@@ -1,6 +1,6 @@
 -- Shared DB install script for Bridge (pay schema) + Hiha (hiha schema)
 -- Source alignment: docs/pay-tydecode-architecture.md Section 5
--- Run as superuser/postgres in the target database (example: tyde)
+-- Run as superuser/postgres in the target database (example: appgen)
 
 -- ============================================================
 -- 0) Baseline: schemas + extension
@@ -36,16 +36,16 @@ BEGIN
 END
 $$;
 
--- Replace "tyde" if your DB name is different.
-GRANT CONNECT ON DATABASE tyde TO bridge_admin, bridge_app, hiha_admin, hiha_app;
+-- Replace "appgen" if your DB name is different.
+GRANT CONNECT ON DATABASE appgen TO bridge_admin, bridge_app, hiha_admin, hiha_app;
 
 GRANT USAGE ON SCHEMA pay TO bridge_admin, bridge_app;
 GRANT USAGE ON SCHEMA hiha TO hiha_admin, hiha_app;
 
-ALTER ROLE bridge_admin IN DATABASE tyde SET search_path = pay, public;
-ALTER ROLE bridge_app   IN DATABASE tyde SET search_path = pay, public;
-ALTER ROLE hiha_admin   IN DATABASE tyde SET search_path = hiha, public;
-ALTER ROLE hiha_app     IN DATABASE tyde SET search_path = hiha, public;
+ALTER ROLE bridge_admin IN DATABASE appgen SET search_path = pay, public;
+ALTER ROLE bridge_app   IN DATABASE appgen SET search_path = pay, public;
+ALTER ROLE hiha_admin   IN DATABASE appgen SET search_path = hiha, public;
+ALTER ROLE hiha_app     IN DATABASE appgen SET search_path = hiha, public;
 
 COMMIT;
 
