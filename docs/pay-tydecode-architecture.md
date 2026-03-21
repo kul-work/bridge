@@ -415,45 +415,54 @@ CREATE SCHEMA app2;     -- app2.users, app2.rate_limits, ... (future apps)
 **Why schemas instead of table prefixes:**
 - **Transparent to code**: Set `search_path = hiha;` once per connection; queries use `FROM users` (not `FROM hiha_users`)
 - **Easy migration**: When hiha grows, export schema to new database and update connection string — no code changes
-- **Access control**: Grant entire schema to app-specific DB roles (`GRANT ALL ON SCHEMA hiha TO hiha_app_user`)
+- **Access control**: Grant entire schema to app-specific DB roles (`GRANT ALL ON SCHEMA hiha TO hiha_admin, hiha_app`)
 
-### Row-Level Security (RLS) — Tenant Isolation
+### Row-Level Security (RLS) — Tenant & User Isolation
 
-Bridge enforces `app_id` isolation at the database level using PostgreSQL RLS (migration `11_enable_row_level_security.sql`). This is defense-in-depth: even if application code has a bug or `search_path` is misconfigured, cross-tenant data access is blocked by Postgres itself.
+Both Bridge and HiHa enforce isolation at the database level using PostgreSQL RLS. This is defense-in-depth: even if application code has a bug or `search_path` is misconfigured, cross-tenant or cross-user data access is blocked by Postgres itself.
 
-**Two database roles:**
+**Two database roles per app:**
 
 | Role | Purpose | RLS |
 |---|---|---|
-| `bridge_admin` | Migrations, background jobs, admin UI | BYPASSRLS — full access |
-| `bridge_app` | Per-request Axum queries | Subject to RLS policies |
+| `bridge_admin` | Bridge migrations, background reconciliation, admin UI | BYPASSRLS — full access |
+| `bridge_app` | Bridge per-request Axum queries | Subject to `app_id` RLS policies |
+| `hiha_admin` | HiHa migrations, background jobs, provider webhooks | BYPASSRLS — full access |
+| `hiha_app` | HiHa per-request Axum queries | Subject to `clerk_id` RLS policies |
 
 **How it works:**
 
-1. All 9 tenant-scoped tables have RLS enabled (everything with `app_id`). The `apps` registry table is excluded.
-2. Policies restrict all operations to rows where `app_id = current_setting('bridge.current_app_id')::uuid`.
-3. The Axum app must call `SET LOCAL bridge.current_app_id = '<app-uuid>';` once per request/transaction, after resolving the API key to an `app_id`.
+1. **Bridge**: All 9 tenant-scoped tables have RLS enabled (everything with `app_id`). The `apps` registry table is excluded. Policies restrict all operations to rows where `app_id = current_setting('bridge.current_app_id', true)::uuid`.
+2. **HiHa**: All user-scoped tables (`users`, `rate_limits`, etc.) have RLS enabled. Policies restrict operations to rows where `clerk_id = current_setting('request.jwt.claim.sub', true)`.
+3. The Axum app must call the appropriate `SET LOCAL` command once per request/transaction.
 4. **Fail-closed**: if the session variable is not set, queries return zero rows — no silent data leaks.
 
 **`DATABASE_URL` setup:**
 
-- Production/runtime: use the `bridge_app` role (subject to RLS)
-- Migrations/admin: use the `bridge_admin` role (bypasses RLS)
+Apps should maintain two connection pools: a primary pool using the limited `_app` role, and an isolated pool using the `_admin` role for migrations and background tasks.
 
 ```
-# Runtime (Axum app)
+# Bridge Configuration
 DATABASE_URL=postgresql://bridge_app:password@localhost/tyde
+ADMIN_DATABASE_URL=postgresql://bridge_admin:password@localhost/tyde
 
-# Migrations / admin tasks
-DATABASE_URL=postgresql://bridge_admin:password@localhost/tyde
+# HiHa Configuration
+DATABASE_URL=postgresql://hiha_app:password@localhost/tyde
+ADMIN_DATABASE_URL=postgresql://hiha_admin:password@localhost/tyde
 ```
 
-**Rust integration** (not yet implemented):
+**Rust integration:**
 
-After API key authentication resolves `app_id`, a middleware or extractor must execute:
+During a request, a middleware or extractor must execute the context setter inside the transaction before any query:
 
+For Bridge (after resolving API key to `app_id`):
 ```sql
 SET LOCAL bridge.current_app_id = '<resolved-app-uuid>';
+```
+
+For HiHa (after resolving Clerk JWT):
+```sql
+SET LOCAL request.jwt.claim.sub = '<clerk_id>';
 ```
 
 This is a single call per request inside the existing transaction. Background jobs and admin endpoints should use the `bridge_admin` role connection pool (which bypasses RLS entirely).
