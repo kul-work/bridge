@@ -365,6 +365,22 @@ CREATE TABLE rate_limits (
     PRIMARY KEY (clerk_id, endpoint)
 );
 
+-- App-specific callback idempotency/event log from Bridge
+CREATE TABLE callback_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    clerk_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    subscription_id TEXT,
+    status TEXT NOT NULL,
+    amount_cents INT,
+    current_period_end TIMESTAMPTZ,
+    timestamp_epoch_ms BIGINT NOT NULL,
+    processed BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- App-specific notifications
 CREATE TABLE notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
