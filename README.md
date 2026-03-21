@@ -44,12 +44,18 @@ cp .env.sample .env
 Set at minimum:
 ```env
 # Database configuration
-DATABASE_URL=postgresql://user:password@localhost/bridge
+DATABASE_URL=postgresql://user:password@localhost/appgen
 # Application Encryption key (AES-GCM for provider keys)
 ENCRYPTION_KEY=your-secure-key
 ```
 
 ### 2. Run Database Migrations
+
+```bash
+sqlx migrate run --database-url postgresql://bridge_admin:password@localhost:5432/appgen
+```
+
+Or if using a `.env` file with `DATABASE_URL`:
 
 ```bash
 sqlx migrate run

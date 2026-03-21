@@ -48,9 +48,9 @@ $$;
 GRANT CONNECT ON DATABASE appgen TO bridge_admin, bridge_app;
 GRANT CONNECT ON DATABASE appgen TO hiha_admin, hiha_app, household_admin, household_app;
 
-GRANT USAGE ON SCHEMA pay TO bridge_admin, bridge_app;
-GRANT USAGE ON SCHEMA hiha TO hiha_admin, hiha_app;
-GRANT USAGE ON SCHEMA household TO household_admin, household_app;
+GRANT USAGE, CREATE ON SCHEMA pay TO bridge_admin, bridge_app;
+GRANT USAGE, CREATE ON SCHEMA hiha TO hiha_admin, hiha_app;
+GRANT USAGE, CREATE ON SCHEMA household TO household_admin, household_app;
 
 ALTER ROLE bridge_admin IN DATABASE appgen SET search_path = pay, public;
 ALTER ROLE bridge_app   IN DATABASE appgen SET search_path = pay, public;
