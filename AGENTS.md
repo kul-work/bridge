@@ -39,13 +39,19 @@
 - **Imports**: Group by std, external crates, then local modules
 - NEVER use `cargo fmt` - is shit.
 
+## K.I.S.S. (Keep It Simple, Stupid)
+
+- **Avoid over-engineering**: Implement the simplest solution that solves the problem
+- **Readable > Clever**: Code that's easy to understand beats clever one-liners
+- **Single responsibility**: Each function/module should have one clear purpose
+- **No magic numbers/strings**: Always explain why values exist (use constants/comments)
+- **Minimal abstractions**: Don't create layers of abstraction until proven necessary
+
 ## 💡 Developer Principles (Guidance)
 
 - **Minimize PII Storage**: Avoid recording general user PII (emails, names) unnecessarily in Bridge DB. Rely on opaque mappings like `external_user_id` from client apps.
-
 - **Idempotency first**: Validate `webhook_log` before mutating states inside subscription layers to safe-guard duplication race-conditions.
 - **Stale Event Suppression**: Avoid overwriting newer status updates with older triggers using high-water point comparison (`timestamp_epoch_ms`).
-- **Minimal abstractions**: Don't create layers of abstraction until proven necessary (K.I.S.S.).
 
 ## Code Change Requests - Guidelines
 
@@ -57,6 +63,22 @@
 - Read files, search, analyze, present findings ONLY.
 - If user wants the fix applied, they will explicitly say so.
 
+Only implement if user says: "fix", "implement", "make", "change", or explicitly requests a solution.
+
+### Before Asking for Changes
+
+**Provide context:**
+
+- What pattern/library already exists for this problem?
+- Where in the architecture does it happen?
+- Why is the existing approach not working for this case?
+
+**Be explicit about constraints:**
+
+- Should I follow existing patterns or introduce new approaches?
+- Are there dependencies/libraries I must or must not use?
+- Is there a specific "style" or architectural decision already made?
+
 ### How to Request Code Changes
 
 Structure as:
@@ -65,7 +87,22 @@ Structure as:
 3. **Constraint** - what pattern should it follow?
 4. **Success criteria** - how do I know it's done right?
 
----
+Avoid:
+
+- "Fix X in Y" (too vague)
+- Asking me to decide architectural choices you haven't made
+
+### Project Patterns
+
+- **Consistency first:** Match existing code style before optimizing
+- **Surgical changes:** Keep changes as minimal as possible to minimize risk and respect the history of working code. Never reformat working blocks (e.g., collapsing multi-line `if` or `match` blocks)
+
+### Release Notes Guidelines
+
+When updating `Release Notes.md`:
+
+- **Keep it short** - 1-2 lines per feature, not a full document
+- **Format**: `- **Feature**: Brief description (what changed, not how it works)`
 
 ## Database - PostgreSQL Commands
 
@@ -73,4 +110,16 @@ When running `psql` commands, always include the password via `PGPASSWORD` envir
 
 ```bash
 cmd: "PGPASSWORD=password psql -U postgres -h localhost -p 5432 -d bridge -c 'SELECT * FROM apps;'"
+```
+
+This ensures non-interactive execution.
+
+## Bash Tool - Windows Path Handling
+
+When using the Bash tool on Windows with absolute paths:
+
+**Use forward slashes with lowercase drive letter:**
+
+```bash
+cmd: "cd c:/share/tyde/bridge && cargo build"
 ```
