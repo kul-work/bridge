@@ -39,3 +39,8 @@ certs/play-billing*.json
 .sqlx
 .agents.arhive
 .gemini_security
+
+
+# Added by cargo
+
+/target
