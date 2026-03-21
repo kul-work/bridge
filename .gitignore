@@ -1,0 +1,41 @@
+# Rust
+target/
+*.rlib
+**/*.rs.bk
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+.amp/
+.claude/
+.zed/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+*.log
+server.log.*
+*-report.json
+*-summary.json
+
+# Build artifacts
+*.o
+*.a
+static/tmp/app
+
+# Sensitive files
+certs/play-billing*.json
+
+# Misc
+.sqlx
+.agents.arhive
+.gemini_security
