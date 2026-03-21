@@ -97,7 +97,7 @@ Create a checkout session with a payment provider. Bridge orchestrates the sessi
 **Note on Idempotency Implementation**: The `idempotency_key` prevents duplicate checkout sessions on network retries. Implementation can use:
 - In-memory cache (short-lived), or
 - Redis (if distributed), or
-- Query existing `webhook_log` for duplicate `app_id + external_user_id + product_id` as natural deduplication
+- A dedicated idempotency cache key such as `app_id + idempotency_key` with TTL and cached response replay
 
 No new database table required.
 
@@ -906,4 +906,3 @@ X-RateLimit-Limit: 100
 X-RateLimit-Remaining: 95
 X-RateLimit-Reset: 1711000060
 ```
-

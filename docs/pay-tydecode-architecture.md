@@ -288,7 +288,7 @@ CREATE INDEX idx_agent_tokens_user ON agent_payment_tokens(app_id, external_user
 
 ### 3.8 `webhook_log`
 
-Webhook deduplication, audit trail, and forwarding status.
+Webhook deduplication, ingress audit trail, and stale-event suppression state.
 
 ```sql
 CREATE TABLE webhook_log (
@@ -301,12 +301,6 @@ CREATE TABLE webhook_log (
     purchase_token TEXT,
     payload JSONB NOT NULL,
     processed BOOLEAN DEFAULT false,
-    -- Forwarding to app
-    forwarded BOOLEAN DEFAULT false,
-    forwarded_at TIMESTAMPTZ,
-    forward_status_code INT,               -- HTTP status from app callback
-    forward_attempts INT DEFAULT 0,
-    next_forward_retry_at TIMESTAMPTZ,     -- required for the spaced/backoff 3-strike strategy
     -- Stale event suppression
     timestamp_epoch_ms BIGINT,             -- provider event time, used for high-water-mark comparison against subscriptions.last_event_time
     suppressed BOOLEAN DEFAULT false,
@@ -317,8 +311,32 @@ CREATE TABLE webhook_log (
 CREATE UNIQUE INDEX idx_wh_app_provider_id ON webhook_log(app_id, provider, provider_webhook_id);
 CREATE UNIQUE INDEX idx_wh_token_type ON webhook_log(app_id, provider, purchase_token, event_type)
     WHERE purchase_token IS NOT NULL;
-CREATE INDEX idx_wh_forward_pending ON webhook_log(forwarded, next_forward_retry_at)
-    WHERE forwarded = false AND suppressed = false;
+```
+
+### 3.9 `webhook_delivery`
+
+Tracks callback delivery state and retry attempts separately from ingress logs.
+
+```sql
+CREATE TABLE webhook_delivery (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    webhook_log_id UUID NOT NULL REFERENCES webhook_log(id) ON DELETE CASCADE,
+    -- Delivery attempt tracking
+    forward_attempts INT NOT NULL DEFAULT 0,
+    forwarded BOOLEAN DEFAULT false,
+    forwarded_at TIMESTAMPTZ,
+    -- HTTP response details
+    last_http_status INT,
+    last_error TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_webhook_delivery_app_id ON webhook_delivery(app_id);
+CREATE INDEX idx_webhook_delivery_log_id ON webhook_delivery(webhook_log_id);
+CREATE INDEX idx_webhook_delivery_forwarded ON webhook_delivery(app_id, forwarded) WHERE forwarded = false;
+CREATE INDEX idx_webhook_delivery_attempts ON webhook_delivery(app_id, forward_attempts) WHERE forward_attempts > 0;
 ```
 
 ---
@@ -373,7 +391,7 @@ CREATE TABLE notifications (
 For cost and deployment efficiency, start with **one PostgreSQL database** containing multiple schemas:
 
 ```sql
-CREATE SCHEMA pay;      -- pay.apps, pay.subscriptions, pay.payments, pay.webhook_log
+CREATE SCHEMA pay;      -- pay.apps, pay.subscriptions, pay.payments, pay.webhook_log, pay.webhook_delivery
 CREATE SCHEMA hiha;     -- hiha.users, hiha.rate_limits, hiha.agent_credits, ...
 CREATE SCHEMA app2;     -- app2.users, app2.rate_limits, ... (future apps)
 ```
@@ -432,7 +450,7 @@ When app grows, simply:
     ```
 7. **hiha.app**: receives callback, verifies HMAC signature, updates own `users.is_premium` (typically keeps access during grace period)
 
-> **Note on Callback Resilience**: Callback delivery uses a **3-strike retry system**. If the app doesn't respond with a 2xx status, a background job (running every 5 minutes) will retry delivery up to 3 times. Failed attempts increment `webhook_log.forward_attempts`. If it fails 3 times, it remains `forwarded = false`, natively acting as a dead-letter record without additional infrastructure. This job also monitors for permanently failed callbacks and pushes alerts to Discord/Slack.
+> **Note on Callback Resilience**: Callback delivery uses a **3-strike retry system**. If the app doesn't respond with a 2xx status, a background job (running every 5 minutes) will retry delivery up to 3 times. Failed attempts increment `webhook_delivery.forward_attempts`. If it fails 3 times, the `webhook_delivery` row remains `forwarded = false`, natively acting as a dead-letter record without additional infrastructure. This job also monitors for permanently failed callbacks and pushes alerts to Discord/Slack.
 
 #### Stale Event Suppression (Bridge-Side) - idempotency issue solution
 
@@ -461,7 +479,7 @@ commit;
 **Guard 2 — At retry/forward time** (re-check before every send attempt):
 
 ```
-for each pending webhook_log row:
+for each pending webhook_delivery row (join webhook_log):
     sub = load_subscription(...);
 
     if log.timestamp_epoch_ms < sub.last_event_time →
@@ -469,8 +487,8 @@ for each pending webhook_log row:
         continue;  -- do NOT forward stale callback
 
     resp = POST to app callback_url;
-    if resp.is_2xx → mark forwarded;
-    else → increment forward_attempts;
+    if resp.is_2xx → mark webhook_delivery.forwarded = true;
+    else → increment webhook_delivery.forward_attempts;
 ```
 
 > **Key rule**: Always compare using provider event time (`timestamp_epoch_ms`), never delivery/receipt time. Use `<` (not `<=`) since exact duplicates are already handled by `webhook_log` unique indexes.
