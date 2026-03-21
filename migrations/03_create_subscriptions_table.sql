@@ -72,9 +72,6 @@ CREATE INDEX idx_subs_app_user ON subscriptions(app_id, external_user_id);
 CREATE INDEX idx_subs_status ON subscriptions(app_id, status) WHERE status = 'active';
 CREATE INDEX idx_subs_provider_status ON subscriptions(app_id, provider, status);
 CREATE INDEX idx_subs_event_time ON subscriptions(app_id, external_user_id, subscription_id, last_event_time);
-CREATE INDEX idx_subs_purchase_token ON subscriptions(purchase_token) WHERE purchase_token IS NOT NULL;
-CREATE INDEX idx_subs_period_end ON subscriptions(app_id, current_period_end) WHERE current_period_end IS NOT NULL;
-
 COMMENT ON TABLE subscriptions IS 'Source of truth for subscription lifecycle. external_user_id is opaque; Bridge does not interpret it.';
 COMMENT ON COLUMN subscriptions.external_user_id IS 'Opaque user ID from the app (e.g., Clerk user ID).';
 COMMENT ON COLUMN subscriptions.purchase_token IS 'One-token-one-owner for fraud prevention and restore purchases.';

@@ -26,10 +26,8 @@ CREATE TABLE payments (
 );
 
 CREATE INDEX idx_pay_app_user ON payments(app_id, external_user_id);
-CREATE INDEX idx_pay_provider_txn_id ON payments(provider, provider_transaction_id);
-CREATE INDEX idx_pay_subscription_id ON payments(subscription_id) WHERE subscription_id IS NOT NULL;
-CREATE INDEX idx_pay_app_status ON payments(app_id, status);
-CREATE INDEX idx_pay_created_at ON payments(app_id, created_at);
+CREATE INDEX idx_pay_provider_txn_id ON payments(provider_transaction_id);
+CREATE INDEX idx_pay_subscription_id ON payments(subscription_id);
 
 COMMENT ON TABLE payments IS 'Payment records. external_user_id and product_id are opaque; Bridge does not interpret them.';
 COMMENT ON COLUMN payments.external_user_id IS 'Opaque user ID from the app.';
