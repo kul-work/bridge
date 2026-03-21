@@ -401,6 +401,47 @@ CREATE SCHEMA app2;     -- app2.users, app2.rate_limits, ... (future apps)
 - **Easy migration**: When hiha grows, export schema to new database and update connection string — no code changes
 - **Access control**: Grant entire schema to app-specific DB roles (`GRANT ALL ON SCHEMA hiha TO hiha_app_user`)
 
+### Row-Level Security (RLS) — Tenant Isolation
+
+Bridge enforces `app_id` isolation at the database level using PostgreSQL RLS (migration `11_enable_row_level_security.sql`). This is defense-in-depth: even if application code has a bug or `search_path` is misconfigured, cross-tenant data access is blocked by Postgres itself.
+
+**Two database roles:**
+
+| Role | Purpose | RLS |
+|---|---|---|
+| `bridge_admin` | Migrations, background jobs, admin UI | BYPASSRLS — full access |
+| `bridge_app` | Per-request Axum queries | Subject to RLS policies |
+
+**How it works:**
+
+1. All 9 tenant-scoped tables have RLS enabled (everything with `app_id`). The `apps` registry table is excluded.
+2. Policies restrict all operations to rows where `app_id = current_setting('bridge.current_app_id')::uuid`.
+3. The Axum app must call `SET LOCAL bridge.current_app_id = '<app-uuid>';` once per request/transaction, after resolving the API key to an `app_id`.
+4. **Fail-closed**: if the session variable is not set, queries return zero rows — no silent data leaks.
+
+**`DATABASE_URL` setup:**
+
+- Production/runtime: use the `bridge_app` role (subject to RLS)
+- Migrations/admin: use the `bridge_admin` role (bypasses RLS)
+
+```
+# Runtime (Axum app)
+DATABASE_URL=postgresql://bridge_app:password@localhost/tyde
+
+# Migrations / admin tasks
+DATABASE_URL=postgresql://bridge_admin:password@localhost/tyde
+```
+
+**Rust integration** (not yet implemented):
+
+After API key authentication resolves `app_id`, a middleware or extractor must execute:
+
+```sql
+SET LOCAL bridge.current_app_id = '<resolved-app-uuid>';
+```
+
+This is a single call per request inside the existing transaction. Background jobs and admin endpoints should use the `bridge_admin` role connection pool (which bypasses RLS entirely).
+
 ### Splitting to Separate Databases
 
 When app grows, simply:
