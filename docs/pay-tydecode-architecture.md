@@ -9,7 +9,7 @@
 
 **Bridge** (`pay.tydecode.com`) is a private payment processing microservice owned by Tyde. It acts as a centralized payment gateway for all Tyde apps (hiha.app, future apps). It will act like a bank service for Tyde. It is NOT a public service — it serves only Tyde's own applications.
 
-**Core principle**: Bridge processes and records payments. It does not know about app users, app products, or app business logic. It stores opaque identifiers from apps and forwards payment events back to them.
+**Core principle**: Bridge processes and records payments. It does not know about app users, app products, or app business logic. It stores opaque identifiers from apps and forwards payment events back to them. Some fields (e.g., `email` in checkout) are accepted as pass-through — forwarded to the provider API to create the session, then discarded. They are never written to Bridge DB.
 
 ### Entities
 
@@ -100,7 +100,7 @@ CREATE TABLE apps (
     -- Security & Rate Limiting
     webhook_ingress_token UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),  -- secret path component for webhook URLs
     api_rate_limit_per_minute INT DEFAULT 120,  -- global fallback rate limit per-API-key
-    api_rate_limit_rules JSONB,             -- per-endpoint dynamic overrides (e.g., {"checkout": 20, "status": 100})
+    api_rate_limit_rules JSONB,             -- per-endpoint dynamic overrides (e.g., {"checkout": 20, "subscription_queries": 100})
     -- Settings
     app_url TEXT,                           -- app's public URL (used in checkout redirects)
     enabled BOOLEAN DEFAULT true,
@@ -141,7 +141,7 @@ CREATE TABLE subscriptions (
     external_user_id TEXT NOT NULL,         -- opaque, from the app (e.g. clerk_id)
     subscription_id TEXT NOT NULL,
     provider TEXT NOT NULL,                 -- 'google_play', 'creem', 'apple', 'lemonsqueezy'
-    purchase_token TEXT,
+    purchase_token TEXT UNIQUE,             -- one-token-one-owner: required for restore purchases & fraud prevention
     status TEXT NOT NULL DEFAULT 'pending', -- pending, active, trial, past_due, cancelled, expired, revoked, paused, on_hold
     current_period_end TIMESTAMPTZ,
     auto_renewing BOOLEAN,
@@ -194,7 +194,6 @@ CREATE TABLE subscriptions (
 
 CREATE INDEX idx_subs_app_id ON subscriptions(app_id);
 CREATE INDEX idx_subs_app_user ON subscriptions(app_id, external_user_id);
-CREATE INDEX idx_subs_purchase_token ON subscriptions(purchase_token);
 CREATE INDEX idx_subs_status ON subscriptions(app_id, status) WHERE status = 'active';
 CREATE INDEX idx_subs_provider_status ON subscriptions(app_id, provider, status);
 CREATE INDEX idx_subs_event_time ON subscriptions(app_id, external_user_id, subscription_id, last_event_time);
@@ -225,6 +224,7 @@ CREATE TABLE payments (
 CREATE INDEX idx_pay_app_user ON payments(app_id, external_user_id);
 CREATE INDEX idx_pay_provider_txn_id ON payments(provider_transaction_id);
 CREATE INDEX idx_pay_subscription_id ON payments(subscription_id);
+```
 
 ### 3.5 `agent_credits`
 
@@ -287,9 +287,6 @@ CREATE INDEX idx_agent_tokens_user ON agent_payment_tokens(app_id, external_user
 ```
 
 ### 3.8 `webhook_log`
-```
-
-### 3.5 `webhook_log`
 
 Webhook deduplication, audit trail, and forwarding status.
 
@@ -310,6 +307,10 @@ CREATE TABLE webhook_log (
     forward_status_code INT,               -- HTTP status from app callback
     forward_attempts INT DEFAULT 0,
     next_forward_retry_at TIMESTAMPTZ,     -- required for the spaced/backoff 3-strike strategy
+    -- Stale event suppression
+    timestamp_epoch_ms BIGINT,             -- provider event time, used for high-water-mark comparison against subscriptions.last_event_time
+    suppressed BOOLEAN DEFAULT false,
+    suppressed_reason TEXT,                 -- 'stale_ingress', 'superseded_before_forward'
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -317,7 +318,7 @@ CREATE UNIQUE INDEX idx_wh_app_provider_id ON webhook_log(app_id, provider, prov
 CREATE UNIQUE INDEX idx_wh_token_type ON webhook_log(app_id, provider, purchase_token, event_type)
     WHERE purchase_token IS NOT NULL;
 CREATE INDEX idx_wh_forward_pending ON webhook_log(forwarded, next_forward_retry_at)
-    WHERE forwarded = false;
+    WHERE forwarded = false AND suppressed = false;
 ```
 
 ---
@@ -398,7 +399,7 @@ When app grows, simply:
 
 1. **User** → hiha.fe: "I want premium"
 2. **hiha.fe** → hiha.app BE: authenticated request (Clerk JWT)
-3. **hiha.app** → Bridge: `POST /api/v1/checkout` with API key, `external_user_id`, `product_id`, `amount_cents`, `provider`
+3. **hiha.app** → Bridge: `POST /api/v1/checkout` with API key, `external_user_id`, `product_id`, `provider`
 4. **Bridge** → creates checkout session with provider (Google Play / Creem / etc.)
 5. **Bridge** → returns checkout URL or purchase parameters to hiha.app
 6. **hiha.app** → hiha.fe: redirect / initiate purchase
@@ -411,24 +412,68 @@ When app grows, simply:
 4. **Bridge**: update `subscriptions` table (status, period_end, provider-specific fields)
 5. **Bridge**: record in `payments` table if payment event
 6. **Bridge** → `POST hiha.app/webhook_callback_url` with normalized event:
-   ```json
-   {
-     "event_id": "evt_uuid",
-     "event_type": "subscription.grace_period",
-     "external_user_id": "clerk_abc",
-     "subscription_id": "premium_monthly",
-     "product_id": "premium_monthly",
-     "provider": "google_play",
-     "status": "past_due",
-     "current_period_end": "2026-04-18T00:00:00Z",
-     "amount_cents": 299,
-     "timestamp": "2026-03-18T10:05:00Z",
-     "timestamp_epoch_ms": 1711000700000
-   }
-   ```
+    ```json
+    {
+      "event_id": "evt_uuid",
+      "event_type": "subscription.grace_period",
+      "app_slug": "hiha",
+      "external_user_id": "clerk_abc",
+      "subscription_id": "premium_monthly",
+      "product_id": "premium_monthly",
+      "provider": "google_play",
+      "status": "past_due",
+      "current_period_end": "2026-04-18T00:00:00Z",
+      "amount_cents": 299,
+      "auto_renewing": true,
+      "purchase_token": "token_xxx",
+      "timestamp": "2026-03-18T10:05:00Z",
+      "timestamp_epoch_ms": 1711000700000
+    }
+    ```
 7. **hiha.app**: receives callback, verifies HMAC signature, updates own `users.is_premium` (typically keeps access during grace period)
 
 > **Note on Callback Resilience**: Callback delivery uses a **3-strike retry system**. If the app doesn't respond with a 2xx status, a background job (running every 5 minutes) will retry delivery up to 3 times. Failed attempts increment `webhook_log.forward_attempts`. If it fails 3 times, it remains `forwarded = false`, natively acting as a dead-letter record without additional infrastructure. This job also monitors for permanently failed callbacks and pushes alerts to Discord/Slack.
+
+#### Stale Event Suppression (Bridge-Side) - idempotency issue solution
+
+Bridge guarantees **at-least-once** delivery but **NOT strict ordering**. Retries from the 3-strike system can deliver older events after newer ones have already been processed. Without protection, this causes state regression (e.g., a stale `subscription.expired` overwriting a valid `subscription.activated`).
+
+**Bridge prevents this using `subscriptions.last_event_time` as a per-subscription high-water mark.** No app-side ordering logic is needed.
+
+**Guard 1 — At webhook ingress** (same transaction as subscription mutation):
+
+```
+begin tx;
+  log = insert_webhook_log_if_not_duplicate(...);  -- dedup via unique index
+  if log.is_duplicate → commit; return;
+
+  sub = SELECT ... FROM subscriptions FOR UPDATE;
+
+  if event_ts < sub.last_event_time →
+      mark webhook_log.suppressed = true, reason = 'stale_ingress'
+      commit; return;  -- do NOT update subscription, do NOT forward
+
+  apply subscription state change;
+  SET last_event_time = event_ts, version = version + 1;
+commit;
+```
+
+**Guard 2 — At retry/forward time** (re-check before every send attempt):
+
+```
+for each pending webhook_log row:
+    sub = load_subscription(...);
+
+    if log.timestamp_epoch_ms < sub.last_event_time →
+        mark webhook_log.suppressed = true, reason = 'superseded_before_forward'
+        continue;  -- do NOT forward stale callback
+
+    resp = POST to app callback_url;
+    if resp.is_2xx → mark forwarded;
+    else → increment forward_attempts;
+```
+
+> **Key rule**: Always compare using provider event time (`timestamp_epoch_ms`), never delivery/receipt time. Use `<` (not `<=`) since exact duplicates are already handled by `webhook_log` unique indexes.
 
 #### Provider Event Normalization
 
@@ -484,7 +529,7 @@ Pay normalizes provider-specific events to canonical types for consistent app-si
 ### 6.5 Subscription Cancellation Flow
 
 1. **User** → hiha.fe → hiha.app: "cancel my subscription"
-2. **hiha.app** → Bridge: `POST /api/v1/subscriptions/:id/cancel`
+2. **hiha.app** → Bridge: `POST /api/v1/subscriptions/:subscription_id/cancel?external_user_id=clerk_abc&provider=google_play` with `mode` and `purchase_token` in body
 3. **Bridge**: calls provider API to cancel
 4. **Bridge**: updates `subscriptions.status`
 5. **Bridge** → hiha.app: callback with cancellation event
@@ -617,8 +662,8 @@ To prevent unchecked database bloat, limit PII exposure windows, and comply with
 
 | Data Type | Storage | Retention | Rationale / Cleanup Action |
 |---|---|---|---|
-| **Raw Webhooks** | `webhook_log` | **30 - 90 Days** | Payloads are huge and contain raw provider JSON. Needed for short-term debugging/reconciliation. Cleaned up via cron (`DELETE FROM webhook_log WHERE created_at < NOW() - 30 days`). |
-| **Mobile Obfuscated IDs** | `fraud_prevention` (pseudo) | **30 Days post-deletion** | `google_obfuscated_account_id` and similar markers are retained for 30 days *after* account deletion to prevent immediate fraudulent re-enrollment, then purged. |
+| **Raw Webhooks** | `webhook_log` | **90 Days** | Payloads are huge and contain raw provider JSON. Needed for short-term debugging/reconciliation. Cleaned up via cron (`DELETE FROM webhook_log WHERE created_at < NOW() - 90 days`). |
+| **Mobile Obfuscated IDs** | `fraud_prevention` (pseudo) | **90 Days post-deletion** | `google_obfuscated_account_id` and similar markers are retained for 90 days *after* account deletion to prevent immediate fraudulent re-enrollment, then purged. |
 | **Payments & Subscriptions** | `payments`, `subscriptions` | **7 Years / Indefinite** | Required for financial, tax, and accounting audits. Cannot be deleted, but the `external_user_id` will be scrubbed/anonymized upon user deletion. |
 | **Purchase Tokens** | `subscriptions.purchase_token` | **Indefinite** | Required for "Restore Purchases" logic and ensuring the same receipt isn't fraudulently reused by a "new" user. |
 
@@ -643,5 +688,5 @@ When a user deletes their account in the client app UI (e.g., `hiha.app`), the a
 ### 10.4 Data Subject Access Requests (GDPR Article 15)
 
 - **Endpoint**: `GET /api/v1/users/:external_user_id/data-export`
-- **Response**: JSON export of all data Bridge holds on the user (subscriptions, payments, webhook logs, notifications).
+- **Response**: JSON export of all data Bridge holds on the user (subscriptions, payments, webhook logs).
 - **Responsibility**: The app aggregates this response with app-side data (content history, credits, etc.) and returns the full package to the end user.

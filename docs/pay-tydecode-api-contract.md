@@ -79,8 +79,6 @@ Create a checkout session with a payment provider. Bridge orchestrates the sessi
   "provider": "google_play",
   "product_id": "premium_monthly",
   "product_type": "subscription",
-  "amount_cents": 299,
-  "currency": "USD",
   "idempotency_key": "uuid_v4_for_retry_safety"
 }
 ```
@@ -89,12 +87,12 @@ Create a checkout session with a payment provider. Bridge orchestrates the sessi
 |---|---|---|---|
 | `external_user_id` | string | yes | Opaque user ID from the app |
 | `email` | string | yes | User email (needed by some providers for checkout) |
-| `provider` | string | yes | `google_play`, `apple`, `creem`, `lemonsqueezy`, `coinbase` |
+| `provider` | string | yes | `google_play`, `apple`, `creem`, `lemonsqueezy` |
 | `product_id` | string | yes | Opaque product identifier from the app |
 | `product_type` | string | no | `subscription` or `one_time`. Default: `subscription` |
-| `amount_cents` | int | yes | Price in cents |
-| `currency` | string | no | Default: `USD` |
 | `idempotency_key` | string (UUID) | no | Optional idempotency key to prevent duplicate checkout sessions on retries. If provided, subsequent requests with the same key return the cached response. |
+
+> **Note on pricing**: `amount_cents` is intentionally absent. The price authority is always the provider (Google Play Console, Creem dashboard, LemonSqueezy dashboard, etc.). Bridge populates `amount_cents` in the `payments` table from the provider's webhook or verification response — never from the app.
 
 **Note on Idempotency Implementation**: The `idempotency_key` prevents duplicate checkout sessions on network retries. Implementation can use:
 - In-memory cache (short-lived), or
@@ -239,7 +237,7 @@ Get a specific subscription.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `external_user_id` | string | yes | Opaque user ID |
-| `provider` | string | yes | `google_play`, `apple`, `creem`, `lemonsqueezy`, or `coinbase`. **Required to disambiguate** when a user has the same `subscription_id` across multiple providers (e.g., premium_monthly on both Google Play and Creem). |
+| `provider` | string | yes | `google_play`, `apple`, `creem`, or `lemonsqueezy`. **Required to disambiguate** when a user has the same `subscription_id` across multiple providers (e.g., premium_monthly on both Google Play and Creem). |
 
 **Response** `200`:
 ```json
@@ -270,7 +268,7 @@ Cancel a subscription.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `external_user_id` | string | yes | Opaque user ID |
-| `provider` | string | yes | `google_play`, `apple`, `creem`, `lemonsqueezy`, or `coinbase`. **Required to disambiguate** which provider's subscription to cancel (see "Provider Disambiguation"). |
+| `provider` | string | yes | `google_play`, `apple`, `creem`, or `lemonsqueezy`. **Required to disambiguate** which provider's subscription to cancel (see "Provider Disambiguation"). |
 
 **Request Body**:
 ```json
@@ -303,7 +301,7 @@ Resume a paused/cancelled subscription (if provider supports it).
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `external_user_id` | string | yes | Opaque user ID |
-| `provider` | string | yes | `google_play`, `apple`, `creem`, `lemonsqueezy`, or `coinbase`. **Required to disambiguate** which provider's subscription to resume. |
+| `provider` | string | yes | `google_play`, `apple`, `creem`, or `lemonsqueezy`. **Required to disambiguate** which provider's subscription to resume. |
 
 **Request Body**: Empty `{}`
 
@@ -712,8 +710,7 @@ X-Pay-Event-Id: evt_uuid
   "app_slug": "hiha",
   "external_user_id": "clerk_abc123",
   "provider": "creem",
-  "subscription_id": "lifetime_access",
-  "product_id": "lifetime_access",
+  "product_id": "otp_product_id",
   "status": "completed",
   "current_period_end": null,
   "amount_cents": 9999,
