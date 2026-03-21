@@ -10,7 +10,7 @@
 --   2. RLS policies restrict all SELECT/INSERT/UPDATE/DELETE to rows matching that app_id.
 --   3. The superuser / migration role (bridge_admin) bypasses RLS for admin operations.
 --
--- Roles (bridge_admin, bridge_app) are created in shared-db-install-roles-rls.sql
+-- Roles (bridge_admin, bridge_app) are created in db-install-roles-rls.sql
 -- Schema access and grants are set up there as well.
 --   bridge_admin  — used for migrations, background jobs, admin UI (BYPASSRLS)
 --   bridge_app    — used by the Axum application for per-request queries (subject to RLS)
