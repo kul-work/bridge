@@ -824,13 +824,5 @@ When a user deletes their account in the client app UI (e.g., `hiha.app`), the a
 
 **Decryption Timing**: Decrypt on-demand when provider API calls are made (lazy decryption, not startup validation).
 
-**Rationale for Deferral**:
-- Initial deployment targets internal Tyde use only (Bridge Admin UI already secured by Tyde Clerk org)
-- Threat model is low (no public/multi-tenant exposure)
-- DB backups are responsible for security at rest
-- Follows K.I.S.S. principle — add encryption if threat model changes (e.g., future SaaS expansion)
-
 **Future Implementation Notes**:
-- Key rotation strategy TBD when encryption is enabled
-- Consider per-app key derivation if moving to multi-tenant model
 - Admin UI will transparently show decrypted configs when reading
