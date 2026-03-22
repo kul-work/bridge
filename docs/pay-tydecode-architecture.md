@@ -60,40 +60,16 @@
 
 Top-level entity. Each registered application.
 
-> **Security Note**: All sensitive credentials in this table (e.g., Google service account JSON, provider API keys, webhook secrets) are encrypted at rest at the application level (via AES-GCM) using a master `ENCRYPTION_KEY` environment variable.
+> **Security Note**: Sensitive credentials (API keys, service accounts, webhooks) are stored in the separate `provider_configs` table (Section 3.2) and encrypted at rest at the application level (via AES-GCM) using a master `ENCRYPTION_KEY` environment variable.
 
 ```sql
 CREATE TABLE apps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     slug TEXT UNIQUE NOT NULL,              -- 'hiha', 'future-app'
     display_name TEXT NOT NULL,
-    -- Mobile store identifiers
-    google_package_name TEXT,               -- 'com.hiha.fe'
-    apple_bundle_id TEXT,                   -- 'com.hiha.fe'
-    -- Google Play credentials
-    google_service_account_json TEXT,        -- JSON content (encrypted at rest)
-    google_verify_webhook_signature BOOLEAN DEFAULT true,
-    google_verify_audience BOOLEAN DEFAULT false,
-    google_pub_sub_audience TEXT,
-    -- Creem credentials
-    creem_api_key TEXT,
-    creem_product_id TEXT,
-    creem_offer_id TEXT,
-    creem_otp_id TEXT,
-    creem_webhook_secret TEXT,
-    creem_api_url TEXT DEFAULT 'https://api.creem.io/v1',
-    -- LemonSqueezy credentials
-    lemonsqueezy_api_key TEXT,
-    lemonsqueezy_product_id TEXT,
-    lemonsqueezy_webhook_secret TEXT,
-    -- Apple credentials (future)
-    apple_shared_secret TEXT,
-    apple_key_id TEXT,
-    apple_issuer_id TEXT,
-    apple_private_key TEXT,
-    -- Coinbase Commerce
-    coinbase_api_key TEXT,
-    coinbase_webhook_secret TEXT,
+    -- Mobile store identifiers (informational)
+    google_package_name TEXT,               -- 'com.hiha.fe' (reference only; actual config in provider_configs)
+    apple_bundle_id TEXT,                   -- 'com.hiha.fe' (reference only)
     -- App callback
     webhook_callback_url TEXT NOT NULL,     -- where Bridge forwards events to the app
     webhook_callback_secret TEXT NOT NULL,  -- HMAC secret for callback verification
@@ -130,7 +106,62 @@ CREATE INDEX idx_api_keys_app_id ON api_keys(app_id);
 CREATE INDEX idx_api_keys_prefix ON api_keys(key_prefix);
 ```
 
-### 3.3 `subscriptions`
+### 3.3 `provider_configs`
+
+Per-app, per-provider configuration. Decouples provider credentials and settings from the `apps` table schema, enabling flexible provider expansion without schema migrations.
+
+```sql
+CREATE TABLE provider_configs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    
+    provider TEXT NOT NULL,                      -- 'google_play', 'creem', 'apple', 'lemonsqueezy', 'coinbase'
+    
+    -- Provider-specific configuration (encrypted at rest)
+    config JSONB NOT NULL,                       -- credentials, endpoints, product IDs, etc.
+    
+    -- Audit
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    CONSTRAINT uq_provider_configs_app_provider UNIQUE (app_id, provider)
+);
+
+CREATE INDEX idx_provider_configs_app_id ON provider_configs(app_id);
+CREATE INDEX idx_provider_configs_provider ON provider_configs(app_id, provider);
+CREATE INDEX idx_provider_configs_enabled ON provider_configs(app_id, enabled) WHERE enabled = true;
+```
+
+**Example `config` JSONB for Google Play:**
+```json
+{
+  "service_account_json": "{\"type\":\"service_account\",...}",
+  "verify_webhook_signature": true,
+  "verify_audience": false,
+  "pub_sub_audience": "https://www.googleapis.com/oauth2/v1/..."
+}
+```
+
+**Example `config` JSONB for Creem:**
+```json
+{
+  "api_key": "creem_live_xxxxx",
+  "api_url": "https://api.creem.io/v1",
+  "product_id": "premium_monthly",
+  "offer_id": "offer_123",
+  "webhook_secret": "whsec_xxxxx"
+}
+```
+
+**Benefits**:
+- ✅ No schema migrations when adding/updating providers
+- ✅ Multiple providers per app (1:N relationship)
+- ✅ Enable/disable providers without deletion (set `enabled = false`)
+- ✅ Audit trail of provider changes via `updated_at`
+- ✅ Clean separation of concerns
+
+### 3.4 `subscriptions`
 
 Source of truth for subscription lifecycle. `external_user_id` is opaque — Bridge does not interpret it.
 
@@ -199,7 +230,7 @@ CREATE INDEX idx_subs_provider_status ON subscriptions(app_id, provider, status)
 CREATE INDEX idx_subs_event_time ON subscriptions(app_id, external_user_id, subscription_id, last_event_time);
 ```
 
-### 3.4 `payments`
+### 3.5 `payments`
 
 Payment records. `product_id` is opaque — Bridge does not interpret it.
 
@@ -226,7 +257,7 @@ CREATE INDEX idx_pay_provider_txn_id ON payments(provider_transaction_id);
 CREATE INDEX idx_pay_subscription_id ON payments(subscription_id);
 ```
 
-### 3.5 `agent_credits`
+### 3.6 `agent_credits`
 
 Tracks virtual balance for automated agents. `external_user_id` is typically an email as per human/agent bifurcation principle.
 
@@ -245,7 +276,7 @@ CREATE TABLE agent_credits (
 CREATE INDEX idx_agent_credits_user ON agent_credits(app_id, external_user_id);
 ```
 
-### 3.6 `agent_transactions`
+### 3.7 `agent_transactions`
 
 Audit log for credit top-ups and deductions.
 
@@ -264,7 +295,7 @@ CREATE TABLE agent_transactions (
 CREATE INDEX idx_agent_transactions_user ON agent_transactions(app_id, external_user_id);
 ```
 
-### 3.7 `agent_payment_tokens`
+### 3.8 `agent_payment_tokens`
 
 Scoped one-time payment tokens inside Bridge to enable atomic reservation workflows (prevents race conditions).
 
