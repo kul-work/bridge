@@ -7,38 +7,9 @@ CREATE TABLE apps (
     slug TEXT UNIQUE NOT NULL,                  -- 'hiha', 'future-app'
     display_name TEXT NOT NULL,
     
-    -- Mobile store identifiers
+    -- Mobile store identifiers (reference only; actual config in provider_configs)
     google_package_name TEXT,                   -- 'com.hiha.fe'
     apple_bundle_id TEXT,                       -- 'com.hiha.fe'
-    
-    -- Google Play credentials
-    google_service_account_json TEXT,           -- JSON content (encrypted at rest)
-    google_verify_webhook_signature BOOLEAN DEFAULT true,
-    google_verify_audience BOOLEAN DEFAULT false,
-    google_pub_sub_audience TEXT,
-    
-    -- Creem credentials
-    creem_api_key TEXT,
-    creem_product_id TEXT,
-    creem_offer_id TEXT,
-    creem_otp_id TEXT,
-    creem_webhook_secret TEXT,
-    creem_api_url TEXT DEFAULT 'https://api.creem.io/v1',
-    
-    -- LemonSqueezy credentials
-    lemonsqueezy_api_key TEXT,
-    lemonsqueezy_product_id TEXT,
-    lemonsqueezy_webhook_secret TEXT,
-    
-    -- Apple credentials (future)
-    apple_shared_secret TEXT,
-    apple_key_id TEXT,
-    apple_issuer_id TEXT,
-    apple_private_key TEXT,
-    
-    -- Coinbase Commerce
-    coinbase_api_key TEXT,
-    coinbase_webhook_secret TEXT,
     
     -- App callback
     webhook_callback_url TEXT NOT NULL,         -- where Bridge forwards events to the app
@@ -62,6 +33,6 @@ CREATE INDEX idx_apps_slug ON apps(slug);
 CREATE INDEX idx_apps_enabled ON apps(enabled);
 CREATE INDEX idx_apps_webhook_ingress_token ON apps(webhook_ingress_token);
 
-COMMENT ON TABLE apps IS 'Registered applications in Bridge. All credential fields are encrypted at the application layer (AES-GCM).';
+COMMENT ON TABLE apps IS 'Registered applications in Bridge. Provider credentials stored separately in provider_configs table (encrypted at application layer via AES-GCM).';
 COMMENT ON COLUMN apps.webhook_ingress_token IS 'Obfuscated token for webhook URLs (not cryptographically sufficient alone; must pair with provider signature verification).';
 COMMENT ON COLUMN apps.api_rate_limit_rules IS 'JSONB: per-endpoint overrides, e.g. {"checkout": 20, "subscription_queries": 100}';

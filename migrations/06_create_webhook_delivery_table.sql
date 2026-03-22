@@ -4,7 +4,7 @@
 CREATE TABLE webhook_delivery (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    webhook_log_id UUID NOT NULL REFERENCES webhook_log(id) ON DELETE CASCADE,
+    webhook_provider_id UUID NOT NULL REFERENCES webhook_provider(id) ON DELETE CASCADE,
     
     -- Delivery attempt tracking
     forward_attempts INT NOT NULL DEFAULT 0,
@@ -20,7 +20,7 @@ CREATE TABLE webhook_delivery (
 );
 
 CREATE INDEX idx_webhook_delivery_app_id ON webhook_delivery(app_id);
-CREATE INDEX idx_webhook_delivery_log_id ON webhook_delivery(webhook_log_id);
+CREATE INDEX idx_webhook_delivery_provider_id ON webhook_delivery(webhook_provider_id);
 CREATE INDEX idx_webhook_delivery_forwarded ON webhook_delivery(app_id, forwarded) WHERE forwarded = false;
 CREATE INDEX idx_webhook_delivery_attempts ON webhook_delivery(app_id, forward_attempts) WHERE forward_attempts > 0;
 CREATE INDEX idx_webhook_delivery_created_at ON webhook_delivery(created_at);

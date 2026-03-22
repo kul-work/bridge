@@ -19,9 +19,9 @@ CREATE INDEX idx_payments_pending
 CREATE INDEX idx_payments_provider
     ON payments(app_id, provider, created_at DESC);
 
--- Webhook log: Unprocessed webhooks for background job
-CREATE INDEX idx_webhook_unprocessed
-    ON webhook_log(app_id, created_at)
+-- Webhook provider: Unprocessed webhooks for background job
+CREATE INDEX idx_webhook_provider_unprocessed
+    ON webhook_provider(app_id, created_at)
     WHERE processed = false;
 
 -- Agent credits: Active agents with balance
