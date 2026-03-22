@@ -346,7 +346,7 @@ CREATE UNIQUE INDEX idx_wh_token_type ON webhook_provider(app_id, provider, purc
 
 ### 3.9 `webhook_delivery`
 
-Tracks callback delivery state and retry attempts separately from ingress logs.
+Tracks callback delivery state and retry attempts separately from ingress logs. Implements **3-strike retry pattern**: a background job (runs every 5 mins) retries failed deliveries up to 3 times before marking as dead-lettered.
 
 ```sql
 CREATE TABLE webhook_delivery (
@@ -689,12 +689,12 @@ This flow ensures concurrent requests do not oversubscribe available balance, an
 
 ### 8.1 Bridge Pay
 
-**API endpoints** (`/api/v1/*`) — rate limited per API key:
+**API endpoints** (`/api/v1/*`) — rate limited per API key using in-memory token bucket:
 
 | Scope | Default | Configurable | Storage |
 |---|---|---|---|
 | Per API key | `api_rate_limit_per_minute` from `apps` table (default: 120) | Yes, per-app | In-memory (token bucket) |
-| Per IP (unauthenticated / auth failures) | 10 req/min | No | In-memory |
+| Per IP (unauthenticated / auth failures) | 10 req/min | No | In-memory (per-IP tracking) |
 
 **Webhook endpoints** (`/webhooks/{token}/:provider`) — **NOT rate limited**. Protection relies on:
 
