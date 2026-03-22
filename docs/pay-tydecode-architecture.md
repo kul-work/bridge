@@ -117,7 +117,7 @@ CREATE TABLE provider_configs (
     
     provider TEXT NOT NULL,                      -- 'google_play', 'creem', 'apple', 'lemonsqueezy', 'coinbase'
     
-    -- Provider-specific configuration (encrypted at rest)
+    -- Provider-specific configuration (unencrypted initially, see DEFERRED #6 below)
     config JSONB NOT NULL,                       -- credentials, endpoints, product IDs, etc.
     
     -- Audit
@@ -805,3 +805,32 @@ When a user deletes their account in the client app UI (e.g., `hiha.app`), the a
 - **Endpoint**: `GET /api/v1/users/:external_user_id/data-export`
 - **Response**: JSON export of all data Bridge holds on the user (subscriptions, payments, webhook logs).
 - **Responsibility**: The app aggregates this response with app-side data (content history, credits, etc.) and returns the full package to the end user.
+
+---
+
+## 11. DEFERRED / TODO Items
+
+### #6 — Encryption at Rest (DEFERRED)
+
+**Status**: Not implemented in initial release. Marked for future enhancement.
+
+**Scope**: Encrypt sensitive provider credentials stored in `provider_configs.config` JSONB column.
+
+**Planned Approach (Option 1 — Whole Config Encryption)**:
+- Encrypt entire `config` JSONB as base64-encoded ciphertext on write
+- Decrypt on read at application layer (Rust)
+- Use AES-GCM algorithm via `aes-gcm` crate
+- Single `ENCRYPTION_KEY` environment variable for all apps (no per-app derivation initially)
+
+**Decryption Timing**: Decrypt on-demand when provider API calls are made (lazy decryption, not startup validation).
+
+**Rationale for Deferral**:
+- Initial deployment targets internal Tyde use only (Bridge Admin UI already secured by Tyde Clerk org)
+- Threat model is low (no public/multi-tenant exposure)
+- DB backups are responsible for security at rest
+- Follows K.I.S.S. principle — add encryption if threat model changes (e.g., future SaaS expansion)
+
+**Future Implementation Notes**:
+- Key rotation strategy TBD when encryption is enabled
+- Consider per-app key derivation if moving to multi-tenant model
+- Admin UI will transparently show decrypted configs when reading
