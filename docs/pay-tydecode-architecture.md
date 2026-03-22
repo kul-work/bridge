@@ -317,12 +317,12 @@ CREATE UNIQUE INDEX idx_agent_tokens_unique_request ON agent_payment_tokens(app_
 CREATE INDEX idx_agent_tokens_user ON agent_payment_tokens(app_id, external_user_id);
 ```
 
-### 3.8 `webhook_log`
+### 3.8 `webhook_provider`
 
 Webhook deduplication, ingress audit trail, and stale-event suppression state.
 
 ```sql
-CREATE TABLE webhook_log (
+CREATE TABLE webhook_provider (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     provider TEXT NOT NULL,
@@ -339,8 +339,8 @@ CREATE TABLE webhook_log (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX idx_wh_app_provider_id ON webhook_log(app_id, provider, provider_webhook_id);
-CREATE UNIQUE INDEX idx_wh_token_type ON webhook_log(app_id, provider, purchase_token, event_type)
+CREATE UNIQUE INDEX idx_wh_app_provider_id ON webhook_provider(app_id, provider, provider_webhook_id);
+CREATE UNIQUE INDEX idx_wh_token_type ON webhook_provider(app_id, provider, purchase_token, event_type)
     WHERE purchase_token IS NOT NULL;
 ```
 
@@ -352,7 +352,7 @@ Tracks callback delivery state and retry attempts separately from ingress logs.
 CREATE TABLE webhook_delivery (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    webhook_log_id UUID NOT NULL REFERENCES webhook_log(id) ON DELETE CASCADE,
+    webhook_provider_id UUID NOT NULL REFERENCES webhook_provider(id) ON DELETE CASCADE,
     -- Delivery attempt tracking
     forward_attempts INT NOT NULL DEFAULT 0,
     forwarded BOOLEAN DEFAULT false,
@@ -365,7 +365,7 @@ CREATE TABLE webhook_delivery (
 );
 
 CREATE INDEX idx_webhook_delivery_app_id ON webhook_delivery(app_id);
-CREATE INDEX idx_webhook_delivery_log_id ON webhook_delivery(webhook_log_id);
+CREATE INDEX idx_webhook_delivery_log_id ON webhook_delivery(webhook_provider_id);
 CREATE INDEX idx_webhook_delivery_forwarded ON webhook_delivery(app_id, forwarded) WHERE forwarded = false;
 CREATE INDEX idx_webhook_delivery_attempts ON webhook_delivery(app_id, forward_attempts) WHERE forward_attempts > 0;
 ```
@@ -438,7 +438,7 @@ CREATE TABLE notifications (
 For cost and deployment efficiency, start with **one PostgreSQL database** containing multiple schemas:
 
 ```sql
-CREATE SCHEMA pay;      -- pay.apps, pay.subscriptions, pay.payments, pay.webhook_log, pay.webhook_delivery
+CREATE SCHEMA pay;      -- pay.apps, pay.subscriptions, pay.payments, pay.webhook_provider, pay.webhook_delivery
 CREATE SCHEMA hiha;     -- hiha.users, hiha.rate_limits, hiha.agent_credits, ...
 CREATE SCHEMA app2;     -- app2.users, app2.rate_limits, ... (future apps)
 ```
@@ -522,7 +522,7 @@ When app grows, simply:
 ### 6.2 Webhook Flow (Provider → Bridge → App)
 
 1. **Google Play / Apple / Creem** → `pay.tydecode.com/webhooks/{webhook_ingress_token}/google_play`
-2. **Bridge**: verify signature, dedup, parse event, store in `webhook_log`
+2. **Bridge**: verify signature, dedup, parse event, store in `webhook_provider`
 3. **Bridge**: normalize provider event to canonical type (see table below)
 4. **Bridge**: update `subscriptions` table (status, period_end, provider-specific fields)
 5. **Bridge**: record in `payments` table if payment event
@@ -588,7 +588,7 @@ for each pending webhook_delivery row (join webhook_provider):
     else → increment webhook_delivery.forward_attempts;
 ```
 
-> **Key rule**: Always compare using provider event time (`timestamp_epoch_ms`), never delivery/receipt time. Use `<` (not `<=`) since exact duplicates are already handled by `webhook_log` unique indexes.
+> **Key rule**: Always compare using provider event time (`timestamp_epoch_ms`), never delivery/receipt time. Use `<` (not `<=`) since exact duplicates are already handled by `webhook_provider` unique indexes.
 
 #### Provider Event Normalization
 
@@ -700,7 +700,7 @@ This flow ensures concurrent requests do not oversubscribe available balance, an
 
 1. **Obfuscated paths** — each app gets a unique `webhook_ingress_token` (UUID v4). The full webhook URL is `pay.tydecode.com/webhooks/{token}/{provider}`, unguessable by random clients. Providers (Google Play, Creem, etc.) are configured with this URL
 2. **Provider signature verification** — every webhook payload is cryptographically verified before processing
-3. **Deduplication** — `webhook_log` table prevents reprocessing of duplicate events
+3. **Deduplication** — `webhook_provider` table prevents reprocessing of duplicate events
 
 **Health endpoint**: `GET /health` — no authentication, no rate limiting. Used for uptime monitoring and load balancer health checks.
 
