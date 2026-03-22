@@ -35,7 +35,7 @@
 | Webhook ingress | Receives webhooks at obfuscated `pay.tydecode.com/webhooks/{token}/:provider` URLs. **Security Note**: This obfuscated token prevents blind bulk scans, but is NOT enough on its own. It MUST be explicitly paired with provider signature cryptographic verification to prevent spoofing if the token leaks. |
 | Webhook forwarding | After processing, forwards normalized events to each app's `webhook_callback_url` |
 | Reconciliation | Background jobs polling Google Play / Apple per-app, detecting drift, updating subscriptions, triggering callbacks |
-| Webhook dedup & audit | Idempotent processing, full payload logging |
+| Webhook dedup & audit | Idempotent processing via `webhook_provider` table, full payload logging |
 | Provider abstraction | Google Play, Apple IAP, Creem, LemonSqueezy, Coinbase — all normalized behind a common interface |
 
 ### Each app (e.g. hiha.app) owns
@@ -528,13 +528,13 @@ Bridge guarantees **at-least-once** delivery but **NOT strict ordering**. Retrie
 
 ```
 begin tx;
-  log = insert_webhook_log_if_not_duplicate(...);  -- dedup via unique index
-  if log.is_duplicate → commit; return;
+  wh = insert_webhook_provider_if_not_duplicate(...);  -- dedup via unique index
+  if wh.is_duplicate → commit; return;
 
   sub = SELECT ... FROM subscriptions FOR UPDATE;
 
   if event_ts < sub.last_event_time →
-      mark webhook_log.suppressed = true, reason = 'stale_ingress'
+      mark webhook_provider.suppressed = true, reason = 'stale_ingress'
       commit; return;  -- do NOT update subscription, do NOT forward
 
   apply subscription state change;
@@ -545,11 +545,11 @@ commit;
 **Guard 2 — At retry/forward time** (re-check before every send attempt):
 
 ```
-for each pending webhook_delivery row (join webhook_log):
+for each pending webhook_delivery row (join webhook_provider):
     sub = load_subscription(...);
 
-    if log.timestamp_epoch_ms < sub.last_event_time →
-        mark webhook_log.suppressed = true, reason = 'superseded_before_forward'
+    if wh.timestamp_epoch_ms < sub.last_event_time →
+        mark webhook_provider.suppressed = true, reason = 'superseded_before_forward'
         continue;  -- do NOT forward stale callback
 
     resp = POST to app callback_url;
@@ -746,7 +746,7 @@ To prevent unchecked database bloat, limit PII exposure windows, and comply with
 
 | Data Type | Storage | Retention | Rationale / Cleanup Action |
 |---|---|---|---|
-| **Raw Webhooks** | `webhook_log` | **90 Days** | Payloads are huge and contain raw provider JSON. Needed for short-term debugging/reconciliation. Cleaned up via cron (`DELETE FROM webhook_log WHERE created_at < NOW() - 90 days`). |
+| **Raw Webhooks** | `webhook_provider` | **90 Days** | Payloads are huge and contain raw provider JSON. Needed for short-term debugging/reconciliation. Cleaned up via cron (`DELETE FROM webhook_provider WHERE created_at < NOW() - 90 days`). |
 | **Mobile Obfuscated IDs** | `fraud_prevention` (pseudo) | **90 Days post-deletion** | `google_obfuscated_account_id` and similar markers are retained for 90 days *after* account deletion to prevent immediate fraudulent re-enrollment, then purged. |
 | **Payments & Subscriptions** | `payments`, `subscriptions` | **7 Years / Indefinite** | Required for financial, tax, and accounting audits. Cannot be deleted, but the `external_user_id` will be scrubbed/anonymized upon user deletion. |
 | **Purchase Tokens** | `subscriptions.purchase_token` | **Indefinite** | Required for "Restore Purchases" logic and ensuring the same receipt isn't fraudulently reused by a "new" user. |
