@@ -25,9 +25,9 @@ CREATE INDEX idx_provider_configs_app_id ON provider_configs(app_id);
 CREATE INDEX idx_provider_configs_provider ON provider_configs(app_id, provider);
 CREATE INDEX idx_provider_configs_enabled ON provider_configs(app_id, enabled) WHERE enabled = true;
 
-COMMENT ON TABLE provider_configs IS 'Per-app, per-provider configuration (credentials, API keys, webhooks). Decouples provider setup from apps table schema. Config JSONB is encrypted at application level.';
-COMMENT ON COLUMN provider_configs.provider IS 'Payment provider identifier: google_play, creem, apple, lemonsqueezy, coinbase, etc.';
-COMMENT ON COLUMN provider_configs.config IS 'Provider-specific config as JSON. Encrypted at rest via application-level AES-GCM using ENCRYPTION_KEY. Examples:
+COMMENT ON TABLE provider_configs IS 'Per-app, per-provider configuration (credentials, API keys, webhooks). Decouples provider setup from apps table schema. Config JSONB is encrypted at application level.
+
+Examples:
 
   Google Play:
   {
@@ -68,3 +68,5 @@ COMMENT ON COLUMN provider_configs.config IS 'Provider-specific config as JSON. 
     "webhook_secret": "cbwhsec_xxxxx"
   }';
 COMMENT ON COLUMN provider_configs.enabled IS 'Controls whether this provider config is active for this app.';
+COMMENT ON COLUMN provider_configs.provider IS 'Payment provider identifier: google_play, creem, apple, lemonsqueezy, coinbase, etc.';
+COMMENT ON COLUMN provider_configs.config IS 'Provider-specific config as JSON. Encrypted at rest via application-level AES-GCM using ENCRYPTION_KEY.';
