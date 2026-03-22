@@ -33,7 +33,7 @@ CREATE INDEX idx_fraud_prevention_is_anonymized ON fraud_prevention(app_id, is_a
 CREATE INDEX idx_fraud_prevention_purge_at ON fraud_prevention(should_purge_at) WHERE should_purge_at IS NOT NULL;
 CREATE INDEX idx_fraud_prevention_created_at ON fraud_prevention(created_at);
 
-COMMENT ON TABLE fraud_prevention IS 'Tracks obfuscated IDs and enrollment history. Supports 90-day post-deletion retention for GDPR compliance.';
+COMMENT ON TABLE fraud_prevention IS 'GDPR compliance. Tracks obfuscated IDs and enrollment history. Supports 90-day post-deletion retention.';
 COMMENT ON COLUMN fraud_prevention.provider_obfuscated_account_id IS 'Opaque account ID from provider (e.g., Google Play obfuscated_account_id) - never reusable by different user.';
 COMMENT ON COLUMN fraud_prevention.is_anonymized IS 'True after user account deletion. external_user_id becomes "deleted_*".';
 COMMENT ON COLUMN fraud_prevention.should_purge_at IS 'Date when this record should be permanently deleted (90 days post-anonymization).';
