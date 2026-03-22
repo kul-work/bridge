@@ -30,8 +30,6 @@ CREATE TABLE webhook_provider (
 
 CREATE UNIQUE INDEX idx_webhook_provider_app_id ON webhook_provider(app_id, provider, provider_webhook_id);
 CREATE UNIQUE INDEX idx_webhook_provider_id_app_id ON webhook_provider(id, app_id);
-CREATE UNIQUE INDEX idx_webhook_provider_token_type ON webhook_provider(app_id, provider, purchase_token, event_type)
-    WHERE purchase_token IS NOT NULL;
 COMMENT ON TABLE webhook_provider IS 'Incoming webhooks from payment providers (Google Play, Creem, Apple, LemonSqueezy). Deduplication, idempotent processing, and audit trail. Full raw payloads stored for short-term debugging (90 days).';
 COMMENT ON COLUMN webhook_provider.provider_webhook_id IS 'Unique event ID from the provider. Used for deduplication.';
 COMMENT ON COLUMN webhook_provider.payload IS 'Full raw JSON payload from the provider (for audit and debugging).';
