@@ -1,3 +1,5 @@
+SET search_path TO pay, public;
+
 -- Bridge: Apps Registry
 -- Each registered application (e.g., hiha.app, future apps)
 -- All sensitive credentials are encrypted at the application level using AES-GCM

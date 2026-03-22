@@ -1,3 +1,5 @@
+SET search_path TO pay, public;
+
 -- Bridge: Subscriptions
 -- Source of truth for subscription lifecycle. external_user_id is opaque (e.g., clerk_id from app).
 

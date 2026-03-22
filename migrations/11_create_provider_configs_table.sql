@@ -1,3 +1,5 @@
+SET search_path TO pay, public;
+
 -- Bridge: Provider Configurations
 -- Stores per-app, per-provider settings (credentials, API keys, webhooks).
 -- Decouples provider management from apps table schema.

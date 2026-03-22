@@ -1,3 +1,5 @@
+SET search_path TO pay, public;
+
 -- Bridge: Fraud Prevention & Purchase Token Tracking
 -- Prevents re-enrollment, tracks obfuscated IDs for GDPR compliance, 90-day post-deletion retention.
 

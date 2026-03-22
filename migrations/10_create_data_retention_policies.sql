@@ -1,3 +1,5 @@
+SET search_path TO pay, public;
+
 -- Bridge: Data Retention Policies
 -- Enforces GDPR/CCPA compliance and prevents unchecked database bloat
 

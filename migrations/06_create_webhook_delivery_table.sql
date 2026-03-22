@@ -1,10 +1,12 @@
+SET search_path TO pay, public;
+
 -- Bridge: Webhook Delivery
 -- Tracks forwarded callbacks to apps. Supports retry logic and audit.
 
 CREATE TABLE webhook_delivery (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    webhook_provider_id UUID NOT NULL REFERENCES webhook_provider(id) ON DELETE CASCADE,
+    webhook_provider_id UUID NOT NULL,
     
     -- Delivery attempt tracking
     forward_attempts INT NOT NULL DEFAULT 0,
@@ -16,7 +18,12 @@ CREATE TABLE webhook_delivery (
     last_error TEXT,
     
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+    CONSTRAINT uq_webhook_delivery_provider UNIQUE (webhook_provider_id),
+    CONSTRAINT chk_webhook_delivery_forward_attempts_non_negative CHECK (forward_attempts >= 0),
+    CONSTRAINT fk_webhook_delivery_provider_and_app
+        FOREIGN KEY (webhook_provider_id, app_id) REFERENCES webhook_provider(id, app_id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_webhook_delivery_app_id ON webhook_delivery(app_id);

@@ -1,3 +1,5 @@
+SET search_path TO pay, public;
+
 -- Bridge: API Keys
 -- App-to-Bridge authentication. Each app gets one or more API keys.
 

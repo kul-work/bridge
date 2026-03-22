@@ -1,3 +1,5 @@
+SET search_path TO pay, public;
+
 -- Bridge: Additional Indexes and Constraints
 -- Performance optimization for common queries
 

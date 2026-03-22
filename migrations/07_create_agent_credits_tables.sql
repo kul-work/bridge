@@ -1,3 +1,5 @@
+SET search_path TO pay, public;
+
 -- Bridge: Agent Credits System
 -- Tracks virtual balance for automated agents. external_user_id is typically an email.
 -- Completely decoupled from app's Clerk/Human users.

@@ -1,3 +1,5 @@
+SET search_path TO pay, public;
+
 -- Bridge: Row-Level Security (RLS) for Multi-App Tenant Isolation
 --
 -- Defense-in-depth: ensures app_id isolation at the database level, even if
@@ -44,71 +46,71 @@ ALTER TABLE pay.fraud_prevention      ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_api_keys ON pay.api_keys
     FOR ALL
     TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id')::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- subscriptions
 CREATE POLICY tenant_isolation_subscriptions ON pay.subscriptions
     FOR ALL
     TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id')::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- payments
 CREATE POLICY tenant_isolation_payments ON pay.payments
     FOR ALL
     TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id')::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- webhook_provider
 CREATE POLICY tenant_isolation_webhook_provider ON pay.webhook_provider
     FOR ALL
     TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id')::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- webhook_delivery
 CREATE POLICY tenant_isolation_webhook_delivery ON pay.webhook_delivery
     FOR ALL
     TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id')::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- provider_configs
 CREATE POLICY tenant_isolation_provider_configs ON pay.provider_configs
     FOR ALL
     TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id')::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- agent_credits
 CREATE POLICY tenant_isolation_agent_credits ON pay.agent_credits
     FOR ALL
     TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id')::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- agent_transactions
 CREATE POLICY tenant_isolation_agent_transactions ON pay.agent_transactions
     FOR ALL
     TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id')::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- agent_payment_tokens
 CREATE POLICY tenant_isolation_agent_payment_tokens ON pay.agent_payment_tokens
     FOR ALL
     TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id')::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- fraud_prevention
 CREATE POLICY tenant_isolation_fraud_prevention ON pay.fraud_prevention
     FOR ALL
     TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id')::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- ============================================================================
 -- 3. Comments

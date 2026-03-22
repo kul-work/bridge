@@ -1,3 +1,5 @@
+SET search_path TO pay, public;
+
 -- Bridge: Payments
 -- Payment records. product_id is opaque (Bridge does not interpret it).
 
