@@ -396,8 +396,8 @@ CREATE TABLE rate_limits (
     PRIMARY KEY (clerk_id, endpoint)
 );
 
--- App-specific callback idempotency/event log from Bridge
-CREATE TABLE callback_events (
+-- App-specific webhook callback idempotency/event log from Bridge
+CREATE TABLE webhook_callbacks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
