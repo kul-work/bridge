@@ -22,8 +22,9 @@
 ALTER TABLE pay.api_keys              ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay.subscriptions         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay.payments              ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pay.webhook_log           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pay.webhook_provider      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay.webhook_delivery      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pay.provider_configs      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay.agent_credits         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay.agent_transactions    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay.agent_payment_tokens  ENABLE ROW LEVEL SECURITY;
@@ -60,8 +61,8 @@ CREATE POLICY tenant_isolation_payments ON pay.payments
     USING (app_id = current_setting('bridge.current_app_id')::uuid)
     WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
 
--- webhook_log
-CREATE POLICY tenant_isolation_webhook_log ON pay.webhook_log
+-- webhook_provider
+CREATE POLICY tenant_isolation_webhook_provider ON pay.webhook_provider
     FOR ALL
     TO bridge_app
     USING (app_id = current_setting('bridge.current_app_id')::uuid)
@@ -69,6 +70,13 @@ CREATE POLICY tenant_isolation_webhook_log ON pay.webhook_log
 
 -- webhook_delivery
 CREATE POLICY tenant_isolation_webhook_delivery ON pay.webhook_delivery
+    FOR ALL
+    TO bridge_app
+    USING (app_id = current_setting('bridge.current_app_id')::uuid)
+    WITH CHECK (app_id = current_setting('bridge.current_app_id')::uuid);
+
+-- provider_configs
+CREATE POLICY tenant_isolation_provider_configs ON pay.provider_configs
     FOR ALL
     TO bridge_app
     USING (app_id = current_setting('bridge.current_app_id')::uuid)
@@ -112,10 +120,12 @@ COMMENT ON POLICY tenant_isolation_subscriptions ON pay.subscriptions IS
     'RLS: restrict subscriptions access to current app_id session variable.';
 COMMENT ON POLICY tenant_isolation_payments ON pay.payments IS
     'RLS: restrict payments access to current app_id session variable.';
-COMMENT ON POLICY tenant_isolation_webhook_log ON pay.webhook_log IS
-    'RLS: restrict webhook_log access to current app_id session variable.';
+COMMENT ON POLICY tenant_isolation_webhook_provider ON pay.webhook_provider IS
+    'RLS: restrict webhook_provider access to current app_id session variable.';
 COMMENT ON POLICY tenant_isolation_webhook_delivery ON pay.webhook_delivery IS
     'RLS: restrict webhook_delivery access to current app_id session variable.';
+COMMENT ON POLICY tenant_isolation_provider_configs ON pay.provider_configs IS
+    'RLS: restrict provider_configs access to current app_id session variable.';
 COMMENT ON POLICY tenant_isolation_agent_credits ON pay.agent_credits IS
     'RLS: restrict agent_credits access to current app_id session variable.';
 COMMENT ON POLICY tenant_isolation_agent_transactions ON pay.agent_transactions IS
