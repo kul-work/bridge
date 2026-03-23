@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Token validation mode for mobile stores
 /// TODO: Move to google_play module when it's fully ported
+/// Used by Google Play validation module (imported but not directly instantiated).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TokenValidationMode {
@@ -88,7 +89,7 @@ impl From<&str> for SubscriptionStatus {
 }
 
 /// Purchase type for idempotent acknowledgment
-/// Used for future Google Play purchase acknowledgment flow
+/// Used by Google Play lifecycle management (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PurchaseType {
@@ -97,7 +98,7 @@ pub enum PurchaseType {
 }
 
 /// Checkout session returned by payment provider
-/// Used for future provider-specific checkout implementations
+/// Used by Google Play provider trait methods (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CheckoutSession {
@@ -107,7 +108,7 @@ pub struct CheckoutSession {
 
 /// PAUSED STATE CONTEXT
 /// Tracks metadata about subscription pauses (scheduled or active)
-/// Currently used only for documentation; Phase 2 will integrate this fully
+/// Used by Google Play lifecycle management (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct PausedStateContext {
@@ -127,7 +128,7 @@ pub struct PausedStateContext {
 /// NORMALIZED SUBSCRIPTION DATA (provider-agnostic, used by all providers)
 /// This is the "source of truth" for business logic.
 /// All providers map to these fields; business logic never reads provider-specific fields.
-/// Used for future webhook processing when multiple providers are implemented.
+/// Used by Google Play subscription lifecycle (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct NormalizedSubscriptionData {
@@ -159,7 +160,7 @@ impl Default for NormalizedSubscriptionData {
 /// Raw data extracted directly from Google Play API v3.
 /// All fields are read-only from Google; we store as-is for audit trail.
 /// Transformation to normalized data happens in separate function.
-/// Used for future webhook processing and Google Play integration.
+/// Used by Google Play provider (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct GooglePlayRawData {
@@ -245,7 +246,7 @@ impl Default for GooglePlayRawData {
 /// SUBSCRIPTION RECORD (combined for DB storage)
 /// Forces developers to populate both normalized AND provider-specific data.
 /// Option<GooglePlayRawData> makes it explicit: this is provider-optional data.
-/// Used for future subscription state management and provider integration.
+/// Used by Google Play lifecycle (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SubscriptionRecord {
@@ -269,7 +270,7 @@ pub struct SubscriptionRecord {
 }
 
 /// Webhook event from payment provider
-/// Used for future webhook ingress and processing across multiple providers.
+/// Used by Google Play webhook parsing (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct WebhookEvent {
@@ -297,7 +298,7 @@ pub struct WebhookEvent {
 
 /// Google Play-specific fields returned by the provider during verification.
 /// Isolated here so non-Google providers don't carry irrelevant None fields.
-/// Used for future Google Play webhook processing and subscription details.
+/// Used by Google Play provider (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct GooglePlayProviderData {
@@ -315,7 +316,7 @@ pub struct GooglePlayProviderData {
 }
 
 /// Provider-specific data attached to a SubscriptionDetails.
-/// Used for future provider-specific subscription detail queries.
+/// Used by Google Play provider (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ProviderData {
@@ -328,7 +329,7 @@ impl Default for ProviderData {
 }
 
 /// Subscription details from provider
-/// Used for future subscription verification and detail queries across providers.
+/// Used by Google Play provider (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SubscriptionDetails {
@@ -352,6 +353,7 @@ pub struct SubscriptionDetails {
 
 impl SubscriptionDetails {
     /// Access Google Play-specific data if present.
+    /// Used by google_play provider integration.
     #[allow(dead_code)]
     pub fn google_play(&self) -> Option<&GooglePlayProviderData> {
         match &self.provider_data {
@@ -361,18 +363,22 @@ impl SubscriptionDetails {
     }
 
     // Convenience accessors for frequently used Google Play fields
+    /// Used by google_play provider integration.
     #[allow(dead_code)]
     pub fn google_obfuscated_account_id(&self) -> Option<&str> {
         self.google_play().and_then(|g| g.obfuscated_account_id.as_deref())
     }
+    /// Used by google_play provider integration.
     #[allow(dead_code)]
     pub fn google_linked_purchase_token(&self) -> Option<&str> {
         self.google_play().and_then(|g| g.linked_purchase_token.as_deref())
     }
+    /// Used by google_play provider integration.
     #[allow(dead_code)]
     pub fn google_out_of_app_purchase_context(&self) -> Option<&google_play_models::OutOfAppPurchaseContext> {
         self.google_play().and_then(|g| g.out_of_app_purchase_context.as_ref())
     }
+    /// Used by google_play provider integration.
     #[allow(dead_code)]
     pub fn google_pause_scheduled_at(&self) -> Option<DateTime<Utc>> {
         self.google_play().and_then(|g| g.pause_scheduled_at)
@@ -380,7 +386,7 @@ impl SubscriptionDetails {
 }
 
 /// Result of a token verification, supporting account linking flows.
-/// Used for future account linking and resubscription flows.
+/// Used by Google Play provider (imported in type signature).
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum VerificationResult {
@@ -393,11 +399,11 @@ pub enum VerificationResult {
 
 /// Generic payment provider interface
 /// Defines the contract for payment provider implementations.
-/// Many methods are not currently used but are part of the architectural design.
-#[allow(dead_code)]
+/// Used by Google Play provider for subscription management operations.
 #[async_trait]
 pub trait PaymentProvider: Send + Sync {
     /// Create a checkout session for a user
+    #[allow(dead_code)]
     async fn create_checkout(
         &self,
         user_id: &str,
@@ -406,6 +412,7 @@ pub trait PaymentProvider: Send + Sync {
     ) -> Result<CheckoutSession, AppError>;
 
     /// Verify webhook authenticity and parse event
+    #[allow(dead_code)]
     async fn verify_and_parse_webhook(
         &self,
         body: &[u8],
@@ -421,10 +428,12 @@ pub trait PaymentProvider: Send + Sync {
     ) -> Result<SubscriptionDetails, AppError>;
 
     /// Cancel subscription
+    #[allow(dead_code)]
     async fn cancel_subscription(&self, subscription_id: &str) -> Result<(), AppError>;
 
     /// Cancel subscription with provider-specific mode (e.g., immediate/scheduled)
     /// Default implementation delegates to cancel_subscription.
+    #[allow(dead_code)]
     async fn cancel_subscription_with_mode(
         &self,
         subscription_id: &str,
@@ -436,6 +445,7 @@ pub trait PaymentProvider: Send + Sync {
 
     /// Cancel subscription with purchase token (for Google Play)
     /// Default implementation delegates to cancel_subscription for backward compatibility
+    #[allow(dead_code)]
     async fn cancel_subscription_with_token(
         &self,
         subscription_id: &str,
@@ -445,6 +455,7 @@ pub trait PaymentProvider: Send + Sync {
     }
 
     /// Create customer billing portal URL (if supported by provider).
+    #[allow(dead_code)]
     async fn create_billing_portal(&self, _customer_id: &str) -> Result<String, AppError> {
         Err(AppError::PaymentProviderError(
             "Billing portal not supported by this provider".to_string(),
@@ -452,6 +463,7 @@ pub trait PaymentProvider: Send + Sync {
     }
 
     /// Resume a subscription (if supported by provider).
+    #[allow(dead_code)]
     async fn resume_subscription(&self, _subscription_id: &str) -> Result<(), AppError> {
         Err(AppError::PaymentProviderError(
             "Resume subscription not supported by this provider".to_string(),
@@ -463,14 +475,17 @@ pub trait PaymentProvider: Send + Sync {
     fn provider_name(&self) -> &'static str;
 
     /// Get the header name for webhook signature verification
+    #[allow(dead_code)]
     fn signature_header_name(&self) -> &'static str;
 
     /// Get the header name for webhook ID (idempotency)
+    #[allow(dead_code)]
     fn webhook_id_header_name(&self) -> &'static str;
 
     /// Verify a purchase token (for mobile stores)
     /// user_id: Authenticated user ID for user binding validation
     /// validation_mode: Token validation mode (Strict, Relaxed, Off)
+    #[allow(dead_code)]
     async fn verify_token(
         &self,
         _token: &str,
@@ -487,6 +502,7 @@ pub trait PaymentProvider: Send + Sync {
     /// Enrich and normalize a webhook event with provider-specific data.
     /// Called during subscription activation to fill in missing fields (e.g., period_end from API)
     /// and normalize status values. Default is a no-op for providers that don't need it.
+    #[allow(dead_code)]
     async fn enrich_webhook_event(
         &self,
         _clerk_id: &str,
@@ -522,6 +538,7 @@ pub trait PaymentProvider: Send + Sync {
     /// **Provider-specific behavior**:
     /// - **GooglePlay**: Calls acknowledge_subscription() or acknowledge() API. Returns error if already acknowledged or token invalid.
     /// - **Creem/LemonSqueezy**: No-op (these providers don't require acknowledgment).
+    #[allow(dead_code)]
     async fn acknowledge_purchase_idempotent(
         &self,
         subscription_id: &str,
