@@ -400,10 +400,11 @@ pub enum VerificationResult {
 /// Generic payment provider interface
 /// Defines the contract for payment provider implementations.
 /// Used by Google Play provider for subscription management operations.
+/// Marked as allow(dead_code) because the trait is not used when google_play module is disabled.
+#[allow(dead_code)]
 #[async_trait]
 pub trait PaymentProvider: Send + Sync {
     /// Create a checkout session for a user
-    #[allow(dead_code)]
     async fn create_checkout(
         &self,
         user_id: &str,
@@ -412,7 +413,6 @@ pub trait PaymentProvider: Send + Sync {
     ) -> Result<CheckoutSession, AppError>;
 
     /// Verify webhook authenticity and parse event
-    #[allow(dead_code)]
     async fn verify_and_parse_webhook(
         &self,
         body: &[u8],
@@ -421,31 +421,16 @@ pub trait PaymentProvider: Send + Sync {
     ) -> Result<WebhookEvent, AppError>;
 
     /// Get subscription details
-    #[allow(dead_code)]
     async fn get_subscription(
         &self,
         subscription_id: &str,
     ) -> Result<SubscriptionDetails, AppError>;
 
     /// Cancel subscription
-    #[allow(dead_code)]
     async fn cancel_subscription(&self, subscription_id: &str) -> Result<(), AppError>;
-
-    /// Cancel subscription with provider-specific mode (e.g., immediate/scheduled)
-    /// Default implementation delegates to cancel_subscription.
-    #[allow(dead_code)]
-    async fn cancel_subscription_with_mode(
-        &self,
-        subscription_id: &str,
-        _mode: Option<&str>,
-        _on_execute: Option<&str>,
-    ) -> Result<(), AppError> {
-        self.cancel_subscription(subscription_id).await
-    }
 
     /// Cancel subscription with purchase token (for Google Play)
     /// Default implementation delegates to cancel_subscription for backward compatibility
-    #[allow(dead_code)]
     async fn cancel_subscription_with_token(
         &self,
         subscription_id: &str,
@@ -454,38 +439,9 @@ pub trait PaymentProvider: Send + Sync {
         self.cancel_subscription(subscription_id).await
     }
 
-    /// Create customer billing portal URL (if supported by provider).
-    #[allow(dead_code)]
-    async fn create_billing_portal(&self, _customer_id: &str) -> Result<String, AppError> {
-        Err(AppError::PaymentProviderError(
-            "Billing portal not supported by this provider".to_string(),
-        ))
-    }
-
-    /// Resume a subscription (if supported by provider).
-    #[allow(dead_code)]
-    async fn resume_subscription(&self, _subscription_id: &str) -> Result<(), AppError> {
-        Err(AppError::PaymentProviderError(
-            "Resume subscription not supported by this provider".to_string(),
-        ))
-    }
-
-    /// Get provider name
-    #[allow(dead_code)]
-    fn provider_name(&self) -> &'static str;
-
-    /// Get the header name for webhook signature verification
-    #[allow(dead_code)]
-    fn signature_header_name(&self) -> &'static str;
-
-    /// Get the header name for webhook ID (idempotency)
-    #[allow(dead_code)]
-    fn webhook_id_header_name(&self) -> &'static str;
-
     /// Verify a purchase token (for mobile stores)
     /// user_id: Authenticated user ID for user binding validation
     /// validation_mode: Token validation mode (Strict, Relaxed, Off)
-    #[allow(dead_code)]
     async fn verify_token(
         &self,
         _token: &str,
@@ -502,7 +458,6 @@ pub trait PaymentProvider: Send + Sync {
     /// Enrich and normalize a webhook event with provider-specific data.
     /// Called during subscription activation to fill in missing fields (e.g., period_end from API)
     /// and normalize status values. Default is a no-op for providers that don't need it.
-    #[allow(dead_code)]
     async fn enrich_webhook_event(
         &self,
         _clerk_id: &str,
@@ -512,10 +467,6 @@ pub trait PaymentProvider: Send + Sync {
     ) {
         // Default: no enrichment needed (Creem, LemonSqueezy)
     }
-
-    /// For downcasting to concrete types (used internally for provider-specific operations)
-    #[allow(dead_code)]
-    fn as_any(&self) -> &dyn std::any::Any;
 
     /// Acknowledge a purchase (subscription or OTP) with the provider
     ///
@@ -538,7 +489,6 @@ pub trait PaymentProvider: Send + Sync {
     /// **Provider-specific behavior**:
     /// - **GooglePlay**: Calls acknowledge_subscription() or acknowledge() API. Returns error if already acknowledged or token invalid.
     /// - **Creem/LemonSqueezy**: No-op (these providers don't require acknowledgment).
-    #[allow(dead_code)]
     async fn acknowledge_purchase_idempotent(
         &self,
         subscription_id: &str,
