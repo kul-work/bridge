@@ -4,6 +4,8 @@ pub mod subscriptions;
 pub mod payments;
 pub mod provider_configs;
 pub mod webhooks;
+pub mod users;
+pub mod agent;
 
 use crate::error::BridgeError;
 use sqlx::PgPool;

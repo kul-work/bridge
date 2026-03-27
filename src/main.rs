@@ -60,12 +60,21 @@ async fn main() -> anyhow::Result<()> {
     let database = Arc::new(Database::new(&config.database_url).await?);
     info!("Connected to PostgreSQL");
 
+    // Start background webhook delivery job
+    webhooks::scheduler::spawn_webhook_retry_worker(database.clone());
+
     // Build protected routes with API key middleware
     let protected_routes = Router::new()
         .route("/checkout", axum::routing::post(handlers::checkout::create_checkout))
         .route("/verify-purchase", axum::routing::post(handlers::verify_purchase::verify_purchase))
         .route("/subscriptions", axum::routing::get(handlers::subscriptions::list_subscriptions))
         .route("/subscriptions/:subscription_id", axum::routing::get(handlers::subscriptions::get_subscription))
+        .route("/users/:external_user_id/anonymize", axum::routing::post(handlers::users::anonymize))
+        .route("/users/:external_user_id/data-export", axum::routing::get(handlers::users::data_export))
+        .route("/agent/balance", axum::routing::get(handlers::agent::balance))
+        .route("/agent/token", axum::routing::post(handlers::agent::token))
+        .route("/agent/charge", axum::routing::post(handlers::agent::charge))
+        .route("/agent/topup", axum::routing::post(handlers::agent::topup))
         .layer(axum::middleware::from_fn_with_state(
             database.clone(),
             handlers::api_key::api_key_auth,
