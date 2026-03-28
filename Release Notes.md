@@ -1,7 +1,7 @@
 # Release Notes
 
 ## [0.1.2] - 2026-03-28
-- Bump version
+- Empty bump version
 
 ## [0.1.1] - 2026-03-28
 - Several gap fixes
