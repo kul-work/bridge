@@ -41,7 +41,12 @@ async fn main() -> anyhow::Result<()> {
     );
 
     use tracing_subscriber::fmt::writer::MakeWriterExt;
-    let file_appender = tracing_appender::rolling::daily("logs", "bridge.log");
+    let file_appender = tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("server")
+        .filename_suffix("log")
+        .build("logs")
+        .expect("failed to create log file appender");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::fmt()
