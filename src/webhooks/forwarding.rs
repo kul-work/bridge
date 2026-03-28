@@ -52,7 +52,7 @@ pub async fn forward_webhook(
         .map_err(|e| BridgeError::WebhookError(format!("Failed to serialize payload: {}", e)))?;
 
     // Create HMAC signature
-    let timestamp = Utc::now().timestamp_millis().to_string();
+    let timestamp = Utc::now().timestamp().to_string();
     let signature = create_signature(&payload_json, &timestamp, &app.webhook_callback_secret)?;
 
     // Make HTTP request

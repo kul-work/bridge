@@ -41,6 +41,7 @@ pub async fn get_agent_credit(
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
+#[allow(dead_code)]
 pub async fn upsert_agent_credit(
     pool: &PgPool,
     app_id: Uuid,
@@ -150,7 +151,7 @@ pub async fn charge_agent(
     app_id: Uuid,
     external_user_id: &str,
     token_id: Uuid,
-) -> Result<i32, BridgeError> {
+) -> Result<(i32, i32), BridgeError> {
     let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     let token_opt = use_agent_token(&mut tx, token_id).await?;
@@ -203,5 +204,5 @@ pub async fn charge_agent(
 
     tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
     
-    Ok(credit.balance_cents)
+    Ok((credit.balance_cents, token.amount_cents))
 }

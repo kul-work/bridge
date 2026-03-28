@@ -71,6 +71,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Start background webhook delivery job
     webhooks::scheduler::spawn_webhook_retry_worker(database.clone());
+    
+    // Start background subscription reconciliation job
+    webhooks::scheduler::spawn_reconciliation_worker(database.clone());
 
     // Build protected routes with API key middleware
     let protected_routes = Router::new()

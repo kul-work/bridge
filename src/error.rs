@@ -77,6 +77,9 @@ pub enum BridgeError {
 
     #[error("Database operation failed: {0}")]
     DatabaseError(#[from] sqlx::Error),
+
+    #[error("Fraud detected: {0}")]
+    FraudDetected(String),
 }
 
 impl IntoResponse for BridgeError {
@@ -146,6 +149,14 @@ impl IntoResponse for BridgeError {
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "database_error",
                     "Database error occurred.".to_string(),
+                )
+            }
+            BridgeError::FraudDetected(msg) => {
+                error!("Fraud detected: {}", msg);
+                (
+                    StatusCode::CONFLICT,
+                    "fraud_detected",
+                    msg.clone(),
                 )
             }
         };

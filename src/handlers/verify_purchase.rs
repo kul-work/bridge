@@ -84,6 +84,34 @@ pub async fn verify_purchase(
     let is_new = existing.is_err();
 
     let subscription = if is_new {
+        // Check fraud prevention: verify purchase_token isn't already bound to different user
+        let token_bound_user = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT external_user_id FROM pay.fraud_prevention WHERE app_id = $1 AND purchase_token = $2 LIMIT 1"
+        )
+        .bind(auth.app_id)
+        .bind(&payload.purchase_token)
+        .fetch_optional(&database.pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+        if let Some(Some(existing_user)) = token_bound_user {
+            if existing_user != payload.external_user_id {
+                return Err(BridgeError::FraudDetected(
+                    "Purchase token already bound to different user".to_string()
+                ));
+            }
+        } else {
+            // Record new binding in fraud_prevention table
+            let _ = sqlx::query(
+                "INSERT INTO pay.fraud_prevention (app_id, external_user_id, purchase_token, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) ON CONFLICT DO NOTHING"
+            )
+            .bind(auth.app_id)
+            .bind(&payload.external_user_id)
+            .bind(&payload.purchase_token)
+            .execute(&database.pool)
+            .await;
+        }
+
         // Create new subscription with verified status
         db::subscriptions::create_subscription(
             &database.pool,

@@ -8,12 +8,13 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use base64::Engine;
 
 #[derive(Debug, Deserialize)]
 pub struct ListSubscriptionsQuery {
     pub external_user_id: String,
     pub limit: Option<i64>,
-    pub offset: Option<i64>,
+    pub after: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -27,11 +28,15 @@ pub struct SubscriptionDetail {
 }
 
 #[derive(Debug, Serialize)]
+pub struct PaginationMeta {
+    pub has_more: bool,
+    pub after: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ListSubscriptionsResponse {
     pub subscriptions: Vec<SubscriptionDetail>,
-    pub total: i64,
-    pub limit: i64,
-    pub offset: i64,
+    pub pagination: PaginationMeta,
 }
 
 pub async fn list_subscriptions(
@@ -46,29 +51,34 @@ pub async fn list_subscriptions(
     }
 
     let limit = query.limit.unwrap_or(10).min(100);
-    let offset = query.offset.unwrap_or(0).max(0);
-
-    // Get total count
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pay.subscriptions WHERE app_id = $1 AND external_user_id = $2",
-    )
-    .bind(auth.app_id)
-    .bind(&query.external_user_id)
-    .fetch_one(&database.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    
+    // Decode cursor to get offset (cursor = base64(offset))
+    let offset = if let Some(cursor) = &query.after {
+        String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(cursor)
+                .unwrap_or_default()
+        )
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0)
+    } else {
+        0
+    };
 
     let subs = db::subscriptions::get_user_subscriptions(
         &database.pool,
         auth.app_id,
         &query.external_user_id,
-        limit,
+        limit + 1, // Fetch one extra to check if there are more
         offset,
     )
     .await?;
 
-    let subscriptions = subs
+    let has_more = subs.len() > limit as usize;
+    let subscriptions: Vec<_> = subs
         .into_iter()
+        .take(limit as usize)
         .map(|s| SubscriptionDetail {
             id: s.id.to_string(),
             subscription_id: s.subscription_id,
@@ -79,13 +89,21 @@ pub async fn list_subscriptions(
         })
         .collect();
 
+    let next_cursor = if has_more {
+        let next_offset = offset + limit;
+        Some(base64::engine::general_purpose::STANDARD.encode(next_offset.to_string()))
+    } else {
+        None
+    };
+
     Ok((
         StatusCode::OK,
         Json(ListSubscriptionsResponse {
             subscriptions,
-            total,
-            limit,
-            offset,
+            pagination: PaginationMeta {
+                has_more,
+                after: next_cursor,
+            },
         }),
     ))
 }

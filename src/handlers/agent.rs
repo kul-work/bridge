@@ -78,7 +78,7 @@ pub async fn charge(
     Extension(auth): Extension<AppAuth>,
     Json(request): Json<AgentChargeRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let new_balance = crate::db::agent::charge_agent(
+    let (new_balance, amount_charged) = crate::db::agent::charge_agent(
         &database.pool,
         auth.app_id,
         &request.external_user_id,
@@ -88,7 +88,7 @@ pub async fn charge(
 
     Ok(Json(json!({
         "charged": true,
-        "amount_cents": 0, // In practice, would return token amount.
+        "amount_cents": amount_charged,
         "new_balance_cents": new_balance
     })))
 }
@@ -98,16 +98,29 @@ pub async fn topup(
     Extension(auth): Extension<AppAuth>,
     Json(request): Json<AgentTopUpRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let credit = crate::db::agent::upsert_agent_credit(
-        &database.pool,
-        auth.app_id,
-        &request.external_user_id,
-        request.amount_cents,
-        0,
-    )
-    .await?;
-
     let mut tx = database.pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    
+    // Upsert credit within transaction
+    let credit = sqlx::query_as::<_, crate::db::agent::AgentCredit>(
+        r#"
+        INSERT INTO pay.agent_credits (app_id, external_user_id, balance_cents, lifetime_spent_cents, updated_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (app_id, external_user_id)
+        DO UPDATE SET
+            balance_cents = pay.agent_credits.balance_cents + EXCLUDED.balance_cents,
+            lifetime_spent_cents = pay.agent_credits.lifetime_spent_cents + EXCLUDED.lifetime_spent_cents,
+            updated_at = NOW()
+        RETURNING *
+        "#
+    )
+    .bind(auth.app_id)
+    .bind(&request.external_user_id)
+    .bind(request.amount_cents)
+    .bind(0)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
     crate::db::agent::record_agent_transaction(
         &mut tx,
         auth.app_id,
@@ -116,6 +129,7 @@ pub async fn topup(
         request.amount_cents,
         request.charge_id.as_deref(),
     ).await?;
+    
     tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(Json(json!({
