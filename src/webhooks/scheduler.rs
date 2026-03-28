@@ -105,7 +105,7 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
     for (_sub_id, subscription_id, provider, _external_user_id) in active_subs {
         // Check current status with provider
         let provider_config = sqlx::query_as::<_, crate::db::provider_configs::ProviderConfig>(
-            "SELECT * FROM pay.provider_configs WHERE app_id = $1 AND provider_name = $2"
+            "SELECT * FROM pay.provider_configs WHERE app_id = $1 AND provider = $2"
         )
         .bind(app_id)
         .bind(&provider)
