@@ -1,6 +1,6 @@
 # Bridge — Multi-App Payment Gateway
 
-**Bridge** is a central payment processing service designed to handle subscription lifecycles, payments, and agent micropayments for all Tyde applications. It decouples complex payment logic, provider webhooks, and ledger auditing mechanics from core business applications.
+**Bridge** is a central payment processing service designed to handle subscription lifecycles, payments, and agent micropayments for all Tyde applications. It decouples complex payment logic, provider webhooks, and ledger auditing mechanics from core business applications. 
 
 It operates as a private, centralized gateway (e.g., `pay.tydecode.com`) serving approved Tyde application instances (such as **hiha.app**).
 
