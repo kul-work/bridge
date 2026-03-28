@@ -2,6 +2,8 @@ pub mod api_key;
 pub mod checkout;
 pub mod verify_purchase;
 pub mod subscriptions;
+pub mod subscriptions_actions;
+pub mod payments;
 pub mod admin;
 pub mod users;
 pub mod agent;
