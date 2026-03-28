@@ -1,5 +1,8 @@
 # Release Notes
 
+## [0.1.1] - 2026-03-28
+- Several gap fixes
+
 ## [0.1.0] - 2026-03-23
 
 Initial Bridge payment gateway implementation with:
