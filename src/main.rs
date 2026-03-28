@@ -4,16 +4,20 @@ mod db;
 mod handlers;
 mod services;
 mod webhooks;
+mod middleware;
 
 use axum::{
     routing::get,
     Router,
+    middleware::from_fn_with_state,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::fmt::time::OffsetTime;
+use tower::ServiceBuilder;
+use tower_http::trace::TraceLayer;
 
 use config::Config;
 use db::Database;
@@ -85,17 +89,29 @@ async fn main() -> anyhow::Result<()> {
             handlers::api_key::api_key_auth,
         ));
 
+    // Build admin routes with auth middleware
+    let admin_routes = Router::new()
+        .route("/", axum::routing::get(handlers::admin::admin_dashboard))
+        .route("/apps", axum::routing::get(handlers::admin::list_apps))
+        .route("/apps/:app_id/webhooks", axum::routing::get(handlers::admin::get_app_webhooks))
+        .route("/webhooks/:webhook_id/retry", axum::routing::post(handlers::admin::retry_webhook))
+        .layer(from_fn_with_state(
+            database.clone(),
+            middleware::admin_auth::admin_auth_middleware,
+        ))
+        .with_state(database.clone());
+
     // Build app
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/api/v1/health", get(health_check))
-        .route("/admin", axum::routing::get(handlers::admin::admin_dashboard))
-        .route("/admin/apps", axum::routing::get(handlers::admin::list_apps))
-        .route("/admin/apps/:app_id/webhooks", axum::routing::get(handlers::admin::get_app_webhooks))
-        .route("/admin/webhooks/:webhook_id/retry", axum::routing::post(handlers::admin::retry_webhook))
+        .nest("/admin", admin_routes)
         .nest("/api/v1", protected_routes)
         .nest("/webhooks", webhooks::webhook_routes(database.clone()))
-        .layer(CorsLayer::permissive())
+        .layer(ServiceBuilder::new()
+            .layer(TraceLayer::new_for_http())
+            .layer(CorsLayer::permissive())
+        )
         .with_state(database);
 
     // Start server

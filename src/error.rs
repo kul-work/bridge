@@ -9,8 +9,7 @@ use tracing::error;
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
     pub error: String,
-    pub code: String,
-    pub details: serde_json::Value,
+    pub message: String,
 }
 
 /// AppError enum compatible with payment provider services
@@ -87,57 +86,57 @@ impl IntoResponse for BridgeError {
                 error!("Database error: {}", msg);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "DB_ERROR",
+                    "database_error",
                     format!("Database error: {}", msg),
                 )
             }
             BridgeError::ValidationError(msg) => (
                 StatusCode::BAD_REQUEST,
-                "VALIDATION_ERROR",
-                format!("Validation error: {}", msg),
+                "validation_error",
+                msg.clone(),
             ),
             BridgeError::UnauthorizedError(msg) => {
                 error!("Unauthorized: {}", msg);
                 (
                     StatusCode::UNAUTHORIZED,
-                    "UNAUTHORIZED",
-                    format!("Unauthorized: {}", msg),
+                    "unauthorized",
+                    msg.clone(),
                 )
             }
             BridgeError::ProviderError(msg) => {
                 error!("Provider error: {}", msg);
                 (
                     StatusCode::BAD_GATEWAY,
-                    "PROVIDER_ERROR",
-                    format!("Provider error: {}", msg),
+                    "provider_error",
+                    msg.clone(),
                 )
             }
             BridgeError::WebhookError(msg) => {
                 error!("Webhook error: {}", msg);
                 (
                     StatusCode::BAD_REQUEST,
-                    "WEBHOOK_ERROR",
-                    format!("Webhook error: {}", msg),
+                    "webhook_error",
+                    msg.clone(),
                 )
             }
             BridgeError::InternalServerError(msg) => {
                 error!("Internal server error: {}", msg);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "INTERNAL_SERVER_ERROR",
+                    "internal_server_error",
                     "An internal server error occurred.".to_string(),
                 )
             }
             BridgeError::BadRequest(msg) => (
                 StatusCode::BAD_REQUEST,
-                "BAD_REQUEST",
+                "bad_request",
                 msg.clone(),
             ),
             BridgeError::ConfigError(msg) => {
                 error!("Configuration error: {}", msg);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "CONFIG_ERROR",
+                    "config_error",
                     format!("Configuration error: {}", msg),
                 )
             }
@@ -145,16 +144,15 @@ impl IntoResponse for BridgeError {
                 error!("Database error: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "DATABASE_ERROR",
+                    "database_error",
                     "Database error occurred.".to_string(),
                 )
             }
         };
 
         let error_response = ErrorResponse {
-            error: message,
-            code: error_code.to_string(),
-            details: serde_json::json!({}),
+            error: error_code.to_string(),
+            message,
         };
 
         (status, Json(error_response)).into_response()
