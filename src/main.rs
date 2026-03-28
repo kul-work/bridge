@@ -66,7 +66,9 @@ async fn main() -> anyhow::Result<()> {
     info!("Environment: {}", config.environment);
 
     // Initialize database
-    let database = Arc::new(Database::new(&config.database_url).await?);
+    let database = Arc::new(
+        Database::new(&config.database_url, config.admin_database_url.as_deref()).await?
+    );
     info!("Connected to PostgreSQL");
 
     // Start background webhook delivery job
@@ -78,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
     // Build protected routes with API key middleware
     let protected_routes = Router::new()
         .route("/checkout", axum::routing::post(handlers::checkout::create_checkout))
+        .route("/payment/checkout", axum::routing::post(handlers::checkout::create_checkout))
         .route("/verify-purchase", axum::routing::post(handlers::verify_purchase::verify_purchase))
         .route("/subscriptions", axum::routing::get(handlers::subscriptions::list_subscriptions))
         .route("/subscriptions/:subscription_id", axum::routing::get(handlers::subscriptions::get_subscription))

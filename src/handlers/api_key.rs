@@ -2,6 +2,7 @@ use crate::db;
 use crate::error::BridgeError;
 use axum::{
     extract::{Request, State},
+    http::Method,
     middleware::Next,
     response::Response,
 };
@@ -18,6 +19,10 @@ pub async fn api_key_auth(
     mut request: Request,
     next: Next,
 ) -> Result<Response, BridgeError> {
+    if request.method() == Method::OPTIONS {
+        return Ok(next.run(request).await);
+    }
+
     let auth_header = request
         .headers()
         .get("authorization")

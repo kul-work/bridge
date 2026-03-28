@@ -26,7 +26,10 @@ impl Clone for Database {
 
 impl Database {
     /// Create a new database connection pool and run migrations
-    pub async fn new(database_url: &str) -> Result<Self, BridgeError> {
+    pub async fn new(
+        database_url: &str,
+        admin_database_url: Option<&str>,
+    ) -> Result<Self, BridgeError> {
         let mut opts = sqlx::postgres::PgConnectOptions::from_str(database_url)
             .map_err(|_| BridgeError::ConfigError("Failed to parse database URL".to_string()))?;
 
@@ -46,11 +49,27 @@ impl Database {
             .await
             .map_err(|e| BridgeError::DbError(format!("Failed to connect to database: {}", e)))?;
 
-        // Run migrations
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .map_err(|e| BridgeError::DbError(format!("Failed to run migrations: {}", e)))?;
+        // Run migrations with admin credentials when available, so runtime app role
+        // can stay least-privilege.
+        if let Some(admin_url) = admin_database_url {
+            let admin_opts = sqlx::postgres::PgConnectOptions::from_str(admin_url)
+                .map_err(|_| {
+                    BridgeError::ConfigError("Failed to parse ADMIN_DATABASE_URL".to_string())
+                })?;
+            let admin_pool = PgPool::connect_with(admin_opts).await.map_err(|e| {
+                BridgeError::DbError(format!("Failed to connect to admin database: {}", e))
+            })?;
+
+            sqlx::migrate!("./migrations")
+                .run(&admin_pool)
+                .await
+                .map_err(|e| BridgeError::DbError(format!("Failed to run migrations: {}", e)))?;
+        } else {
+            sqlx::migrate!("./migrations")
+                .run(&pool)
+                .await
+                .map_err(|e| BridgeError::DbError(format!("Failed to run migrations: {}", e)))?;
+        }
 
         info!("Migrations completed successfully");
 

@@ -5,6 +5,7 @@ use std::env;
 #[derive(Clone, Debug)]
 pub struct Config {
     pub database_url: String,
+    pub admin_database_url: Option<String>,
     pub server_addr: String,
     pub server_port: u16,
     pub master_encryption_key: Option<String>,
@@ -27,6 +28,7 @@ impl Config {
         Ok(Config {
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql://localhost/bridge".to_string()),
+            admin_database_url: env::var("ADMIN_DATABASE_URL").ok(),
             server_addr: env::var("SERVER_ADDR")
                 .unwrap_or_else(|_| "0.0.0.0".to_string()),
             server_port: parse_u16_env("PORT", 3000)?,
