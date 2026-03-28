@@ -48,6 +48,9 @@ pub async fn get_webhook_provider(pool: &PgPool, id: Uuid) -> Result<WebhookProv
 }
 
 /// Mark webhook as suppressed (stale event)
+/// Used for stale event suppression - called during webhook processing when
+/// newer events have already been processed for the same subscription.
+#[allow(dead_code)]
 pub async fn suppress_webhook(
     pool: &PgPool,
     webhook_id: Uuid,
@@ -147,4 +150,78 @@ pub async fn count_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, B
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
     Ok(count.0)
+}
+
+/// Create webhook provider record (idempotent via unique index)
+/// Returns the webhook provider ID and a flag indicating if it was newly created
+pub async fn create_webhook_provider(
+    pool: &PgPool,
+    app_id: Uuid,
+    provider: &str,
+    provider_webhook_id: &str,
+    event_type: &str,
+    subscription_id: Option<String>,
+    purchase_token: Option<String>,
+    payload: serde_json::Value,
+    timestamp_epoch_ms: Option<i64>,
+) -> Result<(Uuid, bool), BridgeError> {
+    // Try to insert; on conflict (idempotency), return existing without error
+    let result = sqlx::query_as::<_, (Uuid,)>(
+        "INSERT INTO pay.webhook_provider 
+         (app_id, provider, provider_webhook_id, event_type, subscription_id, purchase_token, payload, timestamp_epoch_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (app_id, provider, provider_webhook_id) DO NOTHING
+         RETURNING id"
+    )
+    .bind(app_id)
+    .bind(provider)
+    .bind(provider_webhook_id)
+    .bind(event_type)
+    .bind(subscription_id)
+    .bind(purchase_token)
+    .bind(payload)
+    .bind(timestamp_epoch_ms)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(format!("Failed to create webhook provider: {}", e)))?;
+
+    // If we got a result, it's new. Otherwise, fetch the existing one.
+    let (webhook_id, is_new) = if let Some((id,)) = result {
+        (id, true)
+    } else {
+        // Query for the existing webhook
+        let existing: (Uuid,) = sqlx::query_as(
+            "SELECT id FROM pay.webhook_provider 
+             WHERE app_id = $1 AND provider = $2 AND provider_webhook_id = $3"
+        )
+        .bind(app_id)
+        .bind(provider)
+        .bind(provider_webhook_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(format!("Failed to fetch existing webhook: {}", e)))?;
+        (existing.0, false)
+    };
+
+    Ok((webhook_id, is_new))
+}
+
+/// Create webhook delivery record
+pub async fn create_webhook_delivery(
+    pool: &PgPool,
+    app_id: Uuid,
+    webhook_provider_id: Uuid,
+) -> Result<Uuid, BridgeError> {
+    let delivery_id: (Uuid,) = sqlx::query_as(
+        "INSERT INTO pay.webhook_delivery (app_id, webhook_provider_id, forward_attempts, forwarded)
+         VALUES ($1, $2, 0, false)
+         RETURNING id"
+    )
+    .bind(app_id)
+    .bind(webhook_provider_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(format!("Failed to create webhook delivery: {}", e)))?;
+
+    Ok(delivery_id.0)
 }

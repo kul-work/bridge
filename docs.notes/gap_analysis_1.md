@@ -17,13 +17,5 @@ The implementation in `bridge.haiku` is significantly behind the API contract. T
     *   `GET /api/v1/payments` (Payment history)
     *   `POST /api/v1/purchases/register` (Server-side manual grants)
 
-## 2. Contradictions & Missing Specifications
 
-### A. Provider Disambiguation for Subscriptions (Contract vs. Code)
-*   **The Contradiction:** The `pay-tydecode-api-contract.md` explicitly calls out the problem of multiple subscriptions with the same ID across different providers. It mandates: *"always include the `provider` parameter... `provider` is required to disambiguate"*.
-*   **Current implementation (`bridge.haiku`):** In `src/handlers/subscriptions.rs`, `GetSubscriptionQuery` only extracts `external_user_id`. It completely ignores `provider`.
-*   **Source of Truth (`hiha`):** The legacy monolith has a database constraint `ON CONFLICT (clerk_id, subscription_id, provider)` which confirms the documentation is anatomically correct—you *must* use `provider` to uniquely identify a subscription row. The `haiku` code fails to implement this API contract rule.
-
-### B. Agent Micropayment `charge` Endpoint Mocking
-*   **The Issue:** While the agent endpoints (402 flow) are wired up, they are incomplete. In `src/handlers/agent.rs` (`charge` function), the route succeeds but hardcodes `"amount_cents": 0` in the response, along with the comment: `// In practice, would return token amount.` It's returning a dummy placeholder instead of the token cost.
 

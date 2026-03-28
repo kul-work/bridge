@@ -8,8 +8,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::db::Database;
-use crate::db::apps::App;
 use crate::error::BridgeError;
+use crate::handlers::api_key::AppAuth;
 
 #[derive(Deserialize)]
 pub struct AgentBalanceQuery {
@@ -39,10 +39,10 @@ pub struct AgentTopUpRequest {
 
 pub async fn balance(
     State(database): State<Arc<Database>>,
-    Extension(app): Extension<App>,
+    Extension(auth): Extension<AppAuth>,
     Query(query): Query<AgentBalanceQuery>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let credit = crate::db::agent::get_agent_credit(&database.pool, app.id, &query.external_user_id).await?;
+    let credit = crate::db::agent::get_agent_credit(&database.pool, auth.app_id, &query.external_user_id).await?;
     
     Ok(Json(json!({
         "external_user_id": query.external_user_id,
@@ -53,12 +53,12 @@ pub async fn balance(
 
 pub async fn token(
     State(database): State<Arc<Database>>,
-    Extension(app): Extension<App>,
+    Extension(auth): Extension<AppAuth>,
     Json(request): Json<AgentTokenRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
     let token = crate::db::agent::insert_agent_token(
         &database.pool,
-        app.id,
+        auth.app_id,
         &request.external_user_id,
         &request.endpoint,
         request.amount_cents,
@@ -75,12 +75,12 @@ pub async fn token(
 
 pub async fn charge(
     State(database): State<Arc<Database>>,
-    Extension(app): Extension<App>,
+    Extension(auth): Extension<AppAuth>,
     Json(request): Json<AgentChargeRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
     let new_balance = crate::db::agent::charge_agent(
         &database.pool,
-        app.id,
+        auth.app_id,
         &request.external_user_id,
         request.token_id,
     )
@@ -95,12 +95,12 @@ pub async fn charge(
 
 pub async fn topup(
     State(database): State<Arc<Database>>,
-    Extension(app): Extension<App>,
+    Extension(auth): Extension<AppAuth>,
     Json(request): Json<AgentTopUpRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
     let credit = crate::db::agent::upsert_agent_credit(
         &database.pool,
-        app.id,
+        auth.app_id,
         &request.external_user_id,
         request.amount_cents,
         0,
@@ -110,7 +110,7 @@ pub async fn topup(
     let mut tx = database.pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
     crate::db::agent::record_agent_transaction(
         &mut tx,
-        app.id,
+        auth.app_id,
         &request.external_user_id,
         "topup",
         request.amount_cents,

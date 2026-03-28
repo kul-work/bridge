@@ -93,6 +93,7 @@ pub async fn list_subscriptions(
 #[derive(Debug, Deserialize)]
 pub struct GetSubscriptionQuery {
     pub external_user_id: String,
+    pub provider: String,
 }
 
 pub async fn get_subscription(
@@ -107,19 +108,20 @@ pub async fn get_subscription(
         ));
     }
 
+    if query.provider.is_empty() {
+        return Err(BridgeError::ValidationError(
+            "provider is required".to_string(),
+        ));
+    }
+
     let sub = db::subscriptions::get_subscription(
         &database.pool,
         auth.app_id,
+        &query.external_user_id,
         &subscription_id,
+        &query.provider,
     )
     .await?;
-
-    // Verify external_user_id matches
-    if sub.external_user_id != query.external_user_id {
-        return Err(BridgeError::ValidationError(
-            "Subscription not found".to_string(),
-        ));
-    }
 
     let detail = SubscriptionDetail {
         id: sub.id.to_string(),

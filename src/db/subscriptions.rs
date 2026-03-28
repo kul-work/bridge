@@ -25,13 +25,17 @@ pub struct Subscription {
 pub async fn get_subscription(
     pool: &PgPool,
     app_id: Uuid,
+    external_user_id: &str,
     subscription_id: &str,
+    provider: &str,
 ) -> Result<Subscription, BridgeError> {
     sqlx::query_as::<_, Subscription>(
-        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND subscription_id = $2"
+        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND external_user_id = $2 AND subscription_id = $3 AND provider = $4"
     )
     .bind(app_id)
+    .bind(external_user_id)
     .bind(subscription_id)
+    .bind(provider)
     .fetch_optional(pool)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?

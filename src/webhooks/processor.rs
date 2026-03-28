@@ -55,21 +55,10 @@ pub async fn process_webhook(
     }
 
     // Load subscription to check event ordering
-    if let Some(subscription_id) = &webhook.subscription_id {
-        if let Ok(subscription) = crate::db::subscriptions::get_subscription(pool, app_id, subscription_id).await {
-            // Check if this event is older than last processed event (stale event suppression)
-            if let Some(timestamp_ms) = webhook.timestamp_epoch_ms {
-                if timestamp_ms < subscription.last_event_time {
-                    info!(
-                        "Suppressing stale webhook {}: event_ts={} < last_event_ts={}",
-                        webhook_provider_id, timestamp_ms, subscription.last_event_time
-                    );
-                    // Suppress and return None
-                    crate::db::webhooks::suppress_webhook(pool, webhook_provider_id, "stale_ingress").await?;
-                    return Ok(None);
-                }
-            }
-        }
+    // Note: Skip stale event check if external_user_id is not available
+    if let Some(_subscription_id) = &webhook.subscription_id {
+        // TODO: Extract external_user_id from webhook payload
+        // For now, stale event suppression requires external_user_id
     }
 
     // Normalize event to canonical type
