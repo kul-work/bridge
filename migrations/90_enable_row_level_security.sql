@@ -36,7 +36,7 @@ ALTER TABLE pay.fraud_prevention      ENABLE ROW LEVEL SECURITY;
 -- bridge_admin bypasses RLS via BYPASSRLS role attribute.
 
 -- ============================================================================
--- 2. Create RLS policies (bridge_app role only)
+-- 2. Tenant isolation policies (bridge_app role, FOR ALL)
 -- ============================================================================
 -- Each policy restricts rows to current_setting('bridge.current_app_id').
 -- The app MUST call SET LOCAL bridge.current_app_id = '...' at the start of
@@ -113,7 +113,147 @@ CREATE POLICY tenant_isolation_fraud_prevention ON pay.fraud_prevention
     WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
 
 -- ============================================================================
--- 3. Comments
+-- 3. Bootstrap SELECT policies (pre-tenant-context lookups)
+-- ============================================================================
+-- Some tables must be readable before bridge.current_app_id is set:
+--   - api_keys:         auth middleware resolves API key → app_id
+--   - provider_configs: provider config lookup during early request processing
+--   - webhook_provider: idempotency checks during webhook ingress
+--   - webhook_delivery: scheduler/retry logic before tenant context is established
+-- These are SELECT-only; write paths remain guarded by the FOR ALL policies above.
+
+DO $$
+DECLARE
+    current_table_owner text;
+BEGIN
+    -- api_keys bootstrap SELECT
+    SELECT pg_catalog.pg_get_userbyid(c.relowner)
+    INTO current_table_owner
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'pay'
+      AND c.relname = 'api_keys'
+      AND c.relkind = 'r';
+
+    IF current_table_owner IS NOT NULL AND current_table_owner = current_user THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_policies p
+            WHERE p.schemaname = 'pay' AND p.tablename = 'api_keys'
+              AND p.policyname = 'tenant_isolation_api_keys_bootstrap_select'
+        ) THEN
+            EXECUTE $policy$
+                CREATE POLICY tenant_isolation_api_keys_bootstrap_select ON pay.api_keys
+                    FOR SELECT
+                    TO bridge_app
+                    USING (
+                        current_setting('bridge.current_app_id', true) IS NULL
+                        OR app_id = current_setting('bridge.current_app_id', true)::uuid
+                    )
+            $policy$;
+        END IF;
+        EXECUTE $comment$
+            COMMENT ON POLICY tenant_isolation_api_keys_bootstrap_select ON pay.api_keys IS
+                'RLS bootstrap: allow SELECT on api_keys before bridge.current_app_id is set; write policies remain strict.'
+        $comment$;
+    END IF;
+
+    -- provider_configs bootstrap SELECT
+    SELECT pg_catalog.pg_get_userbyid(c.relowner)
+    INTO current_table_owner
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'pay'
+      AND c.relname = 'provider_configs'
+      AND c.relkind = 'r';
+
+    IF current_table_owner IS NOT NULL AND current_table_owner = current_user THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_policies p
+            WHERE p.schemaname = 'pay' AND p.tablename = 'provider_configs'
+              AND p.policyname = 'tenant_isolation_provider_configs_bootstrap_select'
+        ) THEN
+            EXECUTE $policy$
+                CREATE POLICY tenant_isolation_provider_configs_bootstrap_select ON pay.provider_configs
+                    FOR SELECT
+                    TO bridge_app
+                    USING (
+                        current_setting('bridge.current_app_id', true) IS NULL
+                        OR app_id = current_setting('bridge.current_app_id', true)::uuid
+                    )
+            $policy$;
+        END IF;
+        EXECUTE $comment$
+            COMMENT ON POLICY tenant_isolation_provider_configs_bootstrap_select ON pay.provider_configs IS
+                'RLS bootstrap: allow SELECT on provider_configs before bridge.current_app_id is set; write policies remain strict.'
+        $comment$;
+    END IF;
+
+    -- webhook_provider bootstrap SELECT
+    SELECT pg_catalog.pg_get_userbyid(c.relowner)
+    INTO current_table_owner
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'pay'
+      AND c.relname = 'webhook_provider'
+      AND c.relkind = 'r';
+
+    IF current_table_owner IS NOT NULL AND current_table_owner = current_user THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_policies p
+            WHERE p.schemaname = 'pay' AND p.tablename = 'webhook_provider'
+              AND p.policyname = 'tenant_isolation_webhook_provider_bootstrap_select'
+        ) THEN
+            EXECUTE $policy$
+                CREATE POLICY tenant_isolation_webhook_provider_bootstrap_select ON pay.webhook_provider
+                    FOR SELECT
+                    TO bridge_app
+                    USING (
+                        current_setting('bridge.current_app_id', true) IS NULL
+                        OR app_id = current_setting('bridge.current_app_id', true)::uuid
+                    )
+            $policy$;
+        END IF;
+        EXECUTE $comment$
+            COMMENT ON POLICY tenant_isolation_webhook_provider_bootstrap_select ON pay.webhook_provider IS
+                'RLS bootstrap: allow SELECT on webhook_provider before bridge.current_app_id is set; write policies remain strict.'
+        $comment$;
+    END IF;
+
+    -- webhook_delivery bootstrap SELECT
+    SELECT pg_catalog.pg_get_userbyid(c.relowner)
+    INTO current_table_owner
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'pay'
+      AND c.relname = 'webhook_delivery'
+      AND c.relkind = 'r';
+
+    IF current_table_owner IS NOT NULL AND current_table_owner = current_user THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_policies p
+            WHERE p.schemaname = 'pay' AND p.tablename = 'webhook_delivery'
+              AND p.policyname = 'tenant_isolation_webhook_delivery_bootstrap_select'
+        ) THEN
+            EXECUTE $policy$
+                CREATE POLICY tenant_isolation_webhook_delivery_bootstrap_select ON pay.webhook_delivery
+                    FOR SELECT
+                    TO bridge_app
+                    USING (
+                        current_setting('bridge.current_app_id', true) IS NULL
+                        OR app_id = current_setting('bridge.current_app_id', true)::uuid
+                    )
+            $policy$;
+        END IF;
+        EXECUTE $comment$
+            COMMENT ON POLICY tenant_isolation_webhook_delivery_bootstrap_select ON pay.webhook_delivery IS
+                'RLS bootstrap: allow SELECT on webhook_delivery before bridge.current_app_id is set; write policies remain strict.'
+        $comment$;
+    END IF;
+END
+$$;
+
+-- ============================================================================
+-- 4. Comments (tenant isolation policies)
 -- ============================================================================
 
 COMMENT ON POLICY tenant_isolation_api_keys ON pay.api_keys IS
