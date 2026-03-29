@@ -14,7 +14,7 @@ use axum::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
-use tower_http::cors::CorsLayer;
+
 use tracing_subscriber::fmt::time::OffsetTime;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
@@ -124,7 +124,6 @@ async fn main() -> anyhow::Result<()> {
         .nest("/webhooks", webhooks::webhook_routes(database.clone()))
         .layer(ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
-            .layer(CorsLayer::permissive())
         )
         .with_state(database);
 
