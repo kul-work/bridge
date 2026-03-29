@@ -107,9 +107,8 @@ pub async fn send_email_payment_failed(
     email: &str,
     subscription_id: &str,
     provider_name: &str,
+    app_url: &str,
 ) -> Result<(), AppError> {
-    // Get APP_URL from environment (defaults to localhost for dev)
-    let app_url = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
     
     let provider_display = match provider_name {
         "google_play" => "Google Play",
