@@ -260,18 +260,28 @@ async fn cancel_lemonsqueezy_subscription(
 async fn cancel_google_play_subscription(
     subscription_id: &str,
     purchase_token: &str,
-    _config: &serde_json::Value,
+    config: &serde_json::Value,
 ) -> Result<(), BridgeError> {
-    // Google Play cancellation is handled via the google_play service module
-    // For now, log that it should be cancelled - full implementation would require
-    // the complete Google Play service setup with credentials
-    tracing::warn!(
-        "Google Play subscription {} with token {} should be cancelled via Google Play API",
-        subscription_id,
-        purchase_token
-    );
-    
-    // In a production system, this would call the Google Play Billing API
-    // via the services/google_play/client module
+    let package_name = config.get("package_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| BridgeError::ConfigError("Missing Google Play package_name".to_string()))?;
+
+    let sa_path = config.get("service_account_json")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| BridgeError::ConfigError("Missing Google Play service_account_json path".to_string()))?;
+
+    let sa_path_owned = sa_path.to_string();
+    let client = tokio::task::spawn_blocking(move || {
+        crate::services::google_play::client::GooglePlayClient::new(&sa_path_owned)
+    })
+    .await
+    .map_err(|e| BridgeError::ProviderError(format!("Failed to spawn blocking task: {}", e)))?
+    .map_err(|e| BridgeError::ConfigError(format!("Failed to init Google Play client: {}", e)))?;
+
+    client.cancel_subscription(package_name, subscription_id, purchase_token)
+        .await
+        .map_err(|e| BridgeError::ProviderError(format!("Google Play cancel failed: {}", e)))?;
+
+    tracing::info!("Google Play subscription {} cancelled", subscription_id);
     Ok(())
 }

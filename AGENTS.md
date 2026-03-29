@@ -106,13 +106,22 @@ When updating `Release Notes.md`:
 
 ## Database - PostgreSQL Commands
 
-When running `psql` commands, always include the password via `PGPASSWORD` environment variable to avoid getting stuck at password prompts:
+On Windows, use `cmd /c` with `set PGPASSWORD=` to avoid password prompts and PowerShell quoting issues.
 
+For simple queries (no quotes in SQL):
 ```bash
-cmd: "PGPASSWORD=password psql -U postgres -h localhost -p 5432 -d bridge -c 'SELECT * FROM apps;'"
+cmd /c "set PGPASSWORD=password&& psql -U postgres -h localhost -p 5432 -d appgen -c "\dt pay.*""
 ```
 
-This ensures non-interactive execution.
+For complex queries (with quotes, WHERE clauses, etc.), write a temp `.sql` file and use `-f`:
+```bash
+# 1. Create the file (use create_file tool)
+# 2. Run it:
+cmd /c "set PGPASSWORD=password&& psql -U postgres -h localhost -p 5432 -d appgen -f c:\share\tyde\bridge\tmp_query.sql"
+# 3. Delete the tmp file when done
+```
+
+**Database**: `appgen`, **Schema**: `pay` (e.g. `pay.apps`, `pay.provider_configs`)
 
 ## Bash Tool - Windows Path Handling
 

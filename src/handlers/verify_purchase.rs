@@ -166,18 +166,45 @@ async fn verify_purchase_with_provider(
 
 async fn verify_google_play(
     subscription_id: &str,
-    _purchase_token: &str,
+    purchase_token: &str,
     config: &serde_json::Value,
 ) -> Result<(String, Option<chrono::DateTime<chrono::Utc>>), BridgeError> {
-    let _package_name = config.get("package_name")
+    let package_name = config.get("package_name")
         .and_then(|v| v.as_str())
         .ok_or_else(|| BridgeError::ConfigError("Missing Google Play package_name".to_string()))?;
 
-    tracing::warn!(
-        "Google Play subscription {} verification requires full service setup with credentials",
-        subscription_id
-    );
-    Ok(("pending".to_string(), None))
+    let sa_path = config.get("service_account_json")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| BridgeError::ConfigError("Missing Google Play service_account_json path".to_string()))?;
+
+    let sa_path_owned = sa_path.to_string();
+    let client = tokio::task::spawn_blocking(move || {
+        crate::services::google_play::client::GooglePlayClient::new(&sa_path_owned)
+    })
+    .await
+    .map_err(|e| BridgeError::ProviderError(format!("Failed to spawn blocking task: {}", e)))?
+    .map_err(|e| BridgeError::ConfigError(format!("Failed to init Google Play client: {}", e)))?;
+
+    let purchase = client.get_subscription(package_name, subscription_id, purchase_token)
+        .await
+        .map_err(|e| BridgeError::ProviderError(format!("Google Play verify failed: {}", e)))?;
+
+    let status = match purchase.subscription_state.as_deref() {
+        Some("SUBSCRIPTION_STATE_ACTIVE") | Some("SUBSCRIPTION_STATE_IN_GRACE_PERIOD") => "active",
+        Some("SUBSCRIPTION_STATE_CANCELED") => "canceled",
+        Some("SUBSCRIPTION_STATE_ON_HOLD") => "on_hold",
+        Some("SUBSCRIPTION_STATE_PAUSED") => "paused",
+        Some("SUBSCRIPTION_STATE_EXPIRED") => "expired",
+        Some("SUBSCRIPTION_STATE_PENDING") => "pending",
+        _ => "unknown",
+    };
+
+    let period_end = purchase.expiry_time.as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+
+    tracing::info!("Google Play subscription {} verified: status={}", subscription_id, status);
+    Ok((status.to_string(), period_end))
 }
 
 async fn verify_creem(

@@ -31,10 +31,11 @@ Examples:
 
   Google Play:
   {
-    "service_account_json": "{\"type\":\"service_account\",\"project_id\":\"...\",\"private_key\":\"...\"}",
+    "package_name": "com.example.app",
+    "service_account_json": "certs/play-billing-xxxxx.json",
     "verify_webhook_signature": true,
     "verify_audience": false,
-    "pub_sub_audience": "https://www.googleapis.com/oauth2/v1/..."
+    "pub_sub_audience": "https://your-domain.com/webhooks/google"
   }
 
   Creem:
