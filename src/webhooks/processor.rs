@@ -1,7 +1,7 @@
 use crate::error::BridgeError;
 use sqlx::PgPool;
 use uuid::Uuid;
-use tracing::info;
+use tracing::{info, error};
 
 /// Webhook event type (canonical)
 /// Used for future webhook event normalization and processing.
@@ -39,19 +39,174 @@ pub struct CanonicalWebhookPayload {
     pub provider_event_id: String,
 }
 
-/// Process webhook: dedup, ordering, normalization
-/// Used for webhook ingress processing across multiple providers.
+#[allow(dead_code)]
+struct WebhookFields {
+    subscription_id: Option<String>,
+    purchase_token: Option<String>,
+    amount_cents: Option<i32>,
+    auto_renewing: Option<bool>,
+    current_period_end: Option<String>,
+    provider_transaction_id: Option<String>,
+    provider_customer_id: Option<String>,
+    product_id: Option<String>,
+    cancel_reason: Option<String>,
+    status: Option<String>,
+}
+
+fn extract_webhook_fields(webhook: &crate::db::webhooks::WebhookProvider) -> WebhookFields {
+    let p = &webhook.payload;
+    match webhook.provider.as_str() {
+        "google_play" => WebhookFields {
+            subscription_id: p.pointer("/subscriptionNotification/subscriptionId")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            purchase_token: p.pointer("/subscriptionNotification/purchaseToken")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            amount_cents: p.pointer("/oneTimeProductNotification/priceMicros")
+                .and_then(|v| v.as_i64()).map(|m| (m / 10_000) as i32),
+            auto_renewing: p.pointer("/subscriptionNotification/autoRenewing")
+                .and_then(|v| v.as_bool()),
+            current_period_end: p.pointer("/subscriptionNotification/expiryTimeMillis")
+                .and_then(|v| v.as_i64())
+                .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms))
+                .map(|dt| dt.to_rfc3339()),
+            provider_transaction_id: p.pointer("/subscriptionNotification/purchaseToken")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            provider_customer_id: None,
+            product_id: p.pointer("/subscriptionNotification/subscriptionId")
+                .and_then(|v| v.as_str()).map(|s| s.to_string())
+                .or_else(|| p.pointer("/oneTimeProductNotification/sku")
+                    .and_then(|v| v.as_str()).map(|s| s.to_string())),
+            cancel_reason: p.pointer("/subscriptionNotification/cancelReason")
+                .and_then(|v| v.as_i64()).map(|c| c.to_string()),
+            status: None,
+        },
+        "creem" => WebhookFields {
+            subscription_id: p.pointer("/object/subscription/id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string())
+                .or_else(|| p.pointer("/object/subscription_id")
+                    .and_then(|v| v.as_str()).map(|s| s.to_string())),
+            purchase_token: None,
+            amount_cents: p.pointer("/object/amount")
+                .and_then(|v| v.as_i64()).map(|a| a as i32),
+            auto_renewing: None,
+            current_period_end: p.pointer("/object/current_period_end")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            provider_transaction_id: p.pointer("/object/id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            provider_customer_id: p.pointer("/object/customer/id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            product_id: p.pointer("/object/product/id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            cancel_reason: None,
+            status: p.pointer("/object/status")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+        },
+        "lemonsqueezy" => WebhookFields {
+            subscription_id: p.pointer("/data/id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            purchase_token: None,
+            amount_cents: p.pointer("/data/attributes/total")
+                .and_then(|v| v.as_i64()).map(|a| a as i32),
+            auto_renewing: None,
+            current_period_end: p.pointer("/data/attributes/renews_at")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            provider_transaction_id: p.pointer("/data/id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            provider_customer_id: p.pointer("/data/attributes/customer_id")
+                .and_then(|v| v.as_i64()).map(|c| c.to_string()),
+            product_id: p.pointer("/data/attributes/product_id")
+                .and_then(|v| v.as_i64()).map(|c| c.to_string()),
+            cancel_reason: None,
+            status: p.pointer("/data/attributes/status")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+        },
+        "coinbase" => WebhookFields {
+            subscription_id: None,
+            purchase_token: None,
+            amount_cents: p.pointer("/event/data/pricing/local/amount")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .map(|a| (a * 100.0) as i32),
+            auto_renewing: None,
+            current_period_end: None,
+            provider_transaction_id: p.pointer("/event/data/id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            provider_customer_id: None,
+            product_id: p.pointer("/event/data/metadata/product_id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            cancel_reason: None,
+            status: None,
+        },
+        _ => WebhookFields {
+            subscription_id: None,
+            purchase_token: None,
+            amount_cents: None,
+            auto_renewing: None,
+            current_period_end: None,
+            provider_transaction_id: None,
+            provider_customer_id: None,
+            product_id: None,
+            cancel_reason: None,
+            status: None,
+        },
+    }
+}
+
+/// Resolve external_user_id via §53 cascade
+async fn resolve_user(
+    pool: &PgPool,
+    app_id: Uuid,
+    webhook: &crate::db::webhooks::WebhookProvider,
+) -> Option<String> {
+    // 1. subscription_id lookup
+    if let Some(ref sub_id) = webhook.subscription_id {
+        if let Ok(Some(user)) = crate::db::subscriptions::lookup_user_by_subscription_id(pool, app_id, sub_id).await {
+            return Some(user);
+        }
+    }
+
+    // 2. purchase_token lookup (subscriptions first, then payments)
+    if let Some(ref token) = webhook.purchase_token {
+        if let Ok(Some(user)) = crate::db::subscriptions::lookup_user_by_purchase_token(pool, app_id, token).await {
+            return Some(user);
+        }
+        if let Ok(Some(user)) = crate::db::payments::lookup_user_by_purchase_token_payment(pool, app_id, token).await {
+            return Some(user);
+        }
+    }
+
+    // 3. Creem metadata.user_id
+    if let Some(user_id) = webhook.payload.pointer("/metadata/user_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+    {
+        return Some(user_id);
+    }
+
+    // 4. Creem orphan guard
+    if webhook.provider == "creem" {
+        error!(
+            "Creem orphan guard: discarding webhook {} (event={})",
+            webhook.provider_webhook_id, webhook.event_type
+        );
+        return None;
+    }
+
+    // 5. All strategies failed
+    None
+}
+
+/// Process webhook: dedup, ordering, normalization, DB mutations
 #[allow(dead_code)]
 pub async fn process_webhook(
     pool: &PgPool,
     webhook_provider_id: Uuid,
     app_id: Uuid,
 ) -> Result<Option<CanonicalWebhookPayload>, BridgeError> {
-    // Get the webhook
+    // Step 1: Load webhook + app
     let webhook = crate::db::webhooks::get_webhook_provider(pool, webhook_provider_id)
         .await?;
 
-    // Check if already suppressed
     if webhook.suppressed {
         info!(
             "Webhook {} already suppressed: {}",
@@ -60,44 +215,268 @@ pub async fn process_webhook(
         return Ok(None);
     }
 
-    // Load app for slug
     let app = crate::db::apps::get_app(pool, app_id)
         .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    // Load subscription to check event ordering and extract fields
-    // Note: Skip stale event check if external_user_id is not available
-    if let Some(_subscription_id) = &webhook.subscription_id {
-        // TODO: Extract external_user_id from webhook payload
-        // For now, stale event suppression requires external_user_id
+    // Step 2: Resolve external_user_id (§53 cascade)
+    let external_user_id = resolve_user(pool, app_id, &webhook).await;
+
+    // Creem orphan guard returned None → discard
+    if webhook.provider == "creem" && external_user_id.is_none() {
+        return Ok(None);
     }
 
+    // Step 3: Extract fields from payload
+    let fields = extract_webhook_fields(&webhook);
+
     // Normalize event to canonical type
-    let event_type = normalize_event_type(&webhook.provider, &webhook.event_type);
-    
+    let canonical_event = normalize_event_type(&webhook.provider, &webhook.event_type);
+
     let timestamp_epoch_ms = webhook.timestamp_epoch_ms.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
     let timestamp_iso = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
         .unwrap_or_else(|| chrono::Utc::now())
         .to_rfc3339();
 
-    // Create canonical payload
+    // Step 4: Route by canonical event type and mutate DB
+    match canonical_event.as_str() {
+        // §13 - Subscription Activation
+        "subscription.activated" | "subscription.renewed" | "subscription.recovered" | "subscription.created" => {
+            if let Some(ref user_id) = external_user_id {
+                let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+                if let Some(ref txn_id) = fields.provider_transaction_id {
+                    let _ = crate::db::payments::record_payment_tx(
+                        &mut tx, app_id, user_id, &webhook.provider, txn_id,
+                        fields.subscription_id.as_deref(),
+                        fields.amount_cents.unwrap_or(0), "success",
+                    ).await;
+                }
+
+                let period_end = fields.current_period_end.as_deref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc));
+
+                let sub_id_fallback = webhook.subscription_id.clone().unwrap_or_default();
+                let sub_id_str = fields.subscription_id.as_deref()
+                    .unwrap_or(&sub_id_fallback);
+
+                crate::db::subscriptions::upsert_subscription_tx(
+                    &mut tx, app_id, user_id,
+                    sub_id_str,
+                    &webhook.provider, "active", period_end,
+                    fields.purchase_token.as_deref(), fields.auto_renewing,
+                    None, fields.provider_customer_id.as_deref(),
+                    timestamp_epoch_ms,
+                ).await?;
+
+                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+            }
+        }
+
+        // §15 - Grace Period
+        "subscription.grace_period" => {
+            if let Some(ref _user_id) = external_user_id {
+                crate::db::subscriptions::update_subscription_status(
+                    pool, app_id,
+                    &fields.subscription_id.clone().unwrap_or_default(),
+                    "past_due", timestamp_epoch_ms,
+                ).await?;
+            }
+        }
+
+        // §16 - Revoked
+        "subscription.revoked" => {
+            if let Some(ref _user_id) = external_user_id {
+                crate::db::subscriptions::update_subscription_status(
+                    pool, app_id,
+                    &fields.subscription_id.clone().unwrap_or_default(),
+                    "revoked", timestamp_epoch_ms,
+                ).await?;
+            }
+        }
+
+        // §17 - On Hold
+        "subscription.on_hold" => {
+            if let Some(ref _user_id) = external_user_id {
+                crate::db::subscriptions::update_subscription_status(
+                    pool, app_id,
+                    &fields.subscription_id.clone().unwrap_or_default(),
+                    "on_hold", timestamp_epoch_ms,
+                ).await?;
+            }
+        }
+
+        // §18 - Paused (guard: only if current status is active or trial)
+        "subscription.paused" => {
+            if let Some(ref _user_id) = external_user_id {
+                let sub_id = fields.subscription_id.clone().unwrap_or_default();
+                if let Ok(Some(sub)) = crate::db::subscriptions::get_subscription_by_sub_id(pool, app_id, &sub_id).await {
+                    if sub.status == "active" || sub.status == "trial" {
+                        crate::db::subscriptions::update_subscription_status(
+                            pool, app_id, &sub_id, "paused", timestamp_epoch_ms,
+                        ).await?;
+                    } else {
+                        info!("Ignoring pause event for subscription {} in status '{}'", sub_id, sub.status);
+                    }
+                }
+            }
+        }
+
+        // §19 - Restarted/Resumed (guard: only if current status is paused)
+        "subscription.resumed" => {
+            if let Some(ref _user_id) = external_user_id {
+                let sub_id = fields.subscription_id.clone().unwrap_or_default();
+                if let Ok(Some(sub)) = crate::db::subscriptions::get_subscription_by_sub_id(pool, app_id, &sub_id).await {
+                    if sub.status == "paused" {
+                        crate::db::subscriptions::update_subscription_status(
+                            pool, app_id, &sub_id, "active", timestamp_epoch_ms,
+                        ).await?;
+                    } else {
+                        info!("Ignoring resume event for subscription {} in status '{}'", sub_id, sub.status);
+                    }
+                }
+            }
+        }
+
+        // §20 - Cancellation Scheduled
+        "subscription.cancellation_scheduled" => {
+            if let Some(ref _user_id) = external_user_id {
+                let sub_id = fields.subscription_id.clone().unwrap_or_default();
+                sqlx::query(
+                    "UPDATE pay.subscriptions SET auto_renewing = false, updated_at = NOW() WHERE app_id = $1 AND subscription_id = $2"
+                )
+                .bind(app_id)
+                .bind(&sub_id)
+                .execute(pool)
+                .await
+                .map_err(|e| BridgeError::DbError(e.to_string()))?;
+            }
+        }
+
+        // §21 - Expired/Inactive
+        "subscription.expired" => {
+            if let Some(ref _user_id) = external_user_id {
+                crate::db::subscriptions::update_subscription_status(
+                    pool, app_id,
+                    &fields.subscription_id.clone().unwrap_or_default(),
+                    "expired", timestamp_epoch_ms,
+                ).await?;
+            }
+        }
+
+        // §22 - Cancelled
+        "subscription.cancelled" => {
+            if let Some(ref _user_id) = external_user_id {
+                crate::db::subscriptions::update_subscription_status(
+                    pool, app_id,
+                    &fields.subscription_id.clone().unwrap_or_default(),
+                    "cancelled", timestamp_epoch_ms,
+                ).await?;
+            }
+        }
+
+        // §23 - Order Created (payment pending)
+        "payment.pending" => {
+            if let Some(ref user_id) = external_user_id {
+                let txn_id = fields.provider_transaction_id.as_deref()
+                    .or(fields.subscription_id.as_deref())
+                    .unwrap_or(&webhook.provider_webhook_id);
+                let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                let _ = crate::db::payments::record_payment_tx(
+                    &mut tx, app_id, user_id, &webhook.provider, txn_id,
+                    fields.subscription_id.as_deref(),
+                    fields.amount_cents.unwrap_or(0), "pending",
+                ).await;
+                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+            }
+        }
+
+        // §24 - Order Failed
+        "payment.failed" => {
+            if let Some(ref user_id) = external_user_id {
+                let txn_id = fields.provider_transaction_id.as_deref()
+                    .or(fields.subscription_id.as_deref())
+                    .unwrap_or(&webhook.provider_webhook_id);
+                let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                let _ = crate::db::payments::record_payment_tx(
+                    &mut tx, app_id, user_id, &webhook.provider, txn_id,
+                    fields.subscription_id.as_deref(),
+                    fields.amount_cents.unwrap_or(0), "failed",
+                ).await;
+                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+            }
+        }
+
+        // §25 - One-Time Product Purchased
+        "purchase.one_time" => {
+            if let Some(ref user_id) = external_user_id {
+                let txn_id = fields.purchase_token.as_deref()
+                    .or(fields.provider_transaction_id.as_deref())
+                    .unwrap_or(&webhook.provider_webhook_id);
+                let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                let _ = crate::db::payments::record_payment_tx(
+                    &mut tx, app_id, user_id, &webhook.provider, txn_id,
+                    fields.subscription_id.as_deref(),
+                    fields.amount_cents.unwrap_or(0), "success",
+                ).await;
+                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+            }
+        }
+
+        // §27 - Purchase Voided (Refund)
+        "payment.refunded" => {
+            if let Some(ref _user_id) = external_user_id {
+                if let Some(ref token) = fields.purchase_token {
+                    let existing = crate::db::payments::get_payment_status(pool, app_id, token).await?;
+                    if existing.as_deref() != Some("refunded") {
+                        crate::db::payments::update_payment_status(pool, app_id, token, "refunded").await?;
+                    }
+                    if let Some(sub) = crate::db::subscriptions::get_subscription_by_purchase_token(pool, app_id, token).await? {
+                        crate::db::subscriptions::update_subscription_status(
+                            pool, app_id, &sub.subscription_id, "revoked", timestamp_epoch_ms,
+                        ).await?;
+                    }
+                }
+            }
+        }
+
+        // §42 - Coinbase charge confirmed (agent topup)
+        "payment.succeeded" if webhook.provider == "coinbase" => {
+            info!("Coinbase charge confirmed, agent topup handled separately");
+        }
+
+        // Unknown/unhandled
+        _ => {
+            info!("Unhandled webhook event type: {} (provider: {})", canonical_event, webhook.provider);
+        }
+    }
+
+    // Step 5: Build canonical payload with real data
     let canonical = CanonicalWebhookPayload {
         event_id: format!("{}-{}", webhook.provider, webhook.provider_webhook_id),
-        event_type,
+        event_type: canonical_event,
         timestamp: timestamp_iso,
         timestamp_epoch_ms,
         app_slug: app.slug,
-        product_id: None,           // TODO: extract from payload
-        subscription_id: webhook.subscription_id.clone(),
-        external_user_id: None,     // TODO: load from subscription if available
-        amount_cents: None,         // TODO: extract from payload
-        auto_renewing: None,        // TODO: extract from payload
-        purchase_token: None,       // TODO: extract from payload
-        current_period_end: None,   // TODO: extract from payload
-        status: None,               // TODO: extract from payload
+        product_id: fields.product_id,
+        subscription_id: fields.subscription_id.or(webhook.subscription_id.clone()),
+        external_user_id,
+        amount_cents: fields.amount_cents,
+        auto_renewing: fields.auto_renewing,
+        purchase_token: fields.purchase_token.or(webhook.purchase_token.clone()),
+        current_period_end: fields.current_period_end,
+        status: fields.status,
         provider: webhook.provider.clone(),
         provider_event_id: webhook.provider_webhook_id.clone(),
     };
+
+    // Step 6: Mark webhook as processed
+    sqlx::query("UPDATE pay.webhook_provider SET processed = true WHERE id = $1")
+        .bind(webhook_provider_id)
+        .execute(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(Some(canonical))
 }

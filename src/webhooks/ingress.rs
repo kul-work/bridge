@@ -118,14 +118,28 @@ pub async fn handle_google_play(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    // 4. Call webhook processor to normalize the event
-    if let Ok(Some(_canonical)) = crate::webhooks::processor::process_webhook(&db.pool, webhook_id, app.id).await {
-        // 5. Create webhook_delivery record
-        let _delivery_id = crate::db::webhooks::create_webhook_delivery(&db.pool, app.id, webhook_id).await?;
-        info!("Google Play webhook processed successfully: {} -> {}", event_id, webhook_id);
-    }
+    // 4. Return 204 immediately, spawn async processing (§12)
+    let pool = db.pool.clone();
+    let app_id = app.id;
+    let event_id_owned = event_id.to_string();
+    tokio::spawn(async move {
+        match crate::webhooks::processor::process_webhook(&pool, webhook_id, app_id).await {
+            Ok(Some(canonical)) => {
+                match crate::db::webhooks::create_webhook_delivery(&pool, app_id, webhook_id).await {
+                    Ok(delivery_id) => {
+                        let _ = crate::webhooks::forwarding::forward_webhook(
+                            &pool, app_id, delivery_id, canonical,
+                        ).await;
+                    }
+                    Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
+                }
+                info!("Google Play webhook processed: {}", event_id_owned);
+            }
+            Ok(None) => info!("Google Play webhook suppressed: {}", event_id_owned),
+            Err(e) => error!("Google Play webhook processing failed {}: {}", event_id_owned, e),
+        }
+    });
 
-    // 6. Return 204 No Content per contract
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -219,14 +233,28 @@ pub async fn handle_creem(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    // 4. Call webhook processor
-    if let Ok(Some(_canonical)) = crate::webhooks::processor::process_webhook(&db.pool, webhook_id, app.id).await {
-        // 5. Create webhook_delivery record
-        let _delivery_id = crate::db::webhooks::create_webhook_delivery(&db.pool, app.id, webhook_id).await?;
-        info!("Creem webhook processed successfully: {} -> {}", event_id, webhook_id);
-    }
+    // 4. Return 204 immediately, spawn async processing (§12)
+    let pool = db.pool.clone();
+    let app_id = app.id;
+    let event_id_owned = event_id.to_string();
+    tokio::spawn(async move {
+        match crate::webhooks::processor::process_webhook(&pool, webhook_id, app_id).await {
+            Ok(Some(canonical)) => {
+                match crate::db::webhooks::create_webhook_delivery(&pool, app_id, webhook_id).await {
+                    Ok(delivery_id) => {
+                        let _ = crate::webhooks::forwarding::forward_webhook(
+                            &pool, app_id, delivery_id, canonical,
+                        ).await;
+                    }
+                    Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
+                }
+                info!("Creem webhook processed: {}", event_id_owned);
+            }
+            Ok(None) => info!("Creem webhook suppressed: {}", event_id_owned),
+            Err(e) => error!("Creem webhook processing failed {}: {}", event_id_owned, e),
+        }
+    });
 
-    // 6. Return 204 No Content per contract
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -313,14 +341,28 @@ pub async fn handle_lemonsqueezy(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    // 4. Call webhook processor
-    if let Ok(Some(_canonical)) = crate::webhooks::processor::process_webhook(&db.pool, webhook_id, app.id).await {
-        // 5. Create webhook_delivery record
-        let _delivery_id = crate::db::webhooks::create_webhook_delivery(&db.pool, app.id, webhook_id).await?;
-        info!("LemonSqueezy webhook processed successfully: {} -> {}", event_id, webhook_id);
-    }
+    // 4. Return 204 immediately, spawn async processing (§12)
+    let pool = db.pool.clone();
+    let app_id = app.id;
+    let event_id_owned = event_id.to_string();
+    tokio::spawn(async move {
+        match crate::webhooks::processor::process_webhook(&pool, webhook_id, app_id).await {
+            Ok(Some(canonical)) => {
+                match crate::db::webhooks::create_webhook_delivery(&pool, app_id, webhook_id).await {
+                    Ok(delivery_id) => {
+                        let _ = crate::webhooks::forwarding::forward_webhook(
+                            &pool, app_id, delivery_id, canonical,
+                        ).await;
+                    }
+                    Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
+                }
+                info!("LemonSqueezy webhook processed: {}", event_id_owned);
+            }
+            Ok(None) => info!("LemonSqueezy webhook suppressed: {}", event_id_owned),
+            Err(e) => error!("LemonSqueezy webhook processing failed {}: {}", event_id_owned, e),
+        }
+    });
 
-    // 6. Return 204 No Content per contract
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -412,14 +454,28 @@ pub async fn handle_coinbase(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    // 4. Call webhook processor
-    if let Ok(Some(_canonical)) = crate::webhooks::processor::process_webhook(&db.pool, webhook_id, app.id).await {
-        // 5. Create webhook_delivery record
-        let _delivery_id = crate::db::webhooks::create_webhook_delivery(&db.pool, app.id, webhook_id).await?;
-        info!("Coinbase webhook processed successfully: {} -> {}", event_id, webhook_id);
-    }
+    // 4. Return 204 immediately, spawn async processing (§12)
+    let pool = db.pool.clone();
+    let app_id = app.id;
+    let event_id_owned = event_id.to_string();
+    tokio::spawn(async move {
+        match crate::webhooks::processor::process_webhook(&pool, webhook_id, app_id).await {
+            Ok(Some(canonical)) => {
+                match crate::db::webhooks::create_webhook_delivery(&pool, app_id, webhook_id).await {
+                    Ok(delivery_id) => {
+                        let _ = crate::webhooks::forwarding::forward_webhook(
+                            &pool, app_id, delivery_id, canonical,
+                        ).await;
+                    }
+                    Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
+                }
+                info!("Coinbase webhook processed: {}", event_id_owned);
+            }
+            Ok(None) => info!("Coinbase webhook suppressed: {}", event_id_owned),
+            Err(e) => error!("Coinbase webhook processing failed {}: {}", event_id_owned, e),
+        }
+    });
 
-    // 6. Return 204 No Content per contract
     Ok(StatusCode::NO_CONTENT)
     }
 

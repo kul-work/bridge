@@ -1,91 +1,74 @@
 # Bridge — Gap Analysis vs. Behavioral Specification
 
 **Date**: 2026-03-30  
-**Status**: **Draft / Audit Results**  
+**Last Updated**: 2026-03-30  
+**Status**: **In Progress**  
 **Target Doc**: `docs.notes/BEHAVIORAL_SPEC.md`
 
 ---
 
 ## 1. Executive Summary
 
-This document performs a gap analysis between the current **Bridge** microservice implementation and the **BEHAVIORAL_SPEC.md**. 
+This document tracks gaps between the **Bridge** implementation and the **BEHAVIORAL_SPEC.md**.
 
-The implementation currently provides a solid foundation for routing and basic database interactions. However, it contains **critical functional gaps** where it updates local state (e.g., cancelling a subscription in the DB) without communicating with external payment providers (Google Play, Creem, etc.). Additionally, the **webhook processing system** is a skeleton that lacks the complex state transitions required by the specification.
+Recent work closed the three biggest gaps: webhook processing now performs real DB mutations (subscription state transitions, payment recording with fraud guard), user resolution cascade (§53) is implemented, and webhook ingress returns 204 immediately with async background processing.
 
----
-
-## 2. Feature-by-Feature Gap Table
-
-| Spec Section | Feature | Status | Gap Details |
-| :--- | :--- | :--- | :--- |
-| **§1** | Startup & Init | 🟡 Partial | Missing production safeguard `MOCK_EXTERNAL_APIS` panic. |
-| **§2** | API Auth | 🟡 Partial | Missing `apps.enabled` check and `last_used_at` updates. Hashing strategy differs. |
-| **§3** | Rate Limiting | 🔴 Missing | Completely unimplemented (both per-API-key and per-IP). |
-| **§4** | Checkout Flow | 🔴 Missing | No `idempotency_key` or `product_type`. Non-Creem providers are stubbed. |
-| **§5** | Purchase Verify | 🟡 Partial | Missing Google Play "Acknowledgement" (3-day rule) and forward-to-app callback. |
-| **§6** | Purchase Register | 🔴 Broken | Implemented as "manual grants" instead of the required "pending placeholder" behavior. |
-| **§7-11** | Queries & History | 🟡 Partial | Uses `offset`-based pagination instead of cursor-based (`after`). |
-| **§8-10** | Actions (Cancel/Resume) | 🔴 Critical | **Does not call provider APIs**. Only updates local Bridge DB. |
-| **§12** | Webhook Ingress | 🔴 Critical | No Google Play JWT signature verification. Processing is synchronous. |
-| **§13-37**| Webhook Processing | 🔴 Critical | Skeleton only. No DB mutations (subscriptions/payments) for actual events. |
-| **§38** | Forward To App | 🟡 Partial | HMAC message format and retry intervals differ from spec. |
-| **§39-43**| Agent 402 Flows | 🟡 Partial | Basic balance/token/charge exists, but integration with webhooks is missing. |
-| **§46-49**| Background Jobs | 🔴 Missing | Reconciliation is a dummy skeleton. Price step-up, pause, and cleanup jobs missing. |
+**Remaining critical work**: provider API calls for cancel/resume, rate limiting, and missing background jobs.
 
 ---
 
-## 3. Top Critical Deficiencies
+## 2. Feature-by-Feature Status
 
-### 🔴 Critical A: Provider API Synchronization
-The most significant gap is that **Bridge is not currently acting as a bridge** for mutations. 
-- When an app calls `/cancel` or `/resume`, Bridge updates its own database but **fails to notify the provider** (e.g., Google Play API). 
-- This results in "split-brain" where Bridge thinks a subscription is cancelled, but the provider continues to charge the user.
+### ✅ Resolved
 
-### 🔴 Critical B: Webhook Processor Logic
-The specification outlines ~25 discrete webhook scenarios (Activation, Grace Period, Hold, Pause, etc.). 
-- The current `processor.rs` only "normalizes" the event name. 
-- It **does not update the subscription state** or record the payment in the DB, effectively rendering the webhook system non-functional for state management.
-
-### 🔴 Critical C: User Resolution Strategy (§53)
-The spec requires complex user resolution (lookup by `subscription_id`, `purchase_token`, or `metadata`). 
-- The current implementation lacks this logic, meaning webhooks from providers (which often don't include the consumer's `external_user_id`) cannot be mapped back to the correct user.
-
----
-
-## 4. Infrastructure & Security Gaps
-
-### Rate Limiting (§3)
-The spec requires a sophisticated rate-limiting system:
-- Per-API-Key: Default 120/min with endpoint-specific overrides (e.g., Checkout: 20/min).
-- Per-IP: 10/min for unauthenticated requests.
-- **Current status**: No rate limiting is implemented.
-
-### Pagination (§7, §11)
-The spec explicitly requests **cursor-based pagination** using an `after` token (base64 of the cursor).
-- **Current status**: Most endpoints use traditional `offset/limit` pagination, which is less performant and prone to drift.
-
-### Webhook Signature Verification (§12)
-- **Google Play**: Marked as `TODO`. Verification against Google's public certificates is required for production.
-- **HMAC**: Currently verifies using `app.webhook_callback_secret` instead of provider-specific secrets from `provider_configs`.
-
----
-
-## 5. Background Job Gaps
-
-| Job Name | Spec Ref | Current Status |
+| Spec Section | Feature | Resolution |
 | :--- | :--- | :--- |
-| **Webhook Retry** | §38.7 | Implemented, but uses different retry intervals (0, 5, 10 min). |
-| **Reconciliation** | §46 | Started but **dummy implementation**. Always returns "active". |
-| **Price Step-Up Expiry** | §47 | **Missing**. Required for Google Play price change flows. |
-| **Pause Scheduler** | §48 | **Missing**. Required for Google Play subscription pausing. |
-| **Webhook Log Cleanup** | §49 | **Missing**. Required for DB maintenance. |
+| **§12** | Webhook Ingress — async processing | All 4 providers now return 204 immediately, spawn `tokio::spawn` for processing + forwarding |
+| **§13-22** | Webhook Processing — state mutations | `processor.rs` routes by canonical event, calls `upsert_subscription_tx` / `update_subscription_status` / `record_payment_tx` |
+| **§23-25** | Webhook Processing — payment events | Order created (pending), order failed, OTP purchased all record payments via atomic UPSERT |
+| **§27** | Webhook Processing — refunds | Payment status updated + linked subscription revoked |
+| **§50** | Payment Recording (DB) | Atomic UPSERT with fraud guard (`WHERE external_user_id = EXCLUDED.external_user_id`) |
+| **§52** | Subscription Store/Activate (DB) | Atomic UPSERT with `ON CONFLICT`, version increment, `last_event_time`, `COALESCE` for purchase_token |
+| **§53** | User Lookup Strategies | Full cascade: subscription_id → purchase_token (sub+payment) → Creem metadata → orphan guard |
+| **§18/§19** | Paused/Resumed status guards | Guards check current status before allowing transition (active/trial→paused, paused→active) |
+
+### 🟡 Partial / Minor Gaps
+
+| Spec Section | Feature | Gap Details |
+| :--- | :--- | :--- |
+| **§1** | Startup & Init | Missing production safeguard `MOCK_EXTERNAL_APIS` panic. |
+| **§2** | API Auth | Missing `api_keys.enabled` check, `apps.enabled` → 403, `last_used_at` update. SHA256 instead of bcrypt/argon2. |
+| **§4** | Checkout Flow | No `idempotency_key` or `product_type` fields. Non-Creem providers are stubbed. |
+| **§5** | Purchase Verify | Missing Google Play "Acknowledgement" (3-day rule) and forward-to-app callback after verify. |
+| **§7** | Subscription Queries | Uses `offset`-based pagination in some endpoints instead of cursor-based. |
+| **§12** | Webhook Ingress | Google Play JWT signature verification is TODO (logged as warning). |
+| **§38** | Forward To App | Missing stale event guard at forward time (`timestamp_epoch_ms < subscription.last_event_time`). |
+| **§39-43** | Agent 402 Flows | Basic flows work. Coinbase webhook → agent topup integration not fully wired. |
+| **Appendix A** | Event Mapping | `normalize_event_type` covers ~15 events; spec defines 35+ canonical mappings (§26, §28-§37 events missing). |
+| **Appendix C** | Error Codes | Missing `404 subscription_not_found`, `403 app_disabled` as distinct error variants. |
+
+### 🔴 Critical — Not Yet Implemented
+
+| # | Spec Section | Feature | Gap Details |
+| :--- | :--- | :--- | :--- |
+| 1 | **§3** | Rate Limiting | Middleware exists but **never wired** into router. Per-API-key limits, endpoint overrides, per-IP limiting — all missing. |
+| 2 | **§8/§9** | Cancel/Resume — provider calls | Only updates local DB. **Does not call provider APIs** (Google Play, Creem, etc.) to actually cancel/resume. |
+| 3 | **§10** | Billing Portal | Returns hardcoded URLs. Should call provider API for real portal URLs. |
+| 4 | **§6** | Purchase Registration | Implemented as "manual grants" instead of creating a pending subscription placeholder. |
+| 5 | **§46** | Reconciliation Job | Scaffolded but `verify_subscription_status` always returns "active" — no real provider polling. |
+| 6 | **§47** | Price Step-Up Expiry Job | Background job **not spawned**. |
+| 7 | **§48** | Pause Scheduler Job | Background job **not spawned**. |
+| 8 | **§49** | Webhook Log Cleanup Job | Background job **not spawned**. |
+| 9 | **§51** | Webhook Deduplication | Uses `(app_id, provider, provider_webhook_id)`. Missing secondary unique `(provider, purchase_token, event_type)`. |
 
 ---
 
-## 6. Implementation Roadmap (Priority)
+## 3. Implementation Roadmap (Priority)
 
-1. **[PRIORITY 1] Logic Synchronization**: Implement the actual provider API calls in `handlers/subscriptions_actions.rs`.
-2. **[PRIORITY 1] Webhook Processor**: Implement the DB mutation logic for subscription state transitions in `webhooks/processor.rs`.
-3. **[PRIORITY 2] User Resolution**: Implement the multi-strategy user lookup to correctly route webhooks to users.
-4. **[PRIORITY 2] Security**: Implement Google Play JWT verification and HMAC provider-secret verification.
-5. **[PRIORITY 3] Infrastructure**: Implement the Rate Limiting middleware and move to true cursor pagination.
+1. **[PRIORITY 1] Rate Limiting (§3)**: Wire existing middleware into `main.rs`. Add per-API-key + endpoint-specific overrides.
+2. **[PRIORITY 1] Cancel/Resume provider calls (§8/§9)**: Add actual provider API calls before DB mutation.
+3. **[PRIORITY 2] Background Jobs (§47-§49)**: Spawn price step-up expiry, pause scheduler, webhook cleanup.
+4. **[PRIORITY 2] Reconciliation (§46)**: Replace dummy `verify_subscription_status` with real provider API calls.
+5. **[PRIORITY 3] Remaining webhook events**: Add normalize mappings + handlers for §26, §28-§37 (OTP cancelled, pending purchase cancelled, disputes, Google Play-specific events).
+6. **[PRIORITY 3] Security hardening**: Google Play JWT verification, `api_keys.enabled` check, `apps.enabled` → 403.
+7. **[PRIORITY 3] Checkout improvements**: `idempotency_key`, `product_type`, wire non-Creem providers.
