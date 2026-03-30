@@ -501,6 +501,7 @@ fn extract_google_event_type(payload: &serde_json::Value) -> String {
             5 => "SUBSCRIPTION_ON_HOLD",
             6 => "SUBSCRIPTION_IN_GRACE_PERIOD",
             7 => "SUBSCRIPTION_RESTARTED",
+            8 => "SUBSCRIPTION_PRICE_CHANGE_CONFIRMED",
             9 => "SUBSCRIPTION_DEFERRED",
             10 => "SUBSCRIPTION_PAUSED",
             11 => "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED",
@@ -508,6 +509,7 @@ fn extract_google_event_type(payload: &serde_json::Value) -> String {
             13 => "SUBSCRIPTION_EXPIRED",
             19 => "SUBSCRIPTION_PRICE_CHANGE_UPDATED",
             20 => "SUBSCRIPTION_PENDING_PURCHASE_CANCELED",
+            21 => "SUBSCRIPTION_RENEWAL_PENDING",
             22 => "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED",
             _ => "SUBSCRIPTION_UNKNOWN",
         }
@@ -524,7 +526,8 @@ fn extract_google_event_type(payload: &serde_json::Value) -> String {
     {
         return match notification_type {
             1 => "ONE_TIME_PRODUCT_PURCHASED",
-            2 => "ONE_TIME_PRODUCT_CANCELED",
+            2 => "ONE_TIME_PRODUCT_REFUNDED",
+            14 => "ONE_TIME_PRODUCT_CANCELED",
             _ => "ONE_TIME_PRODUCT_UNKNOWN",
         }
         .to_string();

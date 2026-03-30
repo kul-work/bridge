@@ -87,12 +87,19 @@ pub async fn cancel_subscription(
         }
 
         "google_play" => {
-            // Google Play cancellation requires the purchase_token
-            let _token = purchase_token
+            let service_account_path = config_str(config, "service_account_json", "Google Play")?;
+            let package_name = config_str(config, "package_name", "Google Play")?;
+            let token = purchase_token
                 .ok_or_else(|| BridgeError::ValidationError("purchase_token required for Google Play cancellation".to_string()))?;
-            // Google Play cancel is typically handled via RTDN callbacks.
-            // Direct cancellation API is not currently implemented.
-            info!("Google Play subscription {} cancel requested (provider-side pending)", subscription_id);
+
+            let gp_client = crate::services::google_play::client::GooglePlayClient::new(service_account_path)
+                .map_err(|e| BridgeError::ConfigError(format!("Failed to init Google Play client: {}", e)))?;
+
+            gp_client.cancel_subscription(package_name, subscription_id, token)
+                .await
+                .map_err(|e| BridgeError::ProviderError(format!("Google Play cancel failed: {}", e)))?;
+
+            info!("Google Play subscription {} cancelled via API", subscription_id);
             Ok(())
         }
 
@@ -291,10 +298,26 @@ pub async fn fetch_subscription_status(
         }
 
         "google_play" => {
-            // Google Play requires purchase_token and package_name for subscription queries.
-            // Full Google Play API integration is handled by the google_play service module.
-            info!("Reconciliation for Google Play subscription {} (polling not yet wired)", subscription_id);
-            Err(BridgeError::ProviderError("Google Play reconciliation polling requires service account setup".to_string()))
+            let service_account_path = config_str(config, "service_account_json", "Google Play")?;
+            let package_name = config_str(config, "package_name", "Google Play")?;
+            let token = _purchase_token
+                .ok_or_else(|| BridgeError::ValidationError("purchase_token required for Google Play status fetch".to_string()))?;
+
+            let gp_client = crate::services::google_play::client::GooglePlayClient::new(service_account_path)
+                .map_err(|e| BridgeError::ConfigError(format!("Failed to init Google Play client: {}", e)))?;
+
+            let purchase = gp_client.get_subscription(package_name, subscription_id, token)
+                .await
+                .map_err(|e| BridgeError::ProviderError(format!("Google Play get subscription failed: {}", e)))?;
+
+            let raw_status = purchase.subscription_state.as_deref().unwrap_or("unknown");
+            let status = normalize_google_status(raw_status);
+
+            let period_end = purchase.expiry_time.as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+
+            Ok((status, period_end))
         }
 
         _ => Err(BridgeError::ValidationError(format!("Status fetch not supported for provider: {}", provider))),
@@ -323,5 +346,18 @@ fn normalize_lemonsqueezy_status(raw: &str) -> String {
         "paused" => "paused".to_string(),
         "unpaid" => "past_due".to_string(),
         other => other.to_string(),
+    }
+}
+
+fn normalize_google_status(raw: &str) -> String {
+    match raw {
+        "SUBSCRIPTION_STATE_ACTIVE" => "active".to_string(),
+        "SUBSCRIPTION_STATE_CANCELED" => "cancelled".to_string(),
+        "SUBSCRIPTION_STATE_IN_GRACE_PERIOD" => "past_due".to_string(),
+        "SUBSCRIPTION_STATE_ON_HOLD" => "past_due".to_string(),
+        "SUBSCRIPTION_STATE_PAUSED" => "paused".to_string(),
+        "SUBSCRIPTION_STATE_PENDING" => "pending".to_string(),
+        "SUBSCRIPTION_STATE_EXPIRED" => "expired".to_string(),
+        _ => "active".to_string(), // Default to active for unknown to avoid false expiry
     }
 }

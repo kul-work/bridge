@@ -51,6 +51,8 @@ struct WebhookFields {
     product_id: Option<String>,
     cancel_reason: Option<String>,
     status: Option<String>,
+    google_new_price_cents: Option<i32>,
+    google_price_step_up_consent_deadline: Option<String>,
 }
 
 fn extract_webhook_fields(webhook: &crate::db::webhooks::WebhookProvider) -> WebhookFields {
@@ -79,6 +81,12 @@ fn extract_webhook_fields(webhook: &crate::db::webhooks::WebhookProvider) -> Web
             cancel_reason: p.pointer("/subscriptionNotification/cancelReason")
                 .and_then(|v| v.as_i64()).map(|c| c.to_string()),
             status: None,
+            google_new_price_cents: p.pointer("/subscriptionNotification/priceStepUpConsentDetails/priceMicros")
+                .and_then(|v| v.as_i64()).map(|m| (m / 10_000) as i32),
+            google_price_step_up_consent_deadline: p.pointer("/subscriptionNotification/priceStepUpConsentDetails/consentDeadlineTimeMillis")
+                .and_then(|v| v.as_i64())
+                .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms))
+                .map(|dt| dt.to_rfc3339()),
         },
         "creem" => WebhookFields {
             subscription_id: p.pointer("/object/subscription/id")
@@ -100,6 +108,8 @@ fn extract_webhook_fields(webhook: &crate::db::webhooks::WebhookProvider) -> Web
             cancel_reason: None,
             status: p.pointer("/object/status")
                 .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            google_new_price_cents: None,
+            google_price_step_up_consent_deadline: None,
         },
         "lemonsqueezy" => WebhookFields {
             subscription_id: p.pointer("/data/id")
@@ -119,6 +129,8 @@ fn extract_webhook_fields(webhook: &crate::db::webhooks::WebhookProvider) -> Web
             cancel_reason: None,
             status: p.pointer("/data/attributes/status")
                 .and_then(|v| v.as_str()).map(|s| s.to_string()),
+            google_new_price_cents: None,
+            google_price_step_up_consent_deadline: None,
         },
         "coinbase" => WebhookFields {
             subscription_id: None,
@@ -136,6 +148,8 @@ fn extract_webhook_fields(webhook: &crate::db::webhooks::WebhookProvider) -> Web
                 .and_then(|v| v.as_str()).map(|s| s.to_string()),
             cancel_reason: None,
             status: None,
+            google_new_price_cents: None,
+            google_price_step_up_consent_deadline: None,
         },
         _ => WebhookFields {
             subscription_id: None,
@@ -148,6 +162,8 @@ fn extract_webhook_fields(webhook: &crate::db::webhooks::WebhookProvider) -> Web
             product_id: None,
             cancel_reason: None,
             status: None,
+            google_new_price_cents: None,
+            google_price_step_up_consent_deadline: None,
         },
     }
 }
@@ -273,6 +289,18 @@ pub async fn process_webhook(
                 tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
             }
         }
+        
+        // §14 - Subscription Pending
+        "subscription.pending" => {
+            if let Some(ref _user_id) = external_user_id {
+                let sub_id = fields.subscription_id.as_deref()
+                    .or(webhook.subscription_id.as_deref())
+                    .unwrap_or("");
+                crate::db::subscriptions::update_subscription_status(
+                    pool, app_id, sub_id, "pending", timestamp_epoch_ms,
+                ).await?;
+            }
+        }
 
         // §15 - Grace Period
         "subscription.trial_started" => {
@@ -313,10 +341,11 @@ pub async fn process_webhook(
         // §16 - Revoked
         "subscription.revoked" => {
             if let Some(ref _user_id) = external_user_id {
+                let sub_id = fields.subscription_id.as_deref()
+                    .or(webhook.subscription_id.as_deref())
+                    .unwrap_or("");
                 crate::db::subscriptions::update_subscription_status(
-                    pool, app_id,
-                    &fields.subscription_id.clone().unwrap_or_default(),
-                    "revoked", timestamp_epoch_ms,
+                    pool, app_id, sub_id, "revoked", timestamp_epoch_ms,
                 ).await?;
             }
         }
@@ -324,10 +353,11 @@ pub async fn process_webhook(
         // §17 - On Hold
         "subscription.on_hold" => {
             if let Some(ref _user_id) = external_user_id {
+                let sub_id = fields.subscription_id.as_deref()
+                    .or(webhook.subscription_id.as_deref())
+                    .unwrap_or("");
                 crate::db::subscriptions::update_subscription_status(
-                    pool, app_id,
-                    &fields.subscription_id.clone().unwrap_or_default(),
-                    "on_hold", timestamp_epoch_ms,
+                    pool, app_id, sub_id, "on_hold", timestamp_epoch_ms,
                 ).await?;
             }
         }
@@ -457,9 +487,23 @@ pub async fn process_webhook(
             }
         }
 
-        // §27 - Purchase Voided (Refund)
-        "purchase.one_time_cancelled" => {}
+        // §26 - One-Time Product Cancelled
+        "purchase.one_time_cancelled" => {
+            if let Some(ref user_id) = external_user_id {
+                let token = fields.purchase_token.as_deref()
+                    .or(fields.provider_transaction_id.as_deref())
+                    .unwrap_or("");
+                let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                let _ = crate::db::payments::record_payment_tx(
+                    &mut tx, app_id, user_id, &webhook.provider, token,
+                    fields.subscription_id.as_deref(),
+                    fields.amount_cents.unwrap_or(0), "cancelled",
+                ).await;
+                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+            }
+        }
 
+        // §27 - Purchase Voided (Refund)
         "payment.refunded" => {
             if let Some(ref _user_id) = external_user_id {
                 if let Some(ref token) = fields.purchase_token {
@@ -472,11 +516,56 @@ pub async fn process_webhook(
                             pool, app_id, &sub.subscription_id, "revoked", timestamp_epoch_ms,
                         ).await?;
                     }
+                } else if let Some(ref sub_id) = fields.subscription_id {
+                     crate::db::subscriptions::update_subscription_status(
+                        pool, app_id, sub_id, "revoked", timestamp_epoch_ms,
+                    ).await?;
                 }
             }
         }
 
         // §42 - Coinbase charge confirmed (agent topup)
+        "charge.confirmed" if webhook.provider == "coinbase" => {
+            let charge_id = fields.provider_transaction_id
+                .clone()
+                .or_else(|| webhook.subscription_id.clone())
+                .unwrap_or_else(|| webhook.provider_webhook_id.clone());
+
+            let external_user_id = webhook.payload.pointer("/event/data/metadata/external_user_id")
+                .and_then(|v| v.as_str())
+                .or_else(|| webhook.payload.pointer("/event/data/metadata/user_id").and_then(|v| v.as_str()))
+                .map(|s| s.to_string());
+
+            let amount_cents = fields.amount_cents
+                .or_else(|| {
+                    webhook.payload.pointer("/event/data/metadata/amount_cents")
+                        .and_then(|v| v.as_i64())
+                        .map(|v| v as i32)
+                })
+                .unwrap_or(0);
+
+            if amount_cents <= 0 {
+                info!("Coinbase charge {} skipped: non-positive amount {}", charge_id, amount_cents);
+            } else if let Some(user_id) = external_user_id {
+                let inserted = crate::db::agent::apply_topup_if_new(
+                    pool,
+                    app_id,
+                    &user_id,
+                    amount_cents,
+                    &charge_id,
+                )
+                .await?;
+
+                if inserted {
+                    info!("Coinbase topup applied: charge_id={}, user={}, amount_cents={}", charge_id, user_id, amount_cents);
+                } else {
+                    info!("Coinbase topup already applied (idempotent): charge_id={}", charge_id);
+                }
+            } else {
+                info!("Coinbase charge {} skipped: missing metadata external_user_id/user_id", charge_id);
+            }
+        }
+
         "subscription.pending_purchase_cancelled" => {
             if let Some(ref _user_id) = external_user_id {
                 crate::db::subscriptions::update_subscription_status(
@@ -487,11 +576,27 @@ pub async fn process_webhook(
             }
         }
 
+        // §29 - Dispute Created (admin alert + app callback)
         "dispute.created" => {
+            // Send admin alert (email to Tyde support)
             info!(
-                "Admin alert: dispute created for app_id={} provider={} event_id={}",
-                app_id, webhook.provider, webhook.provider_webhook_id
+                "Admin alert: dispute created for app_id={} provider={} event_id={} amount={:?}",
+                app_id, webhook.provider, webhook.provider_webhook_id, fields.amount_cents
             );
+
+            // Forward callback to app with dispute notification
+            if let Some(ref user_id) = external_user_id {
+                let txn_id = fields.provider_transaction_id.as_deref()
+                    .or(webhook.subscription_id.as_deref())
+                    .unwrap_or(&webhook.provider_webhook_id);
+                let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                let _ = crate::db::payments::record_payment_tx(
+                    &mut tx, app_id, user_id, &webhook.provider, txn_id,
+                    fields.subscription_id.as_deref(),
+                    fields.amount_cents.unwrap_or(0), "dispute_created",
+                ).await;
+                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+            }
         }
 
         "refund.created" => {
@@ -519,17 +624,19 @@ pub async fn process_webhook(
 
         "subscription.price_step_up" => {
             if let Some(sub_id) = fields.subscription_id.as_deref() {
-                let deadline = webhook.payload.pointer("/subscriptionNotification/priceStepUpConsentDetails/consentDeadlineTimeMillis")
-                    .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
-                    .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms));
+                let deadline = fields.google_price_step_up_consent_deadline.as_deref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc));
 
                 sqlx::query(
                     "UPDATE pay.subscriptions
                      SET google_requires_price_step_up_consent = true,
-                         google_price_step_up_consent_deadline = COALESCE($1, google_price_step_up_consent_deadline),
+                         google_new_price_cents = $1,
+                         google_price_step_up_consent_deadline = COALESCE($2, google_price_step_up_consent_deadline),
                          updated_at = NOW()
-                     WHERE app_id = $2 AND subscription_id = $3"
+                     WHERE app_id = $3 AND subscription_id = $4"
                 )
+                .bind(fields.google_new_price_cents)
                 .bind(deadline)
                 .bind(app_id)
                 .bind(sub_id)
@@ -701,10 +808,13 @@ fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "SUBSCRIPTION_REVOKED" => "subscription.revoked".to_string(),
             "SUBSCRIPTION_DEFERRED" => "subscription.deferred".to_string(),
             "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED" => "subscription.pause_scheduled".to_string(),
+            "SUBSCRIPTION_RENEWAL_PENDING" => "subscription.pending".to_string(),
+            "SUBSCRIPTION_PRICE_CHANGE_CONFIRMED" => "subscription.price_changed".to_string(),
             "SUBSCRIPTION_PRICE_CHANGE_UPDATED" => "subscription.price_change_updated".to_string(),
             "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED" => "subscription.price_step_up".to_string(),
             "SUBSCRIPTION_PENDING_PURCHASE_CANCELED" => "subscription.pending_purchase_cancelled".to_string(),
             "ONE_TIME_PRODUCT_PURCHASED" => "purchase.one_time".to_string(),
+            "ONE_TIME_PRODUCT_REFUNDED" => "payment.refunded".to_string(),
             "ONE_TIME_PRODUCT_CANCELED" => "purchase.one_time_cancelled".to_string(),
             "VOIDED_PURCHASE" => "payment.refunded".to_string(),
             _ => format!("google_play.{}", event_type),
@@ -757,8 +867,8 @@ fn normalize_event_type(provider: &str, event_type: &str) -> String {
             _ => event_type.to_string(),
         },
         "coinbase" => match event_type {
-            "charge:confirmed" => "payment.succeeded".to_string(),
-            "charge:failed" => "payment.failed".to_string(),
+            "charge:confirmed" => "charge.confirmed".to_string(),
+            "charge:failed" => "charge.failed".to_string(),
             _ => event_type.to_string(),
         },
         _ => event_type.to_string(),

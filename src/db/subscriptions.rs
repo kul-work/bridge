@@ -22,6 +22,18 @@ pub struct Subscription {
     pub last_event_time: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    
+    // Google Play specific
+    #[serde(default)]
+    pub google_requires_price_step_up_consent: Option<bool>,
+    #[serde(default)]
+    pub google_price_step_up_consent_deadline: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub google_new_price_cents: Option<i32>,
+    #[serde(default)]
+    pub google_pause_scheduled_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub google_paused_at: Option<DateTime<Utc>>,
 }
 
 pub async fn get_subscription(
