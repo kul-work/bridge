@@ -165,7 +165,7 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
                                 &subscription_id,
                                 Some(external_user_id.clone()),
                                 purchase_token.clone(),
-                                "reconciliation.drift_detected",
+                                "admin.drift_alert",
                                 Some(provider_status.clone()),
                             ).await {
                                 error!("Failed to forward reconciliation callback for {}: {}", subscription_id, e);
