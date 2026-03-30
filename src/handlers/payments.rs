@@ -5,15 +5,18 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use base64::Engine;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use sqlx::Row;
+use std::sync::Arc;
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct PaymentsQuery {
     pub external_user_id: String,
     pub limit: Option<i64>,
-    pub offset: Option<i64>,
+    pub after: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -28,11 +31,23 @@ pub struct PaymentDetail {
 }
 
 #[derive(Debug, Serialize)]
+pub struct PaymentsPagination {
+    pub has_more: bool,
+    pub after: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct PaymentsResponse {
     pub payments: Vec<PaymentDetail>,
     pub total: i64,
     pub limit: i64,
-    pub offset: i64,
+    pub pagination: PaymentsPagination,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct PaymentsCursor {
+    created_at: DateTime<Utc>,
+    id: Uuid,
 }
 
 pub async fn get_payments(
@@ -47,9 +62,8 @@ pub async fn get_payments(
     }
 
     let limit = query.limit.unwrap_or(20).min(100);
-    let offset = query.offset.unwrap_or(0).max(0);
+    let cursor = decode_cursor(query.after.as_deref())?;
 
-    // Get total count
     let total: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pay.payments WHERE app_id = $1 AND external_user_id = $2",
     )
@@ -59,32 +73,54 @@ pub async fn get_payments(
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    // Get payments
-    let rows = sqlx::query(
-        r#"
-        SELECT 
-            id, external_user_id, subscription_id, amount, currency, status, created_at
-        FROM pay.payments
-        WHERE app_id = $1 AND external_user_id = $2
-        ORDER BY created_at DESC
-        LIMIT $3 OFFSET $4
-        "#,
-    )
-    .bind(auth.app_id)
-    .bind(&query.external_user_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&database.pool)
-    .await
+    let rows = if let Some(cursor) = cursor.as_ref() {
+        sqlx::query(
+            r#"
+            SELECT
+                id, external_user_id, subscription_id, amount_cents, currency, status, created_at
+            FROM pay.payments
+            WHERE app_id = $1 AND external_user_id = $2
+              AND (created_at, id) < ($3, $4)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $5
+            "#,
+        )
+        .bind(auth.app_id)
+        .bind(&query.external_user_id)
+        .bind(cursor.created_at)
+        .bind(cursor.id)
+        .bind(limit + 1)
+        .fetch_all(&database.pool)
+        .await
+    } else {
+        sqlx::query(
+            r#"
+            SELECT
+                id, external_user_id, subscription_id, amount_cents, currency, status, created_at
+            FROM pay.payments
+            WHERE app_id = $1 AND external_user_id = $2
+            ORDER BY created_at DESC, id DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(auth.app_id)
+        .bind(&query.external_user_id)
+        .bind(limit + 1)
+        .fetch_all(&database.pool)
+        .await
+    }
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    let payments = rows
-        .into_iter()
+    let has_more = rows.len() > limit as usize;
+    let page_rows: Vec<_> = rows.into_iter().take(limit as usize).collect();
+
+    let payments = page_rows
+        .iter()
         .map(|row| PaymentDetail {
-            id: row.get::<String, _>("id"),
+            id: row.get::<Uuid, _>("id").to_string(),
             external_user_id: row.get::<String, _>("external_user_id"),
             subscription_id: row.get::<Option<String>, _>("subscription_id"),
-            amount: row.get::<i64, _>("amount"),
+            amount: row.get::<i32, _>("amount_cents") as i64,
             currency: row.get::<String, _>("currency"),
             status: row.get::<String, _>("status"),
             created_at: row
@@ -93,15 +129,48 @@ pub async fn get_payments(
         })
         .collect();
 
+    let next_cursor = if has_more {
+        let last = page_rows.last().expect("has_more implies non-empty page");
+        let cursor = PaymentsCursor {
+            created_at: last.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+            id: last.get::<Uuid, _>("id"),
+        };
+        Some(encode_cursor(&cursor)?)
+    } else {
+        None
+    };
+
     Ok((
         StatusCode::OK,
         Json(PaymentsResponse {
             payments,
             total,
             limit,
-            offset,
+            pagination: PaymentsPagination {
+                has_more,
+                after: next_cursor,
+            },
         }),
     ))
+}
+
+fn decode_cursor(after: Option<&str>) -> Result<Option<PaymentsCursor>, BridgeError> {
+    let Some(raw) = after else {
+        return Ok(None);
+    };
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(raw)
+        .map_err(|_| BridgeError::ValidationError("Invalid cursor encoding".to_string()))?;
+    let cursor: PaymentsCursor = serde_json::from_slice(&decoded)
+        .map_err(|_| BridgeError::ValidationError("Invalid cursor payload".to_string()))?;
+    Ok(Some(cursor))
+}
+
+fn encode_cursor(cursor: &PaymentsCursor) -> Result<String, BridgeError> {
+    let bytes = serde_json::to_vec(cursor)
+        .map_err(|e| BridgeError::InternalServerError(format!("Failed to encode cursor: {}", e)))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
 #[derive(Debug, Deserialize)]
