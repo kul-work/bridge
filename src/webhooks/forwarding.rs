@@ -88,7 +88,7 @@ pub async fn forward_webhook(
 
     // Create HMAC signature
     let timestamp = Utc::now().timestamp().to_string();
-    let signature = create_signature(&payload_json, &timestamp, &app.webhook_callback_secret)?;
+    let signature = create_signature(&payload_json, &app.webhook_callback_secret)?;
 
     // Make HTTP request
     let client = Client::new();
@@ -159,14 +159,12 @@ pub async fn forward_webhook(
 
 /// Create HMAC-SHA256 signature for webhook
 #[allow(dead_code)]
-fn create_signature(payload: &str, timestamp: &str, secret: &str) -> Result<String, BridgeError> {
-    // Signature format: HMAC-SHA256(secret, payload.timestamp)
-    let message = format!("{}.{}", payload, timestamp);
-
+fn create_signature(payload: &str, secret: &str) -> Result<String, BridgeError> {
+    // Signature format: HMAC-SHA256(secret, raw JSON payload)
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
     
-    mac.update(message.as_bytes());
+    mac.update(payload.as_bytes());
     let result = mac.finalize();
     
     Ok(format!("sha256={}", hex::encode(result.into_bytes())))
@@ -180,7 +178,6 @@ mod tests {
     fn test_create_signature() {
         let result = create_signature(
             r#"{"event_id":"test"}"#,
-            "1234567890",
             "secret"
         ).unwrap();
         
@@ -189,8 +186,8 @@ mod tests {
 
     #[test]
     fn test_signature_deterministic() {
-        let sig1 = create_signature(r#"{"event_id":"test"}"#, "1234567890", "secret").unwrap();
-        let sig2 = create_signature(r#"{"event_id":"test"}"#, "1234567890", "secret").unwrap();
+        let sig1 = create_signature(r#"{"event_id":"test"}"#, "secret").unwrap();
+        let sig2 = create_signature(r#"{"event_id":"test"}"#, "secret").unwrap();
         
         assert_eq!(sig1, sig2);
     }
