@@ -80,6 +80,9 @@ pub enum BridgeError {
 
     #[error("Fraud detected: {0}")]
     FraudDetected(String),
+
+    #[error("App disabled: {0}")]
+    AppDisabled(String),
 }
 
 impl IntoResponse for BridgeError {
@@ -156,6 +159,14 @@ impl IntoResponse for BridgeError {
                 (
                     StatusCode::CONFLICT,
                     "fraud_detected",
+                    msg.clone(),
+                )
+            }
+            BridgeError::AppDisabled(msg) => {
+                error!("App disabled: {}", msg);
+                (
+                    StatusCode::FORBIDDEN,
+                    "app_disabled",
                     msg.clone(),
                 )
             }

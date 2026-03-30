@@ -1,6 +1,7 @@
 use crate::db;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
+use crate::webhooks::processor::CanonicalWebhookPayload;
 use axum::{
     extract::{State, Extension},
     http::StatusCode,
@@ -8,6 +9,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct VerifyPurchaseRequest {
@@ -55,7 +57,7 @@ pub async fn verify_purchase(
     }
 
     // Get app config
-    let _app = db::apps::get_app(&database.pool, auth.app_id).await?;
+    let app = db::apps::get_app(&database.pool, auth.app_id).await?;
 
     // Load provider config
     let provider_config =
@@ -127,13 +129,32 @@ pub async fn verify_purchase(
     };
 
     let response = VerifyPurchaseResponse {
-        status: verified_status,
+        status: verified_status.clone(),
         subscription_id: subscription.subscription_id,
         current_period_end: period_end.map(|d| d.to_rfc3339()),
         auto_renewing: subscription.auto_renewing,
         amount_cents: None,
         is_new,
     };
+
+    if let Err(e) = forward_verify_purchase_callback(
+        &database.pool,
+        app.id,
+        &app.slug,
+        &payload,
+        &response.status,
+        response.current_period_end.as_deref(),
+        response.auto_renewing,
+    )
+    .await
+    {
+        tracing::warn!(
+            "verify_purchase callback forwarding failed for app {} sub {}: {}",
+            app.id,
+            payload.subscription_id,
+            e
+        );
+    }
 
     Ok((StatusCode::OK, Json(response)))
 }
@@ -188,6 +209,19 @@ async fn verify_google_play(
     let purchase = client.get_subscription(package_name, subscription_id, purchase_token)
         .await
         .map_err(|e| BridgeError::ProviderError(format!("Google Play verify failed: {}", e)))?;
+
+    let needs_ack = purchase
+        .acknowledgement_state
+        .as_deref()
+        .map(|s| s == "ACKNOWLEDGEMENT_STATE_PENDING")
+        .unwrap_or(true);
+
+    if needs_ack {
+        client
+            .acknowledge_subscription(package_name, subscription_id, purchase_token)
+            .await
+            .map_err(|e| BridgeError::ProviderError(format!("Google Play acknowledgement failed: {}", e)))?;
+    }
 
     let status = match purchase.subscription_state.as_deref() {
         Some("SUBSCRIPTION_STATE_ACTIVE") | Some("SUBSCRIPTION_STATE_IN_GRACE_PERIOD") => "active",
@@ -348,4 +382,58 @@ async fn verify_coinbase(
     
     tracing::info!("Coinbase charge {} verified with status: {}", subscription_id, verified_status);
     Ok((verified_status, confirmed))
+}
+
+async fn forward_verify_purchase_callback(
+    pool: &sqlx::PgPool,
+    app_id: uuid::Uuid,
+    app_slug: &str,
+    request: &VerifyPurchaseRequest,
+    status: &str,
+    current_period_end: Option<&str>,
+    auto_renewing: Option<bool>,
+) -> Result<(), BridgeError> {
+    let now = chrono::Utc::now();
+    let event_id = format!("verify-purchase-{}", Uuid::new_v4());
+
+    let (webhook_id, _) = crate::db::webhooks::create_webhook_provider(
+        pool,
+        app_id,
+        &request.provider,
+        &event_id,
+        "verify_purchase.succeeded",
+        Some(request.subscription_id.clone()),
+        Some(request.purchase_token.clone()),
+        serde_json::json!({
+            "source": "verify_purchase",
+            "external_user_id": request.external_user_id,
+            "subscription_id": request.subscription_id,
+            "provider": request.provider,
+            "status": status,
+        }),
+        Some(now.timestamp_millis()),
+    )
+    .await?;
+
+    let delivery_id = crate::db::webhooks::create_webhook_delivery(pool, app_id, webhook_id).await?;
+
+    let callback_payload = CanonicalWebhookPayload {
+        event_id: event_id.clone(),
+        event_type: "subscription.verified".to_string(),
+        timestamp: now.to_rfc3339(),
+        timestamp_epoch_ms: now.timestamp_millis(),
+        app_slug: app_slug.to_string(),
+        product_id: Some(request.subscription_id.clone()),
+        subscription_id: Some(request.subscription_id.clone()),
+        external_user_id: Some(request.external_user_id.clone()),
+        amount_cents: None,
+        auto_renewing,
+        purchase_token: Some(request.purchase_token.clone()),
+        current_period_end: current_period_end.map(|s| s.to_string()),
+        status: Some(status.to_string()),
+        provider: request.provider.clone(),
+        provider_event_id: event_id,
+    };
+
+    crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, callback_payload).await
 }

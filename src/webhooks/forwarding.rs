@@ -30,6 +30,41 @@ pub async fn forward_webhook(
         return Ok(());
     }
 
+    if let Some(ref subscription_id) = payload.subscription_id {
+        if let Some(subscription) = crate::db::subscriptions::get_subscription_by_sub_id(
+            pool,
+            app_id,
+            subscription_id,
+        )
+        .await?
+        {
+            if payload.timestamp_epoch_ms < subscription.last_event_time {
+                crate::db::webhooks::suppress_webhook(
+                    pool,
+                    delivery.webhook_provider_id,
+                    "stale_event_suppressed_at_forwarding",
+                )
+                .await?;
+                crate::db::webhooks::update_webhook_delivery_attempt(
+                    pool,
+                    webhook_delivery_id,
+                    None,
+                    Some("Suppressed stale event".to_string()),
+                    true,
+                )
+                .await?;
+                info!(
+                    "Suppressed stale webhook delivery {} for subscription {} (event ts={} < last_event_time={})",
+                    webhook_delivery_id,
+                    subscription_id,
+                    payload.timestamp_epoch_ms,
+                    subscription.last_event_time
+                );
+                return Ok(());
+            }
+        }
+    }
+
     // Calculate retry delay based on attempt number
     let delay_ms = match delivery.forward_attempts {
         0 => 0,        // immediate

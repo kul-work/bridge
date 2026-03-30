@@ -1,30 +1,26 @@
 use axum::{
     extract::{Path, State},
-    http::{StatusCode, HeaderMap},
+    http::{HeaderMap, StatusCode},
 };
-use std::sync::Arc;
-use tracing::{info, error};
-use uuid::Uuid;
 use base64::Engine;
+use std::sync::Arc;
+use tracing::{error, info};
+use uuid::Uuid;
 
-use crate::{
-    db::Database,
-    error::BridgeError,
-};
+use crate::{db::Database, error::BridgeError};
 
 /// Handle Google Play webhook
 pub async fn handle_google_play(
     State(db): State<Arc<Database>>,
     Path(token): Path<String>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
     body: String,
 ) -> Result<StatusCode, BridgeError> {
     info!("Received Google Play webhook with token: {}", token);
 
-    // 1. Extract app from token
     let token_uuid = Uuid::parse_str(&token)
         .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
-    
+
     let app = crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid)
         .await
         .map_err(|_| {
@@ -32,93 +28,117 @@ pub async fn handle_google_play(
             BridgeError::ValidationError("App not found".to_string())
         })?;
 
-    // 2. Verify provider signature and parse webhook
-    // For Google Play, we need to extract the JWT from the body and verify it
-    let payload: serde_json::Value = serde_json::from_str(&body)
+    let provider_config =
+        crate::db::provider_configs::get_provider_config(&db.pool, app.id, "google_play").await?;
+
+    let verify_signature = provider_config
+        .config
+        .get("verify_webhook_signature")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    if verify_signature {
+        let authorization_header = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| {
+                BridgeError::WebhookError("Missing Authorization header".to_string())
+            })?;
+
+        let service_account_path = provider_config
+            .config
+            .get("service_account_json")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                BridgeError::ConfigError("Missing Google Play service_account_json path".to_string())
+            })?;
+
+        let service_account_path_owned = service_account_path.to_string();
+        let client = tokio::task::spawn_blocking(move || {
+            crate::services::google_play::client::GooglePlayClient::new(&service_account_path_owned)
+        })
+        .await
+        .map_err(|e| BridgeError::ProviderError(format!("Failed to spawn blocking task: {}", e)))?
         .map_err(|e| {
-            error!("Failed to parse Google Play webhook JSON: {}", e);
-            BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
+            BridgeError::ConfigError(format!("Failed to init Google Play client: {}", e))
         })?;
 
-    // Extract the message (Google Play sends in Pub/Sub format)
-    let message = payload["message"]["data"]
-        .as_str()
-        .ok_or_else(|| {
-            error!("Missing message.data in Google Play webhook");
-            BridgeError::WebhookError("Missing message.data field".to_string())
-        })?;
+        let verified = client
+            .verify_pubsub_signature(authorization_header)
+            .await
+            .map_err(|e| BridgeError::WebhookError(format!("Google signature verify failed: {}", e)))?;
 
-    // Decode the base64-encoded JWT
-    let jwt_bytes = base64::engine::general_purpose::STANDARD.decode(message)
-        .map_err(|e| {
-            error!("Failed to decode base64 message: {}", e);
-            BridgeError::WebhookError(format!("Invalid base64 encoding: {}", e))
-        })?;
+        if !verified {
+            return Err(BridgeError::WebhookError(
+                "Invalid Google Play signature".to_string(),
+            ));
+        }
 
-    let jwt_str = String::from_utf8(jwt_bytes)
-        .map_err(|e| {
-            error!("Failed to convert bytes to UTF-8: {}", e);
-            BridgeError::WebhookError(format!("Invalid UTF-8 in JWT: {}", e))
-        })?;
-
-    // Verify JWT signature using Google's public key
-    // Extract the signature from the JWT
-    let parts: Vec<&str> = jwt_str.split('.').collect();
-    if parts.len() != 3 {
-        return Err(BridgeError::WebhookError("Invalid JWT format".to_string()));
+        info!("Google Play webhook signature verified");
     }
 
-    // In production, verify JWT signature with Google's public certificates
-    // For now, we parse the payload and log that verification should occur
-    tracing::warn!("Google Play JWT signature verification should be implemented with Google's public keys");
+    let payload: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+        error!("Failed to parse Google Play webhook JSON: {}", e);
+        BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
+    })?;
 
-    let payload_json = base64::engine::general_purpose::STANDARD.decode(parts[1])
-        .map_err(|e| {
-            error!("Failed to decode JWT payload: {}", e);
-            BridgeError::WebhookError(format!("Invalid JWT: {}", e))
-        })?;
+    let message_data = payload["message"]["data"].as_str().ok_or_else(|| {
+        error!("Missing message.data in Google Play webhook");
+        BridgeError::WebhookError("Missing message.data field".to_string())
+    })?;
 
-    let google_play_event: serde_json::Value = serde_json::from_slice(&payload_json)
-        .map_err(|e| {
-            error!("Failed to parse JWT payload: {}", e);
-            BridgeError::WebhookError(format!("Invalid JWT payload: {}", e))
-        })?;
+    let decoded_message = decode_base64_flexible(message_data)
+        .map_err(|e| BridgeError::WebhookError(format!("Invalid message.data: {}", e)))?;
 
-    // 3. Dedup via webhook_provider table (check idempotency)
-    let event_id = google_play_event["eventId"]
+    let google_play_event: serde_json::Value = serde_json::from_slice(&decoded_message).map_err(|e| {
+        error!("Failed to parse Google Play message.data payload: {}", e);
+        BridgeError::WebhookError(format!("Invalid Google Play message.data payload: {}", e))
+    })?;
+
+    let event_id = payload["message"]["messageId"]
         .as_str()
+        .or_else(|| google_play_event["eventId"].as_str())
         .unwrap_or("unknown");
 
-    let event_type = google_play_event["subscriptionNotification"]["notificationType"]
-        .as_str()
-        .unwrap_or("unknown");
+    let event_type = extract_google_event_type(&google_play_event);
 
     let subscription_id = google_play_event["subscriptionNotification"]["subscriptionId"]
         .as_str()
+        .or_else(|| google_play_event["oneTimeProductNotification"]["productId"].as_str())
+        .map(|s| s.to_string());
+
+    let purchase_token = google_play_event["subscriptionNotification"]["purchaseToken"]
+        .as_str()
+        .or_else(|| google_play_event["oneTimeProductNotification"]["purchaseToken"].as_str())
+        .or_else(|| google_play_event["voidedPurchaseNotification"]["purchaseToken"].as_str())
         .map(|s| s.to_string());
 
     let timestamp_ms = google_play_event["eventTimeMillis"]
         .as_str()
-        .and_then(|s| s.parse::<i64>().ok());
+        .and_then(|s| s.parse::<i64>().ok())
+        .or_else(|| google_play_event["eventTimeMillis"].as_i64());
 
     let (webhook_id, is_new) = crate::db::webhooks::create_webhook_provider(
         &db.pool,
         app.id,
         "google_play",
         event_id,
-        event_type,
+        &event_type,
         subscription_id,
-        None,
+        purchase_token,
         google_play_event.clone(),
         timestamp_ms,
-    ).await?;
+    )
+    .await?;
 
     if !is_new {
-        info!("Duplicate Google Play webhook received (already processed): {}", event_id);
+        info!(
+            "Duplicate Google Play webhook received (already processed): {}",
+            event_id
+        );
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    // 4. Return 204 immediately, spawn async processing (§12)
     let pool = db.pool.clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
@@ -129,7 +149,8 @@ pub async fn handle_google_play(
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
                             &pool, app_id, delivery_id, canonical,
-                        ).await;
+                        )
+                        .await;
                     }
                     Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
                 }
@@ -152,10 +173,9 @@ pub async fn handle_creem(
 ) -> Result<StatusCode, BridgeError> {
     info!("Received Creem webhook with token: {}", token);
 
-    // 1. Extract app from token
     let token_uuid = Uuid::parse_str(&token)
         .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
-    
+
     let app = crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid)
         .await
         .map_err(|_| {
@@ -163,20 +183,19 @@ pub async fn handle_creem(
             BridgeError::ValidationError("App not found".to_string())
         })?;
 
-    // 2. Verify provider signature
-    // Creem uses HMAC-SHA256 signature verification via x-signature header
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
 
-    let mut mac = HmacSha256::new_from_slice(app.webhook_callback_secret.as_bytes())
+    let webhook_secret = get_provider_webhook_secret(&db.pool, app.id, "creem").await?;
+    let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
-    
+
     mac.update(body.as_bytes());
     let computed_sig = hex::encode(mac.finalize().into_bytes());
 
-    // Extract signature from x-signature header
-    let provided_sig = headers.get("x-signature")
+    let provided_sig = headers
+        .get("x-signature")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
@@ -185,36 +204,26 @@ pub async fn handle_creem(
         return Err(BridgeError::WebhookError("Invalid signature".to_string()));
     }
 
-    tracing::info!("Creem webhook signature verified");
-    
-    // Parse payload
-    let payload: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| {
-            error!("Failed to parse Creem webhook JSON: {}", e);
-            BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
-        })?;
+    info!("Creem webhook signature verified");
 
-    // 3. Dedup via webhook_provider table
-    let event_id = payload["id"]
-        .as_str()
-        .unwrap_or("unknown");
+    let payload: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+        error!("Failed to parse Creem webhook JSON: {}", e);
+        BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
+    })?;
 
-    let event_type = payload["eventType"]
-        .as_str()
-        .unwrap_or("unknown");
+    let event_id = payload["id"].as_str().unwrap_or("unknown");
+    let event_type = payload["eventType"].as_str().unwrap_or("unknown");
 
     let subscription_id = payload["object"]["subscription"]["id"]
         .as_str()
         .or_else(|| payload["object"]["subscription_id"].as_str())
         .map(|s| s.to_string());
 
-    let timestamp_ms = payload["createdAt"]
-        .as_str()
-        .and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.timestamp_millis())
-        });
+    let timestamp_ms = payload["createdAt"].as_str().and_then(|s| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|dt| dt.timestamp_millis())
+    });
 
     let (webhook_id, is_new) = crate::db::webhooks::create_webhook_provider(
         &db.pool,
@@ -226,14 +235,14 @@ pub async fn handle_creem(
         None,
         payload.clone(),
         timestamp_ms,
-    ).await?;
+    )
+    .await?;
 
     if !is_new {
         info!("Duplicate Creem webhook received (already processed): {}", event_id);
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    // 4. Return 204 immediately, spawn async processing (§12)
     let pool = db.pool.clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
@@ -244,7 +253,8 @@ pub async fn handle_creem(
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
                             &pool, app_id, delivery_id, canonical,
-                        ).await;
+                        )
+                        .await;
                     }
                     Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
                 }
@@ -267,10 +277,9 @@ pub async fn handle_lemonsqueezy(
 ) -> Result<StatusCode, BridgeError> {
     info!("Received LemonSqueezy webhook with token: {}", token);
 
-    // 1. Extract app from token
     let token_uuid = Uuid::parse_str(&token)
         .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
-    
+
     let app = crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid)
         .await
         .map_err(|_| {
@@ -278,19 +287,19 @@ pub async fn handle_lemonsqueezy(
             BridgeError::ValidationError("App not found".to_string())
         })?;
 
-    // 2. Verify provider signature (LemonSqueezy uses HMAC-SHA256 with "sha256=" prefix)
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
 
-    let mut mac = HmacSha256::new_from_slice(app.webhook_callback_secret.as_bytes())
+    let webhook_secret = get_provider_webhook_secret(&db.pool, app.id, "lemonsqueezy").await?;
+    let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
-    
+
     mac.update(body.as_bytes());
     let computed_sig = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
 
-    // Extract signature from x-signature header
-    let provided_sig = headers.get("x-signature")
+    let provided_sig = headers
+        .get("x-signature")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
@@ -299,30 +308,20 @@ pub async fn handle_lemonsqueezy(
         return Err(BridgeError::WebhookError("Invalid signature".to_string()));
     }
 
-    tracing::info!("LemonSqueezy webhook signature verified");
-    
-    // Parse payload
-    let payload: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| {
-            error!("Failed to parse LemonSqueezy webhook JSON: {}", e);
-            BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
-        })?;
+    info!("LemonSqueezy webhook signature verified");
 
-    // 3. Dedup via webhook_provider table
-    let event_id = payload["meta"]["webhook_id"]
-        .as_str()
-        .unwrap_or("unknown");
+    let payload: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+        error!("Failed to parse LemonSqueezy webhook JSON: {}", e);
+        BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
+    })?;
 
-    let event_type = payload["meta"]["event_name"]
-        .as_str()
-        .unwrap_or("unknown");
+    let event_id = payload["meta"]["webhook_id"].as_str().unwrap_or("unknown");
+    let event_type = payload["meta"]["event_name"].as_str().unwrap_or("unknown");
 
     let subscription_id = payload["data"]["id"]
         .as_str()
         .or_else(|| payload["data"]["attributes"]["subscription_id"].as_str())
         .map(|s| s.to_string());
-
-    let timestamp_ms = None; // LemonSqueezy timestamps are in RFC3339 format, extract if needed
 
     let (webhook_id, is_new) = crate::db::webhooks::create_webhook_provider(
         &db.pool,
@@ -333,15 +332,18 @@ pub async fn handle_lemonsqueezy(
         subscription_id,
         None,
         payload.clone(),
-        timestamp_ms,
-    ).await?;
+        None,
+    )
+    .await?;
 
     if !is_new {
-        info!("Duplicate LemonSqueezy webhook received (already processed): {}", event_id);
+        info!(
+            "Duplicate LemonSqueezy webhook received (already processed): {}",
+            event_id
+        );
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    // 4. Return 204 immediately, spawn async processing (§12)
     let pool = db.pool.clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
@@ -352,7 +354,8 @@ pub async fn handle_lemonsqueezy(
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
                             &pool, app_id, delivery_id, canonical,
-                        ).await;
+                        )
+                        .await;
                     }
                     Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
                 }
@@ -375,10 +378,9 @@ pub async fn handle_coinbase(
 ) -> Result<StatusCode, BridgeError> {
     info!("Received Coinbase webhook with token: {}", token);
 
-    // 1. Extract app from token
     let token_uuid = Uuid::parse_str(&token)
         .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
-    
+
     let app = crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid)
         .await
         .map_err(|_| {
@@ -386,19 +388,19 @@ pub async fn handle_coinbase(
             BridgeError::ValidationError("App not found".to_string())
         })?;
 
-    // 2. Verify provider signature (Coinbase uses HMAC-SHA256)
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
 
-    let mut mac = HmacSha256::new_from_slice(app.webhook_callback_secret.as_bytes())
+    let webhook_secret = get_provider_webhook_secret(&db.pool, app.id, "coinbase").await?;
+    let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
-    
+
     mac.update(body.as_bytes());
     let computed_sig = hex::encode(mac.finalize().into_bytes());
 
-    // Extract signature from x-cc-webhook-signature header
-    let provided_sig = headers.get("x-cc-webhook-signature")
+    let provided_sig = headers
+        .get("x-cc-webhook-signature")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
@@ -407,35 +409,22 @@ pub async fn handle_coinbase(
         return Err(BridgeError::WebhookError("Invalid signature".to_string()));
     }
 
-    tracing::info!("Coinbase webhook signature verified");
-    
-    // Parse payload
-    let payload: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| {
-            error!("Failed to parse Coinbase webhook JSON: {}", e);
-            BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
-        })?;
+    info!("Coinbase webhook signature verified");
 
-    // 3. Dedup via webhook_provider table
-    let event_id = payload["event"]["id"]
-        .as_str()
-        .unwrap_or("unknown");
+    let payload: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+        error!("Failed to parse Coinbase webhook JSON: {}", e);
+        BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
+    })?;
 
-    let event_type = payload["event"]["type"]
-        .as_str()
-        .unwrap_or("unknown");
+    let event_id = payload["event"]["id"].as_str().unwrap_or("unknown");
+    let event_type = payload["event"]["type"].as_str().unwrap_or("unknown");
+    let charge_id = payload["event"]["data"]["id"].as_str().map(|s| s.to_string());
 
-    let charge_id = payload["event"]["data"]["id"]
-        .as_str()
-        .map(|s| s.to_string());
-
-    let timestamp_ms = payload["event"]["created_at"]
-        .as_str()
-        .and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.timestamp_millis())
-        });
+    let timestamp_ms = payload["event"]["created_at"].as_str().and_then(|s| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|dt| dt.timestamp_millis())
+    });
 
     let (webhook_id, is_new) = crate::db::webhooks::create_webhook_provider(
         &db.pool,
@@ -447,14 +436,17 @@ pub async fn handle_coinbase(
         None,
         payload.clone(),
         timestamp_ms,
-    ).await?;
+    )
+    .await?;
 
     if !is_new {
-        info!("Duplicate Coinbase webhook received (already processed): {}", event_id);
+        info!(
+            "Duplicate Coinbase webhook received (already processed): {}",
+            event_id
+        );
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    // 4. Return 204 immediately, spawn async processing (§12)
     let pool = db.pool.clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
@@ -465,7 +457,8 @@ pub async fn handle_coinbase(
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
                             &pool, app_id, delivery_id, canonical,
-                        ).await;
+                        )
+                        .await;
                     }
                     Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
                 }
@@ -477,10 +470,95 @@ pub async fn handle_coinbase(
     });
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn decode_base64_flexible(input: &str) -> Result<Vec<u8>, String> {
+    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(input) {
+        return Ok(decoded);
+    }
+    if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE.decode(input) {
+        return Ok(decoded);
+    }
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(input)
+        .map_err(|e| e.to_string())
+}
+
+fn extract_google_event_type(payload: &serde_json::Value) -> String {
+    if let Some(notification_type) = payload["subscriptionNotification"]["notificationType"]
+        .as_i64()
+        .or_else(|| {
+            payload["subscriptionNotification"]["notificationType"]
+                .as_str()
+                .and_then(|s| s.parse::<i64>().ok())
+        })
+    {
+        return match notification_type {
+            1 => "SUBSCRIPTION_RESTORED",
+            2 => "SUBSCRIPTION_RENEWED",
+            3 => "SUBSCRIPTION_CANCELED",
+            4 => "SUBSCRIPTION_PURCHASED",
+            5 => "SUBSCRIPTION_ON_HOLD",
+            6 => "SUBSCRIPTION_IN_GRACE_PERIOD",
+            7 => "SUBSCRIPTION_RESTARTED",
+            9 => "SUBSCRIPTION_DEFERRED",
+            10 => "SUBSCRIPTION_PAUSED",
+            11 => "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED",
+            12 => "SUBSCRIPTION_REVOKED",
+            13 => "SUBSCRIPTION_EXPIRED",
+            19 => "SUBSCRIPTION_PRICE_CHANGE_UPDATED",
+            20 => "SUBSCRIPTION_PENDING_PURCHASE_CANCELED",
+            22 => "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED",
+            _ => "SUBSCRIPTION_UNKNOWN",
+        }
+        .to_string();
     }
 
-    /// Constant-time comparison of byte slices to prevent timing attacks
-    fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
+    if let Some(notification_type) = payload["oneTimeProductNotification"]["notificationType"]
+        .as_i64()
+        .or_else(|| {
+            payload["oneTimeProductNotification"]["notificationType"]
+                .as_str()
+                .and_then(|s| s.parse::<i64>().ok())
+        })
+    {
+        return match notification_type {
+            1 => "ONE_TIME_PRODUCT_PURCHASED",
+            2 => "ONE_TIME_PRODUCT_CANCELED",
+            _ => "ONE_TIME_PRODUCT_UNKNOWN",
+        }
+        .to_string();
+    }
+
+    if payload.get("voidedPurchaseNotification").is_some() {
+        return "VOIDED_PURCHASE".to_string();
+    }
+
+    "unknown".to_string()
+}
+
+async fn get_provider_webhook_secret(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    provider: &str,
+) -> Result<String, BridgeError> {
+    let provider_config =
+        crate::db::provider_configs::get_provider_config(pool, app_id, provider).await?;
+
+    provider_config
+        .config
+        .get("webhook_secret")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            BridgeError::ConfigError(format!(
+                "Missing {} webhook_secret in provider config",
+                provider
+            ))
+        })
+}
+
+fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -489,5 +567,4 @@ pub async fn handle_coinbase(
         result |= x ^ y;
     }
     result == 0
-    }
-
+}

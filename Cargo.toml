@@ -40,6 +40,8 @@ base64 = "0.22"
 rsa = "0.9"
 backoff = { version = "0.4", features = ["tokio"] }
 semver = "1.0"
+bcrypt = "0.16"
+argon2 = "0.5"
 
 [dev-dependencies]
 walkdir = "2.5.0"

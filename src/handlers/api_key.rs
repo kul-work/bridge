@@ -37,17 +37,8 @@ pub async fn api_key_auth(
     }
 
     let api_key = parts[1];
-    let key_hash = sha256_hash(api_key);
-
-    let app_id = db::api_keys::validate_api_key(&database.pool, &key_hash).await?;
+    let app_id = db::api_keys::authenticate_api_key(&database.pool, api_key).await?;
 
     request.extensions_mut().insert(AppAuth { app_id });
     Ok(next.run(request).await)
-}
-
-fn sha256_hash(input: &str) -> String {
-    use sha2::{Sha256, Digest};
-    let mut hasher = Sha256::new();
-    hasher.update(input.as_bytes());
-    hex::encode(hasher.finalize())
 }

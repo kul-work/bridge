@@ -8,8 +8,8 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use crate::db::Database;
-use crate::db::apps::App;
 use crate::error::BridgeError;
+use crate::handlers::api_key::AppAuth;
 
 #[derive(Deserialize)]
 pub struct AnonymizeRequest {
@@ -18,14 +18,14 @@ pub struct AnonymizeRequest {
 
 pub async fn anonymize(
     State(database): State<Arc<Database>>,
-    Extension(app): Extension<App>,
+    Extension(auth): Extension<AppAuth>,
     Path(external_user_id): Path<String>,
     Json(request): Json<AnonymizeRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
     let (subscriptions_cancelled, payments_anonymized, new_anonymous_id) = 
         crate::db::users::anonymize_user(
             &database.pool,
-            app.id,
+            auth.app_id,
             &external_user_id,
             request.reason.as_deref(),
         )
@@ -45,12 +45,12 @@ pub async fn anonymize(
 
 pub async fn data_export(
     State(database): State<Arc<Database>>,
-    Extension(app): Extension<App>,
+    Extension(auth): Extension<AppAuth>,
     Path(external_user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
     let subscriptions = crate::db::subscriptions::get_user_subscriptions(
         &database.pool,
-        app.id,
+        auth.app_id,
         &external_user_id,
         100,
         0,
@@ -59,7 +59,7 @@ pub async fn data_export(
     
     let payments = crate::db::payments::get_user_payments(
         &database.pool,
-        app.id,
+        auth.app_id,
         &external_user_id,
         100,
         0,
