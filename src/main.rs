@@ -61,6 +61,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Load config
     let config = Config::from_env()?;
+    let env_lower = config.environment.to_ascii_lowercase();
+    let is_production = env_lower == "production" || env_lower == "prod";
+
+    if is_production && config.mock_external_apis {
+        anyhow::bail!("MOCK_EXTERNAL_APIS=true is not allowed in production");
+    }
 
     info!("Starting Bridge v{}", env!("CARGO_PKG_VERSION"));
     info!("Environment: {}", config.environment);
@@ -72,19 +78,17 @@ async fn main() -> anyhow::Result<()> {
     info!("Connected to PostgreSQL");
 
     // Start background webhook delivery job
-    webhooks::scheduler::spawn_webhook_retry_worker(database.clone());
-    
-    // Start background subscription reconciliation job
-    webhooks::scheduler::spawn_reconciliation_worker(database.clone());
+    // Start background workers
+    if config.enable_background_jobs {
+        webhooks::scheduler::spawn_webhook_retry_worker(database.clone());
+        webhooks::scheduler::spawn_reconciliation_worker(database.clone());
+        webhooks::scheduler::spawn_price_step_up_expiry_worker(database.clone());
+        webhooks::scheduler::spawn_pause_scheduler_worker(database.clone());
+        webhooks::scheduler::spawn_webhook_cleanup_worker(database.clone());
+    } else {
+        info!("Background jobs are disabled (ENABLE_BACKGROUND_JOBS=false)");
+    }
 
-    // Start background price step-up expiry job (§47)
-    webhooks::scheduler::spawn_price_step_up_expiry_worker(database.clone());
-
-    // Start background pause scheduler job (§48)
-    webhooks::scheduler::spawn_pause_scheduler_worker(database.clone());
-
-    // Start background webhook log cleanup job (§49)
-    webhooks::scheduler::spawn_webhook_cleanup_worker(database.clone());
 
     // Build protected routes with API key middleware
     let protected_routes = Router::new()

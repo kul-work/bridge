@@ -9,12 +9,20 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use base64::Engine;
+use chrono::{DateTime, Utc};
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct ListSubscriptionsQuery {
     pub external_user_id: String,
     pub limit: Option<i64>,
     pub after: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SubscriptionCursor {
+    created_at: DateTime<Utc>,
+    id: Uuid,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,47 +59,37 @@ pub async fn list_subscriptions(
     }
 
     let limit = query.limit.unwrap_or(10).min(100);
-    
-    // Decode cursor to get offset (cursor = base64(offset))
-    let offset = if let Some(cursor) = &query.after {
-        String::from_utf8(
-            base64::engine::general_purpose::STANDARD
-                .decode(cursor)
-                .unwrap_or_default()
-        )
-        .ok()
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(0)
-    } else {
-        0
-    };
 
-    let subs = db::subscriptions::get_user_subscriptions(
+    let cursor = decode_cursor(query.after.as_deref())?;
+
+    let subs = db::subscriptions::get_user_subscriptions_keyset(
         &database.pool,
         auth.app_id,
         &query.external_user_id,
         limit + 1, // Fetch one extra to check if there are more
-        offset,
+        cursor.as_ref().map(|c| c.created_at),
+        cursor.as_ref().map(|c| c.id),
     )
     .await?;
 
     let has_more = subs.len() > limit as usize;
-    let subscriptions: Vec<_> = subs
-        .into_iter()
-        .take(limit as usize)
+    let page_subs: Vec<_> = subs.iter().take(limit as usize).collect();
+    let subscriptions: Vec<_> = page_subs
+        .iter()
         .map(|s| SubscriptionDetail {
             id: s.id.to_string(),
-            subscription_id: s.subscription_id,
-            provider: s.provider,
-            status: s.status,
+            subscription_id: s.subscription_id.clone(),
+            provider: s.provider.clone(),
+            status: s.status.clone(),
             current_period_end: s.current_period_end.map(|d| d.to_rfc3339()),
             auto_renewing: s.auto_renewing,
         })
         .collect();
 
     let next_cursor = if has_more {
-        let next_offset = offset + limit;
-        Some(base64::engine::general_purpose::STANDARD.encode(next_offset.to_string()))
+        let last = page_subs.last().expect("has_more implies non-empty page");
+        let cursor = SubscriptionCursor { created_at: last.created_at, id: last.id };
+        Some(encode_cursor(&cursor)?)
     } else {
         None
     };
@@ -106,6 +104,25 @@ pub async fn list_subscriptions(
             },
         }),
     ))
+}
+
+fn decode_cursor(after: Option<&str>) -> Result<Option<SubscriptionCursor>, BridgeError> {
+    let Some(raw) = after else {
+        return Ok(None);
+    };
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(raw)
+        .map_err(|_| BridgeError::ValidationError("Invalid cursor encoding".to_string()))?;
+    let cursor: SubscriptionCursor = serde_json::from_slice(&decoded)
+        .map_err(|_| BridgeError::ValidationError("Invalid cursor payload".to_string()))?;
+    Ok(Some(cursor))
+}
+
+fn encode_cursor(cursor: &SubscriptionCursor) -> Result<String, BridgeError> {
+    let bytes = serde_json::to_vec(cursor)
+        .map_err(|e| BridgeError::InternalServerError(format!("Failed to encode cursor: {}", e)))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
 #[derive(Debug, Deserialize)]

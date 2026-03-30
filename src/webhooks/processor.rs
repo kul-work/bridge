@@ -442,8 +442,71 @@ pub async fn process_webhook(
         }
 
         // §42 - Coinbase charge confirmed (agent topup)
+        "subscription.pause_schedule_changed" => {
+            if let Some(sub_id) = fields.subscription_id.as_deref() {
+                let pause_scheduled_at = webhook.payload.pointer("/subscriptionNotification/pauseScheduleTimeMillis")
+                    .and_then(|v| v.as_i64())
+                    .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms));
+
+                if let Some(schedule_at) = pause_scheduled_at {
+                    sqlx::query(
+                        "UPDATE pay.subscriptions
+                         SET google_pause_scheduled_at = $1, updated_at = NOW()
+                         WHERE app_id = $2 AND subscription_id = $3"
+                    )
+                    .bind(schedule_at)
+                    .bind(app_id)
+                    .bind(sub_id)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+                }
+            }
+        }
+
+        "subscription.deferred" | "subscription.price_change_updated" | "subscription.price_step_up_consent_updated" => {
+            info!("Processed informational webhook event: {} (provider: {})", canonical_event, webhook.provider);
+        }
+
         "payment.succeeded" if webhook.provider == "coinbase" => {
-            info!("Coinbase charge confirmed, agent topup handled separately");
+            let charge_id = fields.provider_transaction_id
+                .clone()
+                .or_else(|| webhook.subscription_id.clone())
+                .unwrap_or_else(|| webhook.provider_webhook_id.clone());
+
+            let external_user_id = webhook.payload.pointer("/event/data/metadata/external_user_id")
+                .and_then(|v| v.as_str())
+                .or_else(|| webhook.payload.pointer("/event/data/metadata/user_id").and_then(|v| v.as_str()))
+                .map(|s| s.to_string());
+
+            let amount_cents = fields.amount_cents
+                .or_else(|| {
+                    webhook.payload.pointer("/event/data/metadata/amount_cents")
+                        .and_then(|v| v.as_i64())
+                        .map(|v| v as i32)
+                })
+                .unwrap_or(0);
+
+            if amount_cents <= 0 {
+                info!("Coinbase charge {} skipped: non-positive amount {}", charge_id, amount_cents);
+            } else if let Some(user_id) = external_user_id {
+                let inserted = crate::db::agent::apply_topup_if_new(
+                    pool,
+                    app_id,
+                    &user_id,
+                    amount_cents,
+                    &charge_id,
+                )
+                .await?;
+
+                if inserted {
+                    info!("Coinbase topup applied: charge_id={}, user={}, amount_cents={}", charge_id, user_id, amount_cents);
+                } else {
+                    info!("Coinbase topup already applied (idempotent): charge_id={}", charge_id);
+                }
+            } else {
+                info!("Coinbase charge {} skipped: missing metadata external_user_id/user_id", charge_id);
+            }
         }
 
         // Unknown/unhandled
@@ -494,6 +557,18 @@ fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "SUBSCRIPTION_RESTORED" => "subscription.recovered".to_string(),
             "SUBSCRIPTION_EXPIRED" => "subscription.expired".to_string(),
             "SUBSCRIPTION_ON_HOLD" => "subscription.on_hold".to_string(),
+            "SUBSCRIPTION_IN_GRACE_PERIOD" => "subscription.grace_period".to_string(),
+            "SUBSCRIPTION_RESTARTED" => "subscription.resumed".to_string(),
+            "SUBSCRIPTION_PAUSED" => "subscription.paused".to_string(),
+            "SUBSCRIPTION_REVOKED" => "subscription.revoked".to_string(),
+            "SUBSCRIPTION_DEFERRED" => "subscription.deferred".to_string(),
+            "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED" => "subscription.pause_schedule_changed".to_string(),
+            "SUBSCRIPTION_PRICE_CHANGE_UPDATED" => "subscription.price_change_updated".to_string(),
+            "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED" => "subscription.price_step_up_consent_updated".to_string(),
+            "SUBSCRIPTION_PENDING_PURCHASE_CANCELED" => "payment.failed".to_string(),
+            "ONE_TIME_PRODUCT_PURCHASED" => "purchase.one_time".to_string(),
+            "ONE_TIME_PRODUCT_CANCELED" => "payment.refunded".to_string(),
+            "VOIDED_PURCHASE" => "payment.refunded".to_string(),
             _ => format!("google_play.{}", event_type),
         },
         "creem" => match event_type {

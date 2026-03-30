@@ -6,6 +6,7 @@ pub mod provider_configs;
 pub mod webhooks;
 pub mod users;
 pub mod agent;
+pub mod checkout_idempotency;
 
 use crate::error::BridgeError;
 use sqlx::PgPool;

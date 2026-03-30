@@ -6,6 +6,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -16,9 +17,11 @@ pub struct CheckoutRequest {
     pub email: Option<String>,
     pub provider: String,
     pub product_id: String,
+    pub product_type: Option<String>,
+    pub idempotency_key: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CheckoutResponse {
     pub checkout_id: String,
     pub redirect_url: Option<String>,
@@ -45,6 +48,29 @@ pub async fn create_checkout(
         return Err(BridgeError::ValidationError(
             "product_id is required".to_string(),
         ));
+    }
+    if payload.idempotency_key.as_deref() == Some("") {
+        return Err(BridgeError::ValidationError(
+            "idempotency_key cannot be empty".to_string(),
+        ));
+    }
+
+    let request_fingerprint = compute_request_fingerprint(&payload)?;
+
+    if let Some(key) = payload.idempotency_key.as_deref() {
+        if let Some(cached) =
+            db::checkout_idempotency::get_cached_checkout(&database.pool, auth.app_id, key).await?
+        {
+            if cached.request_fingerprint != request_fingerprint {
+                return Err(BridgeError::ValidationError(
+                    "idempotency_key reused with different checkout payload".to_string(),
+                ));
+            }
+
+            let cached_response: CheckoutResponse = serde_json::from_value(cached.response_payload)
+                .map_err(|e| BridgeError::InternalServerError(format!("Invalid cached checkout payload: {}", e)))?;
+            return Ok((StatusCode::OK, Json(cached_response)));
+        }
     }
 
     // Get app config
@@ -155,5 +181,34 @@ pub async fn create_checkout(
         }
     };
 
+    if let Some(key) = payload.idempotency_key.as_deref() {
+        let response_json = serde_json::to_value(&response)
+            .map_err(|e| BridgeError::InternalServerError(format!("Failed to serialize checkout response: {}", e)))?;
+        db::checkout_idempotency::cache_checkout_response(
+            &database.pool,
+            auth.app_id,
+            key,
+            &request_fingerprint,
+            &response_json,
+        )
+        .await?;
+    }
+
     Ok((StatusCode::CREATED, Json(response)))
+}
+
+fn compute_request_fingerprint(payload: &CheckoutRequest) -> Result<String, BridgeError> {
+    let normalized_payload = serde_json::json!({
+        "external_user_id": payload.external_user_id,
+        "email": payload.email,
+        "provider": payload.provider,
+        "product_id": payload.product_id,
+        "product_type": payload.product_type,
+    });
+
+    let body = serde_json::to_vec(&normalized_payload)
+        .map_err(|e| BridgeError::InternalServerError(format!("Failed to serialize checkout payload: {}", e)))?;
+    let mut hasher = Sha256::new();
+    hasher.update(body);
+    Ok(hex::encode(hasher.finalize()))
 }

@@ -83,6 +83,9 @@ pub enum BridgeError {
 
     #[error("App disabled: {0}")]
     AppDisabled(String),
+
+    #[error("Subscription not found: {0}")]
+    SubscriptionNotFound(String),
 }
 
 impl IntoResponse for BridgeError {
@@ -170,6 +173,11 @@ impl IntoResponse for BridgeError {
                     msg.clone(),
                 )
             }
+            BridgeError::SubscriptionNotFound(msg) => (
+                StatusCode::NOT_FOUND,
+                "subscription_not_found",
+                msg.clone(),
+            ),
         };
 
         let error_response = ErrorResponse {

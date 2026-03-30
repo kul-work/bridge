@@ -20,6 +20,8 @@ pub struct Subscription {
     pub provider_customer_id: Option<String>,
     pub version: i32,
     pub last_event_time: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 pub async fn get_subscription(
@@ -39,7 +41,36 @@ pub async fn get_subscription(
     .fetch_optional(pool)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?
-    .ok_or_else(|| BridgeError::ValidationError("Subscription not found".to_string()))
+    .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))
+}
+
+pub async fn get_user_subscriptions_keyset(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+    limit: i64,
+    cursor_created_at: Option<DateTime<Utc>>,
+    cursor_id: Option<Uuid>,
+) -> Result<Vec<Subscription>, BridgeError> {
+    sqlx::query_as::<_, Subscription>(
+        "SELECT * FROM pay.subscriptions
+         WHERE app_id = $1 AND external_user_id = $2 
+           AND (
+               $3::timestamptz IS NULL
+               OR $4::uuid IS NULL
+               OR (created_at, id) < ($3, $4)
+           )
+         ORDER BY created_at DESC, id DESC
+         LIMIT $5"
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .bind(limit)
+    .bind(cursor_created_at)
+    .bind(cursor_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
 pub async fn get_user_subscriptions(
@@ -50,9 +81,9 @@ pub async fn get_user_subscriptions(
     offset: i64,
 ) -> Result<Vec<Subscription>, BridgeError> {
     sqlx::query_as::<_, Subscription>(
-        "SELECT * FROM pay.subscriptions 
-         WHERE app_id = $1 AND external_user_id = $2 
-         ORDER BY created_at DESC 
+        "SELECT * FROM pay.subscriptions
+         WHERE app_id = $1 AND external_user_id = $2
+         ORDER BY created_at DESC
          LIMIT $3 OFFSET $4"
     )
     .bind(app_id)
