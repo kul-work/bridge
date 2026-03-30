@@ -24,17 +24,6 @@ Main risk areas:
 
 ## 2. Findings by Severity
 
-### Critical / High
-
-**Current open criticals:** None after recheck (2026-03-30).
-
-Resolved in code:
-
-- Section 2 API key hardening (full hash verify path, app-enabled gate, `last_used_at` update).
-- Section 12 ingress verification (Google signature verification path + provider webhook secret usage).
-- Section 38 stale-event suppression at forward time.
-- Section 5 verify-purchase Google acknowledge + callback forwarding.
-- Sections 44-45 GDPR handler auth extractor alignment (`AppAuth`).
 
 ### Medium
 
