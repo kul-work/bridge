@@ -109,6 +109,7 @@ pub struct RegisterPurchaseRequest {
     pub external_user_id: String,
     pub subscription_id: String,
     pub provider: String,
+    #[allow(dead_code)]
     pub reason: String,
 }
 
@@ -116,7 +117,8 @@ pub struct RegisterPurchaseRequest {
 pub struct RegisterPurchaseResponse {
     pub success: bool,
     pub message: String,
-    pub grant_id: String,
+    pub subscription_id: String,
+    pub status: String,
 }
 
 pub async fn register_purchase(
@@ -133,31 +135,22 @@ pub async fn register_purchase(
         ));
     }
 
-    // Insert manual grant record
-    let grant_id = uuid::Uuid::new_v4().to_string();
-
-    sqlx::query(
-        r#"
-        INSERT INTO pay.manual_grants (id, app_id, external_user_id, subscription_id, provider, reason, granted_at)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW())
-        "#,
-    )
-    .bind(&grant_id)
-    .bind(auth.app_id)
-    .bind(&request.external_user_id)
-    .bind(&request.subscription_id)
-    .bind(&request.provider)
-    .bind(&request.reason)
-    .execute(&database.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    // §6: Create pending subscription placeholder (not a manual grant)
+    let sub = crate::db::subscriptions::upsert_pending_subscription(
+        &database.pool,
+        auth.app_id,
+        &request.external_user_id,
+        &request.subscription_id,
+        &request.provider,
+    ).await?;
 
     Ok((
         StatusCode::CREATED,
         Json(RegisterPurchaseResponse {
             success: true,
-            message: "Purchase registered".to_string(),
-            grant_id,
+            message: "Purchase registered as pending subscription".to_string(),
+            subscription_id: sub.subscription_id,
+            status: sub.status,
         }),
     ))
 }

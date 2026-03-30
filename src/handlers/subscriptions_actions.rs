@@ -1,6 +1,7 @@
 use crate::db;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
+use crate::services::provider_api;
 use axum::{
     extract::{State, Extension, Path},
     http::StatusCode,
@@ -29,21 +30,38 @@ pub async fn cancel_subscription(
     Path(subscription_id): Path<String>,
     Json(request): Json<CancelSubscriptionRequest>,
 ) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
-    // Get subscription to verify ownership
-    let sub = db::subscriptions::get_subscription(
+    // Load subscription (provider-agnostic lookup)
+    let sub = db::subscriptions::get_subscription_by_sub_id(
         &database.pool,
         auth.app_id,
-        &request.external_user_id,
         &subscription_id,
-        "", // provider will be fetched from db
     )
-    .await?;
+    .await?
+    .ok_or_else(|| BridgeError::ValidationError("Subscription not found".to_string()))?;
 
-    // Update subscription status to cancelled
+    // Verify ownership
+    if sub.external_user_id != request.external_user_id {
+        return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
+    }
+
+    // Load provider config and call provider API
+    let provider_config = db::provider_configs::get_provider_config(
+        &database.pool,
+        auth.app_id,
+        &sub.provider,
+    ).await?;
+
+    provider_api::cancel_subscription(
+        &sub.provider,
+        &sub.subscription_id,
+        sub.purchase_token.as_deref(),
+        &provider_config.config,
+    ).await?;
+
+    // Provider call succeeded — update local DB
     sqlx::query(
-        "UPDATE pay.subscriptions SET status = $1, updated_at = NOW() WHERE id = $2",
+        "UPDATE pay.subscriptions SET auto_renewing = false, cancellation_initiated_at = NOW(), updated_at = NOW() WHERE id = $1",
     )
-    .bind("cancelled")
     .bind(sub.id)
     .execute(&database.pool)
     .await
@@ -53,7 +71,7 @@ pub async fn cancel_subscription(
         StatusCode::OK,
         Json(SubscriptionActionResponse {
             success: true,
-            message: "Subscription cancelled".to_string(),
+            message: "Subscription cancellation requested".to_string(),
         }),
     ))
 }
@@ -64,20 +82,35 @@ pub async fn resume_subscription(
     Path(subscription_id): Path<String>,
     Json(request): Json<CancelSubscriptionRequest>,
 ) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription(
+    let sub = db::subscriptions::get_subscription_by_sub_id(
         &database.pool,
         auth.app_id,
-        &request.external_user_id,
         &subscription_id,
-        "",
     )
-    .await?;
+    .await?
+    .ok_or_else(|| BridgeError::ValidationError("Subscription not found".to_string()))?;
 
-    // Update subscription status to active
+    if sub.external_user_id != request.external_user_id {
+        return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
+    }
+
+    // Load provider config and call provider API
+    let provider_config = db::provider_configs::get_provider_config(
+        &database.pool,
+        auth.app_id,
+        &sub.provider,
+    ).await?;
+
+    provider_api::resume_subscription(
+        &sub.provider,
+        &sub.subscription_id,
+        &provider_config.config,
+    ).await?;
+
+    // Provider call succeeded — update local DB
     sqlx::query(
-        "UPDATE pay.subscriptions SET status = $1, updated_at = NOW() WHERE id = $2",
+        "UPDATE pay.subscriptions SET status = 'active', auto_renewing = true, cancellation_initiated_at = NULL, updated_at = NOW() WHERE id = $1",
     )
-    .bind("active")
     .bind(sub.id)
     .execute(&database.pool)
     .await
@@ -103,16 +136,18 @@ pub async fn acknowledge_subscription(
     Path(subscription_id): Path<String>,
     Json(request): Json<AcknowledgeRequest>,
 ) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription(
+    let sub = db::subscriptions::get_subscription_by_sub_id(
         &database.pool,
         auth.app_id,
-        &request.external_user_id,
         &subscription_id,
-        "",
     )
-    .await?;
+    .await?
+    .ok_or_else(|| BridgeError::ValidationError("Subscription not found".to_string()))?;
 
-    // Mark as acknowledged (clear any pending action flags)
+    if sub.external_user_id != request.external_user_id {
+        return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
+    }
+
     sqlx::query(
         "UPDATE pay.subscriptions SET acknowledged_at = NOW(), updated_at = NOW() WHERE id = $1",
     )
@@ -141,21 +176,33 @@ pub async fn create_billing_portal(
     Path(subscription_id): Path<String>,
     Json(request): Json<AcknowledgeRequest>,
 ) -> Result<(StatusCode, Json<BillingPortalResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription(
+    let sub = db::subscriptions::get_subscription_by_sub_id(
         &database.pool,
         auth.app_id,
-        &request.external_user_id,
         &subscription_id,
-        "",
     )
-    .await?;
+    .await?
+    .ok_or_else(|| BridgeError::ValidationError("Subscription not found".to_string()))?;
 
-    // Generate portal URL based on provider
-    let portal_url = match sub.provider.as_str() {
-        "creem" => format!("https://creem.app/portal/{}", sub.subscription_id),
-        "lemonsqueezy" => format!("https://lemon.app/portal/{}", sub.subscription_id),
-        _ => format!("https://portal.pay.tydecode.com/{}", sub.subscription_id),
-    };
+    if sub.external_user_id != request.external_user_id {
+        return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
+    }
+
+    let customer_id = sub.provider_customer_id.as_deref()
+        .ok_or_else(|| BridgeError::ValidationError("Provider customer ID not available for this subscription".to_string()))?;
+
+    // Load provider config and call provider API for real portal URL
+    let provider_config = db::provider_configs::get_provider_config(
+        &database.pool,
+        auth.app_id,
+        &sub.provider,
+    ).await?;
+
+    let portal_url = provider_api::create_billing_portal(
+        &sub.provider,
+        customer_id,
+        &provider_config.config,
+    ).await?;
 
     Ok((
         StatusCode::OK,
@@ -174,16 +221,18 @@ pub async fn accept_price_step_up(
     Path(subscription_id): Path<String>,
     Json(request): Json<PriceStepUpRequest>,
 ) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription(
+    let sub = db::subscriptions::get_subscription_by_sub_id(
         &database.pool,
         auth.app_id,
-        &request.external_user_id,
         &subscription_id,
-        "",
     )
-    .await?;
+    .await?
+    .ok_or_else(|| BridgeError::ValidationError("Subscription not found".to_string()))?;
 
-    // Clear price step-up flag
+    if sub.external_user_id != request.external_user_id {
+        return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
+    }
+
     sqlx::query(
         "UPDATE pay.subscriptions SET price_step_up_pending = false, updated_at = NOW() WHERE id = $1",
     )
@@ -207,16 +256,18 @@ pub async fn decline_price_step_up(
     Path(subscription_id): Path<String>,
     Json(request): Json<PriceStepUpRequest>,
 ) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription(
+    let sub = db::subscriptions::get_subscription_by_sub_id(
         &database.pool,
         auth.app_id,
-        &request.external_user_id,
         &subscription_id,
-        "",
     )
-    .await?;
+    .await?
+    .ok_or_else(|| BridgeError::ValidationError("Subscription not found".to_string()))?;
 
-    // Set status to pending cancellation due to declined price step-up
+    if sub.external_user_id != request.external_user_id {
+        return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
+    }
+
     sqlx::query(
         "UPDATE pay.subscriptions SET status = $1, price_step_up_pending = false, updated_at = NOW() WHERE id = $2",
     )

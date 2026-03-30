@@ -77,6 +77,15 @@ async fn main() -> anyhow::Result<()> {
     // Start background subscription reconciliation job
     webhooks::scheduler::spawn_reconciliation_worker(database.clone());
 
+    // Start background price step-up expiry job (§47)
+    webhooks::scheduler::spawn_price_step_up_expiry_worker(database.clone());
+
+    // Start background pause scheduler job (§48)
+    webhooks::scheduler::spawn_pause_scheduler_worker(database.clone());
+
+    // Start background webhook log cleanup job (§49)
+    webhooks::scheduler::spawn_webhook_cleanup_worker(database.clone());
+
     // Build protected routes with API key middleware
     let protected_routes = Router::new()
         .route("/checkout", axum::routing::post(handlers::checkout::create_checkout))
@@ -98,6 +107,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/agent/token", axum::routing::post(handlers::agent::token))
         .route("/agent/charge", axum::routing::post(handlers::agent::charge))
         .route("/agent/topup", axum::routing::post(handlers::agent::topup))
+        .layer(axum::middleware::from_fn_with_state(
+            database.clone(),
+            middleware::rate_limit::api_rate_limit_middleware,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             database.clone(),
             handlers::api_key::api_key_auth,

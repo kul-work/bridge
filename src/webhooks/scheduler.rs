@@ -94,15 +94,15 @@ pub async fn reconcile_subscriptions(database: &Arc<Database>) -> Result<(), cra
 
 async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uuid) -> Result<(), crate::error::BridgeError> {
     // Get all active subscriptions for the app
-    let active_subs = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT id, subscription_id, provider, external_user_id FROM pay.subscriptions WHERE app_id = $1 AND status IN ('active', 'trial', 'past_due')"
+    let active_subs = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
+        "SELECT id::text, subscription_id, provider, external_user_id, purchase_token FROM pay.subscriptions WHERE app_id = $1 AND status IN ('active', 'trial', 'past_due')"
     )
     .bind(app_id)
     .fetch_all(&database.pool)
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
-    for (_sub_id, subscription_id, provider, _external_user_id) in active_subs {
+    for (_sub_id, subscription_id, provider, _external_user_id, purchase_token) in active_subs {
         // Check current status with provider
         let provider_config = sqlx::query_as::<_, crate::db::provider_configs::ProviderConfig>(
             "SELECT * FROM pay.provider_configs WHERE app_id = $1 AND provider = $2"
@@ -114,40 +114,48 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
         .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
         if let Some(config) = provider_config {
-            // Verify current status (simplified; actual implementation would call provider APIs)
-            if let Ok((provider_status, _)) = verify_subscription_status(
+            // Call provider API to get current subscription status
+            let provider_result = crate::services::provider_api::fetch_subscription_status(
                 &provider,
                 &subscription_id,
+                purchase_token.as_deref(),
                 &config.config,
-            )
-            .await {
-                // Compare with DB status and trigger corrective webhook if changed
-                let db_status = sqlx::query_scalar::<_, String>(
-                    "SELECT status FROM pay.subscriptions WHERE app_id = $1 AND subscription_id = $2"
-                )
-                .bind(app_id)
-                .bind(&subscription_id)
-                .fetch_optional(&database.pool)
-                .await
-                .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+            ).await;
 
-                if let Some(current_db_status) = db_status {
-                    if current_db_status != provider_status {
-                        info!(
-                            "Subscription {} status drift detected: db={}, provider={}. Triggering corrective callback.",
-                            subscription_id, current_db_status, provider_status
-                        );
-                        // Update status and trigger webhook
-                        sqlx::query(
-                            "UPDATE pay.subscriptions SET status = $1, updated_at = NOW() WHERE app_id = $2 AND subscription_id = $3"
-                        )
-                        .bind(&provider_status)
-                        .bind(app_id)
-                        .bind(&subscription_id)
-                        .execute(&database.pool)
-                        .await
-                        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+            match provider_result {
+                Ok((provider_status, _)) => {
+                    // Compare with DB status and trigger corrective webhook if changed
+                    let db_status = sqlx::query_scalar::<_, String>(
+                        "SELECT status FROM pay.subscriptions WHERE app_id = $1 AND subscription_id = $2"
+                    )
+                    .bind(app_id)
+                    .bind(&subscription_id)
+                    .fetch_optional(&database.pool)
+                    .await
+                    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+                    if let Some(current_db_status) = db_status {
+                        if current_db_status != provider_status {
+                            info!(
+                                "Subscription {} status drift detected: db={}, provider={}. Triggering corrective callback.",
+                                subscription_id, current_db_status, provider_status
+                            );
+                            // Update status and trigger webhook
+                            sqlx::query(
+                                "UPDATE pay.subscriptions SET status = $1, updated_at = NOW() WHERE app_id = $2 AND subscription_id = $3"
+                            )
+                            .bind(&provider_status)
+                            .bind(app_id)
+                            .bind(&subscription_id)
+                            .execute(&database.pool)
+                            .await
+                            .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+                        }
                     }
+                }
+                Err(e) => {
+                    error!("Failed to fetch status for subscription {} from {}: {}", subscription_id, provider, e);
+                    // Skip this subscription, don't fail the whole job
                 }
             }
         }
@@ -156,27 +164,178 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
     Ok(())
 }
 
-async fn verify_subscription_status(
-    provider: &str,
-    subscription_id: &str,
-    _config: &serde_json::Value,
-) -> Result<(String, Option<chrono::DateTime<chrono::Utc>>), crate::error::BridgeError> {
-    match provider {
-        "google_play" => {
-            // Placeholder: Would call Google Play API
-            info!("Reconciling Google Play subscription {}", subscription_id);
-            Ok(("active".to_string(), None))
+pub fn spawn_price_step_up_expiry_worker(database: Arc<Database>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
+        info!("Price step-up expiry worker started");
+
+        loop {
+            interval.tick().await;
+
+            if let Err(e) = process_price_step_up_expiry(&database).await {
+                error!("Price step-up expiry worker failed: {}", e);
+            }
         }
-        "creem" => {
-            // Placeholder: Would call Creem API
-            info!("Reconciling Creem subscription {}", subscription_id);
-            Ok(("active".to_string(), None))
+    });
+}
+
+async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
+    let expired = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, String, String, Option<String>)>(
+        "SELECT id, app_id, subscription_id, provider, purchase_token 
+         FROM pay.subscriptions 
+         WHERE google_requires_price_step_up_consent = true 
+           AND google_price_step_up_consent_deadline IS NOT NULL 
+           AND google_price_step_up_consent_deadline < NOW()
+         LIMIT 100"
+    )
+    .fetch_all(&database.pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    for (id, app_id, subscription_id, provider, purchase_token) in expired {
+        info!("Price step-up expired for subscription {}, auto-cancelling", subscription_id);
+
+        // Try to cancel with provider
+        let provider_config = sqlx::query_as::<_, crate::db::provider_configs::ProviderConfig>(
+            "SELECT * FROM pay.provider_configs WHERE app_id = $1 AND provider = $2"
+        )
+        .bind(app_id)
+        .bind(&provider)
+        .fetch_optional(&database.pool)
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+        if let Some(config) = provider_config {
+            if let Err(e) = crate::services::provider_api::cancel_subscription(
+                &provider,
+                &subscription_id,
+                purchase_token.as_deref(),
+                &config.config,
+            ).await {
+                error!("Failed to cancel price step-up expired sub {}: {}", subscription_id, e);
+            }
         }
-        "lemonsqueezy" => {
-            // Placeholder: Would call LemonSqueezy API
-            info!("Reconciling LemonSqueezy subscription {}", subscription_id);
-            Ok(("active".to_string(), None))
-        }
-        _ => Ok(("active".to_string(), None)),
+
+        // Update local DB regardless (clear consent flags, set auto_renewing=false)
+        sqlx::query(
+            "UPDATE pay.subscriptions 
+             SET google_requires_price_step_up_consent = false,
+                 google_price_step_up_consent_deadline = NULL,
+                 auto_renewing = false,
+                 updated_at = NOW()
+             WHERE id = $1"
+        )
+        .bind(id)
+        .execute(&database.pool)
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
     }
+
+    Ok(())
+}
+
+pub fn spawn_pause_scheduler_worker(database: Arc<Database>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1500)); // 25 minutes
+        info!("Pause scheduler worker started");
+
+        loop {
+            interval.tick().await;
+
+            if let Err(e) = process_pause_transitions(&database).await {
+                error!("Pause scheduler worker failed: {}", e);
+            }
+        }
+    });
+}
+
+async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
+    // 1. Pause transition: subscriptions scheduled to pause
+    let pending_pause = sqlx::query_as::<_, (uuid::Uuid, String)>(
+        "SELECT id, subscription_id FROM pay.subscriptions 
+         WHERE google_pause_scheduled_at IS NOT NULL 
+           AND google_pause_scheduled_at <= NOW() 
+           AND status != 'paused'
+         LIMIT 100"
+    )
+    .fetch_all(&database.pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    for (id, subscription_id) in pending_pause {
+        info!("Transitioning subscription {} to paused (scheduled pause)", subscription_id);
+
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        sqlx::query(
+            "UPDATE pay.subscriptions 
+             SET status = 'paused',
+                 auto_renewing = false,
+                 google_paused_at = NOW(),
+                 version = version + 1,
+                 last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
+                 updated_at = NOW()
+             WHERE id = $2 AND status != 'paused'"
+        )
+        .bind(now_ms)
+        .bind(id)
+        .execute(&database.pool)
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+    }
+
+    // 2. Orphaned pending cleanup: remove stale register_purchase placeholders
+    let deleted = sqlx::query(
+        "DELETE FROM pay.subscriptions 
+         WHERE status = 'pending' 
+           AND purchase_token IS NULL 
+           AND created_at < NOW() - INTERVAL '30 minutes'"
+    )
+    .execute(&database.pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    if deleted.rows_affected() > 0 {
+        info!("Cleaned up {} orphaned pending subscriptions", deleted.rows_affected());
+    }
+
+    Ok(())
+}
+
+pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(86400)); // daily
+        info!("Webhook log cleanup worker started");
+
+        loop {
+            interval.tick().await;
+
+            if let Err(e) = cleanup_old_data(&database).await {
+                error!("Webhook log cleanup worker failed: {}", e);
+            }
+        }
+    });
+}
+
+async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
+    info!("Starting data retention cleanup");
+
+    // §49: Webhook log cleanup (90-day retention)
+    sqlx::query("SELECT pay.cleanup_old_webhook_provider()")
+        .execute(&database.pool)
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    // Also clean up expired agent tokens and fraud prevention records
+    sqlx::query("SELECT pay.cleanup_expired_agent_tokens()")
+        .execute(&database.pool)
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    sqlx::query("SELECT pay.cleanup_purged_fraud_prevention()")
+        .execute(&database.pool)
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    info!("Data retention cleanup completed");
+    Ok(())
 }

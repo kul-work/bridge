@@ -170,7 +170,7 @@ pub async fn create_webhook_provider(
         "INSERT INTO pay.webhook_provider 
          (app_id, provider, provider_webhook_id, event_type, subscription_id, purchase_token, payload, timestamp_epoch_ms)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (app_id, provider, provider_webhook_id) DO NOTHING
+         ON CONFLICT DO NOTHING
          RETURNING id"
     )
     .bind(app_id)
@@ -178,7 +178,7 @@ pub async fn create_webhook_provider(
     .bind(provider_webhook_id)
     .bind(event_type)
     .bind(subscription_id)
-    .bind(purchase_token)
+    .bind(&purchase_token)
     .bind(payload)
     .bind(timestamp_epoch_ms)
     .fetch_optional(pool)
@@ -189,14 +189,21 @@ pub async fn create_webhook_provider(
     let (webhook_id, is_new) = if let Some((id,)) = result {
         (id, true)
     } else {
-        // Query for the existing webhook
+        // Query for the existing webhook (match primary OR secondary dedup index)
         let existing: (Uuid,) = sqlx::query_as(
             "SELECT id FROM pay.webhook_provider 
-             WHERE app_id = $1 AND provider = $2 AND provider_webhook_id = $3"
+             WHERE app_id = $1 AND provider = $2 AND (
+                 provider_webhook_id = $3
+                 OR ($4::TEXT IS NOT NULL AND purchase_token = $4 AND event_type = $5)
+             )
+             ORDER BY created_at ASC
+             LIMIT 1"
         )
         .bind(app_id)
         .bind(provider)
         .bind(provider_webhook_id)
+        .bind(purchase_token.as_deref())
+        .bind(event_type)
         .fetch_one(pool)
         .await
         .map_err(|e| BridgeError::DbError(format!("Failed to fetch existing webhook: {}", e)))?;

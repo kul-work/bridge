@@ -1,33 +1,35 @@
 use axum::{
-    extract::ConnectInfo,
-    http::StatusCode,
+    extract::State,
+    http::{Method, StatusCode},
     middleware::Next,
     response::Response,
     Json,
 };
 use serde_json::json;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Rate limit store (in-memory, per IP)
+use crate::db::Database;
+use crate::handlers::api_key::AppAuth;
+
+/// In-memory rate limit store
 pub struct RateLimitStore {
-    limits: Arc<Mutex<HashMap<String, Vec<i64>>>>,
+    limits: Mutex<HashMap<String, Vec<i64>>>,
 }
 
 impl RateLimitStore {
     pub fn new() -> Self {
         RateLimitStore {
-            limits: Arc::new(Mutex::new(HashMap::new())),
+            limits: Mutex::new(HashMap::new()),
         }
     }
 
     /// Check if request is allowed. Returns (allowed, remaining, reset_at)
     pub async fn check_rate_limit(
         &self,
-        ip: &str,
+        key: &str,
         limit: usize,
         window_secs: u64,
     ) -> (bool, usize, u64) {
@@ -39,7 +41,7 @@ impl RateLimitStore {
         let window_start = now - window_secs as i64;
         let mut limits = self.limits.lock().await;
 
-        let timestamps = limits.entry(ip.to_string()).or_insert_with(Vec::new);
+        let timestamps = limits.entry(key.to_string()).or_insert_with(Vec::new);
 
         // Remove old timestamps
         timestamps.retain(|&t| t > window_start);
@@ -66,16 +68,90 @@ impl Default for RateLimitStore {
     }
 }
 
-/// Rate limit middleware
-#[allow(dead_code)]
-pub async fn rate_limit_middleware(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    store: Arc<RateLimitStore>,
-    req: axum::http::Request<axum::body::Body>,
+fn default_limit_for_group(group: &str) -> usize {
+    match group {
+        "checkout" => 20,
+        "verify_purchase" => 20,
+        "subscription_queries" => 100,
+        "subscription_mutations" => 10,
+        "payment_history" => 100,
+        "purchase_registration" => 20,
+        "agent" => 60,
+        _ => 120,
+    }
+}
+
+fn endpoint_group(method: &Method, path: &str) -> &'static str {
+    if path.contains("/checkout") {
+        return "checkout";
+    }
+    if path.contains("/verify-purchase") {
+        return "verify_purchase";
+    }
+    if path.contains("/purchases/register") {
+        return "purchase_registration";
+    }
+    if path.contains("/agent/") || path.ends_with("/agent") {
+        return "agent";
+    }
+    if path.contains("/subscriptions") {
+        if *method == Method::GET {
+            return "subscription_queries";
+        }
+        return "subscription_mutations";
+    }
+    if path.contains("/payments") {
+        return "payment_history";
+    }
+    "default"
+}
+
+/// Per-API-key rate limit middleware (runs after auth)
+pub async fn api_rate_limit_middleware(
+    State(database): State<Arc<Database>>,
+    request: axum::http::Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    let ip = addr.ip().to_string();
-    let (allowed, remaining, reset_at) = store.check_rate_limit(&ip, 100, 60).await;
+    // Extract AppAuth (set by api_key_auth middleware)
+    let auth = request.extensions().get::<AppAuth>().cloned();
+
+    let auth = match auth {
+        Some(a) => a,
+        None => {
+            // No auth context = middleware running before auth or on unauthenticated route; pass through
+            return Ok(next.run(request).await);
+        }
+    };
+
+    let group = endpoint_group(request.method(), request.uri().path());
+    let key = format!("api:{}:{}", auth.app_id, group);
+
+    // Load app config to get rate limit settings
+    let effective_limit = match crate::db::apps::get_app(&database.pool, auth.app_id).await {
+        Ok(app) => {
+            // Check endpoint-specific override in api_rate_limit_rules JSONB
+            let override_limit = app.api_rate_limit_rules.as_ref()
+                .and_then(|rules| rules.get(group))
+                .and_then(|v| v.as_i64())
+                .map(|v| v as usize);
+
+            override_limit
+                .unwrap_or_else(|| {
+                    if app.api_rate_limit_per_minute > 0 {
+                        app.api_rate_limit_per_minute as usize
+                    } else {
+                        default_limit_for_group(group)
+                    }
+                })
+        }
+        Err(_) => default_limit_for_group(group),
+    };
+
+    // Global static store since middleware can't carry instance state easily
+    static STORE: std::sync::OnceLock<RateLimitStore> = std::sync::OnceLock::new();
+    let store = STORE.get_or_init(RateLimitStore::new);
+
+    let (allowed, remaining, reset_at) = store.check_rate_limit(&key, effective_limit, 60).await;
 
     if !allowed {
         return Err((
@@ -87,11 +163,10 @@ pub async fn rate_limit_middleware(
         ));
     }
 
-    // Add rate limit headers
-    let mut response = next.run(req).await;
+    let mut response = next.run(request).await;
     response.headers_mut().insert(
         "X-RateLimit-Limit",
-        "100".parse().unwrap(),
+        effective_limit.to_string().parse().unwrap(),
     );
     response.headers_mut().insert(
         "X-RateLimit-Remaining",

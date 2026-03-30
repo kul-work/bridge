@@ -135,6 +135,30 @@ pub async fn upsert_subscription_tx(
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
+pub async fn upsert_pending_subscription(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+    subscription_id: &str,
+    provider: &str,
+) -> Result<Subscription, BridgeError> {
+    sqlx::query_as::<_, Subscription>(
+        "INSERT INTO pay.subscriptions
+         (app_id, external_user_id, subscription_id, provider, status, version, last_event_time)
+         VALUES ($1, $2, $3, $4, 'pending', 1, 0)
+         ON CONFLICT (app_id, external_user_id, subscription_id, provider)
+         DO UPDATE SET updated_at = NOW()
+         RETURNING *"
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .bind(subscription_id)
+    .bind(provider)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
 pub async fn lookup_user_by_subscription_id(
     pool: &PgPool,
     app_id: Uuid,
