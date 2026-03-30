@@ -65,9 +65,9 @@ pub async fn get_user_subscriptions_keyset(
     )
     .bind(app_id)
     .bind(external_user_id)
-    .bind(limit)
     .bind(cursor_created_at)
     .bind(cursor_id)
+    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))

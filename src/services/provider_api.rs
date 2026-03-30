@@ -14,6 +14,7 @@ pub async fn cancel_subscription(
     provider: &str,
     subscription_id: &str,
     purchase_token: Option<&str>,
+    mode: Option<&str>,
     config: &Value,
 ) -> Result<(), BridgeError> {
     let client = reqwest::Client::new();
@@ -25,11 +26,17 @@ pub async fn cancel_subscription(
                 .and_then(|v| v.as_str())
                 .unwrap_or("https://api.creem.com");
 
+            let payload = if let Some(mode) = mode {
+                serde_json::json!({ "mode": mode })
+            } else {
+                serde_json::json!({})
+            };
+
             let response = client
                 .post(format!("{}/subscriptions/{}/cancel", api_url.trim_end_matches('/'), subscription_id))
                 .header("x-api-key", api_key)
                 .header("Content-Type", "application/json")
-                .json(&serde_json::json!({}))
+                .json(&payload)
                 .send()
                 .await
                 .map_err(|e| BridgeError::ProviderError(format!("Creem cancel failed: {}", e)))?;

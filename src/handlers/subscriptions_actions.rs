@@ -56,6 +56,7 @@ pub async fn cancel_subscription(
         &sub.provider,
         &sub.subscription_id,
         sub.purchase_token.as_deref(),
+        request.mode.as_deref(),
         &provider_config.config,
     ).await?;
 

@@ -275,6 +275,31 @@ pub async fn process_webhook(
         }
 
         // §15 - Grace Period
+        "subscription.trial_started" => {
+            if let Some(ref user_id) = external_user_id {
+                let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+                let period_end = fields.current_period_end.as_deref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc));
+
+                let sub_id_fallback = webhook.subscription_id.clone().unwrap_or_default();
+                let sub_id_str = fields.subscription_id.as_deref()
+                    .unwrap_or(&sub_id_fallback);
+
+                crate::db::subscriptions::upsert_subscription_tx(
+                    &mut tx, app_id, user_id,
+                    sub_id_str,
+                    &webhook.provider, "trial", period_end,
+                    fields.purchase_token.as_deref(), fields.auto_renewing,
+                    None, fields.provider_customer_id.as_deref(),
+                    timestamp_epoch_ms,
+                ).await?;
+
+                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+            }
+        }
+
         "subscription.grace_period" => {
             if let Some(ref _user_id) = external_user_id {
                 crate::db::subscriptions::update_subscription_status(

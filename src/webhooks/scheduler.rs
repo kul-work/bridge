@@ -230,6 +230,7 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
                 &provider,
                 &subscription_id,
                 purchase_token.as_deref(),
+                None,
                 &config.config,
             ).await {
                 error!("Failed to cancel price step-up expired sub {}: {}", subscription_id, e);
