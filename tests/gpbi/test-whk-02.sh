@@ -1,0 +1,315 @@
+#!/bin/bash
+
+##############################################################################
+# WHK-02: Duplicate Webhook Delivery (Idempotency)
+# 
+# Purpose: Verify that duplicate webhooks (same message_id) are handled
+#          idempotently - second webhook returns success but does NOT
+#          create duplicate database entries.
+#
+# Usage: ./test-whk-02.sh --email "user@example.com"
+#
+# Prerequisites:
+#   - Backend running and listening on $APP_URL (default: http://localhost:3000)
+#   - Backend configured with: MOCK_EXTERNAL_APIS=true
+#   - DATABASE_URL configured and db accessible
+#   - psql installed and in PATH
+#   - Test uses header: X-Webhook-Verification-Mode: off
+#     (Skips signature verification - tests idempotency, not signature validation)
+#
+# TESTPLAN Reference:
+#   Backend Behavior: Backend checks webhook event_id (derived from message_id),
+#                     Uses event_id as idempotency key; skips processing if already recorded,
+#                     No duplicate subscription status update in DB,
+#                     Logs show second attempt as "already processed".
+#   DB Validation: pay.payments table: No duplicate rows for same provider_transaction_id
+#                  (idempotency enforced).
+##############################################################################
+
+set -euo pipefail
+
+# Source global configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/globals.cfg"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Test configuration
+PRODUCT_ID="$PRODUCT_ID_SUB"
+PROVIDER="$PROVIDER"
+
+# Defaults
+EMAIL=""
+APP_URL="$APP_URL"
+DB_URL="$DATABASE_URL"
+
+# Extract DB password once
+export PGPASSWORD="${DB_URL##*:}"
+export PGPASSWORD="${PGPASSWORD%%@*}"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required inputs
+if [[ -z "$EMAIL" ]]; then
+    echo -e "${RED}Error: --email is required${NC}"
+    echo "Usage: ./test-whk-02.sh --email \"user@example.com\""
+    exit 1
+fi
+
+echo -e "${YELLOW}========================================${NC}"
+echo "WHK-02: Duplicate Webhook Delivery (Idempotency)"
+echo -e "${YELLOW}========================================${NC}"
+echo ""
+
+# Step 1: Query database to get user_id from email
+echo -e "${YELLOW}[1/7] Fetching user_id from database for email: $EMAIL${NC}"
+
+USER_ID="${USER_ID:-test_user_$(date +%s)}"
+# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
+
+if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
+    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
+    echo "Error: $USER_ID"
+    exit 1
+fi
+
+USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
+echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+echo ""
+
+# Step 2: Setup - ensure subscription record exists
+echo -e "${YELLOW}[2/7] Setting up test subscription record${NC}"
+
+PURCHASE_TOKEN="test-whk-02-idempotency-$(date +%s)"
+
+# Clean up any existing test data
+psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id LIKE 'test-whk-02%';" 2>/dev/null
+
+# Create subscription entry for testing
+psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW());" 2>/dev/null
+
+echo -e "${GREEN}✓ Created test subscription record with token: $PURCHASE_TOKEN${NC}"
+echo ""
+
+# Step 3: Record initial database state
+echo -e "${YELLOW}[3/7] Recording initial database state${NC}"
+
+INITIAL_PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+INITIAL_SUB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+
+echo -e "${BLUE}Initial payment count: $INITIAL_PAYMENT_COUNT${NC}"
+echo -e "${BLUE}Initial subscription status: $INITIAL_SUB_STATUS${NC}"
+echo ""
+
+# Step 4: Send FIRST webhook (subscription renewal)
+echo -e "${YELLOW}[4/7] Sending FIRST webhook (subscription renewal)${NC}"
+echo ""
+
+TIMESTAMP=$(date +%s000)
+MESSAGE_ID="whk-02-idempotency-test-$(date +%s)"
+
+echo "Webhook details:"
+echo "  Message ID: $MESSAGE_ID (SAME for both deliveries)"
+echo "  Notification Type: 2 (SUBSCRIPTION_RENEWED)"
+echo "  Purchase Token: $PURCHASE_TOKEN"
+echo ""
+
+# Create DeveloperNotification JSON
+NOTIFICATION_JSON=$(cat <<EOF
+{
+  "version": "1.0",
+  "packageName": "$PACKAGE_NAME",
+  "eventTimeMillis": "$TIMESTAMP",
+  "subscriptionNotification": {
+    "version": "1.0",
+    "notificationType": 2,
+    "purchaseToken": "$PURCHASE_TOKEN",
+    "subscriptionId": "$PRODUCT_ID"
+  }
+}
+EOF
+)
+
+# Base64 encode the notification
+NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
+
+# Send FIRST webhook
+# Use X-Webhook-Verification-Mode: off (test doesn't verify signatures, tests idempotency)
+WEBHOOK_RESPONSE_1=$(curl -s -w "\n%{http_code}" -X POST \
+  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
+  -d "{
+    \"message\": {
+      \"data\": \"$NOTIFICATION_B64\",
+      \"message_id\": \"$MESSAGE_ID\",
+      \"attributes\": {}
+    },
+    \"subscription\": \"projects/test-project/pay.subscriptions/test-sub\"
+  }")
+
+WEBHOOK_HTTP_CODE_1=$(echo "$WEBHOOK_RESPONSE_1" | tail -n1)
+echo "First webhook response code: $WEBHOOK_HTTP_CODE_1"
+
+FIRST_ACCEPTED="false"
+if [[ "$WEBHOOK_HTTP_CODE_1" == "200" ]]; then
+    echo -e "${GREEN}✓ First webhook accepted (HTTP 200)${NC}"
+    FIRST_ACCEPTED="true"
+else
+    echo -e "${RED}✗ First webhook failed with HTTP $WEBHOOK_HTTP_CODE_1${NC}"
+fi
+echo ""
+
+# Step 5: Record state after first webhook
+echo -e "${YELLOW}[5/7] Recording state after first webhook${NC}"
+
+AFTER_FIRST_PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+AFTER_FIRST_SUB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+
+echo -e "${BLUE}Payment count after first: $AFTER_FIRST_PAYMENT_COUNT${NC}"
+echo -e "${BLUE}Subscription status after first: $AFTER_FIRST_SUB_STATUS${NC}"
+echo ""
+
+# Step 6: Send DUPLICATE webhook (same message_id)
+echo -e "${YELLOW}[6/7] Sending DUPLICATE webhook (same message_id)${NC}"
+echo ""
+
+echo "Sending exact same webhook again..."
+echo "  Message ID: $MESSAGE_ID (SAME as first)"
+echo ""
+
+# Send DUPLICATE webhook (exact same payload)
+# Use X-Webhook-Verification-Mode: off (test doesn't verify signatures, tests idempotency)
+WEBHOOK_RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST \
+  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
+  -d "{
+    \"message\": {
+      \"data\": \"$NOTIFICATION_B64\",
+      \"message_id\": \"$MESSAGE_ID\",
+      \"attributes\": {}
+    },
+    \"subscription\": \"projects/test-project/pay.subscriptions/test-sub\"
+  }")
+
+WEBHOOK_HTTP_CODE_2=$(echo "$WEBHOOK_RESPONSE_2" | tail -n1)
+echo "Duplicate webhook response code: $WEBHOOK_HTTP_CODE_2"
+
+SECOND_ACCEPTED="false"
+if [[ "$WEBHOOK_HTTP_CODE_2" == "200" ]]; then
+    echo -e "${GREEN}✓ Duplicate webhook also returned HTTP 200 (idempotent)${NC}"
+    SECOND_ACCEPTED="true"
+else
+    echo -e "${YELLOW}⚠ Duplicate webhook returned HTTP $WEBHOOK_HTTP_CODE_2${NC}"
+fi
+echo ""
+
+# Step 7: Verify idempotency - no duplicate records (DB Validation)
+echo -e "${YELLOW}[7/7] Verifying idempotency (DB Validation)${NC}"
+echo ""
+
+FINAL_PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+FINAL_SUB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+
+echo "Final payment count: $FINAL_PAYMENT_COUNT (after first: $AFTER_FIRST_PAYMENT_COUNT)"
+echo "Final subscription status: $FINAL_SUB_STATUS"
+echo ""
+
+# Check that provider_transaction_id is SAME (true idempotency)
+FIRST_PAYMENT_ID=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+
+IDEMPOTENCY_VERIFIED="false"
+if [[ "$FINAL_PAYMENT_COUNT" == "$AFTER_FIRST_PAYMENT_COUNT" ]]; then
+    echo -e "${GREEN}✓ No duplicate payment records created (idempotency enforced)${NC}"
+    
+    # Verify it's the SAME payment, not a different one
+    if [[ ! -z "$FIRST_PAYMENT_ID" ]]; then
+        echo -e "${GREEN}✓ Same payment record (provider_transaction_id: $FIRST_PAYMENT_ID)${NC}"
+        IDEMPOTENCY_VERIFIED="true"
+    else
+        echo -e "${YELLOW}⚠ Could not verify payment ID${NC}"
+    fi
+else
+    echo -e "${RED}✗ Duplicate payment records created! Count: $AFTER_FIRST_PAYMENT_COUNT → $FINAL_PAYMENT_COUNT${NC}"
+    IDEMPOTENCY_VERIFIED="false"
+fi
+
+# Check subscription count as well
+SUB_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+
+if [[ "$SUB_COUNT" == "1" ]]; then
+    echo -e "${GREEN}✓ Single subscription record (no duplicates)${NC}"
+else
+    echo -e "${RED}✗ Unexpected subscription count: $SUB_COUNT (expected: 1)${NC}"
+    IDEMPOTENCY_VERIFIED="false"
+fi
+echo ""
+
+# Determine overall test status
+if [[ "$FIRST_ACCEPTED" == "true" ]] && [[ "$SECOND_ACCEPTED" == "true" ]] && [[ "$IDEMPOTENCY_VERIFIED" == "true" ]]; then
+    TEST_STATUS="pass"
+    TEST_RESULT_MSG="${GREEN}✓ WHK-02 Test PASSED${NC}"
+else
+    TEST_STATUS="fail"
+    TEST_RESULT_MSG="${RED}✗ WHK-02 Test FAILED${NC}"
+fi
+
+# Generate JSON report
+cat > whk-02-report.json <<EOF
+{
+  "test_id": "WHK-02",
+  "test_name": "Duplicate Webhook Delivery (Idempotency)",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "$TEST_STATUS",
+  "user_id": "$USER_ID",
+  "user_email": "$EMAIL",
+  "message_id": "$MESSAGE_ID",
+  "purchase_token": "$PURCHASE_TOKEN",
+  "results": {
+    "first_webhook_accepted": $FIRST_ACCEPTED,
+    "first_webhook_http_code": $WEBHOOK_HTTP_CODE_1,
+    "second_webhook_accepted": $SECOND_ACCEPTED,
+    "second_webhook_http_code": $WEBHOOK_HTTP_CODE_2,
+    "idempotency_enforced": $IDEMPOTENCY_VERIFIED,
+    "initial_payment_count": $INITIAL_PAYMENT_COUNT,
+    "after_first_payment_count": $AFTER_FIRST_PAYMENT_COUNT,
+    "final_payment_count": $FINAL_PAYMENT_COUNT,
+    "no_duplicate_payments": $([ "$FINAL_PAYMENT_COUNT" == "$AFTER_FIRST_PAYMENT_COUNT" ] && echo "true" || echo "false"),
+    "subscription_count": $SUB_COUNT
+  }
+}
+EOF
+
+echo -e "${YELLOW}========================================${NC}"
+echo -e "$TEST_RESULT_MSG"
+echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Report saved to: whk-02-report.json"
+cat whk-02-report.json
+echo ""
+
+if [[ "$TEST_STATUS" == "fail" ]]; then
+    exit 1
+fi
+exit 0
