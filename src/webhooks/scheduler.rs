@@ -2,6 +2,7 @@ use std::time::Duration;
 use crate::db::Database;
 use std::sync::Arc;
 use tracing::{info, error};
+use uuid::Uuid;
 
 pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
     tokio::spawn(async move {
@@ -102,7 +103,7 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
-    for (_sub_id, subscription_id, provider, _external_user_id, purchase_token) in active_subs {
+    for (_sub_id, subscription_id, provider, external_user_id, purchase_token) in active_subs {
         // Check current status with provider
         let provider_config = sqlx::query_as::<_, crate::db::provider_configs::ProviderConfig>(
             "SELECT * FROM pay.provider_configs WHERE app_id = $1 AND provider = $2"
@@ -150,6 +151,25 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
                             .execute(&database.pool)
                             .await
                             .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+                            let alert = format!(
+                                "Admin alert: reconciliation drift app_id={} sub={} provider={} db_status={} provider_status={}",
+                                app_id, subscription_id, provider, current_db_status, provider_status
+                            );
+                            error!("{}", alert);
+
+                            if let Err(e) = emit_scheduler_callback(
+                                &database.pool,
+                                app_id,
+                                &provider,
+                                &subscription_id,
+                                Some(external_user_id.clone()),
+                                purchase_token.clone(),
+                                "reconciliation.drift_detected",
+                                Some(provider_status.clone()),
+                            ).await {
+                                error!("Failed to forward reconciliation callback for {}: {}", subscription_id, e);
+                            }
                         }
                     }
                 }
@@ -180,8 +200,8 @@ pub fn spawn_price_step_up_expiry_worker(database: Arc<Database>) {
 }
 
 async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
-    let expired = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, String, String, Option<String>)>(
-        "SELECT id, app_id, subscription_id, provider, purchase_token 
+    let expired = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, String, String, String, Option<String>)>(
+        "SELECT id, app_id, external_user_id, subscription_id, provider, purchase_token 
          FROM pay.subscriptions 
          WHERE google_requires_price_step_up_consent = true 
            AND google_price_step_up_consent_deadline IS NOT NULL 
@@ -192,7 +212,7 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
-    for (id, app_id, subscription_id, provider, purchase_token) in expired {
+    for (id, app_id, external_user_id, subscription_id, provider, purchase_token) in expired {
         info!("Price step-up expired for subscription {}, auto-cancelling", subscription_id);
 
         // Try to cancel with provider
@@ -221,6 +241,7 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
             "UPDATE pay.subscriptions 
              SET google_requires_price_step_up_consent = false,
                  google_price_step_up_consent_deadline = NULL,
+                 status = 'cancelled',
                  auto_renewing = false,
                  updated_at = NOW()
              WHERE id = $1"
@@ -229,6 +250,19 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
         .execute(&database.pool)
         .await
         .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+        if let Err(e) = emit_scheduler_callback(
+            &database.pool,
+            app_id,
+            &provider,
+            &subscription_id,
+            Some(external_user_id),
+            purchase_token.clone(),
+            "subscription.cancelled",
+            Some("cancelled".to_string()),
+        ).await {
+            error!("Failed to forward price step-up expiry callback for {}: {}", subscription_id, e);
+        }
     }
 
     Ok(())
@@ -251,8 +285,8 @@ pub fn spawn_pause_scheduler_worker(database: Arc<Database>) {
 
 async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
     // 1. Pause transition: subscriptions scheduled to pause
-    let pending_pause = sqlx::query_as::<_, (uuid::Uuid, String)>(
-        "SELECT id, subscription_id FROM pay.subscriptions 
+    let pending_pause = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, String, String, String, Option<String>)>(
+        "SELECT id, app_id, external_user_id, subscription_id, provider, purchase_token FROM pay.subscriptions 
          WHERE google_pause_scheduled_at IS NOT NULL 
            AND google_pause_scheduled_at <= NOW() 
            AND status != 'paused'
@@ -262,7 +296,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
-    for (id, subscription_id) in pending_pause {
+    for (id, app_id, external_user_id, subscription_id, provider, purchase_token) in pending_pause {
         info!("Transitioning subscription {} to paused (scheduled pause)", subscription_id);
 
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -281,6 +315,19 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
         .execute(&database.pool)
         .await
         .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+        if let Err(e) = emit_scheduler_callback(
+            &database.pool,
+            app_id,
+            &provider,
+            &subscription_id,
+            Some(external_user_id),
+            purchase_token,
+            "subscription.paused",
+            Some("paused".to_string()),
+        ).await {
+            error!("Failed to forward pause transition callback for {}: {}", subscription_id, e);
+        }
     }
 
     // 2. Orphaned pending cleanup: remove stale register_purchase placeholders
@@ -299,6 +346,68 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
     }
 
     Ok(())
+}
+
+async fn emit_scheduler_callback(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    provider: &str,
+    subscription_id: &str,
+    external_user_id: Option<String>,
+    purchase_token: Option<String>,
+    event_type: &str,
+    status: Option<String>,
+) -> Result<(), crate::error::BridgeError> {
+    let app = crate::db::apps::get_app(pool, app_id).await?;
+    let provider_event_id = format!("scheduler-{}", Uuid::new_v4());
+    let timestamp_epoch_ms = chrono::Utc::now().timestamp_millis();
+    let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
+        .unwrap_or_else(chrono::Utc::now)
+        .to_rfc3339();
+
+    let payload = serde_json::json!({
+        "source": "scheduler",
+        "event_type": event_type,
+        "subscription_id": subscription_id,
+        "external_user_id": external_user_id,
+        "provider": provider,
+        "status": status,
+    });
+
+    let (webhook_provider_id, _) = crate::db::webhooks::create_webhook_provider(
+        pool,
+        app_id,
+        provider,
+        &provider_event_id,
+        event_type,
+        Some(subscription_id.to_string()),
+        purchase_token.clone(),
+        payload,
+        Some(timestamp_epoch_ms),
+    )
+    .await?;
+
+    let delivery_id = crate::db::webhooks::create_webhook_delivery(pool, app_id, webhook_provider_id).await?;
+
+    let canonical = crate::webhooks::processor::CanonicalWebhookPayload {
+        event_id: format!("{}-{}", provider, provider_event_id),
+        event_type: event_type.to_string(),
+        timestamp,
+        timestamp_epoch_ms,
+        app_slug: app.slug,
+        product_id: None,
+        subscription_id: Some(subscription_id.to_string()),
+        external_user_id,
+        amount_cents: None,
+        auto_renewing: None,
+        purchase_token,
+        current_period_end: None,
+        status,
+        provider: provider.to_string(),
+        provider_event_id,
+    };
+
+    crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, canonical).await
 }
 
 pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {

@@ -393,6 +393,14 @@ pub async fn process_webhook(
         }
 
         // §24 - Order Failed
+        "payment.failed" if webhook.provider == "coinbase" => {
+            let charge_id = fields.provider_transaction_id
+                .as_deref()
+                .or(webhook.subscription_id.as_deref())
+                .unwrap_or(&webhook.provider_webhook_id);
+            info!("Coinbase charge failed: charge_id={}", charge_id);
+        }
+
         "payment.failed" => {
             if let Some(ref user_id) = external_user_id {
                 let txn_id = fields.provider_transaction_id.as_deref()
@@ -425,6 +433,8 @@ pub async fn process_webhook(
         }
 
         // §27 - Purchase Voided (Refund)
+        "purchase.one_time_cancelled" => {}
+
         "payment.refunded" => {
             if let Some(ref _user_id) = external_user_id {
                 if let Some(ref token) = fields.purchase_token {
@@ -442,7 +452,69 @@ pub async fn process_webhook(
         }
 
         // §42 - Coinbase charge confirmed (agent topup)
-        "subscription.pause_schedule_changed" => {
+        "subscription.pending_purchase_cancelled" => {
+            if let Some(ref _user_id) = external_user_id {
+                crate::db::subscriptions::update_subscription_status(
+                    pool, app_id,
+                    &fields.subscription_id.clone().unwrap_or_default(),
+                    "cancelled", timestamp_epoch_ms,
+                ).await?;
+            }
+        }
+
+        "dispute.created" => {
+            info!(
+                "Admin alert: dispute created for app_id={} provider={} event_id={}",
+                app_id, webhook.provider, webhook.provider_webhook_id
+            );
+        }
+
+        "refund.created" => {
+            if let Some(ref token) = fields.purchase_token {
+                let existing = crate::db::payments::get_payment_status(pool, app_id, token).await?;
+                if existing.as_deref() != Some("refunded") {
+                    crate::db::payments::update_payment_status(pool, app_id, token, "refunded").await?;
+                }
+            }
+        }
+
+        "subscription.updated" => {
+            if let Some(ref _user_id) = external_user_id {
+                if let Some(ref status) = fields.status {
+                    crate::db::subscriptions::update_subscription_status(
+                        pool,
+                        app_id,
+                        &fields.subscription_id.clone().unwrap_or_default(),
+                        status,
+                        timestamp_epoch_ms,
+                    ).await?;
+                }
+            }
+        }
+
+        "subscription.price_step_up" => {
+            if let Some(sub_id) = fields.subscription_id.as_deref() {
+                let deadline = webhook.payload.pointer("/subscriptionNotification/priceStepUpConsentDetails/consentDeadlineTimeMillis")
+                    .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
+                    .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms));
+
+                sqlx::query(
+                    "UPDATE pay.subscriptions
+                     SET google_requires_price_step_up_consent = true,
+                         google_price_step_up_consent_deadline = COALESCE($1, google_price_step_up_consent_deadline),
+                         updated_at = NOW()
+                     WHERE app_id = $2 AND subscription_id = $3"
+                )
+                .bind(deadline)
+                .bind(app_id)
+                .bind(sub_id)
+                .execute(pool)
+                .await
+                .map_err(|e| BridgeError::DbError(e.to_string()))?;
+            }
+        }
+
+        "subscription.pause_scheduled" => {
             if let Some(sub_id) = fields.subscription_id.as_deref() {
                 let pause_scheduled_at = webhook.payload.pointer("/subscriptionNotification/pauseScheduleTimeMillis")
                     .and_then(|v| v.as_i64())
@@ -464,7 +536,48 @@ pub async fn process_webhook(
             }
         }
 
-        "subscription.deferred" | "subscription.price_change_updated" | "subscription.price_step_up_consent_updated" => {
+        "subscription.deferred" => {
+            if let Some(sub_id) = fields.subscription_id.as_deref() {
+                let deferred_until = webhook.payload.pointer("/subscriptionNotification/deferredExpiryTimeMillis")
+                    .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
+                    .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms));
+                if let Some(until) = deferred_until {
+                    sqlx::query(
+                        "UPDATE pay.subscriptions
+                         SET google_deferred_until = $1, updated_at = NOW()
+                         WHERE app_id = $2 AND subscription_id = $3"
+                    )
+                    .bind(until)
+                    .bind(app_id)
+                    .bind(sub_id)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+                }
+            }
+        }
+
+        "subscription.price_changed" => {
+            if let Some(ref user_id) = external_user_id {
+                let txn_id = fields.provider_transaction_id.as_deref()
+                    .or(fields.subscription_id.as_deref())
+                    .unwrap_or(&webhook.provider_webhook_id);
+                let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                let _ = crate::db::payments::record_payment_tx(
+                    &mut tx,
+                    app_id,
+                    user_id,
+                    &webhook.provider,
+                    txn_id,
+                    fields.subscription_id.as_deref(),
+                    fields.amount_cents.unwrap_or(0),
+                    "price_changed",
+                ).await;
+                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+            }
+        }
+
+        "subscription.price_change_updated" | "subscription.expired_voided" => {
             info!("Processed informational webhook event: {} (provider: {})", canonical_event, webhook.provider);
         }
 
@@ -562,12 +675,12 @@ fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "SUBSCRIPTION_PAUSED" => "subscription.paused".to_string(),
             "SUBSCRIPTION_REVOKED" => "subscription.revoked".to_string(),
             "SUBSCRIPTION_DEFERRED" => "subscription.deferred".to_string(),
-            "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED" => "subscription.pause_schedule_changed".to_string(),
+            "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED" => "subscription.pause_scheduled".to_string(),
             "SUBSCRIPTION_PRICE_CHANGE_UPDATED" => "subscription.price_change_updated".to_string(),
-            "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED" => "subscription.price_step_up_consent_updated".to_string(),
-            "SUBSCRIPTION_PENDING_PURCHASE_CANCELED" => "payment.failed".to_string(),
+            "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED" => "subscription.price_step_up".to_string(),
+            "SUBSCRIPTION_PENDING_PURCHASE_CANCELED" => "subscription.pending_purchase_cancelled".to_string(),
             "ONE_TIME_PRODUCT_PURCHASED" => "purchase.one_time".to_string(),
-            "ONE_TIME_PRODUCT_CANCELED" => "payment.refunded".to_string(),
+            "ONE_TIME_PRODUCT_CANCELED" => "purchase.one_time_cancelled".to_string(),
             "VOIDED_PURCHASE" => "payment.refunded".to_string(),
             _ => format!("google_play.{}", event_type),
         },
@@ -582,6 +695,22 @@ fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "subscription.cancelled" => "subscription.cancelled".to_string(),
             "subscription.expired" => "subscription.expired".to_string(),
             "subscription.renewed" => "subscription.renewed".to_string(),
+            "order.created" => "payment.pending".to_string(),
+            "order.failed" => "payment.failed".to_string(),
+            "order.completed" => "subscription.activated".to_string(),
+            "one_time_product.purchased" => "purchase.one_time".to_string(),
+            "one_time_product.canceled" => "purchase.one_time_cancelled".to_string(),
+            "purchase.voided" => "payment.refunded".to_string(),
+            "subscription.pending_purchase_canceled" => "subscription.pending_purchase_cancelled".to_string(),
+            "refund.created" => "refund.created".to_string(),
+            "dispute.created" => "dispute.created".to_string(),
+            "subscription.update" => "subscription.updated".to_string(),
+            "subscription.price_changed" => "subscription.price_changed".to_string(),
+            "subscription.price_change_updated" => "subscription.price_change_updated".to_string(),
+            "subscription.expired_voided" => "subscription.expired_voided".to_string(),
+            "subscription.deferred" => "subscription.deferred".to_string(),
+            "subscription.pause_scheduled" => "subscription.pause_scheduled".to_string(),
+            "subscription.price_step_up_consent_updated" => "subscription.price_step_up".to_string(),
             _ => event_type.to_string(),
         },
         "lemonsqueezy" => match event_type {
@@ -589,6 +718,17 @@ fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "subscription_updated" => "subscription.updated".to_string(),
             "subscription_expired" => "subscription.expired".to_string(),
             "subscription_cancelled" => "subscription.cancelled".to_string(),
+            "order_created" => "payment.pending".to_string(),
+            "order_failed" => "payment.failed".to_string(),
+            "order_completed" => "subscription.activated".to_string(),
+            "one_time_product_purchased" => "purchase.one_time".to_string(),
+            "one_time_product_canceled" => "purchase.one_time_cancelled".to_string(),
+            "purchase_voided" => "payment.refunded".to_string(),
+            "pending_purchase_canceled" => "subscription.pending_purchase_cancelled".to_string(),
+            "refund_created" => "refund.created".to_string(),
+            "dispute_created" => "dispute.created".to_string(),
+            "price_changed" => "subscription.price_changed".to_string(),
+            "price_change_updated" => "subscription.price_change_updated".to_string(),
             _ => event_type.to_string(),
         },
         "coinbase" => match event_type {
