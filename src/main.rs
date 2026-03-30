@@ -104,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/subscriptions/:subscription_id/price-step-up/accept", axum::routing::post(handlers::subscriptions_actions::accept_price_step_up))
         .route("/subscriptions/:subscription_id/price-step-up/decline", axum::routing::post(handlers::subscriptions_actions::decline_price_step_up))
         .route("/payments", axum::routing::get(handlers::payments::get_payments))
-        .route("/purchases/register", axum::routing::post(handlers::payments::register_purchase))
+        .route("/purchase/register", axum::routing::post(handlers::payments::register_purchase))
         .route("/users/:external_user_id/anonymize", axum::routing::post(handlers::users::anonymize))
         .route("/users/:external_user_id/data-export", axum::routing::get(handlers::users::data_export))
         .route("/agent/balance", axum::routing::get(handlers::agent::balance))

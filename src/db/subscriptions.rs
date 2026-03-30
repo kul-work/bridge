@@ -288,3 +288,45 @@ pub async fn update_subscription_status(
 
     Ok(result.rows_affected() > 0)
 }
+
+pub async fn lookup_user_by_google_obfuscated_id(
+    pool: &PgPool,
+    app_id: Uuid,
+    obfuscated_id: &str,
+) -> Result<Option<String>, BridgeError> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT external_user_id FROM pay.subscriptions WHERE app_id = $1 AND google_obfuscated_account_id = $2 LIMIT 1"
+    )
+    .bind(app_id)
+    .bind(obfuscated_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(row.map(|r| r.0))
+}
+
+pub async fn link_replacement_subscriptions(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+    current_subscription_id: &str,
+) -> Result<(), BridgeError> {
+    sqlx::query(
+        "UPDATE pay.subscriptions 
+         SET status = 'replaced', updated_at = NOW() 
+         WHERE app_id = $1 
+           AND external_user_id = $2 
+           AND subscription_id != $3 
+           AND status IN ('active', 'trial', 'past_due', 'on_hold')
+           AND provider = 'google_play'"
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .bind(current_subscription_id)
+    .execute(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}

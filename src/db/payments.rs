@@ -138,4 +138,33 @@ pub async fn get_user_payments(
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))
 }
 
+pub async fn adopt_stale_payment(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+    external_user_id: &str,
+    subscription_id: &str,
+) -> Result<(), crate::error::BridgeError> {
+    // Merge old records with mismatched transaction IDs for this user/subscription
+    // that are currently 'pending' or 'failed' but should be part of this subscription.
+    // This is specific to Creem's behavior described in §13.
+    sqlx::query(
+        "UPDATE pay.payments 
+         SET subscription_id = $1, status = 'success'
+         WHERE app_id = $2 
+           AND external_user_id = $3 
+           AND provider = 'creem' 
+           AND subscription_id IS NULL 
+           AND status IN ('pending', 'failed')
+           AND created_at > NOW() - INTERVAL '24 hours'"
+    )
+    .bind(subscription_id)
+    .bind(app_id)
+    .bind(external_user_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
 

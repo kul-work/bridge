@@ -191,7 +191,29 @@ async fn resolve_user(
         }
     }
 
-    // 3. Creem metadata.user_id
+    // 3. Google Play Strategy 3 (obfuscated_account_id lookup)
+    if webhook.provider == "google_play" {
+        if let Some(ref token) = webhook.purchase_token {
+            if let Ok(config) = crate::db::provider_configs::get_provider_config(pool, app_id, "google_play").await {
+                let pkg = config.config.get("package_name").and_then(|v| v.as_str()).unwrap_or("");
+                let sa = config.config.get("service_account_json").and_then(|v| v.as_str()).unwrap_or("");
+                
+                if let Ok(gp_client) = crate::services::google_play::client::GooglePlayClient::new(sa) {
+                    if let Ok(sub) = gp_client.get_subscription(pkg, "", token).await {
+                        if let Some(ref ids) = sub.external_account_identifiers {
+                            if let Some(ref obf_id) = ids.obfuscated_account_id {
+                                if let Ok(Some(user)) = crate::db::subscriptions::lookup_user_by_google_obfuscated_id(pool, app_id, obf_id).await {
+                                    return Some(user);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Creem metadata.user_id
     if let Some(user_id) = webhook.payload.pointer("/metadata/user_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
@@ -199,7 +221,7 @@ async fn resolve_user(
         return Some(user_id);
     }
 
-    // 4. Creem orphan guard
+    // 5. Creem orphan guard
     if webhook.provider == "creem" {
         error!(
             "Creem orphan guard: discarding webhook {} (event={})",
@@ -208,7 +230,7 @@ async fn resolve_user(
         return None;
     }
 
-    // 5. All strategies failed
+    // 6. All strategies failed
     None
 }
 
@@ -286,7 +308,15 @@ pub async fn process_webhook(
                     timestamp_epoch_ms,
                 ).await?;
 
+                if webhook.provider == "creem" {
+                    let _ = crate::db::payments::adopt_stale_payment(&mut tx, app_id, user_id, sub_id_str).await;
+                }
+
                 tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+                if webhook.provider == "google_play" {
+                    let _ = crate::db::subscriptions::link_replacement_subscriptions(pool, app_id, user_id, sub_id_str).await;
+                }
             }
         }
         
