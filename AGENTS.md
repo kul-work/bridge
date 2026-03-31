@@ -82,6 +82,7 @@ Only implement if user says: "fix", "implement", "make", "change", or explicitly
 ### How to Request Code Changes
 
 Structure as:
+
 1. **Current behavior** - what exists now
 2. **Problem** - what's broken/missing
 3. **Constraint** - what pattern should it follow?
@@ -109,17 +110,20 @@ When updating `Release Notes.md`:
 On Windows, use `cmd /c` with `set PGPASSWORD=` to avoid password prompts and PowerShell quoting issues.
 
 For simple queries (no quotes in SQL):
+
 ```bash
 cmd /c "set PGPASSWORD=password&& psql -U postgres -h localhost -p 5432 -d appgen -c "\dt pay.*""
 ```
 
 For complex queries (with quotes, WHERE clauses, etc.), write a temp `.sql` file and use `-f`:
+
 ```bash
-# 1. Create the file (use create_file tool)
-# 2. Run it:
 cmd /c "set PGPASSWORD=password&& psql -U postgres -h localhost -p 5432 -d appgen -f c:\share\tyde\bridge\tmp_query.sql"
-# 3. Delete the tmp file when done
 ```
+
+1. Create the file (use create_file tool)
+2. Run it
+3. Delete the tmp file when done
 
 **Database**: `appgen`, **Schema**: `pay` (e.g. `pay.apps`, `pay.provider_configs`)
 
