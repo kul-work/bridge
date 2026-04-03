@@ -107,30 +107,6 @@ pub async fn get_user_subscriptions(
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
-pub async fn create_subscription(
-    pool: &PgPool,
-    app_id: Uuid,
-    external_user_id: &str,
-    subscription_id: &str,
-    provider: &str,
-    status: &str,
-) -> Result<Subscription, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
-        "INSERT INTO pay.subscriptions 
-        (app_id, external_user_id, subscription_id, provider, status) 
-        VALUES ($1, $2, $3, $4, $5) 
-        RETURNING *"
-    )
-    .bind(app_id)
-    .bind(external_user_id)
-    .bind(subscription_id)
-    .bind(provider)
-    .bind(status)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
-}
-
 pub async fn upsert_subscription_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     app_id: Uuid,
