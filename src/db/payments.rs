@@ -63,6 +63,45 @@ pub async fn record_payment_tx(
     Ok(())
 }
 
+pub async fn payment_acknowledged_at_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+    provider: &str,
+    provider_transaction_id: &str,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, crate::error::BridgeError> {
+    sqlx::query_scalar(
+        "SELECT acknowledged_at FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3"
+    )
+    .bind(app_id)
+    .bind(provider)
+    .bind(provider_transaction_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))
+    .map(|row| row.flatten())
+}
+
+pub async fn mark_payment_acknowledged_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+    provider: &str,
+    provider_transaction_id: &str,
+) -> Result<(), crate::error::BridgeError> {
+    sqlx::query(
+        "UPDATE pay.payments
+         SET acknowledged_at = COALESCE(acknowledged_at, NOW())
+         WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3"
+    )
+    .bind(app_id)
+    .bind(provider)
+    .bind(provider_transaction_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
 pub async fn get_payment_status(
     pool: &sqlx::PgPool,
     app_id: Uuid,
@@ -166,5 +205,4 @@ pub async fn adopt_stale_payment(
 
     Ok(())
 }
-
 

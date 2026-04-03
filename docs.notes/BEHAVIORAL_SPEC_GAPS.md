@@ -15,8 +15,6 @@ Status labels:
 
 ## Executive Summary
 
-Bridge already has the broad skeleton the spec describes: startup, API key auth, checkout idempotency, subscription queries, webhook ingress, webhook forwarding, agent endpoints, GDPR endpoints, and background jobs all exist.
-
 The main gaps are in correctness and contract fidelity:
 
 - `verify-purchase` is much thinner than the spec and misses several required behaviors.
@@ -65,7 +63,6 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 1. Startup & Initialization | Partial | `src/main.rs` starts tracing, DB, routes, and background jobs. Gap: provider secrets are loaded from `pay.provider_configs`, not decrypted from `apps`, and `master_encryption_key` is read in `src/config.rs` but not used. |
 | Admin UI security (part of section 1) | Gap | `src/middleware/admin_auth.rs` only checks for header presence; it does not verify JWT signature or Clerk organization membership. |
 
 ### Rate Limiting
@@ -81,23 +78,23 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 4. Checkout Flow | Partial | `src/handlers/checkout.rs` supports idempotency and provider config lookup. Gaps: `email` is optional, fake email fallback is generated, Google Play mobile checkout is not implemented, Coinbase is rejected, and metadata/redirect handling is not fully aligned with the spec. |
+| 4. Checkout Flow | Gap | `email` is optional with fake email fallback, Google Play mobile checkout not implemented, Coinbase is rejected, metadata/redirect handling not aligned with spec. |
 | 5. Purchase Verification | Gap | Major behavioral gap; see Highest-Risk item 2. |
-| 6. Purchase Registration | Partial | `src/handlers/payments.rs::register_purchase` creates a pending placeholder as expected, but the request `reason` is unused and the flow stops at the placeholder. |
-| 7. Subscription Queries | Partial | Listing and single-item fetch exist in `src/handlers/subscriptions.rs`, with keyset pagination for list. Gap: the single-item response does not return provider-specific fields the spec calls for. |
-| 8. Subscription Cancellation | Partial | `src/handlers/subscriptions_actions.rs::cancel_subscription` exists, but it uses JSON body `external_user_id` instead of required query params, ignores provider disambiguation during lookup, and does not set all spec fields such as revocation metadata for immediate cancel. |
-| 9. Subscription Resume | Partial | Present, but same contract mismatch as cancellation: body-based user lookup, no provider query param, simplified DB update. |
-| 10. Billing Portal | Partial | Present in `src/handlers/subscriptions_actions.rs`, but only works where `provider_customer_id` exists and `src/services/provider_api.rs` only implements billing portal creation for Creem. |
-| 11. Payment History | Partial | `src/handlers/payments.rs::get_payments` paginates correctly, but the response omits `provider` and `provider_transaction_id`, and uses `amount` instead of `amount_cents`. |
+| 6. Purchase Registration | Gap | Request `reason` is unused and flow stops at placeholder. |
+| 7. Subscription Queries | Gap | Single-item response does not return provider-specific fields the spec calls for. |
+| 8. Subscription Cancellation | Gap | Uses JSON body `external_user_id` instead of query params, ignores provider disambiguation, missing revocation metadata for immediate cancel. |
+| 9. Subscription Resume | Gap | Body-based user lookup (should be query param), no provider query param. |
+| 10. Billing Portal | Gap | Only works where `provider_customer_id` exists, only implemented for Creem. |
+| 11. Payment History | Gap | Response omits `provider` and `provider_transaction_id`, uses `amount` instead of `amount_cents`. |
 
 ### Webhook Ingress and Processing
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 12. Webhook Ingress | Partial | `src/webhooks/ingress.rs` implements provider-specific signature verification and dedup insert. Gaps: app-not-found errors are not the spec's silent 404 shape, provider header names differ in some cases, and provider config comes from `provider_configs` rather than encrypted app-level secrets. |
-| 13-31. Canonical webhook processing | Partial | `src/webhooks/processor.rs` handles many canonical events, but several flows are simplified to status-only updates and do not persist all spec-mandated fields or reasons. |
-| 32-37. Google Play special cases | Partial | Price step-up, deferred, pause-scheduled, and informational events exist, but some only log or update one field, and the price-step-up accept/decline API handlers are schema-mismatched. |
-| 38. Callback Forwarding | Partial | `src/webhooks/forwarding.rs` builds canonical JSON and HMAC headers, and retries up to 3 times through `webhook_delivery`. Gaps: no explicit 10-second timeout, no dead-letter state beyond attempt count, and retry reprocesses the webhook instead of forward-only delivery. |
+| 12. Webhook Ingress | Gap | App-not-found errors not silent 404, provider header names differ, config from `provider_configs` not app-level secrets. |
+| 13-31. Canonical webhook processing | Gap | Several flows simplified to status-only updates, do not persist all spec-mandated fields or reasons. |
+| 32-37. Google Play special cases | Gap | Price-step-up accept/decline API handlers schema-mismatched. |
+| 38. Callback Forwarding | Gap | No explicit 10-second timeout, no dead-letter state, retry reprocesses webhook instead of forward-only delivery. |
 
 ### Specific Webhook Gaps Worth Calling Out
 
@@ -110,32 +107,32 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 40. Token Creation | Partial | `src/handlers/agent.rs::token` creates expiring tokens, but it does not validate email format, endpoint support, or amount, and it does not ensure an `agent_credits` row exists before token creation. |
-| 41. Token Charge | Gap | `src/db/agent.rs::charge_agent` does not verify that the token belongs to the same app/user/endpoint. The spec requires strict token scoping and ownership checks. |
-| 42. Charge Confirmed (Coinbase) | Partial | `src/webhooks/processor.rs` applies topups idempotently in intent, but the underlying `ON CONFLICT` target in `src/db/agent.rs::apply_topup_if_new` does not match the schema. |
-| 43. Charge Failed (Coinbase) | Gap | The event is normalized, but no explicit handler branch logs it as required. |
+| 40. Token Creation | Gap | Does not validate email format, endpoint support, or amount; does not ensure `agent_credits` row exists. |
+| 41. Token Charge | Gap | Does not verify token belongs to same app/user/endpoint. |
+| 42. Charge Confirmed (Coinbase) | Gap | `ON CONFLICT` target in `apply_topup_if_new` does not match schema. |
+| 43. Charge Failed (Coinbase) | Gap | No explicit handler branch logs the event. |
 
 ### GDPR and Data Retention
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 44. User Anonymization | Partial | `src/handlers/users.rs` and `src/db/users.rs` cancel active subscriptions and scramble `external_user_id`. This aligns with most of the spec, but provider-side cancellation coverage depends on provider support and no separate app callback is sent. |
-| 45. Data Export | Partial | `src/handlers/users.rs::data_export` returns subscriptions and payments only. It does not include webhook records, agent credits, or agent transactions. |
+| 44. User Anonymization | Gap | No separate app callback sent on anonymization. |
+| 45. Data Export | Gap | Does not include webhook records, agent credits, or agent transactions. |
 
 ### Background Jobs
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 46. Reconciliation | Partial | `src/webhooks/scheduler.rs::reconcile_subscriptions` exists, but it runs for all enabled apps/providers, not just the spec's Google/Apple focus, and it emits `admin.drift_alert` rather than `reconciliation.drift_detected`. |
-| 47. Price Step-Up Expiry | Partial | Present and auto-cancels expired consent cases, but the forwarded callback does not include the richer reason/context described by the spec. |
+| 46. Reconciliation | Gap | Runs for all providers not just Google/Apple, emits `admin.drift_alert` not `reconciliation.drift_detected`. |
+| 47. Price Step-Up Expiry | Gap | Callback does not include richer reason/context described by spec. |
 
 ### DB Behaviors
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 50. Payment Recording | Partial | `src/db/payments.rs::record_payment_tx` mostly matches the spec's fraud-guarded UPSERT, but many webhook callers ignore its error result. |
-| 52. Subscription Store/Activate | Partial | `src/db/subscriptions.rs::upsert_subscription_tx` increments version and updates fields, but lacks a `last_event_time` guard on conflict updates. |
-| 53. User Lookup Strategies | Partial | Strategies 1, 2A, 2B, 3, and 4 exist in `src/webhooks/processor.rs::resolve_user`, but unresolved non-Creem events are not discarded as the spec requires. |
+| 50. Payment Recording | Gap | Many webhook callers ignore error result from `record_payment_tx`. |
+| 52. Subscription Store/Activate | Gap | Lacks `last_event_time` guard on conflict updates. |
+| 53. User Lookup Strategies | Gap | Unresolved non-Creem events not discarded as spec requires. |
 
 ## Recommended Fix Order
 
