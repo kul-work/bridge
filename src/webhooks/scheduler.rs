@@ -55,16 +55,19 @@ pub async fn retry_webhooks(database: &Arc<Database>) -> Result<(), crate::error
         .unwrap_or_default();
 
         for delivery in deliveries {
-            let webhook_opt = crate::db::webhooks::get_webhook_provider(&database.pool, delivery.webhook_provider_id).await.ok();
-            if let Some(webhook) = webhook_opt {
-                if let Ok(Some(canonical)) = crate::webhooks::processor::process_webhook(&database.pool, webhook.id, app.id).await {
-                    let _ = crate::webhooks::forwarding::forward_webhook(
-                        &database.pool,
-                        app.id,
-                        delivery.id,
-                        canonical,
-                    ).await;
-                }
+            if let Ok(Some(canonical)) = crate::webhooks::processor::build_canonical_payload(
+                &database.pool,
+                delivery.webhook_provider_id,
+                app.id,
+            )
+            .await
+            {
+                let _ = crate::webhooks::forwarding::forward_webhook(
+                    &database.pool,
+                    app.id,
+                    delivery.id,
+                    canonical,
+                ).await;
             }
         }
     }

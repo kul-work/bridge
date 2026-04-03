@@ -36,6 +36,12 @@ pub struct Subscription {
     pub google_paused_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SubscriptionUpsertResult {
+    pub subscription: Subscription,
+    pub applied: bool,
+}
+
 pub async fn get_subscription(
     pool: &PgPool,
     app_id: Uuid,
@@ -120,9 +126,9 @@ pub async fn upsert_subscription_tx(
     payment_state: Option<i32>,
     provider_customer_id: Option<&str>,
     event_time_ms: i64,
-) -> Result<Subscription, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
-        "INSERT INTO pay.subscriptions
+) -> Result<SubscriptionUpsertResult, BridgeError> {
+    let subscription = sqlx::query_as::<_, Subscription>(
+        "INSERT INTO pay.subscriptions AS subscriptions
          (app_id, external_user_id, subscription_id, provider, status, current_period_end, purchase_token, auto_renewing, payment_state, provider_customer_id, version, last_event_time)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11)
          ON CONFLICT (app_id, external_user_id, subscription_id, provider)
@@ -136,6 +142,7 @@ pub async fn upsert_subscription_tx(
            version = subscriptions.version + 1,
            last_event_time = EXCLUDED.last_event_time,
            updated_at = NOW()
+         WHERE subscriptions.last_event_time < EXCLUDED.last_event_time
          RETURNING *"
     )
     .bind(app_id)
@@ -149,9 +156,32 @@ pub async fn upsert_subscription_tx(
     .bind(payment_state)
     .bind(provider_customer_id)
     .bind(event_time_ms)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    if let Some(subscription) = subscription {
+        return Ok(SubscriptionUpsertResult {
+            subscription,
+            applied: true,
+        });
+    }
+
+    let subscription = sqlx::query_as::<_, Subscription>(
+        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND external_user_id = $2 AND subscription_id = $3 AND provider = $4"
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .bind(subscription_id)
+    .bind(provider)
     .fetch_one(&mut **tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(SubscriptionUpsertResult {
+        subscription,
+        applied: false,
+    })
 }
 
 pub async fn upsert_pending_subscription(

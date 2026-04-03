@@ -143,7 +143,8 @@ pub async fn verify_purchase(
             .and_then(|subscription| subscription.provider_customer_id.as_deref()),
         chrono::Utc::now().timestamp_millis(),
     )
-    .await?;
+    .await?
+    .subscription;
 
     tx.commit()
         .await

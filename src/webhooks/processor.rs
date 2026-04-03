@@ -234,6 +234,59 @@ async fn resolve_user(
     None
 }
 
+pub async fn build_canonical_payload(
+    pool: &PgPool,
+    webhook_provider_id: Uuid,
+    app_id: Uuid,
+) -> Result<Option<CanonicalWebhookPayload>, BridgeError> {
+    let webhook = crate::db::webhooks::get_webhook_provider(pool, webhook_provider_id)
+        .await?;
+
+    if webhook.suppressed {
+        info!(
+            "Webhook {} already suppressed: {}",
+            webhook_provider_id, webhook.suppressed_reason.as_deref().unwrap_or("unknown")
+        );
+        return Ok(None);
+    }
+
+    let app = crate::db::apps::get_app(pool, app_id)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    let external_user_id = resolve_user(pool, app_id, &webhook).await;
+    if webhook.provider == "creem" && external_user_id.is_none() {
+        return Ok(None);
+    }
+
+    let fields = extract_webhook_fields(&webhook);
+    let canonical_event = normalize_event_type(&webhook.provider, &webhook.event_type);
+    let timestamp_epoch_ms = webhook
+        .timestamp_epoch_ms
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let timestamp_iso = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
+        .unwrap_or_else(|| chrono::Utc::now())
+        .to_rfc3339();
+
+    Ok(Some(CanonicalWebhookPayload {
+        event_id: format!("{}-{}", webhook.provider, webhook.provider_webhook_id),
+        event_type: canonical_event,
+        timestamp: timestamp_iso,
+        timestamp_epoch_ms,
+        app_slug: app.slug,
+        product_id: fields.product_id,
+        subscription_id: fields.subscription_id.or(webhook.subscription_id.clone()),
+        external_user_id,
+        amount_cents: fields.amount_cents,
+        auto_renewing: fields.auto_renewing,
+        purchase_token: fields.purchase_token.or(webhook.purchase_token.clone()),
+        current_period_end: fields.current_period_end,
+        status: fields.status,
+        provider: webhook.provider.clone(),
+        provider_event_id: webhook.provider_webhook_id.clone(),
+    }))
+}
+
 /// Process webhook: dedup, ordering, normalization, DB mutations
 #[allow(dead_code)]
 pub async fn process_webhook(
@@ -283,14 +336,6 @@ pub async fn process_webhook(
             if let Some(ref user_id) = external_user_id {
                 let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-                if let Some(ref txn_id) = fields.provider_transaction_id {
-                    let _ = crate::db::payments::record_payment_tx(
-                        &mut tx, app_id, user_id, &webhook.provider, txn_id,
-                        fields.subscription_id.as_deref(),
-                        fields.amount_cents.unwrap_or(0), "success",
-                    ).await;
-                }
-
                 let period_end = fields.current_period_end.as_deref()
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                     .map(|dt| dt.with_timezone(&chrono::Utc));
@@ -299,7 +344,7 @@ pub async fn process_webhook(
                 let sub_id_str = fields.subscription_id.as_deref()
                     .unwrap_or(&sub_id_fallback);
 
-                crate::db::subscriptions::upsert_subscription_tx(
+                let upsert_result = crate::db::subscriptions::upsert_subscription_tx(
                     &mut tx, app_id, user_id,
                     sub_id_str,
                     &webhook.provider, "active", period_end,
@@ -308,14 +353,31 @@ pub async fn process_webhook(
                     timestamp_epoch_ms,
                 ).await?;
 
-                if webhook.provider == "creem" {
-                    let _ = crate::db::payments::adopt_stale_payment(&mut tx, app_id, user_id, sub_id_str).await;
-                }
+                if !upsert_result.applied {
+                    tx.rollback().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                    info!(
+                        "Skipped stale activation event for subscription {} (provider: {})",
+                        sub_id_str,
+                        webhook.provider
+                    );
+                } else {
+                    if let Some(ref txn_id) = fields.provider_transaction_id {
+                        let _ = crate::db::payments::record_payment_tx(
+                            &mut tx, app_id, user_id, &webhook.provider, txn_id,
+                            fields.subscription_id.as_deref(),
+                            fields.amount_cents.unwrap_or(0), "success",
+                        ).await;
+                    }
 
-                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                    if webhook.provider == "creem" {
+                        let _ = crate::db::payments::adopt_stale_payment(&mut tx, app_id, user_id, sub_id_str).await;
+                    }
 
-                if webhook.provider == "google_play" {
-                    let _ = crate::db::subscriptions::link_replacement_subscriptions(pool, app_id, user_id, sub_id_str).await;
+                    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+                    if webhook.provider == "google_play" {
+                        let _ = crate::db::subscriptions::link_replacement_subscriptions(pool, app_id, user_id, sub_id_str).await;
+                    }
                 }
             }
         }
@@ -345,7 +407,7 @@ pub async fn process_webhook(
                 let sub_id_str = fields.subscription_id.as_deref()
                     .unwrap_or(&sub_id_fallback);
 
-                crate::db::subscriptions::upsert_subscription_tx(
+                let upsert_result = crate::db::subscriptions::upsert_subscription_tx(
                     &mut tx, app_id, user_id,
                     sub_id_str,
                     &webhook.provider, "trial", period_end,
@@ -354,7 +416,16 @@ pub async fn process_webhook(
                     timestamp_epoch_ms,
                 ).await?;
 
-                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                if !upsert_result.applied {
+                    tx.rollback().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                    info!(
+                        "Skipped stale trial-start event for subscription {} (provider: {})",
+                        sub_id_str,
+                        webhook.provider
+                    );
+                } else {
+                    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                }
             }
         }
 
