@@ -207,13 +207,33 @@ pub async fn acknowledge_subscription(
         return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
     }
 
-    sqlx::query(
-        "UPDATE pay.subscriptions SET acknowledged_at = NOW(), updated_at = NOW() WHERE id = $1",
-    )
-    .bind(sub.id)
-    .execute(&database.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    if let Some(purchase_token) = sub.purchase_token.as_deref() {
+        sqlx::query(
+            "UPDATE pay.payments
+             SET acknowledged_at = COALESCE(acknowledged_at, NOW())
+             WHERE app_id = $1 AND external_user_id = $2 AND provider = $3 AND provider_transaction_id = $4",
+        )
+        .bind(auth.app_id)
+        .bind(&sub.external_user_id)
+        .bind(&sub.provider)
+        .bind(purchase_token)
+        .execute(&database.pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    } else {
+        sqlx::query(
+            "UPDATE pay.payments
+             SET acknowledged_at = COALESCE(acknowledged_at, NOW())
+             WHERE app_id = $1 AND external_user_id = $2 AND provider = $3 AND subscription_id = $4",
+        )
+        .bind(auth.app_id)
+        .bind(&sub.external_user_id)
+        .bind(&sub.provider)
+        .bind(&sub.subscription_id)
+        .execute(&database.pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    }
 
     Ok((
         StatusCode::OK,
@@ -291,8 +311,19 @@ pub async fn accept_price_step_up(
         return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
     }
 
+    if sub.provider != "google_play" {
+        return Err(BridgeError::ValidationError(
+            "Price step-up actions are only supported for Google Play subscriptions".to_string(),
+        ));
+    }
+
     sqlx::query(
-        "UPDATE pay.subscriptions SET price_step_up_pending = false, updated_at = NOW() WHERE id = $1",
+        "UPDATE pay.subscriptions
+         SET google_requires_price_step_up_consent = false,
+             google_price_step_up_consent_status = 'accepted',
+             google_price_step_up_consent_deadline = NULL,
+             updated_at = NOW()
+         WHERE id = $1",
     )
     .bind(sub.id)
     .execute(&database.pool)
@@ -326,10 +357,24 @@ pub async fn decline_price_step_up(
         return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
     }
 
+    if sub.provider != "google_play" {
+        return Err(BridgeError::ValidationError(
+            "Price step-up actions are only supported for Google Play subscriptions".to_string(),
+        ));
+    }
+
     sqlx::query(
-        "UPDATE pay.subscriptions SET status = $1, price_step_up_pending = false, updated_at = NOW() WHERE id = $2",
+        "UPDATE pay.subscriptions
+         SET google_requires_price_step_up_consent = false,
+             google_price_step_up_consent_status = 'declined',
+             google_price_step_up_consent_deadline = NULL,
+             google_pending_cancellation = true,
+             google_pending_cancellation_at = NOW(),
+             auto_renewing = false,
+             cancellation_initiated_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $1",
     )
-    .bind("pending_cancellation")
     .bind(sub.id)
     .execute(&database.pool)
     .await
