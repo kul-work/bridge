@@ -196,6 +196,7 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
                                 Some(current_db_status),
                                 Some(provider_status),
                                 Some(provider.clone()),
+                                None,
                             ).await {
                                 error!("Failed to forward reconciliation callback for {}: {}", subscription_id, e);
                             }
@@ -273,6 +274,7 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
              SET google_requires_price_step_up_consent = false,
                  google_price_step_up_consent_deadline = NULL,
                  status = 'cancelled',
+                 revocation_reason = 'price_step_up_expiry',
                  auto_renewing = false,
                  version = version + 1,
                  last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
@@ -302,6 +304,7 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
             None,
             None,
             None,
+            Some("price_step_up_expiry".to_string()),
         ).await {
             error!("Failed to forward price step-up expiry callback for {}: {}", subscription_id, e);
         }
@@ -375,6 +378,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
             None,
             None,
             None,
+            None,
         ).await {
             error!("Failed to forward pause transition callback for {}: {}", subscription_id, e);
         }
@@ -411,6 +415,7 @@ async fn emit_scheduler_callback(
     previous_status: Option<String>,
     corrected_status: Option<String>,
     reconciliation_source: Option<String>,
+    revocation_reason: Option<String>,
 ) -> Result<(), crate::error::BridgeError> {
     let app = crate::db::apps::get_app(pool, app_id).await?;
     let provider_event_id = format!("scheduler-{}", Uuid::new_v4());
@@ -429,6 +434,7 @@ async fn emit_scheduler_callback(
         "previous_status": previous_status,
         "corrected_status": corrected_status,
         "reconciliation_source": reconciliation_source,
+        "revocation_reason": revocation_reason,
     });
 
     let (webhook_provider_id, _) = crate::db::webhooks::create_webhook_provider(
@@ -465,6 +471,7 @@ async fn emit_scheduler_callback(
         previous_status,
         corrected_status,
         reconciliation_source,
+        revocation_reason,
     };
 
     crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, canonical).await

@@ -18,6 +18,12 @@ pub struct Subscription {
     pub payment_state: Option<i32>,
     pub cancel_reason: Option<i32>,
     pub provider_customer_id: Option<String>,
+    
+    // Cancellation / Revocation
+    pub cancellation_initiated_at: Option<DateTime<Utc>>,
+    pub revocation_reason: Option<String>,
+    pub revoked_at: Option<DateTime<Utc>>,
+
     pub version: i32,
     pub last_event_time: i64,
     pub created_at: DateTime<Utc>,

@@ -444,6 +444,7 @@ async fn dispatch_subscription_callback(
         previous_status: None,
         corrected_status: None,
         reconciliation_source: None,
+        revocation_reason: None,
     };
 
     crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, canonical).await

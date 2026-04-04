@@ -80,7 +80,7 @@ The main gaps are in correctness and contract fidelity:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 47. Price Step-Up Expiry | Gap | Callback does not include richer reason/context described by spec. |
+| 47. Price Step-Up Expiry | Fixed | Callback now includes `"price_step_up_expiry"` reason as required by spec. |
 
 ### DB Behaviors
 

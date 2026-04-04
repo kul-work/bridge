@@ -40,6 +40,7 @@ pub struct CanonicalWebhookPayload {
     pub previous_status: Option<String>,
     pub corrected_status: Option<String>,
     pub reconciliation_source: Option<String>,
+    pub revocation_reason: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -326,6 +327,7 @@ pub async fn build_canonical_payload(
         previous_status: None,
         corrected_status: None,
         reconciliation_source: None,
+        revocation_reason: None,
     }))
 }
 
@@ -964,6 +966,7 @@ pub async fn process_webhook(
         previous_status: None,
         corrected_status: None,
         reconciliation_source: None,
+        revocation_reason: fields.cancel_reason,
     };
 
     // Step 6: Mark webhook as processed
