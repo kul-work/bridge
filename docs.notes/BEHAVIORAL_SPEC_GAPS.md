@@ -15,21 +15,6 @@ Status labels:
 - `Partial`: the main path exists, but required behaviors, fields, or safety checks are missing.
 - `Gap`: missing, broken, or contradicted by the current implementation.
 
-## Executive Summary
-
-The main gaps are in correctness and contract fidelity:
-
-- `verify-purchase` is now broadly at spec with full recording and linking implementation.
-- Previous schema/runtime mismatches across handlers have been resolved or found to be inaccurate for v0.1.2.
-- Webhook contract fidelity is improved: unresolved webhooks are suppressed, order/retry safety (event-time guards) is verified.
-- The agent charge flow has been updated to bind the request endpoint back to the token, satisfying spec section 41.
-
-
-### 1. High-risk security gaps
-
-- Fixed: `src/db/agent.rs::charge_agent` and the charge API now properly accept and verify the request `endpoint` against the token, directly addressing spec section 41.
-
-
 ## Section Review
 
 ### Rate Limiting
@@ -62,12 +47,6 @@ The main gaps are in correctness and contract fidelity:
 
 - `src/webhooks/processor.rs` handles `subscription.updated` by writing raw status when present, but the spec expects a more controlled normalized update path.
 - `src/webhooks/processor.rs` only uses the stale-event guard for some update paths. Activation and renewal still use the unguarded upsert helper.
-
-### Agent 402
-
-| Spec area | Status | Notes |
-|---|---|---|
-| 41. Token Charge | Fixed | `src/db/agent.rs::charge_agent` bounds token use to the same app and user and fully verifies the `endpoint` mapping during charge. |
 
 ### GDPR and Data Retention
 
