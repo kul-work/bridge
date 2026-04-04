@@ -36,5 +36,5 @@ CREATE INDEX idx_apps_enabled ON apps(enabled);
 CREATE INDEX idx_apps_webhook_ingress_token ON apps(webhook_ingress_token);
 
 COMMENT ON TABLE apps IS 'Registered applications in Bridge. Provider credentials stored separately in provider_configs table (encrypted at application layer via AES-GCM).';
-COMMENT ON COLUMN apps.webhook_ingress_token IS 'Obfuscated token for webhook URLs (not cryptographically sufficient alone; must pair with provider signature verification).';
+COMMENT ON COLUMN apps.webhook_ingress_token IS 'Auto-generated obfuscated token for webhook URLs (not cryptographically sufficient alone; must pair with provider signature verification). Not need to be setup on the app-client-side';
 COMMENT ON COLUMN apps.api_rate_limit_rules IS 'JSONB: per-endpoint overrides, e.g. {"checkout": 20, "subscription_queries": 100}';
