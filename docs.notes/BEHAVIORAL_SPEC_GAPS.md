@@ -76,12 +76,6 @@ The main gaps are in correctness and contract fidelity:
 | 44. User Anonymization | Gap | No separate app callback sent on anonymization. |
 | 45. Data Export | Gap | Does not include webhook records, agent credits, or agent transactions. |
 
-### Background Jobs
-
-| Spec area | Status | Notes |
-|---|---|---|
-| 47. Price Step-Up Expiry | Fixed | Callback now includes `"price_step_up_expiry"` reason as required by spec. |
-
 ### DB Behaviors
 
 | Spec area | Status | Notes |
