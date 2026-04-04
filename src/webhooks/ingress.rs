@@ -21,12 +21,10 @@ pub async fn handle_google_play(
     let token_uuid = Uuid::parse_str(&token)
         .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
 
-    let app = crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid)
-        .await
-        .map_err(|_| {
-            error!("App not found for token: {}", token);
-            BridgeError::ValidationError("App not found".to_string())
-        })?;
+    let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
+        Ok(app) => app,
+        Err(_) => return Ok(StatusCode::NOT_FOUND),
+    };
 
     let provider_config =
         crate::db::provider_configs::get_provider_config(&db.pool, app.id, "google_play").await?;
@@ -176,12 +174,10 @@ pub async fn handle_creem(
     let token_uuid = Uuid::parse_str(&token)
         .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
 
-    let app = crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid)
-        .await
-        .map_err(|_| {
-            error!("App not found for token: {}", token);
-            BridgeError::ValidationError("App not found".to_string())
-        })?;
+    let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
+        Ok(app) => app,
+        Err(_) => return Ok(StatusCode::NOT_FOUND),
+    };
 
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -280,12 +276,10 @@ pub async fn handle_lemonsqueezy(
     let token_uuid = Uuid::parse_str(&token)
         .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
 
-    let app = crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid)
-        .await
-        .map_err(|_| {
-            error!("App not found for token: {}", token);
-            BridgeError::ValidationError("App not found".to_string())
-        })?;
+    let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
+        Ok(app) => app,
+        Err(_) => return Ok(StatusCode::NOT_FOUND),
+    };
 
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -381,12 +375,10 @@ pub async fn handle_coinbase(
     let token_uuid = Uuid::parse_str(&token)
         .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
 
-    let app = crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid)
-        .await
-        .map_err(|_| {
-            error!("App not found for token: {}", token);
-            BridgeError::ValidationError("App not found".to_string())
-        })?;
+    let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
+        Ok(app) => app,
+        Err(_) => return Ok(StatusCode::NOT_FOUND),
+    };
 
     use hmac::{Hmac, Mac};
     use sha2::Sha256;

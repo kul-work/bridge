@@ -36,6 +36,27 @@ pub struct SubscriptionDetail {
 }
 
 #[derive(Debug, Serialize)]
+pub struct SubscriptionDetailFull {
+    pub id: String,
+    pub subscription_id: String,
+    pub provider: String,
+    pub status: String,
+    pub current_period_end: Option<String>,
+    pub auto_renewing: Option<bool>,
+    pub payment_state: Option<i32>,
+    pub cancel_reason: Option<i32>,
+    pub provider_customer_id: Option<String>,
+    pub cancellation_initiated_at: Option<String>,
+    pub revocation_reason: Option<String>,
+    pub revoked_at: Option<String>,
+    pub google_requires_price_step_up_consent: Option<bool>,
+    pub google_price_step_up_consent_deadline: Option<String>,
+    pub google_new_price_cents: Option<i32>,
+    pub google_pause_scheduled_at: Option<String>,
+    pub google_paused_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct PaginationMeta {
     pub has_more: bool,
     pub after: Option<String>,
@@ -136,7 +157,7 @@ pub async fn get_subscription(
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Query(query): Query<GetSubscriptionQuery>,
-) -> Result<(StatusCode, Json<SubscriptionDetail>), BridgeError> {
+) -> Result<(StatusCode, Json<SubscriptionDetailFull>), BridgeError> {
     if query.external_user_id.is_empty() {
         return Err(BridgeError::ValidationError(
             "external_user_id is required".to_string(),
@@ -158,13 +179,24 @@ pub async fn get_subscription(
     )
     .await?;
 
-    let detail = SubscriptionDetail {
+    let detail = SubscriptionDetailFull {
         id: sub.id.to_string(),
         subscription_id: sub.subscription_id,
         provider: sub.provider,
         status: sub.status,
         current_period_end: sub.current_period_end.map(|d| d.to_rfc3339()),
         auto_renewing: sub.auto_renewing,
+        payment_state: sub.payment_state,
+        cancel_reason: sub.cancel_reason,
+        provider_customer_id: sub.provider_customer_id,
+        cancellation_initiated_at: sub.cancellation_initiated_at.map(|d| d.to_rfc3339()),
+        revocation_reason: sub.revocation_reason,
+        revoked_at: sub.revoked_at.map(|d| d.to_rfc3339()),
+        google_requires_price_step_up_consent: sub.google_requires_price_step_up_consent,
+        google_price_step_up_consent_deadline: sub.google_price_step_up_consent_deadline.map(|d| d.to_rfc3339()),
+        google_new_price_cents: sub.google_new_price_cents,
+        google_pause_scheduled_at: sub.google_pause_scheduled_at.map(|d| d.to_rfc3339()),
+        google_paused_at: sub.google_paused_at.map(|d| d.to_rfc3339()),
     };
 
     Ok((StatusCode::OK, Json(detail)))

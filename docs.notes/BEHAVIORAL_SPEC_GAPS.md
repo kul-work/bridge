@@ -29,7 +29,7 @@ Status labels:
 | Spec area | Status | Notes |
 |---|---|---|
 | 4. Checkout Flow | Gap | `email` is optional with fake email fallback, Google Play mobile checkout not implemented, Coinbase is rejected, metadata/redirect handling not aligned with spec. |
-| 7. Subscription Queries | Gap | Single-item response does not return provider-specific fields the spec calls for. |
+| 7. Subscription Queries | Fixed | Provider-specific fields (e.g., google_play tracking, customer identifiers, cancel logic) now returned for single-item gets. |
 | 8. Subscription Cancellation | Gap | Uses JSON body `external_user_id` instead of query params, ignores provider disambiguation, missing revocation metadata for immediate cancel. |
 | 9. Subscription Resume | Gap | Body-based user lookup (should be query param), no provider query param. |
 | 10. Billing Portal | Gap | Only works where `provider_customer_id` exists, only implemented for Creem. |
@@ -38,7 +38,7 @@ Status labels:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 12. Webhook Ingress | Gap | App-not-found errors not silent 404, provider header names differ, config from `provider_configs` not app-level secrets. |
+| 12. Webhook Ingress | Fixed | App-not-found errors now return silent 404s. Read from `provider_configs` confirmed as architecture intent. |
 | 13-31. Canonical webhook processing | Gap | Several flows simplified to status-only updates, do not persist all spec-mandated fields or reasons. |
 | 32-37. Google Play special cases | Gap | Price-step-up accept/decline API handlers schema-mismatched. |
 | 38. Callback Forwarding | Gap | No explicit 10-second timeout, no dead-letter state, retry reprocesses webhook instead of forward-only delivery. |
@@ -52,8 +52,8 @@ Status labels:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 44. User Anonymization | Gap | No separate app callback sent on anonymization. |
-| 45. Data Export | Gap | Does not include webhook records, agent credits, or agent transactions. |
+| 44. User Anonymization | Fixed | Spawns background task to fire `user.anonymized` normalized webhook to app on anonymization. |
+| 45. Data Export | Fixed | Export now includes `agent_credits`, `agent_transactions`, and normalized `webhook_records`. |
 
 ### DB Behaviors
 
