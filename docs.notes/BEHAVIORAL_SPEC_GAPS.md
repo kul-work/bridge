@@ -44,12 +44,10 @@ The main gaps are in correctness and contract fidelity:
 | Spec area | Status | Notes |
 |---|---|---|
 | 4. Checkout Flow | Gap | `email` is optional with fake email fallback, Google Play mobile checkout not implemented, Coinbase is rejected, metadata/redirect handling not aligned with spec. |
-| 6. Purchase Registration | Completed | Registration creates pending placeholder as required by spec. |
 | 7. Subscription Queries | Gap | Single-item response does not return provider-specific fields the spec calls for. |
 | 8. Subscription Cancellation | Gap | Uses JSON body `external_user_id` instead of query params, ignores provider disambiguation, missing revocation metadata for immediate cancel. |
 | 9. Subscription Resume | Gap | Body-based user lookup (should be query param), no provider query param. |
 | 10. Billing Portal | Gap | Only works where `provider_customer_id` exists, only implemented for Creem. |
-| 11. Payment History | Completed | Response includes `provider` and `provider_transaction_id`, uses `amount_cents` per spec. |
 
 ### Webhook Ingress and Processing
 
@@ -69,7 +67,6 @@ The main gaps are in correctness and contract fidelity:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 40. Token Creation | Completed | Validates positive `amount_cents`, non-empty `endpoint`, and ensures `agent_credits` exists. |
 | 41. Token Charge | Partial | `src/db/agent.rs::charge_agent` now binds token use to the same app and user, but the request still does not carry or verify `endpoint`, so it is not fully at spec. |
 
 ### GDPR and Data Retention
@@ -90,5 +87,4 @@ The main gaps are in correctness and contract fidelity:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 50. Payment Recording | Fixed | Webhook processor now propagates errors from `record_payment_tx` via `?` operator. |
 | 52. Subscription Store/Activate | Gap | Lacks `last_event_time` guard on conflict updates. |
