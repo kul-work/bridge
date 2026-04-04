@@ -40,14 +40,3 @@ Status labels:
 | 13-31. Canonical webhook processing | Gap | Several flows simplified to status-only updates, do not persist all spec-mandated fields or reasons. |
 | 32-37. Google Play special cases | Gap | Price-step-up accept/decline API handlers schema-mismatched. |
 | 38. Callback Forwarding | Gap | No explicit 10-second timeout, no dead-letter state, retry reprocesses webhook instead of forward-only delivery. |
-
-### Specific Webhook Gaps Worth Calling Out
-
-- Fixed: `src/webhooks/processor.rs` handles `subscription.updated` by writing raw status when present, but the spec expects a more controlled normalized update path.
-- Fixed: `src/webhooks/processor.rs` only uses the stale-event guard for some update paths. Activation and renewal still use the unguarded upsert helper.
-
-### DB Behaviors
-
-| Spec area | Status | Notes |
-|---|---|---|
-| 52. Subscription Store/Activate | Fixed | Lacks `last_event_time` guard on conflict updates. (Fixed: Added strict `last_event_time` guards to registration upsert and link replacements) |
