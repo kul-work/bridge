@@ -112,13 +112,13 @@ On Windows, use `cmd /c` with `set PGPASSWORD=` to avoid password prompts and Po
 For simple queries (no quotes in SQL):
 
 ```bash
-cmd /c "set PGPASSWORD=password&& psql -U postgres -h localhost -p 5432 -d appgen -c "\dt pay.*""
+cmd /c "set PGPASSWORD=password && psql -U postgres -h localhost -p 5432 -d appgen -c "\dt pay.*""
 ```
 
 For complex queries (with quotes, WHERE clauses, etc.), write a temp `.sql` file and use `-f`:
 
 ```bash
-cmd /c "set PGPASSWORD=password&& psql -U postgres -h localhost -p 5432 -d appgen -f c:\share\tyde\bridge\tmp_query.sql"
+cmd /c "set PGPASSWORD=password && psql -U postgres -h localhost -p 5432 -d appgen -f c:\share\tyde\bridge\tmp_query.sql"
 ```
 
 1. Create the file (use create_file tool)
