@@ -1,4 +1,5 @@
 use crate::error::BridgeError;
+use std::time::Duration;
 use sqlx::PgPool;
 use uuid::Uuid;
 use reqwest::Client;
@@ -9,6 +10,8 @@ use chrono::Utc;
 
 #[allow(dead_code)]
 type HmacSha256 = Hmac<Sha256>;
+
+const WEBHOOK_FORWARD_TIMEOUT_SECS: u64 = 10;
 
 /// Forward webhook to app callback URL with HMAC signature
 /// Used for future webhook delivery to app callbacks.
@@ -42,14 +45,14 @@ pub async fn forward_webhook(
                 crate::db::webhooks::suppress_webhook(
                     pool,
                     delivery.webhook_provider_id,
-                    "stale_event_suppressed_at_forwarding",
+                    "superseded_before_forward",
                 )
                 .await?;
                 crate::db::webhooks::update_webhook_delivery_attempt(
                     pool,
                     webhook_delivery_id,
                     None,
-                    Some("Suppressed stale event".to_string()),
+                    Some("Suppressed stale event before forward".to_string()),
                     true,
                 )
                 .await?;
@@ -65,21 +68,12 @@ pub async fn forward_webhook(
         }
     }
 
-    // Calculate retry delay based on attempt number
-    let delay_ms = match delivery.forward_attempts {
-        0 => 0,        // immediate
-        1 => 5 * 60 * 1000,  // 5 minutes
-        2 => 10 * 60 * 1000, // 10 minutes
-        _ => return Err(BridgeError::WebhookError("Max retries exceeded".to_string())),
-    };
-
-    if delay_ms > 0 {
-        let delay_secs = delay_ms / 1000;
+    if delivery.forward_attempts > 0 {
         info!(
-            "Scheduling webhook delivery retry in {} seconds",
-            delay_secs
+            "Retrying webhook delivery {} (attempt {} of 3)",
+            webhook_delivery_id,
+            delivery.forward_attempts + 1,
         );
-        // In production, this would use a job queue. For now, just log the delay.
     }
 
     // Serialize payload
@@ -91,7 +85,10 @@ pub async fn forward_webhook(
     let signature = create_signature(&payload_json, &app.webhook_callback_secret)?;
 
     // Make HTTP request
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(Duration::from_secs(WEBHOOK_FORWARD_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| BridgeError::WebhookError(format!("Failed to build webhook client: {}", e)))?;
     let response = client
         .post(&app.webhook_callback_url)
         .header("X-Pay-Signature", &signature)

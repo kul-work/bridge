@@ -105,17 +105,25 @@ pub async fn insert_agent_token(
 
 pub async fn use_agent_token(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+    external_user_id: &str,
     token_id: Uuid,
 ) -> Result<Option<AgentPaymentToken>, BridgeError> {
     sqlx::query_as::<_, AgentPaymentToken>(
         r#"
         UPDATE pay.agent_payment_tokens
         SET used = true, used_at = NOW()
-        WHERE id = $1 AND used = false AND expires_at > NOW()
+        WHERE id = $1
+          AND app_id = $2
+          AND external_user_id = $3
+          AND used = false
+          AND expires_at > NOW()
         RETURNING *
         "#
     )
     .bind(token_id)
+    .bind(app_id)
+    .bind(external_user_id)
     .fetch_optional(&mut **tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))
@@ -154,12 +162,15 @@ pub async fn charge_agent(
 ) -> Result<(i32, i32), BridgeError> {
     let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    let token_opt = use_agent_token(&mut tx, token_id).await?;
+    let token_opt = use_agent_token(&mut tx, app_id, external_user_id, token_id).await?;
     let token = match token_opt {
         Some(token) => token,
         None => {
             let _ = tx.rollback().await;
-            return Err(BridgeError::ValidationError("Token cannot be consumed (expired, already used, or insufficient balance)".into()));
+            return Err(BridgeError::ValidationError(
+                "Token is invalid, expired, already used, or does not belong to this user"
+                    .into(),
+            ));
         }
     };
 
@@ -169,7 +180,7 @@ pub async fn charge_agent(
         SET balance_cents = balance_cents - $3,
             lifetime_spent_cents = lifetime_spent_cents + $3,
             updated_at = NOW()
-        WHERE app_id = $1 AND external_user_id = $2
+        WHERE app_id = $1 AND external_user_id = $2 AND balance_cents >= $3
         RETURNING *
         "#
     )
@@ -187,11 +198,6 @@ pub async fn charge_agent(
             return Err(BridgeError::ValidationError("Insufficient funds".to_string()));
         }
     };
-
-    if credit.balance_cents < 0 {
-        let _ = tx.rollback().await;
-        return Err(BridgeError::ValidationError("Insufficient funds".to_string()));
-    }
 
     record_agent_transaction(
         &mut tx,

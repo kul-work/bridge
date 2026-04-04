@@ -55,6 +55,45 @@ struct WebhookFields {
     google_price_step_up_consent_deadline: Option<String>,
 }
 
+fn extract_metadata_user_id(payload: &serde_json::Value) -> Option<String> {
+    [
+        "/metadata/user_id",
+        "/object/metadata/user_id",
+        "/event/data/metadata/external_user_id",
+        "/event/data/metadata/user_id",
+    ]
+    .into_iter()
+    .find_map(|pointer| payload.pointer(pointer).and_then(|value| value.as_str()).map(|value| value.to_string()))
+}
+
+async fn suppress_unresolved_webhook(
+    pool: &PgPool,
+    webhook_provider_id: Uuid,
+    webhook: &crate::db::webhooks::WebhookProvider,
+) -> Result<(), BridgeError> {
+    error!(
+        "Webhook {} discarded: unable to resolve external_user_id (provider={}, event={})",
+        webhook.provider_webhook_id,
+        webhook.provider,
+        webhook.event_type
+    );
+    crate::db::webhooks::suppress_webhook(pool, webhook_provider_id, "unresolved_external_user_id").await
+}
+
+async fn ensure_resolved_user(
+    pool: &PgPool,
+    webhook_provider_id: Uuid,
+    webhook: &crate::db::webhooks::WebhookProvider,
+    external_user_id: &Option<String>,
+) -> Result<bool, BridgeError> {
+    if external_user_id.is_some() {
+        return Ok(true);
+    }
+
+    suppress_unresolved_webhook(pool, webhook_provider_id, webhook).await?;
+    Ok(false)
+}
+
 fn extract_webhook_fields(webhook: &crate::db::webhooks::WebhookProvider) -> WebhookFields {
     let p = &webhook.payload;
     match webhook.provider.as_str() {
@@ -69,7 +108,7 @@ fn extract_webhook_fields(webhook: &crate::db::webhooks::WebhookProvider) -> Web
                 .and_then(|v| v.as_bool()),
             current_period_end: p.pointer("/subscriptionNotification/expiryTimeMillis")
                 .and_then(|v| v.as_i64())
-                .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms))
+                .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
                 .map(|dt| dt.to_rfc3339()),
             provider_transaction_id: p.pointer("/subscriptionNotification/purchaseToken")
                 .and_then(|v| v.as_str()).map(|s| s.to_string()),
@@ -85,7 +124,7 @@ fn extract_webhook_fields(webhook: &crate::db::webhooks::WebhookProvider) -> Web
                 .and_then(|v| v.as_i64()).map(|m| (m / 10_000) as i32),
             google_price_step_up_consent_deadline: p.pointer("/subscriptionNotification/priceStepUpConsentDetails/consentDeadlineTimeMillis")
                 .and_then(|v| v.as_i64())
-                .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms))
+                .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
                 .map(|dt| dt.to_rfc3339()),
         },
         "creem" => WebhookFields {
@@ -213,11 +252,8 @@ async fn resolve_user(
         }
     }
 
-    // 4. Creem metadata.user_id
-    if let Some(user_id) = webhook.payload.pointer("/metadata/user_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-    {
+    // 4. Provider metadata.user_id / external_user_id
+    if let Some(user_id) = extract_metadata_user_id(&webhook.payload) {
         return Some(user_id);
     }
 
@@ -255,7 +291,7 @@ pub async fn build_canonical_payload(
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     let external_user_id = resolve_user(pool, app_id, &webhook).await;
-    if webhook.provider == "creem" && external_user_id.is_none() {
+    if !ensure_resolved_user(pool, webhook_provider_id, &webhook, &external_user_id).await? {
         return Ok(None);
     }
 
@@ -265,7 +301,7 @@ pub async fn build_canonical_payload(
         .timestamp_epoch_ms
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
     let timestamp_iso = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
-        .unwrap_or_else(|| chrono::Utc::now())
+        .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
 
     Ok(Some(CanonicalWebhookPayload {
@@ -312,9 +348,7 @@ pub async fn process_webhook(
 
     // Step 2: Resolve external_user_id (§53 cascade)
     let external_user_id = resolve_user(pool, app_id, &webhook).await;
-
-    // Creem orphan guard returned None → discard
-    if webhook.provider == "creem" && external_user_id.is_none() {
+    if !ensure_resolved_user(pool, webhook_provider_id, &webhook, &external_user_id).await? {
         return Ok(None);
     }
 
@@ -326,7 +360,7 @@ pub async fn process_webhook(
 
     let timestamp_epoch_ms = webhook.timestamp_epoch_ms.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
     let timestamp_iso = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
-        .unwrap_or_else(|| chrono::Utc::now())
+        .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
 
     // Step 4: Route by canonical event type and mutate DB
@@ -498,15 +532,26 @@ pub async fn process_webhook(
         // §20 - Cancellation Scheduled
         "subscription.cancellation_scheduled" => {
             if let Some(ref _user_id) = external_user_id {
-                let sub_id = fields.subscription_id.clone().unwrap_or_default();
-                sqlx::query(
-                    "UPDATE pay.subscriptions SET auto_renewing = false, updated_at = NOW() WHERE app_id = $1 AND subscription_id = $2"
-                )
-                .bind(app_id)
-                .bind(&sub_id)
-                .execute(pool)
-                .await
-                .map_err(|e| BridgeError::DbError(e.to_string()))?;
+                if let Some(sub_id) = fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()) {
+                    let result = sqlx::query(
+                        "UPDATE pay.subscriptions
+                         SET auto_renewing = false,
+                             version = version + 1,
+                             last_event_time = $1,
+                             updated_at = NOW()
+                         WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1"
+                    )
+                    .bind(timestamp_epoch_ms)
+                    .bind(app_id)
+                    .bind(sub_id)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+                    if result.rows_affected() == 0 {
+                        info!("Skipped stale cancellation_scheduled event for subscription {}", sub_id);
+                    }
+                }
             }
         }
 
@@ -724,68 +769,91 @@ pub async fn process_webhook(
         }
 
         "subscription.price_step_up" => {
-            if let Some(sub_id) = fields.subscription_id.as_deref() {
+            if let Some(sub_id) = fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()) {
                 let deadline = fields.google_price_step_up_consent_deadline.as_deref()
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                     .map(|dt| dt.with_timezone(&chrono::Utc));
 
-                sqlx::query(
+                let result = sqlx::query(
                     "UPDATE pay.subscriptions
                      SET google_requires_price_step_up_consent = true,
                          google_new_price_cents = $1,
                          google_price_step_up_consent_deadline = COALESCE($2, google_price_step_up_consent_deadline),
+                         version = version + 1,
+                         last_event_time = $3,
                          updated_at = NOW()
-                     WHERE app_id = $3 AND subscription_id = $4"
+                     WHERE app_id = $4 AND subscription_id = $5 AND last_event_time < $3"
                 )
                 .bind(fields.google_new_price_cents)
                 .bind(deadline)
+                .bind(timestamp_epoch_ms)
                 .bind(app_id)
                 .bind(sub_id)
                 .execute(pool)
                 .await
                 .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+                if result.rows_affected() == 0 {
+                    info!("Skipped stale price_step_up event for subscription {}", sub_id);
+                }
             }
         }
 
         "subscription.pause_scheduled" => {
-            if let Some(sub_id) = fields.subscription_id.as_deref() {
+            if let Some(sub_id) = fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()) {
                 let pause_scheduled_at = webhook.payload.pointer("/subscriptionNotification/pauseScheduleTimeMillis")
                     .and_then(|v| v.as_i64())
-                    .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms));
+                    .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
 
                 if let Some(schedule_at) = pause_scheduled_at {
-                    sqlx::query(
+                    let result = sqlx::query(
                         "UPDATE pay.subscriptions
-                         SET google_pause_scheduled_at = $1, updated_at = NOW()
-                         WHERE app_id = $2 AND subscription_id = $3"
+                         SET google_pause_scheduled_at = $1,
+                             version = version + 1,
+                             last_event_time = $2,
+                             updated_at = NOW()
+                         WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2"
                     )
                     .bind(schedule_at)
+                    .bind(timestamp_epoch_ms)
                     .bind(app_id)
                     .bind(sub_id)
                     .execute(pool)
                     .await
                     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+                    if result.rows_affected() == 0 {
+                        info!("Skipped stale pause_scheduled event for subscription {}", sub_id);
+                    }
                 }
             }
         }
 
         "subscription.deferred" => {
-            if let Some(sub_id) = fields.subscription_id.as_deref() {
+            if let Some(sub_id) = fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()) {
                 let deferred_until = webhook.payload.pointer("/subscriptionNotification/deferredExpiryTimeMillis")
                     .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
-                    .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms));
+                    .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
                 if let Some(until) = deferred_until {
-                    sqlx::query(
+                    let result = sqlx::query(
                         "UPDATE pay.subscriptions
-                         SET google_deferred_until = $1, updated_at = NOW()
-                         WHERE app_id = $2 AND subscription_id = $3"
+                         SET google_deferred_until = $1,
+                             version = version + 1,
+                             last_event_time = $2,
+                             updated_at = NOW()
+                         WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2"
                     )
                     .bind(until)
+                    .bind(timestamp_epoch_ms)
                     .bind(app_id)
                     .bind(sub_id)
                     .execute(pool)
                     .await
                     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+                    if result.rows_affected() == 0 {
+                        info!("Skipped stale deferred event for subscription {}", sub_id);
+                    }
                 }
             }
         }
@@ -1018,5 +1086,20 @@ mod tests {
             normalize_event_type("creem", "subscription.cancelled"),
             "subscription.cancelled"
         );
+    }
+
+    #[test]
+    fn test_extract_metadata_user_id_supports_nested_paths() {
+        let payload = serde_json::json!({
+            "event": {
+                "data": {
+                    "metadata": {
+                        "external_user_id": "coinbase-user"
+                    }
+                }
+            }
+        });
+
+        assert_eq!(extract_metadata_user_id(&payload).as_deref(), Some("coinbase-user"));
     }
 }

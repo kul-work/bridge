@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, FromRow};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy)]
+pub struct AuthenticatedApiKey {
+    pub api_key_id: Uuid,
+    pub app_id: Uuid,
+}
+
 /// API key for app authentication
 /// Used by api_key middleware for authentication. Struct construction is handled by SQLx FromRow.
 #[allow(dead_code)]
@@ -27,7 +33,10 @@ struct ApiKeyCandidate {
     app_enabled: bool,
 }
 
-pub async fn authenticate_api_key(pool: &PgPool, raw_key: &str) -> Result<Uuid, BridgeError> {
+pub async fn authenticate_api_key(
+    pool: &PgPool,
+    raw_key: &str,
+) -> Result<AuthenticatedApiKey, BridgeError> {
     let key_prefix: String = raw_key.chars().take(8).collect();
     if key_prefix.len() < 8 {
         return Err(BridgeError::UnauthorizedError("Invalid API key".to_string()));
@@ -59,7 +68,10 @@ pub async fn authenticate_api_key(pool: &PgPool, raw_key: &str) -> Result<Uuid, 
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-            return Ok(candidate.app_id);
+            return Ok(AuthenticatedApiKey {
+                api_key_id: candidate.id,
+                app_id: candidate.app_id,
+            });
         }
     }
 

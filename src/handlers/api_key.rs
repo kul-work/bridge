@@ -12,6 +12,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct AppAuth {
     pub app_id: Uuid,
+    pub api_key_id: Uuid,
 }
 
 pub async fn api_key_auth(
@@ -37,8 +38,11 @@ pub async fn api_key_auth(
     }
 
     let api_key = parts[1];
-    let app_id = db::api_keys::authenticate_api_key(&database.pool, api_key).await?;
+    let auth = db::api_keys::authenticate_api_key(&database.pool, api_key).await?;
 
-    request.extensions_mut().insert(AppAuth { app_id });
+    request.extensions_mut().insert(AppAuth {
+        app_id: auth.app_id,
+        api_key_id: auth.api_key_id,
+    });
     Ok(next.run(request).await)
 }

@@ -1,6 +1,7 @@
 # Bridge Behavioral Spec Gap Review
 
 Date: 2026-04-01
+Updated: 2026-04-04
 Source spec: `docs.notes/BEHAVIORAL_SPEC.md`
 Codebase reviewed: `src/`, `migrations/`
 
@@ -10,6 +11,7 @@ This document compares the current Bridge implementation against the behavioral 
 
 Status labels:
 
+- `Resolved`: previously missing behavior is now implemented and no longer considered a gap.
 - `Partial`: the main path exists, but required behaviors, fields, or safety checks are missing.
 - `Gap`: missing, broken, or contradicted by the current implementation.
 
@@ -20,7 +22,7 @@ The main gaps are in correctness and contract fidelity:
 - `verify-purchase` is much thinner than the spec and misses several required behaviors.
 - There are schema/runtime mismatches where handlers write columns that do not exist.
 - webhook ordering and retry behavior is not strong enough to satisfy the spec's stale-event guarantees.
-- admin auth and agent token charging are materially weaker than the spec's security model.
+- the remaining security-sensitive gap is narrower now: admin auth and per-API-key rate limiting are fixed, but agent charge flow still does not bind the request endpoint back to the token as the spec describes.
 
 ## Highest-Risk Gaps
 
@@ -31,7 +33,7 @@ These are not just spec gaps; they look like live failure paths.
 - `src/handlers/verify_purchase.rs` queries and inserts `pay.fraud_prevention.purchase_token`, but `migrations/08_create_fraud_prevention_table.sql` does not define a `purchase_token` column. The same insert also omits the required `provider` column.
 - `src/handlers/subscriptions_actions.rs` updates `pay.subscriptions.acknowledged_at`, but `migrations/03_create_subscriptions_table.sql` does not define that column. `acknowledged_at` exists on `pay.payments` instead (`migrations/04_create_payments_table.sql`).
 - `src/handlers/subscriptions_actions.rs` updates `price_step_up_pending`, but the schema only defines Google price-step-up fields such as `google_requires_price_step_up_consent` and `google_price_step_up_consent_status`.
-- `src/db/agent.rs` uses `ON CONFLICT (app_id, charge_id)` in `apply_topup_if_new`, but `migrations/07_create_agent_credits_tables.sql` does not define a matching unique index or constraint on `pay.agent_transactions`.
+- Resolved: `src/db/agent.rs`'s `ON CONFLICT (app_id, charge_id)` path is now backed by `migrations/14_add_agent_topup_charge_idempotency.sql`, which adds the required unique index for top-up idempotency.
 
 ### 2. `verify-purchase` is far from the spec
 
@@ -53,9 +55,9 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 
 ### 4. Security-sensitive gaps
 
-- `src/middleware/admin_auth.rs` currently treats any bearer token as sufficient for admin access. The spec expects Tyde internal Clerk org verification.
-- `src/db/agent.rs::charge_agent` consumes an agent token by `token_id` only. It does not verify that the token belongs to the same app, user, or endpoint requested by the caller.
-- `src/middleware/rate_limit.rs` applies limits per app/group, not per API key as required by spec section 3.1.
+- Resolved: `src/middleware/admin_auth.rs` now verifies Clerk session JWTs against Clerk JWKS, checks the trusted issuer, rejects pending-org sessions, and enforces `ADMIN_CLERK_ORG_ID` membership for admin routes.
+- Partial: `src/db/agent.rs::charge_agent` now scopes token consumption to the same app and user, but the API still does not accept or verify the request `endpoint` against the token as required by spec section 41.
+- Resolved: `src/middleware/rate_limit.rs` now applies limits per `api_key_id` + endpoint group, matching spec section 3.1.
 
 ## Section Review
 
@@ -63,13 +65,13 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 
 | Spec area | Status | Notes |
 |---|---|---|
-| Admin UI security (part of section 1) | Gap | `src/middleware/admin_auth.rs` only checks for header presence; it does not verify JWT signature or Clerk organization membership. |
+| Admin UI security (part of section 1) | Resolved | `src/middleware/admin_auth.rs` now verifies Clerk JWT signature via JWKS and requires membership in the configured internal Clerk organization. |
 
 ### Rate Limiting
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 3.1 Per-API-Key limits | Partial | `src/middleware/rate_limit.rs` supports endpoint groups and app overrides, but the key is `app_id + group`, not API key + group. |
+| 3.1 Per-API-Key limits | Resolved | `src/middleware/rate_limit.rs` now keys limits by `api_key_id + endpoint_group` while still honoring app-level limit settings and overrides. |
 | 3.2 Default endpoint limits | Partial | Defaults are present, but `/purchase/register` is routed in `src/main.rs` while the limiter checks for `/purchases/register`, so purchase registration misses the intended endpoint group. |
 | 3.3 Per-IP unauthenticated limits | Gap | No middleware exists for failed-auth or unauthenticated per-IP limits. |
 
@@ -108,8 +110,8 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 | Spec area | Status | Notes |
 |---|---|---|
 | 40. Token Creation | Gap | Does not validate email format, endpoint support, or amount; does not ensure `agent_credits` row exists. |
-| 41. Token Charge | Gap | Does not verify token belongs to same app/user/endpoint. |
-| 42. Charge Confirmed (Coinbase) | Gap | `ON CONFLICT` target in `apply_topup_if_new` does not match schema. |
+| 41. Token Charge | Partial | `src/db/agent.rs::charge_agent` now binds token use to the same app and user, but the request still does not carry or verify `endpoint`, so it is not fully at spec. |
+| 42. Charge Confirmed (Coinbase) | Resolved | `migrations/14_add_agent_topup_charge_idempotency.sql` adds the unique index needed for `apply_topup_if_new`'s `ON CONFLICT (app_id, charge_id)` path. |
 | 43. Charge Failed (Coinbase) | Gap | No explicit handler branch logs the event. |
 
 ### GDPR and Data Retention
@@ -140,7 +142,7 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 2. Bring `verify-purchase` up to the spec contract.
 3. Separate webhook processing from webhook delivery retries.
 4. Add stale-event guards to all subscription mutation paths, especially activation/renewal upserts.
-5. Harden admin auth and agent token scoping.
+5. Finish agent token endpoint scoping so charge requests prove the token is for the requested endpoint, not just the same app and user.
 6. Tighten API response shapes to match the spec exactly.
 
 ## Bottom Line

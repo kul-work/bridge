@@ -55,19 +55,34 @@ pub async fn retry_webhooks(database: &Arc<Database>) -> Result<(), crate::error
         .unwrap_or_default();
 
         for delivery in deliveries {
-            if let Ok(Some(canonical)) = crate::webhooks::processor::build_canonical_payload(
+            match crate::webhooks::processor::build_canonical_payload(
                 &database.pool,
                 delivery.webhook_provider_id,
                 app.id,
             )
             .await
             {
-                let _ = crate::webhooks::forwarding::forward_webhook(
-                    &database.pool,
-                    app.id,
-                    delivery.id,
-                    canonical,
-                ).await;
+                Ok(Some(canonical)) => {
+                    let _ = crate::webhooks::forwarding::forward_webhook(
+                        &database.pool,
+                        app.id,
+                        delivery.id,
+                        canonical,
+                    ).await;
+                }
+                Ok(None) => {
+                    crate::db::webhooks::update_webhook_delivery_attempt(
+                        &database.pool,
+                        delivery.id,
+                        None,
+                        Some("Suppressed before retry".to_string()),
+                        true,
+                    )
+                    .await?;
+                }
+                Err(e) => {
+                    error!("Failed to rebuild canonical webhook payload for delivery {}: {}", delivery.id, e);
+                }
             }
         }
     }
@@ -144,16 +159,24 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
                                 "Subscription {} status drift detected: db={}, provider={}. Triggering corrective callback.",
                                 subscription_id, current_db_status, provider_status
                             );
-                            // Update status and trigger webhook
-                            sqlx::query(
-                                "UPDATE pay.subscriptions SET status = $1, updated_at = NOW() WHERE app_id = $2 AND subscription_id = $3"
+                            let event_time_ms = chrono::Utc::now().timestamp_millis();
+                            let updated = crate::db::subscriptions::update_subscription_status(
+                                &database.pool,
+                                app_id,
+                                &subscription_id,
+                                &provider_status,
+                                event_time_ms,
                             )
-                            .bind(&provider_status)
-                            .bind(app_id)
-                            .bind(&subscription_id)
-                            .execute(&database.pool)
-                            .await
-                            .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+                            .await?;
+
+                            if !updated {
+                                info!(
+                                    "Skipped stale reconciliation update for subscription {} (provider={})",
+                                    subscription_id,
+                                    provider,
+                                );
+                                continue;
+                            }
 
                             let alert = format!(
                                 "Admin alert: reconciliation drift app_id={} sub={} provider={} db_status={} provider_status={}",
@@ -241,19 +264,28 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
         }
 
         // Update local DB regardless (clear consent flags, set auto_renewing=false)
-        sqlx::query(
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let result = sqlx::query(
             "UPDATE pay.subscriptions 
              SET google_requires_price_step_up_consent = false,
                  google_price_step_up_consent_deadline = NULL,
                  status = 'cancelled',
                  auto_renewing = false,
+                 version = version + 1,
+                 last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
                  updated_at = NOW()
-             WHERE id = $1"
+             WHERE id = $2"
         )
+        .bind(now_ms)
         .bind(id)
         .execute(&database.pool)
         .await
         .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            info!("Skipped price step-up expiry transition for subscription {} because it was already updated", subscription_id);
+            continue;
+        }
 
         if let Err(e) = emit_scheduler_callback(
             &database.pool,
@@ -304,7 +336,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
         info!("Transitioning subscription {} to paused (scheduled pause)", subscription_id);
 
         let now_ms = chrono::Utc::now().timestamp_millis();
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE pay.subscriptions 
              SET status = 'paused',
                  auto_renewing = false,
@@ -319,6 +351,11 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
         .execute(&database.pool)
         .await
         .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            info!("Skipped pause transition callback for subscription {} because state was already updated", subscription_id);
+            continue;
+        }
 
         if let Err(e) = emit_scheduler_callback(
             &database.pool,
@@ -352,6 +389,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn emit_scheduler_callback(
     pool: &sqlx::PgPool,
     app_id: Uuid,
