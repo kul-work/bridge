@@ -80,7 +80,6 @@ The main gaps are in correctness and contract fidelity:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 46. Reconciliation | Fixed | Emits spec-compliant `reconciliation.drift_detected` event with required previous/corrected status fields. |
 | 47. Price Step-Up Expiry | Gap | Callback does not include richer reason/context described by spec. |
 
 ### DB Behaviors
