@@ -21,7 +21,7 @@ The main gaps are in correctness and contract fidelity:
 
 - `verify-purchase` is much thinner than the spec and misses several required behaviors.
 - There are schema/runtime mismatches where handlers write columns that do not exist.
-- webhook ordering and retry behavior is not strong enough to satisfy the spec's stale-event guarantees.
+- webhook contract fidelity is improved: unresolved webhooks are now suppressed before forwarding, Coinbase `charge.failed` is handled as a log-only warning, and refund callbacks normalize to `payment.refunded`; ordering and retry safety still remain weak.
 - the remaining security-sensitive gap is narrower now: admin auth and per-API-key rate limiting are fixed, but agent charge flow still does not bind the request endpoint back to the token as the spec describes.
 
 ## Highest-Risk Gaps
