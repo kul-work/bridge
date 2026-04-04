@@ -43,11 +43,11 @@ Status labels:
 
 ### Specific Webhook Gaps Worth Calling Out
 
-- `src/webhooks/processor.rs` handles `subscription.updated` by writing raw status when present, but the spec expects a more controlled normalized update path.
-- `src/webhooks/processor.rs` only uses the stale-event guard for some update paths. Activation and renewal still use the unguarded upsert helper.
+- Fixed: `src/webhooks/processor.rs` handles `subscription.updated` by writing raw status when present, but the spec expects a more controlled normalized update path.
+- Fixed: `src/webhooks/processor.rs` only uses the stale-event guard for some update paths. Activation and renewal still use the unguarded upsert helper.
 
 ### DB Behaviors
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 52. Subscription Store/Activate | Gap | Lacks `last_event_time` guard on conflict updates. |
+| 52. Subscription Store/Activate | Fixed | Lacks `last_event_time` guard on conflict updates. (Fixed: Added strict `last_event_time` guards to registration upsert and link replacements) |

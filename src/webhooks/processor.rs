@@ -354,7 +354,7 @@ pub async fn process_webhook(
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    let canonical_event = normalize_event_type(&webhook.provider, &webhook.event_type);
+    let mut canonical_event = normalize_event_type(&webhook.provider, &webhook.event_type);
 
     if webhook.provider == "coinbase" && canonical_event == "charge.failed" {
         let fields = extract_webhook_fields(&webhook);
@@ -435,7 +435,7 @@ pub async fn process_webhook(
                     tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
                     if webhook.provider == "google_play" {
-                        let _ = crate::db::subscriptions::link_replacement_subscriptions(pool, app_id, user_id, sub_id_str).await;
+                        let _ = crate::db::subscriptions::link_replacement_subscriptions(pool, app_id, user_id, sub_id_str, timestamp_epoch_ms).await;
                     }
                 }
             }
@@ -447,9 +447,13 @@ pub async fn process_webhook(
                 let sub_id = fields.subscription_id.as_deref()
                     .or(webhook.subscription_id.as_deref())
                     .unwrap_or("");
-                crate::db::subscriptions::update_subscription_status(
+                let applied = crate::db::subscriptions::update_subscription_status(
                     pool, app_id, sub_id, "pending", timestamp_epoch_ms,
                 ).await?;
+                if !applied {
+                    info!("Skipped stale pending event for subscription {}", sub_id);
+                    return Ok(None);
+                }
             }
         }
 
@@ -490,11 +494,16 @@ pub async fn process_webhook(
 
         "subscription.grace_period" => {
             if let Some(ref _user_id) = external_user_id {
-                crate::db::subscriptions::update_subscription_status(
+                let sub_id = fields.subscription_id.clone().unwrap_or_default();
+                let applied = crate::db::subscriptions::update_subscription_status(
                     pool, app_id,
-                    &fields.subscription_id.clone().unwrap_or_default(),
+                    &sub_id,
                     "past_due", timestamp_epoch_ms,
                 ).await?;
+                if !applied {
+                    info!("Skipped stale grace_period event for subscription {}", sub_id);
+                    return Ok(None);
+                }
             }
         }
 
@@ -504,9 +513,13 @@ pub async fn process_webhook(
                 let sub_id = fields.subscription_id.as_deref()
                     .or(webhook.subscription_id.as_deref())
                     .unwrap_or("");
-                crate::db::subscriptions::update_subscription_status(
+                let applied = crate::db::subscriptions::update_subscription_status(
                     pool, app_id, sub_id, "revoked", timestamp_epoch_ms,
                 ).await?;
+                if !applied {
+                    info!("Skipped stale revoked event for subscription {}", sub_id);
+                    return Ok(None);
+                }
             }
         }
 
@@ -516,9 +529,13 @@ pub async fn process_webhook(
                 let sub_id = fields.subscription_id.as_deref()
                     .or(webhook.subscription_id.as_deref())
                     .unwrap_or("");
-                crate::db::subscriptions::update_subscription_status(
+                let applied = crate::db::subscriptions::update_subscription_status(
                     pool, app_id, sub_id, "on_hold", timestamp_epoch_ms,
                 ).await?;
+                if !applied {
+                    info!("Skipped stale on_hold event for subscription {}", sub_id);
+                    return Ok(None);
+                }
             }
         }
 
@@ -528,11 +545,15 @@ pub async fn process_webhook(
                 let sub_id = fields.subscription_id.clone().unwrap_or_default();
                 if let Ok(Some(sub)) = crate::db::subscriptions::get_subscription_by_sub_id(pool, app_id, &sub_id).await {
                     if sub.status == "active" || sub.status == "trial" {
-                        crate::db::subscriptions::update_subscription_status(
+                        let applied = crate::db::subscriptions::update_subscription_status(
                             pool, app_id, &sub_id, "paused", timestamp_epoch_ms,
                         ).await?;
+                        if !applied {
+                            info!("Skipped stale paused event for subscription {}", sub_id);
+                            return Ok(None);
+                        }
                     } else {
-                        info!("Ignoring pause event for subscription {} in status '{}'", sub_id, sub.status);
+                        info!("Ignoring pause event for subscription {} in status '{}' (not active/trial)", sub_id, sub.status);
                     }
                 }
             }
@@ -544,11 +565,15 @@ pub async fn process_webhook(
                 let sub_id = fields.subscription_id.clone().unwrap_or_default();
                 if let Ok(Some(sub)) = crate::db::subscriptions::get_subscription_by_sub_id(pool, app_id, &sub_id).await {
                     if sub.status == "paused" {
-                        crate::db::subscriptions::update_subscription_status(
+                        let applied = crate::db::subscriptions::update_subscription_status(
                             pool, app_id, &sub_id, "active", timestamp_epoch_ms,
                         ).await?;
+                        if !applied {
+                            info!("Skipped stale resumed event for subscription {}", sub_id);
+                            return Ok(None);
+                        }
                     } else {
-                        info!("Ignoring resume event for subscription {} in status '{}'", sub_id, sub.status);
+                        info!("Ignoring resume event for subscription {} in status '{}' (not paused)", sub_id, sub.status);
                     }
                 }
             }
@@ -583,22 +608,32 @@ pub async fn process_webhook(
         // §21 - Expired/Inactive
         "subscription.expired" => {
             if let Some(ref _user_id) = external_user_id {
-                crate::db::subscriptions::update_subscription_status(
+                let sub_id = fields.subscription_id.clone().unwrap_or_default();
+                let applied = crate::db::subscriptions::update_subscription_status(
                     pool, app_id,
-                    &fields.subscription_id.clone().unwrap_or_default(),
+                    &sub_id,
                     "expired", timestamp_epoch_ms,
                 ).await?;
+                if !applied {
+                    info!("Skipped stale expired event for subscription {}", sub_id);
+                    return Ok(None);
+                }
             }
         }
 
         // §22 - Cancelled
         "subscription.cancelled" => {
             if let Some(ref _user_id) = external_user_id {
-                crate::db::subscriptions::update_subscription_status(
+                let sub_id = fields.subscription_id.clone().unwrap_or_default();
+                let applied = crate::db::subscriptions::update_subscription_status(
                     pool, app_id,
-                    &fields.subscription_id.clone().unwrap_or_default(),
+                    &sub_id,
                     "cancelled", timestamp_epoch_ms,
                 ).await?;
+                if !applied {
+                    info!("Skipped stale cancelled event for subscription {}", sub_id);
+                    return Ok(None);
+                }
             }
         }
 
@@ -739,11 +774,16 @@ pub async fn process_webhook(
 
         "subscription.pending_purchase_cancelled" => {
             if let Some(ref _user_id) = external_user_id {
-                crate::db::subscriptions::update_subscription_status(
+                let sub_id = fields.subscription_id.clone().unwrap_or_default();
+                let applied = crate::db::subscriptions::update_subscription_status(
                     pool, app_id,
-                    &fields.subscription_id.clone().unwrap_or_default(),
+                    &sub_id,
                     "cancelled", timestamp_epoch_ms,
                 ).await?;
+                if !applied {
+                    info!("Skipped stale pending_purchase_cancelled event for subscription {}", sub_id);
+                    return Ok(None);
+                }
             }
         }
 
@@ -773,14 +813,26 @@ pub async fn process_webhook(
 
         "subscription.updated" => {
             if let Some(ref _user_id) = external_user_id {
-                if let Some(ref status) = fields.status {
-                    crate::db::subscriptions::update_subscription_status(
-                        pool,
-                        app_id,
-                        &fields.subscription_id.clone().unwrap_or_default(),
-                        status,
-                        timestamp_epoch_ms,
-                    ).await?;
+                let status = normalize_status(fields.status.as_deref());
+                let sub_id = fields.subscription_id.clone()
+                    .or(webhook.subscription_id.clone())
+                    .unwrap_or_default();
+                
+                let applied = crate::db::subscriptions::update_subscription_status(
+                    pool,
+                    app_id,
+                    &sub_id,
+                    &status,
+                    timestamp_epoch_ms,
+                ).await?;
+
+                if applied {
+                    if let Some(new_event) = status_to_canonical_event(&status) {
+                        canonical_event = new_event;
+                    }
+                } else {
+                    info!("Skipped stale subscription.updated event for subscription {}", sub_id);
+                    return Ok(None);
                 }
             }
         }
@@ -1065,6 +1117,37 @@ fn normalize_event_type(provider: &str, event_type: &str) -> String {
     }
 }
 
+/// Normalize raw provider status to canonical Bridge status
+fn normalize_status(raw_status: Option<&str>) -> String {
+    let Some(s) = raw_status else { return "pending".to_string(); };
+    match s.trim().to_ascii_lowercase().as_str() {
+        "trialing" | "trial" => "trial".to_string(),
+        "active" | "paid" | "completed" | "success" => "active".to_string(),
+        "past_due" | "grace_period" => "past_due".to_string(),
+        "cancelled" | "canceled" => "cancelled".to_string(),
+        "expired" => "expired".to_string(),
+        "on_hold" | "on-hold" => "on_hold".to_string(),
+        "paused" => "paused".to_string(),
+        "revoked" => "revoked".to_string(),
+        "pending" => "pending".to_string(),
+        _ => s.to_string(),
+    }
+}
+
+/// Map normalized status to canonical callback event type
+fn status_to_canonical_event(normalized_status: &str) -> Option<String> {
+    match normalized_status {
+        "active" | "trial" => Some("subscription.activated".to_string()),
+        "past_due" => Some("subscription.grace_period".to_string()),
+        "on_hold" => Some("subscription.on_hold".to_string()),
+        "paused" => Some("subscription.paused".to_string()),
+        "expired" => Some("subscription.expired".to_string()),
+        "cancelled" => Some("subscription.cancelled".to_string()),
+        "revoked" => Some("subscription.revoked".to_string()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1123,6 +1206,22 @@ mod tests {
             normalize_event_type("coinbase", "charge:failed"),
             "charge.failed"
         );
+    }
+
+    #[test]
+    fn test_normalize_status() {
+        assert_eq!(normalize_status(Some("Trialing")), "trial");
+        assert_eq!(normalize_status(Some(" PAID ")), "active");
+        assert_eq!(normalize_status(Some("canceled")), "cancelled");
+        assert_eq!(normalize_status(None), "pending");
+    }
+
+    #[test]
+    fn test_status_to_canonical_event() {
+        assert_eq!(status_to_canonical_event("active"), Some("subscription.activated".to_string()));
+        assert_eq!(status_to_canonical_event("trial"), Some("subscription.activated".to_string()));
+        assert_eq!(status_to_canonical_event("expired"), Some("subscription.expired".to_string()));
+        assert_eq!(status_to_canonical_event("unknown"), None);
     }
 
     #[test]

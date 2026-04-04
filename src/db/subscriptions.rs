@@ -203,7 +203,9 @@ pub async fn upsert_pending_subscription(
          (app_id, external_user_id, subscription_id, provider, status, version, last_event_time)
          VALUES ($1, $2, $3, $4, 'pending', 1, 0)
          ON CONFLICT (app_id, external_user_id, subscription_id, provider)
-         DO UPDATE SET updated_at = NOW()
+         DO UPDATE SET 
+           updated_at = NOW()
+         WHERE subscriptions.last_event_time <= EXCLUDED.last_event_time
          RETURNING *"
     )
     .bind(app_id)
@@ -324,19 +326,24 @@ pub async fn link_replacement_subscriptions(
     app_id: Uuid,
     external_user_id: &str,
     current_subscription_id: &str,
+    last_event_time: i64,
 ) -> Result<(), BridgeError> {
     sqlx::query(
         "UPDATE pay.subscriptions 
-         SET status = 'replaced', updated_at = NOW() 
+         SET status = 'replaced', 
+             last_event_time = $4,
+             updated_at = NOW() 
          WHERE app_id = $1 
            AND external_user_id = $2 
            AND subscription_id != $3 
            AND status IN ('active', 'trial', 'past_due', 'on_hold')
-           AND provider = 'google_play'"
+           AND provider = 'google_play'
+           AND last_event_time < $4"
     )
     .bind(app_id)
     .bind(external_user_id)
     .bind(current_subscription_id)
+    .bind(last_event_time)
     .execute(pool)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
