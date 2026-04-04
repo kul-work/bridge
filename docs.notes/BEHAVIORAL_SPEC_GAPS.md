@@ -17,13 +17,6 @@ Status labels:
 
 ## Section Review
 
-### Rate Limiting
-
-| Spec area | Status | Notes |
-|---|---|---|
-| 3.3 Per-IP unauthenticated limits | Gap | No middleware exists for failed-auth or unauthenticated per-IP limits. |
-
-
 ### Core API Flows
 
 | Spec area | Status | Notes |

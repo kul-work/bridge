@@ -118,6 +118,9 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum::middleware::from_fn_with_state(
             database.clone(),
             handlers::api_key::api_key_auth,
+        ))
+        .layer(axum::middleware::from_fn(
+            middleware::rate_limit::unauthenticated_ip_rate_limit_middleware,
         ));
 
     // Build admin routes with auth middleware
@@ -153,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     info!("Bridge server listening on {}", addr);
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
 
     Ok(())
 }

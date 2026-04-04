@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{ConnectInfo, Request, State},
     http::{Method, StatusCode},
     middleware::Next,
     response::Response,
@@ -9,10 +9,14 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::Database;
 use crate::handlers::api_key::AppAuth;
+
+const UNAUTHENTICATED_IP_LIMIT: usize = 10;
+const UNAUTHENTICATED_IP_WINDOW_SECS: u64 = 60;
 
 /// In-memory rate limit store
 pub struct RateLimitStore {
@@ -24,6 +28,44 @@ impl RateLimitStore {
         RateLimitStore {
             limits: Mutex::new(HashMap::new()),
         }
+    }
+
+    async fn current_usage(&self, key: &str, window_secs: u64) -> (usize, u64) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let window_start = now - window_secs as i64;
+        let mut limits = self.limits.lock().await;
+        let timestamps = limits.entry(key.to_string()).or_insert_with(Vec::new);
+
+        timestamps.retain(|&t| t > window_start);
+
+        let reset_at = if timestamps.is_empty() {
+            now as u64
+        } else {
+            (timestamps[0] + window_secs as i64) as u64
+        };
+
+        (timestamps.len(), reset_at)
+    }
+
+    async fn record_event(&self, key: &str, window_secs: u64) -> (usize, u64) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let window_start = now - window_secs as i64;
+        let mut limits = self.limits.lock().await;
+        let timestamps = limits.entry(key.to_string()).or_insert_with(Vec::new);
+
+        timestamps.retain(|&t| t > window_start);
+        timestamps.push(now);
+
+        let reset_at = (timestamps[0] + window_secs as i64) as u64;
+        (timestamps.len(), reset_at)
     }
 
     /// Check if request is allowed. Returns (allowed, remaining, reset_at)
@@ -68,6 +110,13 @@ impl Default for RateLimitStore {
     }
 }
 
+fn extract_client_ip(request: &Request) -> Option<String> {
+    request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|connect_info| connect_info.0.ip().to_string())
+}
+
 fn default_limit_for_group(group: &str) -> usize {
     match group {
         "checkout" => 20,
@@ -109,7 +158,7 @@ fn endpoint_group(method: &Method, path: &str) -> &'static str {
 /// Per-API-key rate limit middleware (runs after auth)
 pub async fn api_rate_limit_middleware(
     State(database): State<Arc<Database>>,
-    request: axum::http::Request<axum::body::Body>,
+    request: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     // Extract AppAuth (set by api_key_auth middleware)
@@ -180,10 +229,71 @@ pub async fn api_rate_limit_middleware(
     Ok(response)
 }
 
+/// Per-IP rate limit middleware for unauthenticated and failed-auth requests.
+/// This wraps the protected API stack and only counts responses that end in 401.
+pub async fn unauthenticated_ip_rate_limit_middleware(
+    request: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let client_ip = match extract_client_ip(&request) {
+        Some(ip) => ip,
+        None => {
+            // If we cannot identify the client IP, do not block the request.
+            return Ok(next.run(request).await);
+        }
+    };
+
+    let key = format!("ip:{}", client_ip);
+    let has_auth_header = request.headers().get("authorization").is_some();
+
+    static STORE: std::sync::OnceLock<RateLimitStore> = std::sync::OnceLock::new();
+    let store = STORE.get_or_init(RateLimitStore::new);
+
+    let (current_count, reset_at) = store
+        .current_usage(&key, UNAUTHENTICATED_IP_WINDOW_SECS)
+        .await;
+
+    if !has_auth_header && current_count >= UNAUTHENTICATED_IP_LIMIT {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "error": "rate_limit_exceeded",
+                "message": "Too many unauthenticated requests",
+                "reset_at": reset_at
+            })),
+        ));
+    }
+
+    let response = next.run(request).await;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        if current_count >= UNAUTHENTICATED_IP_LIMIT {
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({
+                    "error": "rate_limit_exceeded",
+                    "message": "Too many unauthenticated requests",
+                    "reset_at": reset_at
+                })),
+            ));
+        }
+
+        let _ = store
+            .record_event(&key, UNAUTHENTICATED_IP_WINDOW_SECS)
+            .await;
+    }
+
+    Ok(response)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::endpoint_group;
+    use super::{endpoint_group, extract_client_ip};
+    use axum::extract::ConnectInfo;
+    use axum::body::Body;
+    use axum::http::Request;
     use axum::http::Method;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     #[test]
     fn purchase_registration_uses_the_expected_rate_limit_bucket() {
@@ -195,5 +305,20 @@ mod tests {
             endpoint_group(&Method::POST, "/api/v1/purchases/register"),
             "purchase_registration"
         );
+    }
+
+    #[test]
+    fn client_ip_uses_connect_info() {
+        let request = Request::builder()
+            .uri("/api/v1/checkout")
+            .body(Body::empty())
+            .unwrap();
+        let mut request = request;
+        request.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
+            443,
+        )));
+
+        assert_eq!(extract_client_ip(&request).as_deref(), Some("203.0.113.10"));
     }
 }
