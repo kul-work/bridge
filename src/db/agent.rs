@@ -108,6 +108,7 @@ pub async fn use_agent_token(
     app_id: Uuid,
     external_user_id: &str,
     token_id: Uuid,
+    endpoint: &str,
 ) -> Result<Option<AgentPaymentToken>, BridgeError> {
     sqlx::query_as::<_, AgentPaymentToken>(
         r#"
@@ -116,6 +117,7 @@ pub async fn use_agent_token(
         WHERE id = $1
           AND app_id = $2
           AND external_user_id = $3
+          AND endpoint = $4
           AND used = false
           AND expires_at > NOW()
         RETURNING *
@@ -124,6 +126,7 @@ pub async fn use_agent_token(
     .bind(token_id)
     .bind(app_id)
     .bind(external_user_id)
+    .bind(endpoint)
     .fetch_optional(&mut **tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))
@@ -159,10 +162,11 @@ pub async fn charge_agent(
     app_id: Uuid,
     external_user_id: &str,
     token_id: Uuid,
+    endpoint: &str,
 ) -> Result<(i32, i32), BridgeError> {
     let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    let token_opt = use_agent_token(&mut tx, app_id, external_user_id, token_id).await?;
+    let token_opt = use_agent_token(&mut tx, app_id, external_user_id, token_id, endpoint).await?;
     let token = match token_opt {
         Some(token) => token,
         None => {

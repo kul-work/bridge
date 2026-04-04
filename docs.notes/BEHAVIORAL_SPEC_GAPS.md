@@ -22,12 +22,12 @@ The main gaps are in correctness and contract fidelity:
 - `verify-purchase` is now broadly at spec with full recording and linking implementation.
 - Previous schema/runtime mismatches across handlers have been resolved or found to be inaccurate for v0.1.2.
 - Webhook contract fidelity is improved: unresolved webhooks are suppressed, order/retry safety (event-time guards) is verified.
-- The remaining security-sensitive gap: agent charge flow still does not bind the request endpoint back to the token as spec section 41 describes.
+- The agent charge flow has been updated to bind the request endpoint back to the token, satisfying spec section 41.
 
 
 ### 1. High-risk security gaps
 
-- Partial: `src/db/agent.rs::charge_agent` now scopes token consumption to the same app and user, but the API still does not accept or verify the request `endpoint` against the token as required by spec section 41.
+- Fixed: `src/db/agent.rs::charge_agent` and the charge API now properly accept and verify the request `endpoint` against the token, directly addressing spec section 41.
 
 
 ## Section Review
@@ -67,7 +67,7 @@ The main gaps are in correctness and contract fidelity:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 41. Token Charge | Partial | `src/db/agent.rs::charge_agent` now binds token use to the same app and user, but the request still does not carry or verify `endpoint`, so it is not fully at spec. |
+| 41. Token Charge | Fixed | `src/db/agent.rs::charge_agent` bounds token use to the same app and user and fully verifies the `endpoint` mapping during charge. |
 
 ### GDPR and Data Retention
 

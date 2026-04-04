@@ -28,6 +28,7 @@ pub struct AgentTokenRequest {
 pub struct AgentChargeRequest {
     pub external_user_id: String,
     pub token_id: Uuid,
+    pub endpoint: String,
 }
 
 #[derive(Deserialize)]
@@ -96,6 +97,7 @@ pub async fn charge(
         auth.app_id,
         &request.external_user_id,
         request.token_id,
+        &request.endpoint,
     )
     .await?;
 
