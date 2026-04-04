@@ -98,7 +98,6 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 |---|---|---|
 | 40. Token Creation | Gap | Does not validate email format, endpoint support, or amount; does not ensure `agent_credits` row exists. |
 | 41. Token Charge | Partial | `src/db/agent.rs::charge_agent` now binds token use to the same app and user, but the request still does not carry or verify `endpoint`, so it is not fully at spec. |
-| 43. Charge Failed (Coinbase) | Fixed | `src/webhooks/processor.rs` now handles `charge.failed` explicitly as a log-only warning path and suppresses app callback forwarding, matching spec section 43. |
 
 ### GDPR and Data Retention
 
@@ -120,7 +119,6 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 |---|---|---|
 | 50. Payment Recording | Gap | Many webhook callers ignore error result from `record_payment_tx`. |
 | 52. Subscription Store/Activate | Gap | Lacks `last_event_time` guard on conflict updates. |
-| 53. User Lookup Strategies | Fixed | `src/webhooks/processor.rs` suppresses unresolved webhooks before forwarding, so unresolved events are discarded instead of emitting callbacks without `external_user_id`. |
 
 ## Recommended Fix Order
 
