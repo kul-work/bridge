@@ -11,7 +11,6 @@ This document compares the current Bridge implementation against the behavioral 
 
 Status labels:
 
-- `Resolved`: previously missing behavior is now implemented and no longer considered a gap.
 - `Partial`: the main path exists, but required behaviors, fields, or safety checks are missing.
 - `Gap`: missing, broken, or contradicted by the current implementation.
 
@@ -33,7 +32,6 @@ These are not just spec gaps; they look like live failure paths.
 - `src/handlers/verify_purchase.rs` queries and inserts `pay.fraud_prevention.purchase_token`, but `migrations/08_create_fraud_prevention_table.sql` does not define a `purchase_token` column. The same insert also omits the required `provider` column.
 - `src/handlers/subscriptions_actions.rs` updates `pay.subscriptions.acknowledged_at`, but `migrations/03_create_subscriptions_table.sql` does not define that column. `acknowledged_at` exists on `pay.payments` instead (`migrations/04_create_payments_table.sql`).
 - `src/handlers/subscriptions_actions.rs` updates `price_step_up_pending`, but the schema only defines Google price-step-up fields such as `google_requires_price_step_up_consent` and `google_price_step_up_consent_status`.
-- Resolved: `src/db/agent.rs`'s `ON CONFLICT (app_id, charge_id)` path is now backed by `migrations/14_add_agent_topup_charge_idempotency.sql`, which adds the required unique index for top-up idempotency.
 
 ### 2. `verify-purchase` is far from the spec
 
@@ -55,23 +53,14 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 
 ### 4. Security-sensitive gaps
 
-- Resolved: `src/middleware/admin_auth.rs` now verifies Clerk session JWTs against Clerk JWKS, checks the trusted issuer, rejects pending-org sessions, and enforces `ADMIN_CLERK_ORG_ID` membership for admin routes.
 - Partial: `src/db/agent.rs::charge_agent` now scopes token consumption to the same app and user, but the API still does not accept or verify the request `endpoint` against the token as required by spec section 41.
-- Resolved: `src/middleware/rate_limit.rs` now applies limits per `api_key_id` + endpoint group, matching spec section 3.1.
 
 ## Section Review
-
-### Startup, Auth, Health, Admin
-
-| Spec area | Status | Notes |
-|---|---|---|
-| Admin UI security (part of section 1) | Resolved | `src/middleware/admin_auth.rs` now verifies Clerk JWT signature via JWKS and requires membership in the configured internal Clerk organization. |
 
 ### Rate Limiting
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 3.1 Per-API-Key limits | Resolved | `src/middleware/rate_limit.rs` now keys limits by `api_key_id + endpoint_group` while still honoring app-level limit settings and overrides. |
 | 3.2 Default endpoint limits | Partial | Defaults are present, but `/purchase/register` is routed in `src/main.rs` while the limiter checks for `/purchases/register`, so purchase registration misses the intended endpoint group. |
 | 3.3 Per-IP unauthenticated limits | Gap | No middleware exists for failed-auth or unauthenticated per-IP limits. |
 
@@ -111,7 +100,6 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 |---|---|---|
 | 40. Token Creation | Gap | Does not validate email format, endpoint support, or amount; does not ensure `agent_credits` row exists. |
 | 41. Token Charge | Partial | `src/db/agent.rs::charge_agent` now binds token use to the same app and user, but the request still does not carry or verify `endpoint`, so it is not fully at spec. |
-| 42. Charge Confirmed (Coinbase) | Resolved | `migrations/14_add_agent_topup_charge_idempotency.sql` adds the unique index needed for `apply_topup_if_new`'s `ON CONFLICT (app_id, charge_id)` path. |
 | 43. Charge Failed (Coinbase) | Gap | No explicit handler branch logs the event. |
 
 ### GDPR and Data Retention
