@@ -37,6 +37,9 @@ pub struct CanonicalWebhookPayload {
     pub status: Option<String>,
     pub provider: String,
     pub provider_event_id: String,
+    pub previous_status: Option<String>,
+    pub corrected_status: Option<String>,
+    pub reconciliation_source: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -320,6 +323,9 @@ pub async fn build_canonical_payload(
         status: fields.status,
         provider: webhook.provider.clone(),
         provider_event_id: webhook.provider_webhook_id.clone(),
+        previous_status: None,
+        corrected_status: None,
+        reconciliation_source: None,
     }))
 }
 
@@ -955,6 +961,9 @@ pub async fn process_webhook(
         status: fields.status,
         provider: webhook.provider.clone(),
         provider_event_id: webhook.provider_webhook_id.clone(),
+        previous_status: None,
+        corrected_status: None,
+        reconciliation_source: None,
     };
 
     // Step 6: Mark webhook as processed

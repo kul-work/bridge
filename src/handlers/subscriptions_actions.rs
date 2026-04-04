@@ -441,6 +441,9 @@ async fn dispatch_subscription_callback(
         status: Some(sub.status.clone()),
         provider: sub.provider.clone(),
         provider_event_id,
+        previous_status: None,
+        corrected_status: None,
+        reconciliation_source: None,
     };
 
     crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, canonical).await
