@@ -24,7 +24,9 @@ pub struct PaymentDetail {
     pub id: String,
     pub external_user_id: String,
     pub subscription_id: Option<String>,
-    pub amount: i64,
+    pub provider: String,
+    pub provider_transaction_id: String,
+    pub amount_cents: i64,
     pub currency: String,
     pub status: String,
     pub created_at: String,
@@ -77,7 +79,7 @@ pub async fn get_payments(
         sqlx::query(
             r#"
             SELECT
-                id, external_user_id, subscription_id, amount_cents, currency, status, created_at
+                id, external_user_id, subscription_id, provider, provider_transaction_id, amount_cents, currency, status, created_at
             FROM pay.payments
             WHERE app_id = $1 AND external_user_id = $2
               AND (created_at, id) < ($3, $4)
@@ -96,7 +98,7 @@ pub async fn get_payments(
         sqlx::query(
             r#"
             SELECT
-                id, external_user_id, subscription_id, amount_cents, currency, status, created_at
+                id, external_user_id, subscription_id, provider, provider_transaction_id, amount_cents, currency, status, created_at
             FROM pay.payments
             WHERE app_id = $1 AND external_user_id = $2
             ORDER BY created_at DESC, id DESC
@@ -120,7 +122,9 @@ pub async fn get_payments(
             id: row.get::<Uuid, _>("id").to_string(),
             external_user_id: row.get::<String, _>("external_user_id"),
             subscription_id: row.get::<Option<String>, _>("subscription_id"),
-            amount: row.get::<i32, _>("amount_cents") as i64,
+            provider: row.get::<String, _>("provider"),
+            provider_transaction_id: row.get::<String, _>("provider_transaction_id"),
+            amount_cents: row.get::<i32, _>("amount_cents") as i64,
             currency: row.get::<String, _>("currency"),
             status: row.get::<String, _>("status"),
             created_at: row

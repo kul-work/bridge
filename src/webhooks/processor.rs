@@ -413,11 +413,11 @@ pub async fn process_webhook(
                     );
                 } else {
                     if let Some(ref txn_id) = fields.provider_transaction_id {
-                        let _ = crate::db::payments::record_payment_tx(
+                        crate::db::payments::record_payment_tx(
                             &mut tx, app_id, user_id, &webhook.provider, txn_id,
                             fields.subscription_id.as_deref(),
                             fields.amount_cents.unwrap_or(0), "success",
-                        ).await;
+                        ).await?;
                     }
 
                     if webhook.provider == "creem" {
@@ -601,11 +601,11 @@ pub async fn process_webhook(
                     .or(fields.subscription_id.as_deref())
                     .unwrap_or(&webhook.provider_webhook_id);
                 let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-                let _ = crate::db::payments::record_payment_tx(
+                crate::db::payments::record_payment_tx(
                     &mut tx, app_id, user_id, &webhook.provider, txn_id,
                     fields.subscription_id.as_deref(),
                     fields.amount_cents.unwrap_or(0), "pending",
-                ).await;
+                ).await?;
                 tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
             }
         }
@@ -625,11 +625,11 @@ pub async fn process_webhook(
                     .or(fields.subscription_id.as_deref())
                     .unwrap_or(&webhook.provider_webhook_id);
                 let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-                let _ = crate::db::payments::record_payment_tx(
+                crate::db::payments::record_payment_tx(
                     &mut tx, app_id, user_id, &webhook.provider, txn_id,
                     fields.subscription_id.as_deref(),
                     fields.amount_cents.unwrap_or(0), "failed",
-                ).await;
+                ).await?;
                 tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
             }
         }
@@ -641,11 +641,11 @@ pub async fn process_webhook(
                     .or(fields.provider_transaction_id.as_deref())
                     .unwrap_or(&webhook.provider_webhook_id);
                 let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-                let _ = crate::db::payments::record_payment_tx(
+                crate::db::payments::record_payment_tx(
                     &mut tx, app_id, user_id, &webhook.provider, txn_id,
                     fields.subscription_id.as_deref(),
                     fields.amount_cents.unwrap_or(0), "success",
-                ).await;
+                ).await?;
                 tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
             }
         }
@@ -657,11 +657,11 @@ pub async fn process_webhook(
                     .or(fields.provider_transaction_id.as_deref())
                     .unwrap_or("");
                 let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-                let _ = crate::db::payments::record_payment_tx(
+                crate::db::payments::record_payment_tx(
                     &mut tx, app_id, user_id, &webhook.provider, token,
                     fields.subscription_id.as_deref(),
                     fields.amount_cents.unwrap_or(0), "cancelled",
-                ).await;
+                ).await?;
                 tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
             }
         }
@@ -753,11 +753,11 @@ pub async fn process_webhook(
                     .or(webhook.subscription_id.as_deref())
                     .unwrap_or(&webhook.provider_webhook_id);
                 let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-                let _ = crate::db::payments::record_payment_tx(
+                crate::db::payments::record_payment_tx(
                     &mut tx, app_id, user_id, &webhook.provider, txn_id,
                     fields.subscription_id.as_deref(),
                     fields.amount_cents.unwrap_or(0), "dispute_created",
-                ).await;
+                ).await?;
                 tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
             }
         }

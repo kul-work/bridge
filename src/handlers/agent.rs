@@ -56,6 +56,19 @@ pub async fn token(
     Extension(auth): Extension<AppAuth>,
     Json(request): Json<AgentTokenRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
+    if request.amount_cents <= 0 {
+        return Err(BridgeError::ValidationError("amount_cents must be positive".to_string()));
+    }
+    if request.endpoint.trim().is_empty() {
+        return Err(BridgeError::ValidationError("endpoint is required".to_string()));
+    }
+
+    // §40: Ensure agent_credits row exists (tokens must be backed by credits)
+    let credit = crate::db::agent::get_agent_credit(&database.pool, auth.app_id, &request.external_user_id).await?;
+    if credit.is_none() {
+        return Err(BridgeError::ValidationError("User has no agent credits account".to_string()));
+    }
+
     let token = crate::db::agent::insert_agent_token(
         &database.pool,
         auth.app_id,
