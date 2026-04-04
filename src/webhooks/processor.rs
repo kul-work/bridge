@@ -1,7 +1,7 @@
 use crate::error::BridgeError;
 use sqlx::PgPool;
 use uuid::Uuid;
-use tracing::{info, error};
+use tracing::{error, info, warn};
 
 /// Webhook event type (canonical)
 /// Used for future webhook event normalization and processing.
@@ -346,18 +346,35 @@ pub async fn process_webhook(
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    // Step 2: Resolve external_user_id (§53 cascade)
+    let canonical_event = normalize_event_type(&webhook.provider, &webhook.event_type);
+
+    if webhook.provider == "coinbase" && canonical_event == "charge.failed" {
+        let fields = extract_webhook_fields(&webhook);
+        let charge_id = fields.provider_transaction_id
+            .as_deref()
+            .or(webhook.subscription_id.as_deref())
+            .unwrap_or(&webhook.provider_webhook_id);
+        let email = webhook.payload.pointer("/event/data/metadata/email")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown");
+
+        warn!("Coinbase charge failed: charge_id={}, email={}", charge_id, email);
+
+        sqlx::query("UPDATE pay.webhook_provider SET processed = true WHERE id = $1")
+            .bind(webhook_provider_id)
+            .execute(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+        return Ok(None);
+    }
+
     let external_user_id = resolve_user(pool, app_id, &webhook).await;
     if !ensure_resolved_user(pool, webhook_provider_id, &webhook, &external_user_id).await? {
         return Ok(None);
     }
 
-    // Step 3: Extract fields from payload
     let fields = extract_webhook_fields(&webhook);
-
-    // Normalize event to canonical type
-    let canonical_event = normalize_event_type(&webhook.provider, &webhook.event_type);
-
     let timestamp_epoch_ms = webhook.timestamp_epoch_ms.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
     let timestamp_iso = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
         .unwrap_or_else(chrono::Utc::now)
@@ -745,14 +762,6 @@ pub async fn process_webhook(
             }
         }
 
-        "refund.created" => {
-            if let Some(ref token) = fields.purchase_token {
-                let existing = crate::db::payments::get_payment_status(pool, app_id, token).await?;
-                if existing.as_deref() != Some("refunded") {
-                    crate::db::payments::update_payment_status(pool, app_id, token, "refunded").await?;
-                }
-            }
-        }
 
         "subscription.updated" => {
             if let Some(ref _user_id) = external_user_id {
@@ -1006,7 +1015,7 @@ fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "one_time_product.canceled" => "purchase.one_time_cancelled".to_string(),
             "purchase.voided" => "payment.refunded".to_string(),
             "subscription.pending_purchase_canceled" => "subscription.pending_purchase_cancelled".to_string(),
-            "refund.created" => "refund.created".to_string(),
+            "refund.created" => "payment.refunded".to_string(),
             "dispute.created" => "dispute.created".to_string(),
             "subscription.update" => "subscription.updated".to_string(),
             "subscription.price_changed" => "subscription.price_changed".to_string(),
@@ -1029,7 +1038,7 @@ fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "one_time_product_canceled" => "purchase.one_time_cancelled".to_string(),
             "purchase_voided" => "payment.refunded".to_string(),
             "pending_purchase_canceled" => "subscription.pending_purchase_cancelled".to_string(),
-            "refund_created" => "refund.created".to_string(),
+            "refund_created" => "payment.refunded".to_string(),
             "dispute_created" => "dispute.created".to_string(),
             "price_changed" => "subscription.price_changed".to_string(),
             "price_change_updated" => "subscription.price_change_updated".to_string(),
@@ -1085,6 +1094,22 @@ mod tests {
         assert_eq!(
             normalize_event_type("creem", "subscription.cancelled"),
             "subscription.cancelled"
+        );
+        assert_eq!(
+            normalize_event_type("creem", "refund.created"),
+            "payment.refunded"
+        );
+    }
+
+    #[test]
+    fn test_normalize_lemonsqueezy_and_coinbase_special_events() {
+        assert_eq!(
+            normalize_event_type("lemonsqueezy", "refund_created"),
+            "payment.refunded"
+        );
+        assert_eq!(
+            normalize_event_type("coinbase", "charge:failed"),
+            "charge.failed"
         );
     }
 

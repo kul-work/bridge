@@ -11,6 +11,7 @@ This document compares the current Bridge implementation against the behavioral 
 
 Status labels:
 
+- `Fixed`: current code now matches the relevant spec requirement for this item.
 - `Partial`: the main path exists, but required behaviors, fields, or safety checks are missing.
 - `Gap`: missing, broken, or contradicted by the current implementation.
 
@@ -49,7 +50,6 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 
 - `src/db/subscriptions.rs::update_subscription_status` has an event-time guard, but `src/db/subscriptions.rs::upsert_subscription_tx` does not. Activation and renewal events in `src/webhooks/processor.rs` can therefore overwrite newer states with older events.
 - `src/webhooks/scheduler.rs::retry_webhooks` calls `process_webhook()` again when retrying delivery. That means a delivery retry can re-run DB mutations instead of being forward-only.
-- `src/webhooks/processor.rs` only discards unresolved orphan events for Creem. For other providers, unresolved events can still produce forwarded callbacks with no resolved `external_user_id`, which is weaker than spec section 53.
 
 ### 4. Security-sensitive gaps
 
@@ -89,8 +89,6 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 
 ### Specific Webhook Gaps Worth Calling Out
 
-- `src/webhooks/processor.rs` maps Coinbase `charge:failed` to `charge.failed`, but there is no handler branch for `charge.failed`. Spec section 43 says this event should at least log a warning.
-- `src/webhooks/processor.rs` handles `refund.created` by updating payment status, but it does not normalize to the same callback contract as `payment.refunded`.
 - `src/webhooks/processor.rs` handles `subscription.updated` by writing raw status when present, but the spec expects a more controlled normalized update path.
 - `src/webhooks/processor.rs` only uses the stale-event guard for some update paths. Activation and renewal still use the unguarded upsert helper.
 
@@ -100,7 +98,7 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 |---|---|---|
 | 40. Token Creation | Gap | Does not validate email format, endpoint support, or amount; does not ensure `agent_credits` row exists. |
 | 41. Token Charge | Partial | `src/db/agent.rs::charge_agent` now binds token use to the same app and user, but the request still does not carry or verify `endpoint`, so it is not fully at spec. |
-| 43. Charge Failed (Coinbase) | Gap | No explicit handler branch logs the event. |
+| 43. Charge Failed (Coinbase) | Fixed | `src/webhooks/processor.rs` now handles `charge.failed` explicitly as a log-only warning path and suppresses app callback forwarding, matching spec section 43. |
 
 ### GDPR and Data Retention
 
@@ -122,7 +120,7 @@ Spec sections 5, 50, 52, and 53 require more than the current handler does.
 |---|---|---|
 | 50. Payment Recording | Gap | Many webhook callers ignore error result from `record_payment_tx`. |
 | 52. Subscription Store/Activate | Gap | Lacks `last_event_time` guard on conflict updates. |
-| 53. User Lookup Strategies | Gap | Unresolved non-Creem events not discarded as spec requires. |
+| 53. User Lookup Strategies | Fixed | `src/webhooks/processor.rs` suppresses unresolved webhooks before forwarding, so unresolved events are discarded instead of emitting callbacks without `external_user_id`. |
 
 ## Recommended Fix Order
 
