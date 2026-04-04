@@ -19,6 +19,7 @@ pub struct Payment {
     pub status: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn record_payment_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     app_id: Uuid,
@@ -205,4 +206,3 @@ pub async fn adopt_stale_payment(
 
     Ok(())
 }
-

@@ -318,14 +318,11 @@ pub struct GooglePlayProviderData {
 /// Provider-specific data attached to a SubscriptionDetails.
 /// Used by Google Play provider (imported in type signature).
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum ProviderData {
     GooglePlay(GooglePlayProviderData),
+    #[default]
     None,
-}
-
-impl Default for ProviderData {
-    fn default() -> Self { ProviderData::None }
 }
 
 /// Subscription details from provider

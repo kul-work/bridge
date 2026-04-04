@@ -88,7 +88,7 @@ fn endpoint_group(method: &Method, path: &str) -> &'static str {
     if path.contains("/verify-purchase") {
         return "verify_purchase";
     }
-    if path.contains("/purchases/register") {
+    if path.contains("/purchase/register") || path.contains("/purchases/register") {
         return "purchase_registration";
     }
     if path.contains("/agent/") || path.ends_with("/agent") {
@@ -178,4 +178,22 @@ pub async fn api_rate_limit_middleware(
     );
 
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::endpoint_group;
+    use axum::http::Method;
+
+    #[test]
+    fn purchase_registration_uses_the_expected_rate_limit_bucket() {
+        assert_eq!(
+            endpoint_group(&Method::POST, "/api/v1/purchase/register"),
+            "purchase_registration"
+        );
+        assert_eq!(
+            endpoint_group(&Method::POST, "/api/v1/purchases/register"),
+            "purchase_registration"
+        );
+    }
 }

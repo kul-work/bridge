@@ -113,6 +113,7 @@ pub async fn get_user_subscriptions(
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert_subscription_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     app_id: Uuid,

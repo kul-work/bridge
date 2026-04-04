@@ -154,6 +154,7 @@ pub async fn count_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, B
 
 /// Create webhook provider record (idempotent via unique index)
 /// Returns the webhook provider ID and a flag indicating if it was newly created
+#[allow(clippy::too_many_arguments)]
 pub async fn create_webhook_provider(
     pool: &PgPool,
     app_id: Uuid,
