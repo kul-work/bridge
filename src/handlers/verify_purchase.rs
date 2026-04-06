@@ -727,6 +727,7 @@ async fn forward_verify_purchase_callback(
         corrected_status: None,
         reconciliation_source: None,
         revocation_reason: None,
+        cancellation_mode: None,
     };
 
     crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, callback_payload).await

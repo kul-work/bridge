@@ -3,7 +3,7 @@ use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::services::provider_api;
 use axum::{
-    extract::{State, Extension, Path},
+    extract::{State, Extension, Path, Query},
     http::StatusCode,
     Json,
 };
@@ -13,13 +13,22 @@ use tracing::warn;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
-pub struct CancelSubscriptionRequest {
+pub struct SubscriptionActionRequest {
     pub external_user_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SubscriptionActionQuery {
+    pub external_user_id: String,
+    pub provider: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct CancelSubscriptionRequest {
     #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
-    pub reason: Option<String>,
+    pub purchase_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -28,22 +37,50 @@ pub struct SubscriptionActionResponse {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct CancelSubscriptionResponse {
+    pub status: String,
+    pub mode: String,
+    pub subscription_id: String,
+}
+
 pub async fn cancel_subscription(
     State(database): State<Arc<crate::db::Database>>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
-    Json(request): Json<CancelSubscriptionRequest>,
-) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription_by_sub_id(
+    Query(query): Query<SubscriptionActionQuery>,
+    request: Option<Json<CancelSubscriptionRequest>>,
+) -> Result<(StatusCode, Json<CancelSubscriptionResponse>), BridgeError> {
+    if query.external_user_id.trim().is_empty() {
+        return Err(BridgeError::ValidationError("external_user_id is required".to_string()));
+    }
+
+    if query.provider.trim().is_empty() {
+        return Err(BridgeError::ValidationError("provider is required".to_string()));
+    }
+
+    let request = request.map(|Json(request)| request).unwrap_or_default();
+    let provider = query.provider.trim().to_ascii_lowercase();
+    let mode = request.mode.as_deref().unwrap_or("scheduled");
+
+    let sub = db::subscriptions::get_subscription(
         &database.pool,
         auth.app_id,
+        query.external_user_id.trim(),
         &subscription_id,
+        &provider,
     )
-    .await?
-    .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
+    .await?;
 
-    if sub.external_user_id != request.external_user_id {
-        return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
+    let purchase_token = request
+        .purchase_token
+        .as_deref()
+        .or(sub.purchase_token.as_deref());
+
+    if sub.provider == "google_play" && purchase_token.is_none() {
+        return Err(BridgeError::SubscriptionNotFound(
+            "Google Play purchase token not found for this subscription".to_string(),
+        ));
     }
 
     let provider_config = db::provider_configs::get_provider_config(
@@ -55,15 +92,14 @@ pub async fn cancel_subscription(
     provider_api::cancel_subscription(
         &sub.provider,
         &sub.subscription_id,
-        sub.purchase_token.as_deref(),
-        request.mode.as_deref(),
+        purchase_token,
+        Some(mode),
         &provider_config.config,
     ).await?;
 
-    let mode = request.mode.as_deref().unwrap_or("scheduled");
-    let (updated_sub, event_type, message) = match mode {
+    let updated_sub = match mode {
         "scheduled" => {
-            let updated = sqlx::query_as::<_, db::subscriptions::Subscription>(
+            sqlx::query_as::<_, db::subscriptions::Subscription>(
                 "UPDATE pay.subscriptions
                  SET auto_renewing = false, cancellation_initiated_at = NOW(), updated_at = NOW()
                  WHERE id = $1
@@ -72,29 +108,25 @@ pub async fn cancel_subscription(
             .bind(sub.id)
             .fetch_one(&database.pool)
             .await
-            .map_err(|e| BridgeError::DbError(e.to_string()))?;
-            (
-                updated,
-                "subscription.cancellation_scheduled",
-                "Subscription cancellation requested".to_string(),
-            )
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
         "immediate" => {
-            let updated = sqlx::query_as::<_, db::subscriptions::Subscription>(
+            sqlx::query_as::<_, db::subscriptions::Subscription>(
                 "UPDATE pay.subscriptions
-                 SET status = 'cancelled', auto_renewing = false, cancellation_initiated_at = NOW(), current_period_end = NOW(), updated_at = NOW()
+                 SET status = 'cancelled',
+                     auto_renewing = false,
+                     cancellation_initiated_at = NOW(),
+                     current_period_end = NOW(),
+                     revocation_reason = 'immediate_cancel',
+                     revoked_at = NOW(),
+                     updated_at = NOW()
                  WHERE id = $1
                  RETURNING *",
             )
             .bind(sub.id)
             .fetch_one(&database.pool)
             .await
-            .map_err(|e| BridgeError::DbError(e.to_string()))?;
-            (
-                updated,
-                "subscription.cancelled",
-                "Subscription cancelled immediately".to_string(),
-            )
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
         _ => {
             return Err(BridgeError::ValidationError(
@@ -107,7 +139,8 @@ pub async fn cancel_subscription(
         &database.pool,
         auth.app_id,
         &updated_sub,
-        event_type,
+        "subscription.cancelled",
+        Some(mode),
     )
     .await
     {
@@ -116,9 +149,10 @@ pub async fn cancel_subscription(
 
     Ok((
         StatusCode::OK,
-        Json(SubscriptionActionResponse {
-            success: true,
-            message,
+        Json(CancelSubscriptionResponse {
+            status: updated_sub.status.clone(),
+            mode: mode.to_string(),
+            subscription_id: updated_sub.subscription_id,
         }),
     ))
 }
@@ -127,7 +161,7 @@ pub async fn resume_subscription(
     State(database): State<Arc<crate::db::Database>>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
-    Json(request): Json<CancelSubscriptionRequest>,
+    Json(request): Json<SubscriptionActionRequest>,
 ) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
     let sub = db::subscriptions::get_subscription_by_sub_id(
         &database.pool,
@@ -169,6 +203,7 @@ pub async fn resume_subscription(
         auth.app_id,
         &updated_sub,
         "subscription.resumed",
+        None,
     )
     .await
     {
@@ -394,6 +429,7 @@ async fn dispatch_subscription_callback(
     app_id: Uuid,
     sub: &db::subscriptions::Subscription,
     event_type: &str,
+    cancellation_mode: Option<&str>,
 ) -> Result<(), BridgeError> {
     let app = db::apps::get_app(pool, app_id).await?;
     let provider_event_id = format!("manual-{}", Uuid::new_v4());
@@ -408,6 +444,7 @@ async fn dispatch_subscription_callback(
         "subscription_id": sub.subscription_id,
         "external_user_id": sub.external_user_id,
         "provider": sub.provider,
+        "mode": cancellation_mode,
     });
 
     let (webhook_provider_id, _) = db::webhooks::create_webhook_provider(
@@ -444,7 +481,8 @@ async fn dispatch_subscription_callback(
         previous_status: None,
         corrected_status: None,
         reconciliation_source: None,
-        revocation_reason: None,
+        revocation_reason: sub.revocation_reason.clone(),
+        cancellation_mode: cancellation_mode.map(str::to_string),
     };
 
     crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, canonical).await

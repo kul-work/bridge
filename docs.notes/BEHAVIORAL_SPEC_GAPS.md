@@ -21,8 +21,7 @@ Status labels:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 4. Checkout Flow | Fixed | Required field validation, provider-not-configured handling, idempotent response caching, web redirects, and mobile bootstrap payloads for Google Play and Apple now match the spec. |
-| 8. Subscription Cancellation | Gap | Uses JSON body `external_user_id` instead of query params, ignores provider disambiguation, missing revocation metadata for immediate cancel. |
+| 8. Subscription Cancellation | Fixed | Endpoint now resolves `external_user_id` + `provider` from query params, supports request-body `purchase_token` override for Google Play, persists immediate-cancel revocation metadata, and returns cancellation mode in the callback payload. |
 | 9. Subscription Resume | Gap | Body-based user lookup (should be query param), no provider query param. |
 | 10. Billing Portal | Gap | Only works where `provider_customer_id` exists, only implemented for Creem. |
 

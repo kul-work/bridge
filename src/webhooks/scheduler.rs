@@ -472,6 +472,7 @@ async fn emit_scheduler_callback(
         corrected_status,
         reconciliation_source,
         revocation_reason,
+        cancellation_mode: None,
     };
 
     crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, canonical).await
