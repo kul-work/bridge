@@ -23,6 +23,7 @@ pub struct Subscription {
     pub cancellation_initiated_at: Option<DateTime<Utc>>,
     pub revocation_reason: Option<String>,
     pub revoked_at: Option<DateTime<Utc>>,
+    pub payment_failure_notification: bool,
 
     pub version: i32,
     pub last_event_time: i64,
