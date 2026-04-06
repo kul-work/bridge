@@ -31,6 +31,7 @@ pub struct CanonicalWebhookPayload {
     pub subscription_id: Option<String>,
     pub external_user_id: Option<String>,
     pub amount_cents: Option<i32>,
+    pub new_price_cents: Option<i32>,
     pub auto_renewing: Option<bool>,
     pub purchase_token: Option<String>,
     pub current_period_end: Option<String>,  // ISO 8601
@@ -645,6 +646,7 @@ pub async fn build_canonical_payload(
         subscription_id: fields.subscription_id.or(webhook.subscription_id.clone()),
         external_user_id,
         amount_cents: fields.amount_cents,
+        new_price_cents: fields.google_new_price_cents,
         auto_renewing: canonical_auto_renewing,
         purchase_token: canonical_purchase_token,
         current_period_end: canonical_current_period_end,
@@ -1708,6 +1710,7 @@ pub async fn process_webhook(
         subscription_id: fields.subscription_id.or(webhook.subscription_id.clone()),
         external_user_id,
         amount_cents: fields.amount_cents,
+        new_price_cents: fields.google_new_price_cents,
         auto_renewing: canonical_auto_renewing,
         purchase_token: canonical_purchase_token,
         current_period_end: canonical_current_period_end,

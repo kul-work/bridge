@@ -136,6 +136,7 @@ pub async fn cancel_subscription(
         &updated_sub,
         "subscription.cancelled",
         Some(mode),
+        None,
     )
     .await
     {
@@ -204,6 +205,7 @@ pub async fn resume_subscription(
         auth.app_id,
         &updated_sub,
         "subscription.resumed",
+        None,
         None,
     )
     .await
@@ -339,12 +341,24 @@ pub struct PriceStepUpRequest {
     pub external_user_id: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct PriceStepUpAcceptResponse {
+    pub accepted: bool,
+    pub new_price_cents: i32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PriceStepUpDeclineResponse {
+    pub declined: bool,
+    pub cancellation_effective_at: String,
+}
+
 pub async fn accept_price_step_up(
     State(database): State<Arc<crate::db::Database>>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Json(request): Json<PriceStepUpRequest>,
-) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
+) -> Result<(StatusCode, Json<PriceStepUpAcceptResponse>), BridgeError> {
     let sub = db::subscriptions::get_subscription_by_sub_id(
         &database.pool,
         auth.app_id,
@@ -363,24 +377,44 @@ pub async fn accept_price_step_up(
         ));
     }
 
-    sqlx::query(
+    let updated_sub = sqlx::query_as::<_, db::subscriptions::Subscription>(
         "UPDATE pay.subscriptions
          SET google_requires_price_step_up_consent = false,
              google_price_step_up_consent_status = 'accepted',
              google_price_step_up_consent_deadline = NULL,
              updated_at = NOW()
-         WHERE id = $1",
+         WHERE id = $1
+         RETURNING *",
     )
     .bind(sub.id)
-    .execute(&database.pool)
+    .fetch_one(&database.pool)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
+    let new_price_cents = updated_sub.google_new_price_cents.ok_or_else(|| {
+        BridgeError::ValidationError(
+            "Google Play price step-up amount not available for this subscription".to_string(),
+        )
+    })?;
+
+    if let Err(e) = dispatch_subscription_callback(
+        &database.pool,
+        auth.app_id,
+        &updated_sub,
+        "subscription.price_step_up",
+        None,
+        Some(new_price_cents),
+    )
+    .await
+    {
+        warn!("Failed to forward price step-up accept callback for {}: {}", updated_sub.subscription_id, e);
+    }
+
     Ok((
         StatusCode::OK,
-        Json(SubscriptionActionResponse {
-            success: true,
-            message: "Price step-up accepted".to_string(),
+        Json(PriceStepUpAcceptResponse {
+            accepted: true,
+            new_price_cents,
         }),
     ))
 }
@@ -390,7 +424,7 @@ pub async fn decline_price_step_up(
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Json(request): Json<PriceStepUpRequest>,
-) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
+) -> Result<(StatusCode, Json<PriceStepUpDeclineResponse>), BridgeError> {
     let sub = db::subscriptions::get_subscription_by_sub_id(
         &database.pool,
         auth.app_id,
@@ -409,28 +443,34 @@ pub async fn decline_price_step_up(
         ));
     }
 
-    sqlx::query(
+    let updated_sub = sqlx::query_as::<_, db::subscriptions::Subscription>(
         "UPDATE pay.subscriptions
          SET google_requires_price_step_up_consent = false,
-             google_price_step_up_consent_status = 'declined',
+             google_price_step_up_consent_status = 'rejected',
              google_price_step_up_consent_deadline = NULL,
              google_pending_cancellation = true,
              google_pending_cancellation_at = NOW(),
              auto_renewing = false,
              cancellation_initiated_at = NOW(),
              updated_at = NOW()
-         WHERE id = $1",
+         WHERE id = $1
+         RETURNING *",
     )
     .bind(sub.id)
-    .execute(&database.pool)
+    .fetch_one(&database.pool)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
+    let cancellation_effective_at = updated_sub
+        .current_period_end
+        .map(|d| d.to_rfc3339())
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
     Ok((
         StatusCode::OK,
-        Json(SubscriptionActionResponse {
-            success: true,
-            message: "Price step-up declined, subscription scheduled for cancellation".to_string(),
+        Json(PriceStepUpDeclineResponse {
+            declined: true,
+            cancellation_effective_at,
         }),
     ))
 }
@@ -441,6 +481,7 @@ async fn dispatch_subscription_callback(
     sub: &db::subscriptions::Subscription,
     event_type: &str,
     cancellation_mode: Option<&str>,
+    new_price_cents: Option<i32>,
 ) -> Result<(), BridgeError> {
     let app = db::apps::get_app(pool, app_id).await?;
     let provider_event_id = format!("manual-{}", Uuid::new_v4());
@@ -456,6 +497,7 @@ async fn dispatch_subscription_callback(
         "external_user_id": sub.external_user_id,
         "provider": sub.provider,
         "mode": cancellation_mode,
+        "new_price_cents": new_price_cents,
     });
 
     let (webhook_provider_id, _) = db::webhooks::create_webhook_provider(
@@ -483,6 +525,7 @@ async fn dispatch_subscription_callback(
         subscription_id: Some(sub.subscription_id.clone()),
         external_user_id: Some(sub.external_user_id.clone()),
         amount_cents: None,
+        new_price_cents,
         auto_renewing: sub.auto_renewing,
         purchase_token: sub.purchase_token.clone(),
         current_period_end: sub.current_period_end.map(|d| d.to_rfc3339()),

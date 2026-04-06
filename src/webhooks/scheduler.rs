@@ -462,6 +462,7 @@ async fn emit_scheduler_callback(
         subscription_id: Some(subscription_id.to_string()),
         external_user_id,
         amount_cents: None,
+        new_price_cents: None,
         auto_renewing: None,
         purchase_token,
         current_period_end: None,

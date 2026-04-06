@@ -717,6 +717,7 @@ async fn forward_verify_purchase_callback(
             .then(|| callback.request.subscription_id.clone()),
         external_user_id: Some(callback.request.external_user_id.clone()),
         amount_cents: callback.amount_cents,
+        new_price_cents: None,
         auto_renewing: callback.auto_renewing,
         purchase_token: Some(callback.request.purchase_token.clone()),
         current_period_end: callback.current_period_end.map(|s| s.to_string()),

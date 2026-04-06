@@ -21,5 +21,5 @@ Status labels:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 32-37. Google Play special cases | Gap | Price-step-up accept/decline API handlers schema-mismatched. |
+| 32-37. Google Play special cases | Fixed | Price-step-up accept/decline handlers now return contract-compliant payloads, set Google Play consent state consistently, and forward `subscription.price_step_up` with `new_price_cents`. |
 | 38. Callback Forwarding | Partial | Explicit 10-second timeout exists and retries rebuild the canonical callback for redelivery, but there is still no explicit dead-letter state after 3 failed attempts. |
