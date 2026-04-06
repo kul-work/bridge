@@ -8,7 +8,6 @@ Compared [docs.notes/BEHAVIORAL_SPEC.md](./BEHAVIORAL_SPEC.md) against the curre
 
 Status labels used below:
 
-- `Aligned`: behavior is implemented closely enough to the spec.
 - `Partial`: the flow exists, but one or more contract details differ.
 - `Diverged`: the implementation intentionally or materially behaves differently.
 - `Missing`: the spec describes behavior that is not implemented.
@@ -60,7 +59,6 @@ High-confidence mismatches worth attention first:
 | Spec Section | Status | Notes |
 |---|---|---|
 | 1. Startup & Initialization | Partial | Core startup behavior exists; credential encryption path in spec is not implemented. |
-| 2. API Key Authentication | Aligned | Header extraction, key prefix lookup, hash verification, app enabled checks, and `last_used_at` update are present. |
 | 3. Rate Limiting | Partial | Middleware exists, but endpoint defaults and proxy IP extraction do not match spec. |
 | 4. Checkout Flow | Partial | Core checkout is implemented; Apple is only a metadata stub and the code exposes an extra alias route. |
 | 5. Purchase Verification | Partial | Main flow exists, but amount capture and Google relinking semantics diverge; Apple is missing. |
@@ -68,51 +66,13 @@ High-confidence mismatches worth attention first:
 | 7. Subscription Queries | Partial | Query behavior is implemented; default page size differs. |
 | 8. Subscription Cancellation | Partial | Cancel flow exists; scheduled-cancel response contract differs. |
 | 9. Subscription Resume | Partial | Resume flow exists; response contract differs. |
-| 10. Billing Portal | Aligned | Implemented for supported providers and guarded by `provider_customer_id`. |
-| 11. Payment History | Aligned | Query and pagination are implemented. |
 | 12. Webhook Ingress | Partial | Signature verification and async processing exist; invalid-token and missing-event-id semantics differ. |
-| 13. Subscription Activation | Aligned | Main mutation/payment/callback path is implemented. |
-| 14. Subscription Pending | Aligned | Pending is stored and forwarding is suppressed. |
-| 15. Grace Period | Aligned | Past-due transition and callback are implemented. |
-| 16. Subscription Revoked | Aligned | Revocation, refund guard, and callback are implemented. |
-| 17. Subscription On Hold | Aligned | Stale-event guard and callback are implemented. |
-| 18. Subscription Paused | Aligned | State guard and callback are implemented. |
-| 19. Subscription Restarted | Aligned | Resume-from-paused flow is implemented. |
 | 20. Cancellation Scheduled | Partial | DB change exists, but callback payload semantics differ from spec. |
 | 21. Subscription Expired / Inactive | Aligned | Expiry handling and callback are present. |
-| 22. Subscription Cancelled | Aligned | Cancelled transition and callback are present. |
-| 23. Order Created | Aligned | Pending payment recording is present. |
-| 24. Order Failed | Aligned | Failed payment recording and subscription notification flag are present. |
-| 25. One-Time Product Purchased | Aligned | Payment recording and callback are present. |
-| 26. One-Time Product Cancelled | Aligned | Cancellation idempotency and callback are present. |
-| 27. Purchase Voided / Refund | Aligned | Refund updates and revoke flow are present. |
-| 28. Pending Purchase Cancelled | Aligned | Cancel transition and callback are present. |
-| 29. Dispute Created | Aligned | Admin alert path and app callback exist. |
-| 30. Refund Created | Aligned | Mapped into refund handling. |
-| 31. Subscription Updated | Aligned | Normalized upsert and event remapping exist. |
-| 32. Price Step-Up Consent | Aligned | State storage and callback are present. |
-| 33. Subscription Deferred | Aligned | Deferred-until storage is present. |
-| 34. Pause Scheduled | Aligned | Schedule storage and background application are present. |
-| 35. Price Changed | Aligned | Audit payment write and callback path exist. |
-| 36. Price Change Updated | Aligned | Informational event is handled. |
-| 37. Expired Voided | Aligned | Informational event is handled. |
-| 38. Callback Forwarding | Aligned | HMAC signing, timeout, retries, dead-lettering, and stale-forward suppression are implemented. |
-| 39. Agent Balance Query | Aligned | Returns current balance and lifetime spent. |
-| 40. Agent Token Creation | Diverged | Contract differs materially from the spec. |
-| 41. Agent Charge | Partial | Atomic reserve exists; API contract differs. |
-| 42. Charge Confirmed | Aligned | Idempotent top-up application is implemented. |
-| 43. Charge Failed | Aligned | Logged without mutation. |
 | 44. User Anonymization | Diverged | Core anonymization exists, but the spec explicitly forbids extra callbacks and code sends one. |
 | 45. Data Export | Partial | Export exists, but completeness guarantees are weaker than spec. |
 | 46. Reconciliation | Partial | Job exists; provider scope and admin alert behavior differ, Apple still missing. |
 | 47. Price Step-Up Expiry | Aligned | Scheduled auto-cancel flow is implemented. |
-| 48. Pause Scheduler | Aligned | Scheduled pause and orphan cleanup are implemented. |
-| 49. Webhook Log Cleanup | Aligned | Cleanup worker calls the retention functions. |
-| 50. Payment Recording | Aligned | UPSERT + fraud guard match the documented DB behavior closely. |
-| 51. Webhook Deduplication | Aligned | Primary and secondary dedup behaviors are present. |
-| 52. Subscription Store / Activate | Aligned | UPSERT, versioning, and `last_event_time` stale-event guard are implemented. |
-| 53. User Lookup Strategies | Aligned | Strategies 1-4 plus Creem orphan guard are implemented; no email fallback. |
-| 54. Health Check | Aligned | `GET /health` matches spec; extra `/api/v1/health` route also exists. |
 
 ## Likely Stale-Spec Areas
 
@@ -121,7 +81,6 @@ These look more like documentation drift than broken code, but they should still
 - The spec still says provider credentials come from the `apps` table, while the implementation and schema have clearly standardized on `pay.provider_configs`.
 - The spec mentions `ENCRYPTION_KEY`, while code/config use `MASTER_ENCRYPTION_KEY` and do not currently apply encryption/decryption at all.
 - Some response shapes in the spec (`register_purchase`, `resume_subscription`, `agent/token`, `agent/charge`) no longer match the actual API.
-- The spec mentions Apple in multiple places, but the codebase is only partially prepared for it.
 
 ## Suggested Next Actions
 
