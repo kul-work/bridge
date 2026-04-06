@@ -71,6 +71,8 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting Bridge v{}", env!("CARGO_PKG_VERSION"));
     info!("Environment: {}", config.environment);
 
+    let _email_service = services::email::init_email_service(&config)?;
+
     // Initialize database
     let database = Arc::new(
         Database::new(&config.database_url, config.admin_database_url.as_deref()).await?

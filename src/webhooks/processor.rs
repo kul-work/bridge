@@ -1,14 +1,5 @@
 use crate::error::BridgeError;
-use lettre::{
-    message::Mailbox,
-    transport::smtp::authentication::Credentials,
-    AsyncSmtpTransport,
-    AsyncTransport,
-    Message,
-    Tokio1Executor,
-};
 use sqlx::PgPool;
-use std::env;
 use uuid::Uuid;
 use tracing::{error, info, warn};
 
@@ -132,8 +123,8 @@ async fn send_dispute_admin_alert_email(
     fields: &WebhookFields,
     external_user_id: Option<&str>,
 ) -> Result<(), BridgeError> {
-    let admin_email = match env::var("ADMIN_ALERT_EMAIL")
-        .or_else(|_| env::var("TYDE_SUPPORT_EMAIL"))
+    let admin_email = match std::env::var("ADMIN_ALERT_EMAIL")
+        .or_else(|_| std::env::var("TYDE_SUPPORT_EMAIL"))
     {
         Ok(value) if !value.trim().is_empty() => value,
         _ => {
@@ -144,26 +135,6 @@ async fn send_dispute_admin_alert_email(
             return Ok(());
         }
     };
-
-    let smtp_host = match env::var("SMTP_HOST") {
-        Ok(value) if !value.trim().is_empty() => value,
-        _ => {
-            warn!(
-                "Skipping dispute admin email for event {}: SMTP_HOST not configured",
-                webhook.provider_webhook_id
-            );
-            return Ok(());
-        }
-    };
-
-    let smtp_port = env::var("SMTP_PORT")
-        .ok()
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(587);
-    let from_email = env::var("SMTP_FROM_EMAIL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "noreply@bridge.local".to_string());
 
     let customer_email = extract_customer_email_for_dispute(webhook)
         .unwrap_or_else(|| "unknown".to_string());
@@ -206,33 +177,7 @@ async fn send_dispute_admin_alert_email(
             .unwrap_or_else(|| "unknown".to_string()),
     );
 
-    let from: Mailbox = from_email
-        .parse()
-        .map_err(|e| BridgeError::ConfigError(format!("Invalid SMTP_FROM_EMAIL: {}", e)))?;
-    let to: Mailbox = admin_email
-        .parse()
-        .map_err(|e| BridgeError::ConfigError(format!("Invalid ADMIN_ALERT_EMAIL: {}", e)))?;
-
-    let message = Message::builder()
-        .from(from)
-        .to(to)
-        .subject(subject)
-        .body(body)
-        .map_err(|e| BridgeError::InternalServerError(format!("Failed to build admin alert email: {}", e)))?;
-
-    let mut transport_builder = AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp_host)
-        .map_err(|e| BridgeError::ConfigError(format!("Invalid SMTP_HOST '{}': {}", smtp_host, e)))?;
-    transport_builder = transport_builder.port(smtp_port);
-
-    if let (Ok(username), Ok(password)) = (env::var("SMTP_USERNAME"), env::var("SMTP_PASSWORD")) {
-        if !username.trim().is_empty() && !password.trim().is_empty() {
-            transport_builder = transport_builder.credentials(Credentials::new(username, password));
-        }
-    }
-
-    let mailer = transport_builder.build();
-    mailer
-        .send(message)
+    crate::services::email::send_email(&admin_email, &subject, &body)
         .await
         .map_err(|e| BridgeError::InternalServerError(format!("Failed to send dispute admin alert email: {}", e)))?;
 
