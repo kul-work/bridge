@@ -26,5 +26,5 @@ pub async fn get_provider_config(
     .fetch_optional(pool)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?
-    .ok_or_else(|| BridgeError::ConfigError(format!("Provider {} not configured", provider)))
+    .ok_or_else(|| BridgeError::ProviderNotConfigured(format!("Provider {} not configured", provider)))
 }

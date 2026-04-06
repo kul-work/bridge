@@ -14,7 +14,7 @@ use uuid::Uuid;
 #[derive(Debug, Deserialize)]
 pub struct CheckoutRequest {
     pub external_user_id: String,
-    pub email: Option<String>,
+    pub email: String,
     pub provider: String,
     pub product_id: String,
     pub product_type: Option<String>,
@@ -24,6 +24,8 @@ pub struct CheckoutRequest {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CheckoutResponse {
     pub checkout_id: String,
+    #[serde(default)]
+    pub provider: String,
     pub redirect_url: Option<String>,
     pub mobile_checkout_data: Option<serde_json::Value>,
 }
@@ -33,33 +35,36 @@ pub async fn create_checkout(
     Extension(auth): Extension<AppAuth>,
     Json(payload): Json<CheckoutRequest>,
 ) -> Result<(StatusCode, Json<CheckoutResponse>), BridgeError> {
-    // Validate inputs
-    if payload.external_user_id.is_empty() {
-        return Err(BridgeError::ValidationError(
-            "external_user_id is required".to_string(),
-        ));
-    }
-    if payload.provider.is_empty() {
-        return Err(BridgeError::ValidationError(
-            "provider is required".to_string(),
-        ));
-    }
-    if payload.product_id.is_empty() {
-        return Err(BridgeError::ValidationError(
-            "product_id is required".to_string(),
-        ));
-    }
-    if payload.idempotency_key.as_deref() == Some("") {
+    let external_user_id = normalize_required_field(&payload.external_user_id, "external_user_id")?;
+    let email = normalize_required_field(&payload.email, "email")?;
+    let provider = normalize_provider_name(&normalize_required_field(&payload.provider, "provider")?);
+    let product_id = normalize_required_field(&payload.product_id, "product_id")?;
+    let product_type = payload
+        .product_type
+        .as_deref()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    let mobile_product_type = product_type
+        .clone()
+        .unwrap_or_else(|| "subscription".to_string());
+
+    if payload.idempotency_key.as_deref().is_some_and(|value| value.trim().is_empty()) {
         return Err(BridgeError::ValidationError(
             "idempotency_key cannot be empty".to_string(),
         ));
     }
 
-    let request_fingerprint = compute_request_fingerprint(&payload)?;
+    let request_fingerprint = compute_request_fingerprint(
+        &external_user_id,
+        &email,
+        &provider,
+        &product_id,
+        product_type.as_deref(),
+    )?;
 
     if let Some(key) = payload.idempotency_key.as_deref() {
         if let Some(cached) =
-            db::checkout_idempotency::get_cached_checkout(&database.pool, auth.app_id, key).await?
+            db::checkout_idempotency::get_cached_checkout(&database.pool, auth.app_id, key.trim()).await?
         {
             if cached.request_fingerprint != request_fingerprint {
                 return Err(BridgeError::ValidationError(
@@ -77,14 +82,13 @@ pub async fn create_checkout(
     let app = db::apps::get_app(&database.pool, auth.app_id).await?;
 
     // Load provider config
-    let provider_config =
-        db::provider_configs::get_provider_config(&database.pool, auth.app_id, &payload.provider)
-            .await?;
+    let provider_config = db::provider_configs::get_provider_config(&database.pool, auth.app_id, &provider).await?;
 
     // Generate checkout ID
     let checkout_id = Uuid::new_v4().to_string();
+    let checkout_urls = resolve_checkout_redirect_urls(app.app_url.as_deref());
 
-    let response = match payload.provider.as_str() {
+    let response = match provider.as_str() {
         "creem" => {
             let api_key = provider_config
                 .config
@@ -97,10 +101,7 @@ pub async fn create_checkout(
                 .and_then(|v| v.as_str())
                 .unwrap_or("https://api.creem.com");
 
-            let product_selector = payload
-                .product_type
-                .as_deref()
-                .unwrap_or(payload.product_id.as_str());
+            let product_selector = product_type.as_deref().unwrap_or(product_id.as_str());
             let selected_product_id = match product_selector {
                 "offer" => provider_config
                     .config
@@ -119,20 +120,16 @@ pub async fn create_checkout(
                     .ok_or_else(|| BridgeError::ConfigError("Missing Creem product_id".to_string()))?,
             };
 
-            let email = payload
-                .email
-                .clone()
-                .unwrap_or_else(|| format!("{}@local.tyde", payload.external_user_id));
-            let success_url = format!(
-                "{}/billing",
-                app.app_url.clone().unwrap_or_else(|| "http://localhost:3000".to_string())
-            );
-
             let creem_payload = serde_json::json!({
                 "product_id": selected_product_id,
                 "customer": { "email": email },
-                "metadata": { "user_id": payload.external_user_id },
-                "success_url": success_url
+                "metadata": {
+                    "user_id": external_user_id,
+                    "external_user_id": external_user_id,
+                    "product_id": product_id,
+                },
+                "success_url": checkout_urls.success_url,
+                "cancel_url": checkout_urls.cancel_url
             });
 
             let client = reqwest::Client::new();
@@ -159,17 +156,13 @@ pub async fn create_checkout(
                 .await
                 .map_err(|e| BridgeError::ProviderError(format!("Invalid Creem response: {}", e)))?;
 
-            let redirect_url = data
-                .get("checkout_url")
-                .and_then(|v| v.as_str())
+            let redirect_url = extract_checkout_url(&data)
                 .ok_or_else(|| BridgeError::ProviderError("Missing Creem checkout_url".to_string()))?;
-            let session_id = data
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&checkout_id);
+            let session_id = extract_checkout_id(&data).unwrap_or(checkout_id.as_str());
 
             CheckoutResponse {
                 checkout_id: session_id.to_string(),
+                provider: provider.clone(),
                 redirect_url: Some(redirect_url.to_string()),
                 mobile_checkout_data: None,
             }
@@ -181,27 +174,32 @@ pub async fn create_checkout(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| BridgeError::ConfigError("Missing LemonSqueezy api_key".to_string()))?;
 
-            let product_id_raw = provider_config
+            let provider_product_id_raw = provider_config
                 .config
                 .get("product_id")
                 .and_then(|v| v.as_str())
-                .unwrap_or(payload.product_id.as_str());
-            let product_id = product_id_raw.parse::<i32>().map_err(|e| {
-                BridgeError::ConfigError(format!("Invalid LemonSqueezy product_id '{}': {}", product_id_raw, e))
+                .unwrap_or(product_id.as_str());
+            let provider_product_id = provider_product_id_raw.parse::<i32>().map_err(|e| {
+                BridgeError::ConfigError(format!("Invalid LemonSqueezy product_id '{}': {}", provider_product_id_raw, e))
             })?;
-
-            let email = payload
-                .email
-                .clone()
-                .unwrap_or_else(|| format!("{}@local.tyde", payload.external_user_id));
 
             let ls_payload = serde_json::json!({
                 "data": {
                     "type": "checkouts",
                     "attributes": {
-                        "product_id": product_id,
+                        "product_id": provider_product_id,
                         "checkout_data": {
-                            "email": email
+                            "email": email,
+                            "custom": {
+                                "user_id": external_user_id,
+                                "external_user_id": external_user_id,
+                                "product_id": product_id,
+                                "product_type": product_type,
+                                "provider": provider,
+                            }
+                        },
+                        "product_options": {
+                            "redirect_url": checkout_urls.success_url
                         }
                     }
                 }
@@ -243,24 +241,162 @@ pub async fn create_checkout(
 
             CheckoutResponse {
                 checkout_id: session_id.to_string(),
+                provider: provider.clone(),
                 redirect_url: Some(redirect_url.to_string()),
                 mobile_checkout_data: None,
             }
         }
         "google_play" => {
-            return Err(BridgeError::ValidationError(
-                "Google Play checkout must be initiated on Android device".to_string(),
-            ));
+            let package_name = app
+                .google_package_name
+                .as_deref()
+                .or_else(|| {
+                    provider_config
+                        .config
+                        .get("package_name")
+                        .and_then(|v| v.as_str())
+                })
+                .ok_or_else(|| BridgeError::ConfigError("Missing Google Play package_name".to_string()))?;
+
+            let mobile_checkout_data = serde_json::json!({
+                "provider": "google_play",
+                "platform": "android",
+                "package_name": package_name,
+                "external_user_id": external_user_id,
+                "email": email,
+                "product_id": product_id,
+                "sku": product_id,
+                "product_type": mobile_product_type,
+            });
+
+            CheckoutResponse {
+                checkout_id,
+                provider: provider.clone(),
+                redirect_url: None,
+                mobile_checkout_data: Some(mobile_checkout_data),
+            }
+        }
+        "apple" => {
+            let bundle_id = app
+                .apple_bundle_id
+                .as_deref()
+                .or_else(|| {
+                    provider_config
+                        .config
+                        .get("bundle_id")
+                        .and_then(|v| v.as_str())
+                })
+                .ok_or_else(|| BridgeError::ConfigError("Missing Apple bundle_id".to_string()))?;
+
+            let mobile_checkout_data = serde_json::json!({
+                "provider": "apple",
+                "platform": "ios",
+                "bundle_id": bundle_id,
+                "external_user_id": external_user_id,
+                "email": email,
+                "product_id": product_id,
+                "sku": product_id,
+                "product_type": mobile_product_type,
+            });
+
+            CheckoutResponse {
+                checkout_id,
+                provider: provider.clone(),
+                redirect_url: None,
+                mobile_checkout_data: Some(mobile_checkout_data),
+            }
         }
         "coinbase" => {
-            return Err(BridgeError::ValidationError(
-                "Coinbase does not support subscription checkout. Use agent topup/402 flow.".to_string(),
-            ));
+            if let Some(checkout_url) = provider_config
+                .config
+                .get("checkout_url")
+                .or_else(|| provider_config.config.get("hosted_url"))
+                .and_then(|value| value.as_str())
+            {
+                CheckoutResponse {
+                    checkout_id,
+                    provider: provider.clone(),
+                    redirect_url: Some(checkout_url.to_string()),
+                    mobile_checkout_data: None,
+                }
+            } else {
+
+            let api_key = provider_config
+                .config
+                .get("api_key")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| BridgeError::ConfigError("Missing Coinbase api_key".to_string()))?;
+            let api_url = provider_config
+                .config
+                .get("api_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("https://api.commerce.coinbase.com");
+            let amount = coinbase_amount_from_config(&provider_config.config)?;
+            let currency = provider_config
+                .config
+                .get("currency")
+                .and_then(|v| v.as_str())
+                .unwrap_or("USDC");
+
+            let coinbase_payload = serde_json::json!({
+                "name": product_id,
+                "description": format!("Checkout for {}", product_id),
+                "pricing_type": "fixed_price",
+                "local_price": {
+                    "amount": amount,
+                    "currency": currency,
+                },
+                "redirect_url": checkout_urls.success_url,
+                "cancel_url": checkout_urls.cancel_url,
+                "metadata": {
+                    "user_id": external_user_id,
+                    "external_user_id": external_user_id,
+                    "product_id": product_id,
+                    "provider": provider,
+                }
+            });
+
+            let client = reqwest::Client::new();
+            let coinbase_response = client
+                .post(format!("{}/charges", api_url.trim_end_matches('/')))
+                .header("X-CC-Api-Key", api_key)
+                .header("X-CC-Version", "2018-03-22")
+                .header("Content-Type", "application/json")
+                .json(&coinbase_payload)
+                .send()
+                .await
+                .map_err(|e| BridgeError::ProviderError(format!("Coinbase checkout failed: {}", e)))?;
+
+            if !coinbase_response.status().is_success() {
+                let status = coinbase_response.status();
+                let body = coinbase_response.text().await.unwrap_or_default();
+                return Err(BridgeError::ProviderError(format!(
+                    "Coinbase checkout failed: {} - {}",
+                    status, body
+                )));
+            }
+
+            let data: serde_json::Value = coinbase_response
+                .json()
+                .await
+                .map_err(|e| BridgeError::ProviderError(format!("Invalid Coinbase response: {}", e)))?;
+
+            let redirect_url = extract_coinbase_checkout_url(&data)
+                .ok_or_else(|| BridgeError::ProviderError("Missing Coinbase hosted_url".to_string()))?;
+            let session_id = extract_coinbase_checkout_id(&data).unwrap_or(checkout_id.as_str());
+
+            CheckoutResponse {
+                checkout_id: session_id.to_string(),
+                provider: provider.clone(),
+                redirect_url: Some(redirect_url.to_string()),
+                mobile_checkout_data: None,
+            }
+            }
         }
         _ => {
             return Err(BridgeError::ValidationError(format!(
                 "Unknown provider: {}",
-                payload.provider
+                provider
             )));
         }
     };
@@ -269,25 +405,31 @@ pub async fn create_checkout(
         let response_json = serde_json::to_value(&response)
             .map_err(|e| BridgeError::InternalServerError(format!("Failed to serialize checkout response: {}", e)))?;
         db::checkout_idempotency::cache_checkout_response(
-            &database.pool,
-            auth.app_id,
-            key,
-            &request_fingerprint,
-            &response_json,
-        )
-        .await?;
+        &database.pool,
+        auth.app_id,
+        key.trim(),
+        &request_fingerprint,
+        &response_json,
+    )
+    .await?;
     }
 
     Ok((StatusCode::CREATED, Json(response)))
 }
 
-fn compute_request_fingerprint(payload: &CheckoutRequest) -> Result<String, BridgeError> {
+fn compute_request_fingerprint(
+    external_user_id: &str,
+    email: &str,
+    provider: &str,
+    product_id: &str,
+    product_type: Option<&str>,
+) -> Result<String, BridgeError> {
     let normalized_payload = serde_json::json!({
-        "external_user_id": payload.external_user_id,
-        "email": payload.email,
-        "provider": payload.provider,
-        "product_id": payload.product_id,
-        "product_type": payload.product_type,
+        "external_user_id": external_user_id,
+        "email": email,
+        "provider": provider,
+        "product_id": product_id,
+        "product_type": product_type,
     });
 
     let body = serde_json::to_vec(&normalized_payload)
@@ -295,4 +437,88 @@ fn compute_request_fingerprint(payload: &CheckoutRequest) -> Result<String, Brid
     let mut hasher = Sha256::new();
     hasher.update(body);
     Ok(hex::encode(hasher.finalize()))
+}
+
+fn normalize_required_field(value: &str, field_name: &str) -> Result<String, BridgeError> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return Err(BridgeError::ValidationError(format!("{} is required", field_name)));
+    }
+
+    Ok(normalized.to_string())
+}
+
+fn normalize_provider_name(provider: &str) -> String {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "app_store" => "apple".to_string(),
+        normalized => normalized.to_string(),
+    }
+}
+
+fn resolve_checkout_redirect_urls(app_url: Option<&str>) -> CheckoutRedirectUrls {
+    let base_url = app_url
+        .map(|value| value.trim_end_matches('/').to_string())
+        .unwrap_or_else(|| "http://localhost:3000".to_string());
+
+    CheckoutRedirectUrls {
+        success_url: base_url.clone(),
+        cancel_url: base_url,
+    }
+}
+
+fn coinbase_amount_from_config(config: &serde_json::Value) -> Result<String, BridgeError> {
+    if let Some(amount) = config.get("amount").and_then(|value| value.as_str()) {
+        let normalized = amount.trim();
+        if !normalized.is_empty() {
+            return Ok(normalized.to_string());
+        }
+    }
+
+    if let Some(amount_cents) = config.get("amount_cents").and_then(|value| value.as_i64()) {
+        if amount_cents <= 0 {
+            return Err(BridgeError::ConfigError(
+                "Coinbase amount_cents must be positive".to_string(),
+            ));
+        }
+
+        return Ok(format!("{:.2}", amount_cents as f64 / 100.0));
+    }
+
+    Err(BridgeError::ConfigError(
+        "Missing Coinbase amount or amount_cents".to_string(),
+    ))
+}
+
+fn extract_checkout_url(data: &serde_json::Value) -> Option<&str> {
+    data.pointer("/checkout_url")
+        .and_then(|value| value.as_str())
+        .or_else(|| data.pointer("/data/attributes/url").and_then(|value| value.as_str()))
+        .or_else(|| data.pointer("/data/url").and_then(|value| value.as_str()))
+        .or_else(|| data.get("url").and_then(|value| value.as_str()))
+}
+
+fn extract_checkout_id(data: &serde_json::Value) -> Option<&str> {
+    data.pointer("/id")
+        .and_then(|value| value.as_str())
+        .or_else(|| data.pointer("/data/id").and_then(|value| value.as_str()))
+}
+
+fn extract_coinbase_checkout_url(data: &serde_json::Value) -> Option<&str> {
+    data.pointer("/data/hosted_url")
+        .and_then(|value| value.as_str())
+        .or_else(|| data.pointer("/data/attributes/hosted_url").and_then(|value| value.as_str()))
+        .or_else(|| data.pointer("/data/hostedUrl").and_then(|value| value.as_str()))
+        .or_else(|| data.get("hosted_url").and_then(|value| value.as_str()))
+        .or_else(|| data.get("url").and_then(|value| value.as_str()))
+}
+
+fn extract_coinbase_checkout_id(data: &serde_json::Value) -> Option<&str> {
+    data.pointer("/data/id")
+        .and_then(|value| value.as_str())
+        .or_else(|| data.get("id").and_then(|value| value.as_str()))
+}
+
+struct CheckoutRedirectUrls {
+    success_url: String,
+    cancel_url: String,
 }

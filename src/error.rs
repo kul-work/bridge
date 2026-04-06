@@ -75,6 +75,9 @@ pub enum BridgeError {
     #[error("Configuration error: {0}")]
     ConfigError(String),
 
+    #[error("Provider not configured: {0}")]
+    ProviderNotConfigured(String),
+
     #[error("Database operation failed: {0}")]
     DatabaseError(#[from] sqlx::Error),
 
@@ -147,6 +150,14 @@ impl IntoResponse for BridgeError {
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "config_error",
                     format!("Configuration error: {}", msg),
+                )
+            }
+            BridgeError::ProviderNotConfigured(msg) => {
+                error!("Provider not configured: {}", msg);
+                (
+                    StatusCode::BAD_REQUEST,
+                    "provider_not_configured",
+                    msg.clone(),
                 )
             }
             BridgeError::DatabaseError(e) => {

@@ -21,7 +21,7 @@ Status labels:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 4. Checkout Flow | Gap | `email` is optional with fake email fallback, Google Play mobile checkout not implemented, Coinbase is rejected, metadata/redirect handling not aligned with spec. |
+| 4. Checkout Flow | Fixed | Required field validation, provider-not-configured handling, idempotent response caching, web redirects, and mobile bootstrap payloads for Google Play and Apple now match the spec. |
 | 8. Subscription Cancellation | Gap | Uses JSON body `external_user_id` instead of query params, ignores provider disambiguation, missing revocation metadata for immediate cancel. |
 | 9. Subscription Resume | Gap | Body-based user lookup (should be query param), no provider query param. |
 | 10. Billing Portal | Gap | Only works where `provider_customer_id` exists, only implemented for Creem. |
