@@ -547,7 +547,7 @@ When app grows, simply:
     ```
 7. **hiha.app**: receives callback, verifies HMAC signature, updates own `users.is_premium` (typically keeps access during grace period)
 
-> **Note on Callback Resilience**: Callback delivery uses a **3-strike retry system**. If the app doesn't respond with a 2xx status, a background job (running every 5 minutes) will retry delivery up to 3 times. Failed attempts increment `webhook_delivery.forward_attempts`. If it fails 3 times, the `webhook_delivery` row remains `forwarded = false`, natively acting as a dead-letter record without additional infrastructure. This job also monitors for permanently failed callbacks and pushes alerts to Discord/Slack.
+> **Note on Callback Resilience**: Callback delivery uses a **3-strike retry system**. If the app doesn't respond with a 2xx status, a background job (running every 5 minutes) will retry delivery up to 3 times. Failed attempts increment `webhook_delivery.forward_attempts`. If it fails 3 times, the `webhook_delivery` row is marked `dead_lettered = true` and the final error is retained for admin visibility. This job also monitors for permanently failed callbacks and pushes alerts to Discord/Slack.
 
 #### Stale Event Suppression (Bridge-Side) - idempotency issue solution
 

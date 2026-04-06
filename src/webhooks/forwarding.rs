@@ -28,8 +28,11 @@ pub async fn forward_webhook(
     // Get delivery record
     let delivery = crate::db::webhooks::get_webhook_delivery(pool, webhook_delivery_id).await?;
 
-    // Don't retry if already forwarded or max attempts reached
-    if delivery.forwarded || delivery.forward_attempts >= 3 {
+    // Don't retry if already forwarded or already dead-lettered.
+    if delivery.forwarded || delivery.dead_lettered || delivery.forward_attempts >= 3 {
+        if delivery.dead_lettered {
+            info!("Skipping dead-lettered webhook delivery {}", webhook_delivery_id);
+        }
         return Ok(());
     }
 

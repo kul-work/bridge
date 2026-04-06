@@ -29,6 +29,9 @@ pub struct WebhookDelivery {
     pub forward_attempts: i32,
     pub forwarded: bool,
     pub forwarded_at: Option<DateTime<Utc>>,
+    pub dead_lettered: bool,
+    pub dead_lettered_at: Option<DateTime<Utc>>,
+    pub dead_letter_reason: Option<String>,
     pub last_http_status: Option<i32>,
     pub last_error: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -94,6 +97,21 @@ pub async fn update_webhook_delivery_attempt(
              last_error = $2,
              forwarded = $3,
              forwarded_at = CASE WHEN $3 THEN NOW() ELSE forwarded_at END,
+             dead_lettered = CASE
+                 WHEN $3 THEN false
+                 WHEN forward_attempts + 1 >= 3 THEN true
+                 ELSE dead_lettered
+             END,
+             dead_lettered_at = CASE
+                 WHEN $3 THEN NULL
+                 WHEN forward_attempts + 1 >= 3 THEN NOW()
+                 ELSE dead_lettered_at
+             END,
+             dead_letter_reason = CASE
+                 WHEN $3 THEN NULL
+                 WHEN forward_attempts + 1 >= 3 THEN COALESCE($2::TEXT, 'Retry limit exceeded')
+                 ELSE dead_letter_reason
+             END,
              updated_at = NOW()
          WHERE id = $4"
     )

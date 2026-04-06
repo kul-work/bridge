@@ -47,7 +47,7 @@ pub async fn retry_webhooks(database: &Arc<Database>) -> Result<(), crate::error
     for app in apps_result {
         // Find deliveries that need retries
         let deliveries = sqlx::query_as::<_, crate::db::webhooks::WebhookDelivery>(
-            "SELECT * FROM pay.webhook_delivery WHERE app_id = $1 AND forwarded = false AND forward_attempts < 3 ORDER BY created_at ASC LIMIT 50"
+            "SELECT * FROM pay.webhook_delivery WHERE app_id = $1 AND forwarded = false AND dead_lettered = false AND forward_attempts < 3 ORDER BY created_at ASC LIMIT 50"
         )
         .bind(app.id)
         .fetch_all(&database.pool)
