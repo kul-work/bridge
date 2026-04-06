@@ -32,4 +32,4 @@ Status labels:
 |---|---|---|
 | 13-31. Canonical webhook processing | Gap | Several flows simplified to status-only updates, do not persist all spec-mandated fields or reasons. |
 | 32-37. Google Play special cases | Gap | Price-step-up accept/decline API handlers schema-mismatched. |
-| 38. Callback Forwarding | Gap | No explicit 10-second timeout, no dead-letter state, retry reprocesses webhook instead of forward-only delivery. |
+| 38. Callback Forwarding | Partial | Explicit 10-second timeout exists and retries rebuild the canonical callback for redelivery, but there is still no explicit dead-letter state after 3 failed attempts. |
