@@ -218,6 +218,34 @@ pub async fn create_billing_portal(
                 .ok_or_else(|| BridgeError::ProviderError("Missing 'url' in billing portal response".to_string()))
         }
 
+        "lemonsqueezy" => {
+            let api_key = config_str(config, "api_key", "LemonSqueezy")?;
+
+            let response = client
+                .get(format!("https://api.lemonsqueezy.com/v1/customers/{}", provider_customer_id))
+                .bearer_auth(api_key)
+                .header("Accept", "application/vnd.api+json")
+                .send()
+                .await
+                .map_err(|e| BridgeError::ProviderError(format!("LemonSqueezy billing portal failed: {}", e)))?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                error!("LemonSqueezy billing portal failed: {} - {}", status, body);
+                return Err(BridgeError::ProviderError(format!("LemonSqueezy billing portal failed: {}", status)));
+            }
+
+            let data: Value = response.json().await
+                .map_err(|e| BridgeError::ProviderError(format!("Invalid billing portal response: {}", e)))?;
+
+            data["data"]["attributes"]["urls"]["customer_portal"].as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| BridgeError::ValidationError(
+                    "Customer portal not available for this subscription".to_string(),
+                ))
+        }
+
         _ => Err(BridgeError::ValidationError(format!("Billing portal not supported for provider: {}", provider))),
     }
 }

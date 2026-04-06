@@ -282,29 +282,39 @@ pub async fn acknowledge_subscription(
 
 #[derive(Debug, Serialize)]
 pub struct BillingPortalResponse {
-    pub portal_url: String,
+    pub url: String,
 }
 
 pub async fn create_billing_portal(
     State(database): State<Arc<crate::db::Database>>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
-    Json(request): Json<AcknowledgeRequest>,
+    Query(query): Query<SubscriptionActionQuery>,
 ) -> Result<(StatusCode, Json<BillingPortalResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription_by_sub_id(
-        &database.pool,
-        auth.app_id,
-        &subscription_id,
-    )
-    .await?
-    .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
-
-    if sub.external_user_id != request.external_user_id {
-        return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
+    if query.external_user_id.trim().is_empty() {
+        return Err(BridgeError::ValidationError("external_user_id is required".to_string()));
     }
 
-    let customer_id = sub.provider_customer_id.as_deref()
-        .ok_or_else(|| BridgeError::ValidationError("Provider customer ID not available for this subscription".to_string()))?;
+    if query.provider.trim().is_empty() {
+        return Err(BridgeError::ValidationError("provider is required".to_string()));
+    }
+
+    let provider = query.provider.trim().to_ascii_lowercase();
+
+    let sub = db::subscriptions::get_subscription(
+        &database.pool,
+        auth.app_id,
+        query.external_user_id.trim(),
+        &subscription_id,
+        &provider,
+    )
+    .await?;
+
+    let customer_id = sub.provider_customer_id.as_deref().ok_or_else(|| {
+        BridgeError::ValidationError(
+            "Provider customer ID not available for this subscription".to_string(),
+        )
+    })?;
 
     let provider_config = db::provider_configs::get_provider_config(
         &database.pool,
@@ -312,7 +322,7 @@ pub async fn create_billing_portal(
         &sub.provider,
     ).await?;
 
-    let portal_url = provider_api::create_billing_portal(
+    let url = provider_api::create_billing_portal(
         &sub.provider,
         customer_id,
         &provider_config.config,
@@ -320,7 +330,7 @@ pub async fn create_billing_portal(
 
     Ok((
         StatusCode::OK,
-        Json(BillingPortalResponse { portal_url }),
+        Json(BillingPortalResponse { url }),
     ))
 }
 

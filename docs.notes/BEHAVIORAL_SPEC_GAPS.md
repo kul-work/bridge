@@ -22,7 +22,7 @@ Status labels:
 | Spec area | Status | Notes |
 |---|---|---|
 | 9. Subscription Resume | Fixed | Resume now uses `external_user_id` and `provider` query params with an empty request body. |
-| 10. Billing Portal | Gap | Only works where `provider_customer_id` exists, only implemented for Creem. |
+| 10. Billing Portal | Fixed | Uses the stored `provider_customer_id` and supports Creem plus LemonSqueezy customer portals. |
 
 ### Webhook Ingress and Processing
 

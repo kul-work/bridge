@@ -396,7 +396,7 @@ Get a billing management URL (if provider supports it — Creem, LemonSqueezy).
 **Response** `200`:
 ```json
 {
-  "portal_url": "https://billing.creem.io/manage/..."
+  "url": "https://billing.creem.io/manage/..."
 }
 ```
 
