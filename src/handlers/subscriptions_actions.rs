@@ -13,11 +13,6 @@ use tracing::warn;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
-pub struct SubscriptionActionRequest {
-    pub external_user_id: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct SubscriptionActionQuery {
     pub external_user_id: String,
     pub provider: String,
@@ -161,19 +156,25 @@ pub async fn resume_subscription(
     State(database): State<Arc<crate::db::Database>>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
-    Json(request): Json<SubscriptionActionRequest>,
+    Query(query): Query<SubscriptionActionQuery>,
 ) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription_by_sub_id(
+    if query.external_user_id.trim().is_empty() {
+        return Err(BridgeError::ValidationError("external_user_id is required".to_string()));
+    }
+
+    if query.provider.trim().is_empty() {
+        return Err(BridgeError::ValidationError("provider is required".to_string()));
+    }
+
+    let provider = query.provider.trim().to_ascii_lowercase();
+    let sub = db::subscriptions::get_subscription(
         &database.pool,
         auth.app_id,
+        query.external_user_id.trim(),
         &subscription_id,
+        &provider,
     )
-    .await?
-    .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
-
-    if sub.external_user_id != request.external_user_id {
-        return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
-    }
+    .await?;
 
     let provider_config = db::provider_configs::get_provider_config(
         &database.pool,

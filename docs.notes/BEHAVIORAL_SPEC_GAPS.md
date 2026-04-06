@@ -21,8 +21,7 @@ Status labels:
 
 | Spec area | Status | Notes |
 |---|---|---|
-| 8. Subscription Cancellation | Fixed | Endpoint now resolves `external_user_id` + `provider` from query params, supports request-body `purchase_token` override for Google Play, persists immediate-cancel revocation metadata, and returns cancellation mode in the callback payload. |
-| 9. Subscription Resume | Gap | Body-based user lookup (should be query param), no provider query param. |
+| 9. Subscription Resume | Fixed | Resume now uses `external_user_id` and `provider` query params with an empty request body. |
 | 10. Billing Portal | Gap | Only works where `provider_customer_id` exists, only implemented for Creem. |
 
 ### Webhook Ingress and Processing
