@@ -1,7 +1,7 @@
 # Bridge Behavioral Spec Gap Review
 
 Date: 2026-04-01
-Updated: 2026-04-04
+Updated: 2026-04-06
 Source spec: `docs.notes/BEHAVIORAL_SPEC.md`
 Codebase reviewed: `src/`, `migrations/`
 
