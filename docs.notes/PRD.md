@@ -50,7 +50,7 @@ All domains share one PostgreSQL database and one `AppState` object.
 
 4. `GET /api/v1/subscription-status`
 5. `GET /api/v1/payment/history`
-6. `POST /api/v1/payment/checkout`
+6. `POST /api/v1/checkout`
 7. `POST /api/v1/subscriptions/:subscription_id/cancel`
 8. `POST /api/v1/subscriptions/:subscription_id/portal`
 9. `POST /api/v1/subscriptions/:subscription_id/resume`
@@ -92,7 +92,7 @@ All domains share one PostgreSQL database and one `AppState` object.
 
 ### 6.1 Checkout
 
-1. `POST /api/v1/payment/checkout` always uses Creem as default web provider.
+1. `POST /api/v1/checkout` always uses Creem as default web provider.
 2. `product_type` supports product selection (`offer`, `otp`, default recurring product).
 3. Checkout creates provider session and returns redirect URL.
 
