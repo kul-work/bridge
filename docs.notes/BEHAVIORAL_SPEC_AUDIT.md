@@ -18,7 +18,7 @@ The spec itself is marked `Proposal / Under Review`, so some items below are pro
 
 High-confidence mismatches worth attention first:
 
-1. Provider credential storage/encryption does not match the spec. Code reads plaintext provider config from `pay.provider_configs`, while the spec repeatedly describes encrypted credentials loaded from `apps` via an encryption key.
+1. Provider credential storage does not match the spec. Code reads provider config from `pay.provider_configs`, while the spec repeatedly describes app-scoped credentials loaded from `apps` with an extra decryption step.
 2. The documented per-endpoint default rate limits are not what the code actually enforces. In practice, the app-wide default of `120/min` wins unless JSON overrides are configured.
 3. Unauthenticated IP rate limiting ignores `X-Forwarded-For` and `X-Real-IP`, so deployed behavior behind a proxy will drift from the spec.
 4. Webhook ingress is looser than the spec for invalid tokens and missing provider event IDs.
@@ -30,7 +30,7 @@ High-confidence mismatches worth attention first:
 
 | Priority | Spec Section(s) | Status | Finding | Code Evidence |
 |---|---|---|---|---|---|
-|#1| P0 | 1, 4, 12 | Diverged | The spec says provider credentials are Bridge-owned settings decrypted from DB state using an encryption key and describes them as living in the `apps` table. The implementation reads raw JSON from `pay.provider_configs`, and `MASTER_ENCRYPTION_KEY` is loaded but never used. This looks like either an unfinished security feature or stale documentation. | `src/config.rs:11-16`, `src/config.rs:46`, `src/db/provider_configs.rs:15-29`, `src/handlers/checkout.rs:76-103`, `src/handlers/verify_purchase.rs:149-156`, `src/webhooks/ingress.rs:27-29`, `migrations/11_create_provider_configs_table.sql:13-14`, `migrations/11_create_provider_configs_table.sql:73` |
+|#1| P0 | 1, 4, 12 | Diverged | The spec says provider credentials are Bridge-owned settings loaded from the `apps` table with an extra decryption step. The implementation reads raw JSON from `pay.provider_configs`. This is stale-spec drift around both credential location and loading behavior. | `src/db/provider_configs.rs:15-29`, `src/handlers/checkout.rs:76-103`, `src/handlers/verify_purchase.rs:149-156`, `src/webhooks/ingress.rs:27-29`, `migrations/11_create_provider_configs_table.sql:13-14`, `migrations/11_create_provider_configs_table.sql:73` |
 |#2| P0 | 3 | Diverged | The spec defines lower default limits for endpoint groups like checkout and verify-purchase. The middleware instead prefers `apps.api_rate_limit_per_minute` before the hardcoded endpoint defaults, and the schema default is `120`, so checkout/verify/purchase registration usually run at `120/min` unless app JSON overrides are explicitly configured. | `src/middleware/rate_limit.rs:120-130`, `src/middleware/rate_limit.rs:179-197`, `migrations/01_create_apps_table.sql:22` |
 |#3| P0 | 3.3 | Partial | Spec IP extraction order is `X-Forwarded-For` -> `X-Real-IP` -> connection IP. The middleware only uses `ConnectInfo<SocketAddr>`, so proxied deployments will not follow the documented rule. | `src/middleware/rate_limit.rs:113-118` |
 |#4| P0 | 12 | Partial | Invalid webhook tokens are supposed to fail silently with `404`. Unknown app tokens do return `404`, but malformed UUID path tokens return a validation error instead. | `src/webhooks/ingress.rs:20-24`, `src/webhooks/ingress.rs:175-177`, `src/webhooks/ingress.rs:277-279`, `src/webhooks/ingress.rs:375-377` |
@@ -74,12 +74,12 @@ High-confidence mismatches worth attention first:
 These look more like documentation drift than broken code, but they should still be resolved so the spec can be used safely as an implementation contract:
 
 - The spec still says provider credentials come from the `apps` table, while the implementation and schema have clearly standardized on `pay.provider_configs`.
-- The spec mentions `ENCRYPTION_KEY`, while code/config use `MASTER_ENCRYPTION_KEY` and do not currently apply encryption/decryption at all.
+- The spec still describes an extra decryption step for provider credentials, but the current implementation reads provider config directly from `pay.provider_configs`.
 - Some response shapes in the spec (`register_purchase`, `resume_subscription`, `agent/token`, `agent/charge`) no longer match the actual API.
 
 ## Suggested Next Actions
 
-1. Decide whether the source of truth is the spec or the shipped code for provider config storage and encryption. That decision affects both security work and a large amount of doc cleanup.
+1. Decide whether the source of truth is the spec or the shipped code for provider config storage. That decision affects a large amount of doc cleanup.
 2. Fix or explicitly bless the rate-limit behavior. Right now the documented endpoint defaults are misleading.
 3. Tighten webhook ingress semantics for malformed tokens and missing event IDs if the spec is intended to be exact.
 5. Resolve the GDPR mismatch around `user.anonymized` callbacks before other apps build against the current behavior.

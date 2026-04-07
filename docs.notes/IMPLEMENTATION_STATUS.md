@@ -257,7 +257,7 @@ CREATE TABLE provider_configs (
   id UUID PRIMARY KEY,
   app_id UUID REFERENCES apps(id),
   provider TEXT NOT NULL,          -- 'google_play', 'creem', etc.
-  config JSONB NOT NULL,           -- Encrypted credentials
+  config JSONB NOT NULL,           -- Provider credentials
   enabled BOOLEAN DEFAULT true,
   UNIQUE(app_id, provider)
 );
@@ -392,7 +392,6 @@ cargo build --release
 ```bash
 # Requires:
 # - DATABASE_URL=postgres://...
-# - MASTER_ENCRYPTION_KEY=<32-byte hex>
 # - PORT=3000 (default)
 # - LOG_LEVEL=info (default)
 
@@ -403,7 +402,6 @@ cargo run --release
 ### Environment Variables
 ```bash
 DATABASE_URL=postgres://user:pass@localhost:5432/bridge_prod
-MASTER_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
 PORT=3000
 LOG_LEVEL=info
 ENVIRONMENT=production

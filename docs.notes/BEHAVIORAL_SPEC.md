@@ -80,12 +80,12 @@ This document captures **every behavioral action** that Bridge must perform. Eac
 **Trigger**: Application starts
 
 1. Initialize tracing (stdout + daily rolling file log). Filter: `info` in production, `debug` in development.
-2. Load config from environment variables. All provider credentials come from the `apps` table (not env vars), except for Bridge's own settings (port, database_url, encryption_key, etc.).
+2. Load config from environment variables for Bridge-owned runtime settings (port, database URL, environment, background job toggles, etc.). Provider credentials are loaded per-app from `pay.provider_configs` at request time.
 3. **Production safeguard**: If `MOCK_EXTERNAL_APIS=true` in production → panic with error.
 4. Connect to PostgreSQL (Bridge's own database, separate from any app DB).
-5. Initialize the `ENCRYPTION_KEY` for decrypting provider credentials from `apps` table.
+5. No provider credentials are loaded at startup; provider config is fetched on demand for the active app/provider pair.
 6. If `enable_background_jobs=true`: start background tasks (reconciliation, price step-up, pause scheduler, webhook log cleanup).
-7. **Provider loading is dynamic, per-app**: Unlike the monolith (which loads providers at startup from env vars), Bridge loads provider credentials from the `apps` table on each request. Provider instances may be cached per `app_id` with TTL.
+7. **Provider loading is dynamic, per-app**: Unlike the monolith (which loads providers at startup from env vars), Bridge loads provider credentials from `pay.provider_configs` on each request. Provider instances may be cached per `app_id` with TTL.
 8. Build router:
    - **Public**: `GET /health`
    - **API** (`/api/v1/*`): all endpoints, authenticated via API key
@@ -182,9 +182,9 @@ RETURNING request_count
 1. Authenticate via API key → resolve `app_id`.
 2. Check rate limit for `checkout` endpoint.
 3. Validate required fields: `external_user_id`, `email`, `provider`, `product_id`.
-4. Lookup provider credentials from `apps` table for this `app_id` + `provider`. Not configured → `400 provider_not_configured`.
+4. Lookup provider credentials from `pay.provider_configs` for this `app_id` + `provider`. Not configured → `400 provider_not_configured`.
 5. If `idempotency_key` provided: check cache/DB for existing response. If found → return cached response.
-6. Initialize provider client with app's credentials (decrypted from `apps` table).
+6. Initialize provider client with the config loaded for this app/provider pair.
 7. Call provider API to create checkout session:
    - **Web providers** (Creem, LemonSqueezy, Coinbase): provider returns a `redirect_url`.
    - **Mobile providers** (Google Play, Apple): provider returns `mobile_checkout_data` (SKU details for native SDK).
@@ -927,7 +927,7 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
 **Runs for**: Each app with Google Play / Apple configured.
 
 1. For each app in `apps` table with Google Play credentials:
-   - Load Google Play service account from `apps.google_service_account_json` (decrypted).
+   - Load the Google Play provider config row for that app from `pay.provider_configs`.
    - Query all active subscriptions for this `app_id` + `provider='google_play'`: `(external_user_id, subscription_id, purchase_token, current_period_end)`.
 2. For each subscription:
    - Call Google Play API: `get_subscription(package_name, "", purchase_token)`.
@@ -1155,7 +1155,7 @@ Returns:
 | User store | Own `users` table | No user table. Uses opaque `external_user_id`. |
 | Premium status | `UPDATE users SET is_premium=...` | Forward callback event → app decides |
 | Email notifications | Bridge sends directly | Bridge sends admin alerts only. App-facing notifications forwarded via callback. |
-| Provider credentials | Environment variables | `apps` table (encrypted at rest, per-app) |
+| Provider credentials | Environment variables | `pay.provider_configs` table (per-app) |
 | Rate limiting | Per-user, DB-backed | Per-API-key, in-memory or DB-backed |
 | Webhook endpoint | `/webhooks/:provider` | `/webhooks/{token}/:provider` (obfuscated per-app) |
 | Webhook processing | Direct DB mutation | DB mutation + callback forwarding to app |

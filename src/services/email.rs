@@ -190,7 +190,6 @@ pub fn get_email_service() -> Arc<dyn EmailService> {
                 admin_database_url: None,
                 server_addr: "0.0.0.0".to_string(),
                 server_port: 3000,
-                master_encryption_key: None,
                 logging_level: "info".to_string(),
                 environment: std::env::var("ENVIRONMENT")
                     .unwrap_or_else(|_| "development".to_string()),

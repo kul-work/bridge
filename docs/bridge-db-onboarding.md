@@ -220,4 +220,4 @@ WHERE app_id = '{{APP_ID}}'::uuid;
 - Provider name matching is exact and case-sensitive.
 - `pay.apps.google_package_name` is not used as source-of-truth for Google verification; `provider_configs.config.package_name` is.
 - Apple provider exists in schema/docs but is not wired in active runtime handlers yet.
-- Migration comments mention encrypted provider configs, but active runtime paths currently read JSON keys directly from `provider_configs.config`.
+- Active runtime paths read provider config keys directly from `provider_configs.config`.

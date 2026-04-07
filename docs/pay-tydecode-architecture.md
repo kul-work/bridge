@@ -60,7 +60,7 @@
 
 Top-level entity. Each registered application.
 
-> **Security Note**: Sensitive credentials (API keys, service accounts, webhooks) are stored in the separate `provider_configs` table (Section 3.2) and encrypted at rest at the application level (via AES-GCM) using a master `ENCRYPTION_KEY` environment variable.
+> **Security Note**: Sensitive credentials (API keys, service accounts, webhooks) are stored in the separate `provider_configs` table (Section 3.2), keeping provider-specific settings out of the top-level `apps` table.
 
 ```sql
 CREATE TABLE apps (
@@ -117,7 +117,7 @@ CREATE TABLE provider_configs (
     
     provider TEXT NOT NULL,                      -- 'google_play', 'creem', 'apple', 'lemonsqueezy', 'coinbase'
     
-    -- Provider-specific configuration (unencrypted initially, see DEFERRED #6 below)
+    -- Provider-specific configuration
     config JSONB NOT NULL,                       -- credentials, endpoints, product IDs, etc.
     
     -- Audit
@@ -809,20 +809,3 @@ When a user deletes their account in the client app UI (e.g., `hiha.app`), the a
 ---
 
 ## 11. DEFERRED / TODO Items
-
-### #6 — Encryption at Rest (DEFERRED)
-
-**Status**: Not implemented in initial release. Marked for future enhancement.
-
-**Scope**: Encrypt sensitive provider credentials stored in `provider_configs.config` JSONB column.
-
-**Planned Approach (Option 1 — Whole Config Encryption)**:
-- Encrypt entire `config` JSONB as base64-encoded ciphertext on write
-- Decrypt on read at application layer (Rust)
-- Use AES-GCM algorithm via `aes-gcm` crate
-- Single `ENCRYPTION_KEY` environment variable for all apps (no per-app derivation initially)
-
-**Decryption Timing**: Decrypt on-demand when provider API calls are made (lazy decryption, not startup validation).
-
-**Future Implementation Notes**:
-- Admin UI will transparently show decrypted configs when reading

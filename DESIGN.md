@@ -26,7 +26,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 
 ### Multi-App Design
 - Bridge serves N apps (currently hiha.app, future apps)
-- Provider credentials stored per-app in `provider_configs` table (encrypted at rest, deferred)
+- Provider credentials stored per-app in `provider_configs` table
 - Webhook paths obfuscated per-app: `webhooks/{token}/:provider`
 - API keys scoped per app
 
@@ -104,8 +104,6 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 
 **Provider credentials**:
 - Stored in `provider_configs` table (JSONB `config` column)
-- Encrypted at rest (deferred feature, not v1)
-- Decrypted on-demand when API calls made
 - Per-app configuration (app can enable/disable providers independently)
 
 **State normalization**:
@@ -275,9 +273,8 @@ App                          Bridge
 - Webhook paths: exempt from rate limiting (protected by obfuscation + signature)
 
 ### Provider Credentials
-- Encrypted at rest (deferred feature)
-- Decrypted on-demand when API calls made
-- Single master `ENCRYPTION_KEY` environment variable
+- Stored in `provider_configs.config`
+- Loaded on demand when provider API calls are made
 
 ---
 
@@ -346,7 +343,6 @@ App                          Bridge
 |---|---|
 | `PORT` | HTTP server port (default 3000) |
 | `DATABASE_URL` | PostgreSQL connection string |
-| `ENCRYPTION_KEY` | Master key for encrypting provider credentials (deferred) |
 | `ENABLE_BACKGROUND_JOBS` | Enable/disable reconciliation, pause scheduler, etc. |
 | `RECONCILIATION_INTERVAL_MINUTES` | How often to reconcile with providers (default 1440 = 24h) |
 | `MOCK_EXTERNAL_APIS` | Set to `false` in production (panic if true) |
@@ -369,11 +365,6 @@ Per-app provider config in `provider_configs`:
 ---
 
 ## 9. Future Enhancements (Deferred)
-
-### #6 — Encryption at Rest
-- Encrypt `provider_configs.config` JSONB as AES-GCM ciphertext
-- Decrypt on-demand when provider API calls made
-- Admin UI transparently shows decrypted configs
 
 ### Admin Dashboard
 - Manual webhook replay

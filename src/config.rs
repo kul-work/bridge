@@ -8,7 +8,6 @@ pub struct Config {
     pub admin_database_url: Option<String>,
     pub server_addr: String,
     pub server_port: u16,
-    pub master_encryption_key: Option<String>,
     pub logging_level: String,
     pub environment: String,
     pub mock_external_apis: bool,
@@ -43,7 +42,6 @@ impl Config {
             server_addr: env::var("SERVER_ADDR")
                 .unwrap_or_else(|_| "0.0.0.0".to_string()),
             server_port: parse_u16_env("PORT", 3000)?,
-            master_encryption_key: env::var("MASTER_ENCRYPTION_KEY").ok(),
             logging_level: env::var("LOGGING_LEVEL")
                 .unwrap_or_else(|_| "info".to_string()),
             environment: env::var("ENVIRONMENT")

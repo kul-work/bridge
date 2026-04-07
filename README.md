@@ -45,8 +45,6 @@ Set at minimum:
 ```env
 # Database configuration
 DATABASE_URL=postgresql://user:password@localhost/appgen
-# Application Encryption key (AES-GCM for provider keys)
-ENCRYPTION_KEY=your-secure-key
 ```
 
 ### 2. Run Database Migrations
