@@ -36,15 +36,6 @@ pub async fn anonymize(
         return Err(BridgeError::ValidationError("User not found".to_string()));
     }
 
-    // Send anonymized external webhook asynchronously
-    let pool = database.pool.clone();
-    let app_id = auth.app_id;
-    let old_user_id = external_user_id.clone();
-    let new_user_id = new_anonymous_id.clone();
-    tokio::spawn(async move {
-        let _ = send_anonymize_webhook(&pool, app_id, &old_user_id, &new_user_id).await;
-    });
-
     Ok(Json(json!({
         "anonymized": true,
         "subscriptions_cancelled": subscriptions_cancelled,
@@ -119,52 +110,4 @@ pub async fn data_export(
         "agent_transactions": agent_transactions,
         "webhook_records": webhook_records
     })))
-}
-
-async fn send_anonymize_webhook(
-    pool: &sqlx::PgPool,
-    app_id: uuid::Uuid,
-    external_user_id: &str,
-    new_anonymous_id: &str,
-) -> Result<(), BridgeError> {
-    let app = crate::db::apps::get_app(pool, app_id).await?;
-    
-    let payload = json!({
-        "event_id": format!("anon-{}", uuid::Uuid::new_v4()),
-        "event_type": "user.anonymized",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "timestamp_epoch_ms": chrono::Utc::now().timestamp_millis(),
-        "app_slug": app.slug,
-        "external_user_id": external_user_id,
-        "new_anonymous_id": new_anonymous_id,
-    });
-    
-    let payload_json = serde_json::to_string(&payload)
-        .map_err(|e| BridgeError::WebhookError(format!("Failed to serialize payload: {}", e)))?;
-
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    let mut mac = Hmac::<Sha256>::new_from_slice(app.webhook_callback_secret.as_bytes())
-        .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
-    mac.update(payload_json.as_bytes());
-    let signature = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
-
-    let timestamp = chrono::Utc::now().timestamp().to_string();
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| BridgeError::WebhookError(format!("Failed to build webhook client: {}", e)))?;
-        
-    let _ = client
-        .post(&app.webhook_callback_url)
-        .header("X-Pay-Signature", &signature)
-        .header("X-Pay-Timestamp", &timestamp)
-        .header("X-Pay-Event-Id", payload["event_id"].as_str().unwrap())
-        .header("Content-Type", "application/json")
-        .body(payload_json)
-        .send()
-        .await;
-
-    Ok(())
 }
