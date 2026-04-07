@@ -49,6 +49,357 @@ pub struct SubscriptionUpsertResult {
     pub applied: bool,
 }
 
+#[derive(Debug, Clone)]
+pub enum SubscriptionWebhookTransition {
+    Pending,
+    GracePeriod {
+        grace_period_end: Option<DateTime<Utc>>,
+    },
+    Revoked {
+        revocation_reason: Option<String>,
+    },
+    OnHold,
+    Paused,
+    Resumed,
+    CancellationScheduled {
+        google_cancellation_context: Option<String>,
+        google_cancellation_feedback: Option<String>,
+    },
+    Expired,
+    Cancelled {
+        current_period_end: Option<DateTime<Utc>>,
+        google_cancellation_context: Option<String>,
+        google_cancellation_feedback: Option<String>,
+    },
+    PaymentFailed,
+    PendingPurchaseCancelled,
+    PriceStepUp {
+        google_new_price_cents: Option<i32>,
+        google_price_step_up_consent_deadline: Option<DateTime<Utc>>,
+    },
+    PauseScheduled {
+        google_pause_scheduled_at: DateTime<Utc>,
+    },
+    Deferred {
+        google_deferred_until: DateTime<Utc>,
+    },
+}
+
+pub async fn apply_webhook_transition(
+    pool: &PgPool,
+    app_id: Uuid,
+    subscription_id: &str,
+    event_time_ms: i64,
+    transition: SubscriptionWebhookTransition,
+) -> Result<Option<Subscription>, BridgeError> {
+    let result = match transition {
+        SubscriptionWebhookTransition::Pending => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET status = 'pending',
+                     google_subscription_state = 5,
+                     version = version + 1,
+                     last_event_time = $1,
+                     updated_at = NOW()
+                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 RETURNING *",
+            )
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::GracePeriod {
+            grace_period_end,
+        } => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET status = 'past_due',
+                     google_grace_period_start = COALESCE(google_grace_period_start, NOW()),
+                     google_grace_period_end = COALESCE($1, google_grace_period_end),
+                     google_subscription_state = 2,
+                     version = version + 1,
+                     last_event_time = $2,
+                     updated_at = NOW()
+                 WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2
+                 RETURNING *",
+            )
+            .bind(grace_period_end)
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::Revoked {
+            revocation_reason,
+        } => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET status = 'revoked',
+                     auto_renewing = false,
+                     revoked_at = NOW(),
+                     revocation_reason = COALESCE($1, revocation_reason),
+                     google_subscription_state = 6,
+                     version = version + 1,
+                     last_event_time = $2,
+                     updated_at = NOW()
+                 WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2
+                 RETURNING *",
+            )
+            .bind(revocation_reason)
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::OnHold => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET status = 'on_hold',
+                     google_subscription_state = 3,
+                     version = version + 1,
+                     last_event_time = $1,
+                     updated_at = NOW()
+                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 RETURNING *",
+            )
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::Paused => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET status = 'paused',
+                     auto_renewing = false,
+                     google_paused_at = NOW(),
+                     google_subscription_state = 4,
+                     version = version + 1,
+                     last_event_time = $1,
+                     updated_at = NOW()
+                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 RETURNING *",
+            )
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::Resumed => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET status = 'active',
+                     auto_renewing = true,
+                     google_paused_at = NULL,
+                     cancellation_initiated_at = NULL,
+                     google_subscription_state = 0,
+                     version = version + 1,
+                     last_event_time = $1,
+                     updated_at = NOW()
+                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 RETURNING *",
+            )
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::CancellationScheduled {
+            google_cancellation_context,
+            google_cancellation_feedback,
+        } => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET auto_renewing = false,
+                     cancellation_initiated_at = COALESCE(cancellation_initiated_at, NOW()),
+                     google_pending_cancellation = true,
+                     google_pending_cancellation_at = COALESCE(google_pending_cancellation_at, NOW()),
+                     google_cancellation_context = COALESCE($1, google_cancellation_context),
+                     google_cancellation_feedback = COALESCE($2, google_cancellation_feedback),
+                     version = version + 1,
+                     last_event_time = $3,
+                     updated_at = NOW()
+                 WHERE app_id = $4 AND subscription_id = $5 AND last_event_time < $3
+                 RETURNING *",
+            )
+            .bind(google_cancellation_context)
+            .bind(google_cancellation_feedback)
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::Expired => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET status = 'expired',
+                     auto_renewing = false,
+                     google_subscription_state = 6,
+                     version = version + 1,
+                     last_event_time = $1,
+                     updated_at = NOW()
+                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 RETURNING *",
+            )
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::Cancelled {
+            current_period_end,
+            google_cancellation_context,
+            google_cancellation_feedback,
+        } => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET status = 'cancelled',
+                     auto_renewing = false,
+                     current_period_end = COALESCE($1, current_period_end),
+                     cancellation_initiated_at = COALESCE(cancellation_initiated_at, NOW()),
+                     google_subscription_state = 1,
+                     google_cancellation_context = COALESCE($2, google_cancellation_context),
+                     google_cancellation_feedback = COALESCE($3, google_cancellation_feedback),
+                     version = version + 1,
+                     last_event_time = $4,
+                     updated_at = NOW()
+                 WHERE app_id = $5 AND subscription_id = $6 AND last_event_time < $4
+                 RETURNING *",
+            )
+            .bind(current_period_end)
+            .bind(google_cancellation_context)
+            .bind(google_cancellation_feedback)
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::PaymentFailed => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET payment_failure_notification = true,
+                     version = version + 1,
+                     last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
+                     updated_at = NOW()
+                 WHERE app_id = $2 AND subscription_id = $3
+                 RETURNING *",
+            )
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::PendingPurchaseCancelled => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET status = 'cancelled',
+                     auto_renewing = false,
+                     cancellation_initiated_at = COALESCE(cancellation_initiated_at, NOW()),
+                     revocation_reason = 'pending_purchase_canceled',
+                     google_subscription_state = 1,
+                     version = version + 1,
+                     last_event_time = $1,
+                     updated_at = NOW()
+                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 RETURNING *",
+            )
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::PriceStepUp {
+            google_new_price_cents,
+            google_price_step_up_consent_deadline,
+        } => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET google_requires_price_step_up_consent = true,
+                     google_new_price_cents = $1,
+                     google_price_step_up_consent_deadline = COALESCE($2, google_price_step_up_consent_deadline),
+                     version = version + 1,
+                     last_event_time = $3,
+                     updated_at = NOW()
+                 WHERE app_id = $4 AND subscription_id = $5 AND last_event_time < $3
+                 RETURNING *",
+            )
+            .bind(google_new_price_cents)
+            .bind(google_price_step_up_consent_deadline)
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::PauseScheduled {
+            google_pause_scheduled_at,
+        } => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET google_pause_scheduled_at = $1,
+                     version = version + 1,
+                     last_event_time = $2,
+                     updated_at = NOW()
+                 WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2
+                 RETURNING *",
+            )
+            .bind(google_pause_scheduled_at)
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+        SubscriptionWebhookTransition::Deferred {
+            google_deferred_until,
+        } => {
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET google_deferred_until = $1,
+                     version = version + 1,
+                     last_event_time = $2,
+                     updated_at = NOW()
+                 WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2
+                 RETURNING *",
+            )
+            .bind(google_deferred_until)
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(subscription_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+    };
+
+    Ok(result)
+}
+
 pub async fn get_subscription(
     pool: &PgPool,
     app_id: Uuid,

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::{db::Database, error::BridgeError};
+use crate::{db::Database, error::BridgeError, ports::BridgeRepository};
 
 const CREEM_SIGNATURE_HEADERS: [&str; 2] = ["Webhook-Signature", "x-signature"];
 
@@ -25,13 +25,12 @@ pub async fn handle_google_play(
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
+    let app = match db.get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    let provider_config =
-        crate::db::provider_configs::get_provider_config(&db.pool, app.id, "google_play").await?;
+    let provider_config = db.get_provider_config(app.id, "google_play").await?;
 
     let verify_signature = provider_config
         .config
@@ -120,18 +119,18 @@ pub async fn handle_google_play(
         .and_then(|s| s.parse::<i64>().ok())
         .or_else(|| google_play_event["eventTimeMillis"].as_i64());
 
-    let (webhook_id, is_new) = crate::db::webhooks::create_webhook_provider(
-        &db.pool,
-        app.id,
-        "google_play",
-        event_id,
-        &event_type,
-        subscription_id,
-        purchase_token,
-        google_play_event.clone(),
-        timestamp_ms,
-    )
-    .await?;
+    let (webhook_id, is_new) = db
+        .create_webhook_provider(
+            app.id,
+            "google_play",
+            event_id,
+            &event_type,
+            subscription_id,
+            purchase_token,
+            google_play_event.clone(),
+            timestamp_ms,
+        )
+        .await?;
 
     if !is_new {
         info!(
@@ -141,13 +140,13 @@ pub async fn handle_google_play(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let pool = db.pool.clone();
+    let pool = db.pool().clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     tokio::spawn(async move {
-        match crate::webhooks::processor::process_webhook(&pool, webhook_id, app_id).await {
+        match crate::webhooks::processor::process_webhook(db.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
-                match crate::db::webhooks::create_webhook_delivery(&pool, app_id, webhook_id).await {
+                match db.create_webhook_delivery(app_id, webhook_id).await {
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
                             &pool, app_id, delivery_id, canonical,
@@ -180,7 +179,7 @@ pub async fn handle_creem(
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
+    let app = match db.get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
@@ -189,7 +188,7 @@ pub async fn handle_creem(
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
 
-    let webhook_secret = get_provider_webhook_secret(&db.pool, app.id, "creem").await?;
+    let webhook_secret = get_provider_webhook_secret(db.as_ref(), app.id, "creem").await?;
     let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
 
@@ -227,31 +226,31 @@ pub async fn handle_creem(
             .map(|dt| dt.timestamp_millis())
     });
 
-    let (webhook_id, is_new) = crate::db::webhooks::create_webhook_provider(
-        &db.pool,
-        app.id,
-        "creem",
-        event_id,
-        event_type,
-        subscription_id,
-        None,
-        payload.clone(),
-        timestamp_ms,
-    )
-    .await?;
+    let (webhook_id, is_new) = db
+        .create_webhook_provider(
+            app.id,
+            "creem",
+            event_id,
+            event_type,
+            subscription_id,
+            None,
+            payload.clone(),
+            timestamp_ms,
+        )
+        .await?;
 
     if !is_new {
         info!("Duplicate Creem webhook received (already processed): {}", event_id);
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let pool = db.pool.clone();
+    let pool = db.pool().clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     tokio::spawn(async move {
-        match crate::webhooks::processor::process_webhook(&pool, webhook_id, app_id).await {
+        match crate::webhooks::processor::process_webhook(db.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
-                match crate::db::webhooks::create_webhook_delivery(&pool, app_id, webhook_id).await {
+                match db.create_webhook_delivery(app_id, webhook_id).await {
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
                             &pool, app_id, delivery_id, canonical,
@@ -284,7 +283,7 @@ pub async fn handle_lemonsqueezy(
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
+    let app = match db.get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
@@ -293,7 +292,7 @@ pub async fn handle_lemonsqueezy(
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
 
-    let webhook_secret = get_provider_webhook_secret(&db.pool, app.id, "lemonsqueezy").await?;
+    let webhook_secret = get_provider_webhook_secret(db.as_ref(), app.id, "lemonsqueezy").await?;
     let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
 
@@ -327,18 +326,18 @@ pub async fn handle_lemonsqueezy(
         .or_else(|| payload["data"]["attributes"]["subscription_id"].as_str())
         .map(|s| s.to_string());
 
-    let (webhook_id, is_new) = crate::db::webhooks::create_webhook_provider(
-        &db.pool,
-        app.id,
-        "lemonsqueezy",
-        event_id,
-        event_type,
-        subscription_id,
-        None,
-        payload.clone(),
-        None,
-    )
-    .await?;
+    let (webhook_id, is_new) = db
+        .create_webhook_provider(
+            app.id,
+            "lemonsqueezy",
+            event_id,
+            event_type,
+            subscription_id,
+            None,
+            payload.clone(),
+            None,
+        )
+        .await?;
 
     if !is_new {
         info!(
@@ -348,13 +347,13 @@ pub async fn handle_lemonsqueezy(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let pool = db.pool.clone();
+    let pool = db.pool().clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     tokio::spawn(async move {
-        match crate::webhooks::processor::process_webhook(&pool, webhook_id, app_id).await {
+        match crate::webhooks::processor::process_webhook(db.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
-                match crate::db::webhooks::create_webhook_delivery(&pool, app_id, webhook_id).await {
+                match db.create_webhook_delivery(app_id, webhook_id).await {
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
                             &pool, app_id, delivery_id, canonical,
@@ -387,7 +386,7 @@ pub async fn handle_coinbase(
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
+    let app = match db.get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
@@ -396,7 +395,7 @@ pub async fn handle_coinbase(
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
 
-    let webhook_secret = get_provider_webhook_secret(&db.pool, app.id, "coinbase").await?;
+    let webhook_secret = get_provider_webhook_secret(db.as_ref(), app.id, "coinbase").await?;
     let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
 
@@ -432,18 +431,18 @@ pub async fn handle_coinbase(
             .map(|dt| dt.timestamp_millis())
     });
 
-    let (webhook_id, is_new) = crate::db::webhooks::create_webhook_provider(
-        &db.pool,
-        app.id,
-        "coinbase",
-        event_id,
-        event_type,
-        charge_id,
-        None,
-        payload.clone(),
-        timestamp_ms,
-    )
-    .await?;
+    let (webhook_id, is_new) = db
+        .create_webhook_provider(
+            app.id,
+            "coinbase",
+            event_id,
+            event_type,
+            charge_id,
+            None,
+            payload.clone(),
+            timestamp_ms,
+        )
+        .await?;
 
     if !is_new {
         info!(
@@ -453,13 +452,13 @@ pub async fn handle_coinbase(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let pool = db.pool.clone();
+    let pool = db.pool().clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     tokio::spawn(async move {
-        match crate::webhooks::processor::process_webhook(&pool, webhook_id, app_id).await {
+        match crate::webhooks::processor::process_webhook(db.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
-                match crate::db::webhooks::create_webhook_delivery(&pool, app_id, webhook_id).await {
+                match db.create_webhook_delivery(app_id, webhook_id).await {
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
                             &pool, app_id, delivery_id, canonical,
@@ -546,13 +545,12 @@ fn extract_google_event_type(payload: &serde_json::Value) -> String {
     "unknown".to_string()
 }
 
-async fn get_provider_webhook_secret(
-    pool: &sqlx::PgPool,
+async fn get_provider_webhook_secret<R: BridgeRepository + ?Sized>(
+    repo: &R,
     app_id: Uuid,
     provider: &str,
 ) -> Result<String, BridgeError> {
-    let provider_config =
-        crate::db::provider_configs::get_provider_config(pool, app_id, provider).await?;
+    let provider_config = repo.get_provider_config(app_id, provider).await?;
 
     provider_config
         .config

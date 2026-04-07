@@ -56,7 +56,7 @@ pub async fn retry_webhooks(database: &Arc<Database>) -> Result<(), crate::error
 
         for delivery in deliveries {
             match crate::webhooks::processor::build_canonical_payload(
-                &database.pool,
+                database.as_ref(),
                 delivery.webhook_provider_id,
                 app.id,
             )

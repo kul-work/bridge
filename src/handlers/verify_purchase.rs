@@ -1,6 +1,6 @@
-use crate::db;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
+use crate::application;
 use crate::services::google_play::{
     client::GooglePlayClient,
     models::{Money, ProductPurchase, SubscriptionPurchaseV2},
@@ -42,13 +42,13 @@ pub struct VerifyPurchaseResponse {
 }
 
 #[derive(Clone, Copy)]
-enum ProductType {
+pub(crate) enum ProductType {
     Subscription,
     OneTimeProduct,
 }
 
 impl ProductType {
-    fn parse(raw: &str) -> Result<Self, BridgeError> {
+    pub(crate) fn parse(raw: &str) -> Result<Self, BridgeError> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "subscription" | "sub" | "subs" => Ok(Self::Subscription),
             "one_time" | "one-time" | "inapp" => Ok(Self::OneTimeProduct),
@@ -58,18 +58,18 @@ impl ProductType {
         }
     }
 
-    fn is_subscription(self) -> bool {
+    pub(crate) fn is_subscription(self) -> bool {
         matches!(self, Self::Subscription)
     }
 
-    fn callback_event_type(self) -> &'static str {
+    pub(crate) fn callback_event_type(self) -> &'static str {
         match self {
             Self::Subscription => "subscription.activated",
             Self::OneTimeProduct => "purchase.one_time",
         }
     }
 
-    fn payment_status(self, status: &str) -> &'static str {
+    pub(crate) fn payment_status(self, status: &str) -> &'static str {
         if status == "pending" {
             "pending"
         } else {
@@ -77,7 +77,7 @@ impl ProductType {
         }
     }
 
-    fn callback_status(self, status: &str) -> String {
+    pub(crate) fn callback_status(self, status: &str) -> String {
         match self {
             Self::Subscription => status.to_string(),
             Self::OneTimeProduct if status == "pending" => "pending".to_string(),
@@ -86,36 +86,36 @@ impl ProductType {
     }
 }
 
-enum VerificationOutcome {
+pub(crate) enum VerificationOutcome {
     Verified(VerifiedPurchase),
     LinkingRequired { obfuscated_account_id: String },
 }
 
-struct VerifiedPurchase {
-    status: String,
-    current_period_end: Option<DateTime<Utc>>,
-    auto_renewing: Option<bool>,
-    amount_cents: Option<i32>,
-    payment_state: Option<i32>,
-    acknowledgement: PaymentAcknowledgement,
-    obfuscated_account_id: Option<String>,
-    resubscribe_obfuscated_account_id: Option<String>,
+pub(crate) struct VerifiedPurchase {
+    pub(crate) status: String,
+    pub(crate) current_period_end: Option<DateTime<Utc>>,
+    pub(crate) auto_renewing: Option<bool>,
+    pub(crate) amount_cents: Option<i32>,
+    pub(crate) payment_state: Option<i32>,
+    pub(crate) acknowledgement: PaymentAcknowledgement,
+    pub(crate) obfuscated_account_id: Option<String>,
+    pub(crate) resubscribe_obfuscated_account_id: Option<String>,
 }
 
-enum PaymentAcknowledgement {
+pub(crate) enum PaymentAcknowledgement {
     NotApplicable,
     Pending,
     AlreadyAcknowledged,
 }
 
-struct VerifyPurchaseCallback<'a> {
-    request: &'a VerifyPurchaseRequest,
-    resolved_external_user_id: &'a str,
-    product_type: ProductType,
-    status: &'a str,
-    current_period_end: Option<&'a str>,
-    auto_renewing: Option<bool>,
-    amount_cents: Option<i32>,
+pub(crate) struct VerifyPurchaseCallback<'a> {
+    pub(crate) request: &'a VerifyPurchaseRequest,
+    pub(crate) resolved_external_user_id: &'a str,
+    pub(crate) product_type: ProductType,
+    pub(crate) status: &'a str,
+    pub(crate) current_period_end: Option<&'a str>,
+    pub(crate) auto_renewing: Option<bool>,
+    pub(crate) amount_cents: Option<i32>,
 }
 
 pub async fn verify_purchase(
@@ -123,401 +123,10 @@ pub async fn verify_purchase(
     Extension(auth): Extension<AppAuth>,
     Json(payload): Json<VerifyPurchaseRequest>,
 ) -> Result<(StatusCode, Json<VerifyPurchaseResponse>), BridgeError> {
-    // Validate inputs
-    if payload.external_user_id.is_empty() {
-        return Err(BridgeError::ValidationError(
-            "external_user_id is required".to_string(),
-        ));
-    }
-    if payload.provider.is_empty() {
-        return Err(BridgeError::ValidationError(
-            "provider is required".to_string(),
-        ));
-    }
-    if payload.subscription_id.is_empty() {
-        return Err(BridgeError::ValidationError(
-            "subscription_id is required".to_string(),
-        ));
-    }
-    if payload.purchase_token.is_empty() {
-        return Err(BridgeError::ValidationError(
-            "purchase_token is required".to_string(),
-        ));
-    }
-    if payload.product_type.trim().is_empty() {
-        return Err(BridgeError::ValidationError(
-            "product_type is required".to_string(),
-        ));
-    }
-
-    let product_type = ProductType::parse(&payload.product_type)?;
-
-    // Get app config
-    let app = db::apps::get_app(&database.pool, auth.app_id).await?;
-
-    // Load provider config
-    let provider_config =
-        db::provider_configs::get_provider_config(&database.pool, auth.app_id, &payload.provider)
-            .await?;
-
-    let verification = verify_purchase_with_provider(
-        &payload.provider,
-        &payload.subscription_id,
-        &payload.purchase_token,
-        product_type,
-        &payload.external_user_id,
-        &provider_config.config,
-    )
-    .await?;
-
-    let verified = match verification {
-        VerificationOutcome::LinkingRequired {
-            obfuscated_account_id,
-        } => {
-            return Ok((
-                StatusCode::OK,
-                Json(VerifyPurchaseResponse {
-                    status: "linking_required".to_string(),
-                    subscription_id: payload.subscription_id.clone(),
-                    current_period_end: None,
-                    auto_renewing: None,
-                    amount_cents: None,
-                    is_new: false,
-                    message: Some(
-                        "This purchase belongs to a different Google Play account and must be linked first"
-                            .to_string(),
-                    ),
-                    obfuscated_account_id: Some(obfuscated_account_id),
-                }),
-            ));
-        }
-        VerificationOutcome::Verified(verified) => verified,
-    };
-
-    let mut resolved_external_user_id = payload.external_user_id.clone();
-
-    if payload.provider == "google_play" {
-        if let Some(resubscribe_obfuscated_account_id) =
-            verified.resubscribe_obfuscated_account_id.as_deref()
-        {
-            resolved_external_user_id = match db::subscriptions::lookup_user_by_google_obfuscated_id(
-                &database.pool,
-                auth.app_id,
-                resubscribe_obfuscated_account_id,
-            )
-            .await?
-            {
-                Some(original_external_user_id) => original_external_user_id,
-                None => {
-                    return Ok((
-                        StatusCode::OK,
-                        Json(VerifyPurchaseResponse {
-                            status: "linking_required".to_string(),
-                            subscription_id: payload.subscription_id.clone(),
-                            current_period_end: None,
-                            auto_renewing: None,
-                            amount_cents: verified.amount_cents,
-                            is_new: false,
-                            message: Some(
-                                "This purchase belongs to a different Google Play account and must be linked first"
-                                    .to_string(),
-                            ),
-                            obfuscated_account_id: Some(
-                                resubscribe_obfuscated_account_id.to_string(),
-                            ),
-                        }),
-                    ));
-                }
-            };
-        } else if let Some(owner_hash) = verified.obfuscated_account_id.as_deref() {
-            if compute_obfuscated_id_hash(&payload.external_user_id) != owner_hash {
-                return Ok((
-                    StatusCode::OK,
-                    Json(VerifyPurchaseResponse {
-                        status: "linking_required".to_string(),
-                        subscription_id: payload.subscription_id.clone(),
-                        current_period_end: None,
-                        auto_renewing: None,
-                        amount_cents: verified.amount_cents,
-                        is_new: false,
-                        message: Some(
-                            "This purchase belongs to a different Google Play account and must be linked first"
-                                .to_string(),
-                        ),
-                        obfuscated_account_id: Some(owner_hash.to_string()),
-                    }),
-                ));
-            }
-        }
-    }
-
-    let existing_subscription = if product_type.is_subscription() {
-        match db::subscriptions::get_subscription(
-            &database.pool,
-            auth.app_id,
-            &resolved_external_user_id,
-            &payload.subscription_id,
-            &payload.provider,
-        )
-        .await
-        {
-            Ok(subscription) => Some(subscription),
-            Err(BridgeError::SubscriptionNotFound(_)) => None,
-            Err(e) => return Err(e),
-        }
-    } else {
-        None
-    };
-
-    let is_new = existing_subscription.is_none();
-
-    if product_type.is_subscription() {
-        if let Some(token_subscription) = db::subscriptions::get_subscription_by_purchase_token(
-            &database.pool,
-            auth.app_id,
-            &payload.purchase_token,
-        )
-        .await?
-        {
-            if token_subscription.external_user_id != payload.external_user_id {
-                if payload.provider == "google_play" {
-                    if let Some(obfuscated_account_id) = verified.obfuscated_account_id.clone() {
-                        return Ok((
-                            StatusCode::OK,
-                            Json(VerifyPurchaseResponse {
-                                status: "linking_required".to_string(),
-                                subscription_id: payload.subscription_id.clone(),
-                                current_period_end: None,
-                                auto_renewing: None,
-                                amount_cents: verified.amount_cents,
-                                is_new: false,
-                                message: Some(
-                                    "This purchase token is already owned by a different user and must be linked first"
-                                        .to_string(),
-                                ),
-                                obfuscated_account_id: Some(obfuscated_account_id),
-                            }),
-                        ));
-                    }
-                }
-
-                return Err(BridgeError::FraudDetected(
-                    "Purchase token already bound to different user".to_string(),
-                ));
-            }
-
-            if token_subscription.subscription_id != payload.subscription_id
-                || token_subscription.provider != payload.provider
-            {
-                return Err(BridgeError::ValidationError(
-                    "Purchase token already linked to a different subscription".to_string(),
-                ));
-            }
-        }
-    }
-
-    let mut tx = database
-        .pool
-        .begin()
-        .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    let payment_record_result = db::payments::record_payment_tx(
-        &mut tx,
-        auth.app_id,
-        &resolved_external_user_id,
-        &payload.provider,
-        &payload.purchase_token,
-        Some(&payload.subscription_id),
-        verified.amount_cents.unwrap_or(0),
-        product_type.payment_status(&verified.status),
-    )
-    .await;
-
-    if let Err(err) = payment_record_result {
-        tx.rollback()
-            .await
-            .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-        if payload.provider == "google_play" {
-            if let BridgeError::FraudDetected(_) = err {
-                if let Some(obfuscated_account_id) = verified.obfuscated_account_id.clone() {
-                    return Ok((
-                        StatusCode::OK,
-                        Json(VerifyPurchaseResponse {
-                            status: "linking_required".to_string(),
-                            subscription_id: payload.subscription_id.clone(),
-                            current_period_end: None,
-                            auto_renewing: None,
-                            amount_cents: verified.amount_cents,
-                            is_new: false,
-                            message: Some(
-                                "This purchase belongs to a different Google Play account and must be linked first"
-                                    .to_string(),
-                            ),
-                            obfuscated_account_id: Some(obfuscated_account_id),
-                        }),
-                    ));
-                }
-            }
-        }
-
-        return Err(err);
-    }
-
-    let current_period_end = verified.current_period_end.or_else(|| {
-        existing_subscription
-            .as_ref()
-            .and_then(|subscription| subscription.current_period_end.as_ref().cloned())
-    });
-    let response_current_period_end = current_period_end.map(|d| d.to_rfc3339());
-
-    let mut response_auto_renewing = verified.auto_renewing;
-
-    if product_type.is_subscription() {
-        let subscription = db::subscriptions::upsert_subscription_tx(
-            &mut tx,
-            auth.app_id,
-            &resolved_external_user_id,
-            &payload.subscription_id,
-            &payload.provider,
-            &verified.status,
-            current_period_end,
-            Some(&payload.purchase_token),
-            verified.auto_renewing.or_else(|| {
-                existing_subscription
-                    .as_ref()
-                    .and_then(|subscription| subscription.auto_renewing)
-            }),
-            verified.payment_state.or_else(|| {
-                existing_subscription
-                    .as_ref()
-                    .and_then(|subscription| subscription.payment_state)
-            }),
-            existing_subscription
-                .as_ref()
-                .and_then(|subscription| subscription.provider_customer_id.as_deref()),
-            Utc::now().timestamp_millis(),
-        )
-            .await?
-            .subscription;
-
-        if payload.provider == "google_play" {
-            sqlx::query(
-                "UPDATE pay.subscriptions
-                 SET google_obfuscated_account_id = COALESCE($1, google_obfuscated_account_id),
-                     updated_at = NOW()
-                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND provider = $5"
-            )
-            .bind(verified.obfuscated_account_id.as_deref())
-            .bind(auth.app_id)
-            .bind(&resolved_external_user_id)
-            .bind(&payload.subscription_id)
-            .bind(&payload.provider)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| BridgeError::DbError(e.to_string()))?;
-        }
-
-        response_auto_renewing = subscription.auto_renewing;
-    }
-
-    let payment_acknowledged = db::payments::payment_acknowledged_at_tx(
-        &mut tx,
-        auth.app_id,
-        &payload.provider,
-        &payload.purchase_token,
-    )
-    .await?
-    .is_some();
-
-    match verified.acknowledgement {
-        PaymentAcknowledgement::AlreadyAcknowledged => {
-            db::payments::mark_payment_acknowledged_tx(
-                &mut tx,
-                auth.app_id,
-                &payload.provider,
-                &payload.purchase_token,
-            )
-            .await?;
-        }
-        PaymentAcknowledgement::Pending
-            if payload.provider == "google_play" && !payment_acknowledged =>
-        {
-            if let Err(err) = acknowledge_google_play(
-                &payload.subscription_id,
-                &payload.purchase_token,
-                product_type,
-                &provider_config.config,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "verify_purchase acknowledgement failed for app {} token {}: {}",
-                    app.id,
-                    payload.purchase_token,
-                    err
-                );
-            } else {
-                db::payments::mark_payment_acknowledged_tx(
-                    &mut tx,
-                    auth.app_id,
-                    &payload.provider,
-                    &payload.purchase_token,
-                )
-                .await?;
-            }
-        }
-        PaymentAcknowledgement::NotApplicable | PaymentAcknowledgement::Pending => {}
-    }
-
-    tx.commit()
-        .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    let response = VerifyPurchaseResponse {
-        status: verified.status.clone(),
-        subscription_id: payload.subscription_id.clone(),
-        current_period_end: response_current_period_end,
-        auto_renewing: response_auto_renewing,
-        amount_cents: verified.amount_cents,
-        is_new,
-        message: None,
-        obfuscated_account_id: None,
-    };
-
-    if response.status != "pending" {
-        let callback_status = product_type.callback_status(&response.status);
-
-        if let Err(e) = forward_verify_purchase_callback(
-            &database.pool,
-            app.id,
-            &app.slug,
-            VerifyPurchaseCallback {
-                request: &payload,
-                resolved_external_user_id: &resolved_external_user_id,
-                product_type,
-                status: &callback_status,
-                current_period_end: response.current_period_end.as_deref(),
-                auto_renewing: response.auto_renewing,
-                amount_cents: response.amount_cents,
-            },
-        )
-        .await
-        {
-            tracing::warn!(
-                "verify_purchase callback forwarding failed for app {} sub {}: {}",
-                app.id,
-                payload.subscription_id,
-                e
-            );
-        }
-    }
-
-    Ok((StatusCode::OK, Json(response)))
+    application::verify_purchase::verify_purchase(database.as_ref(), auth.app_id, payload).await
 }
 
-async fn verify_purchase_with_provider(
+pub(crate) async fn verify_purchase_with_provider(
     provider: &str,
     subscription_id: &str,
     purchase_token: &str,
@@ -798,8 +407,8 @@ async fn verify_coinbase(
     })
 }
 
-async fn forward_verify_purchase_callback(
-    pool: &sqlx::PgPool,
+pub(crate) async fn forward_verify_purchase_callback<R: crate::ports::BridgeRepository + ?Sized>(
+    repo: &R,
     app_id: uuid::Uuid,
     app_slug: &str,
     callback: VerifyPurchaseCallback<'_>,
@@ -807,8 +416,8 @@ async fn forward_verify_purchase_callback(
     let now = chrono::Utc::now();
     let event_id = format!("verify-purchase-{}", Uuid::new_v4());
 
-    let (webhook_id, _) = crate::db::webhooks::create_webhook_provider(
-        pool,
+    let (webhook_id, _) = repo
+        .create_webhook_provider(
         app_id,
         &callback.request.provider,
         &event_id,
@@ -826,7 +435,7 @@ async fn forward_verify_purchase_callback(
     )
     .await?;
 
-    let delivery_id = crate::db::webhooks::create_webhook_delivery(pool, app_id, webhook_id).await?;
+    let delivery_id = repo.create_webhook_delivery(app_id, webhook_id).await?;
 
     let callback_payload = CanonicalWebhookPayload {
         event_id: event_id.clone(),
@@ -854,7 +463,7 @@ async fn forward_verify_purchase_callback(
         cancellation_mode: None,
     };
 
-    crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, callback_payload).await
+    crate::webhooks::forwarding::forward_webhook(repo.pool(), app_id, delivery_id, callback_payload).await
 }
 
 fn mock_external_apis_enabled() -> bool {
@@ -1036,7 +645,7 @@ fn map_google_product_verification(
     }
 }
 
-async fn acknowledge_google_play(
+pub(crate) async fn acknowledge_google_play(
     subscription_id: &str,
     purchase_token: &str,
     product_type: ProductType,
@@ -1176,7 +785,7 @@ fn load_mock_fixture<T: DeserializeOwned>(env_key: &str) -> Option<T> {
     serde_json::from_str::<T>(&content).ok()
 }
 
-fn compute_obfuscated_id_hash(external_user_id: &str) -> String {
+pub(crate) fn compute_obfuscated_id_hash(external_user_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(external_user_id.as_bytes());
     format!("{:x}", hasher.finalize())
