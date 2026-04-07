@@ -172,6 +172,15 @@ Why this matters:
 5. Remaining handler and middleware read paths
 6. Split `BridgeRepository` into smaller ports
 
+## Short Checklist
+
+- [ ] Move webhook forwarding reads and delivery updates behind ports
+- [ ] Move webhook scheduler queries and mutations behind ports
+- [ ] Split Google Play lifecycle side effects out of the lifecycle handlers
+- [ ] Replace remaining handler and middleware DB reads with application ports
+- [ ] Split `BridgeRepository` into smaller, use-case-specific ports
+- [ ] Re-run `cargo check` and `cargo test` after each extraction
+
 ## Practical Target
 
 If Bridge is fully split, the dependency direction should read as:
