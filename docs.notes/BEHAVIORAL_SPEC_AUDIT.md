@@ -50,7 +50,6 @@ High-confidence mismatches worth attention first:
 |#19| P1 | 46 | Partial | Reconciliation exists, but the implementation differs from the spec in two ways: it runs for whatever providers have config rather than only Google Play/Apple, and it logs an admin alert message instead of sending an admin alert email. | `src/webhooks/scheduler.rs:93-143`, `src/webhooks/scheduler.rs:155-201`, `src/services/provider_api.rs:254-352` |
 |#20| P2 | 1 | Partial | Startup/background workers largely match the spec, but the implementation also starts a webhook retry worker that the startup section does not mention explicitly. This is not harmful, but it means the spec is incomplete about active background jobs. | `src/main.rs:82-89` |
 |#21| P2 | 4 | Partial | Checkout behavior is mostly aligned, but the implementation has an extra alias route (`/api/v1/payment/checkout`) that the spec does not document. | `src/main.rs:97-99` |
-|#22| P2 | 54 | Partial | Health behavior is aligned, but the code also exposes `/api/v1/health` in addition to `/health`. | `src/main.rs:142-145`, `src/handlers/mod.rs:11-16` |
 
 ## Section Status Matrix
 

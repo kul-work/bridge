@@ -140,7 +140,6 @@ async fn main() -> anyhow::Result<()> {
     // Build app
     let app = Router::new()
         .route("/health", get(health_check))
-        .route("/api/v1/health", get(health_check))
         .nest("/admin", admin_routes)
         .nest("/api/v1", protected_routes)
         .nest("/webhooks", webhooks::webhook_routes(database.clone()))
