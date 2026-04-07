@@ -1,3 +1,5 @@
+use crate::config::API_PAGINATION_LIMIT;
+use crate::config::MAX_PAGINATION_LIMIT;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use axum::{
@@ -63,7 +65,7 @@ pub async fn get_payments(
         ));
     }
 
-    let limit = query.limit.unwrap_or(20).min(100);
+    let limit = query.limit.unwrap_or(API_PAGINATION_LIMIT).min(MAX_PAGINATION_LIMIT);
     let cursor = decode_cursor(query.after.as_deref())?;
 
     let total: i64 = sqlx::query_scalar(

@@ -7,6 +7,7 @@ use serde_json::json;
 use std::sync::Arc;
 use chrono::Utc;
 
+use crate::config::DATA_EXPORT_LIMIT;
 use crate::db::Database;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
@@ -61,7 +62,7 @@ pub async fn data_export(
         &database.pool,
         auth.app_id,
         &external_user_id,
-        100,
+        DATA_EXPORT_LIMIT,
         0,
     )
     .await?;
@@ -70,7 +71,7 @@ pub async fn data_export(
         &database.pool,
         auth.app_id,
         &external_user_id,
-        100,
+        DATA_EXPORT_LIMIT,
         0,
     )
     .await.unwrap_or_default();

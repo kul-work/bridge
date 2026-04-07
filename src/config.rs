@@ -1,6 +1,11 @@
 use anyhow::Result;
 use std::env;
 
+pub const API_PAGINATION_LIMIT: i64 = 20;
+pub const MAX_PAGINATION_LIMIT: i64 = 100;
+pub const DATA_EXPORT_LIMIT: i64 = 100;
+pub const ADMIN_WEBHOOK_LIST_LIMIT: i64 = 50;
+
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Config {

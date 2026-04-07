@@ -7,7 +7,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 use tracing::info;
 
-use crate::{db::Database, error::BridgeError};
+use crate::{config::ADMIN_WEBHOOK_LIST_LIMIT, db::Database, error::BridgeError};
 
 /// Get admin dashboard page
 pub async fn admin_dashboard(
@@ -56,7 +56,7 @@ pub async fn get_app_webhooks(
     let app_uuid = Uuid::parse_str(&app_id)
         .map_err(|_| BridgeError::ValidationError("Invalid app ID".to_string()))?;
 
-    let webhooks = crate::db::webhooks::list_app_webhooks(&db.pool, app_uuid, 50, 0)
+    let webhooks = crate::db::webhooks::list_app_webhooks(&db.pool, app_uuid, ADMIN_WEBHOOK_LIST_LIMIT, 0)
         .await?;
 
     let summaries = webhooks
