@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -17,6 +18,19 @@ pub struct Payment {
     pub amount_cents: i32,
     pub currency: String,
     pub status: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct PaymentHistoryEntry {
+    pub id: Uuid,
+    pub external_user_id: String,
+    pub subscription_id: Option<String>,
+    pub provider: String,
+    pub provider_transaction_id: String,
+    pub amount_cents: i32,
+    pub currency: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -176,6 +190,73 @@ pub async fn get_user_payments(
     .fetch_all(pool)
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))
+}
+
+pub async fn count_user_payments(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+) -> Result<i64, crate::error::BridgeError> {
+    let total: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM pay.payments WHERE app_id = $1 AND external_user_id = $2",
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(total.0)
+}
+
+pub async fn list_user_payments_keyset(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+    limit: i64,
+    after_created_at: Option<DateTime<Utc>>,
+    after_id: Option<Uuid>,
+) -> Result<Vec<PaymentHistoryEntry>, crate::error::BridgeError> {
+    if let (Some(created_at), Some(id)) = (after_created_at, after_id) {
+        sqlx::query_as::<_, PaymentHistoryEntry>(
+            r#"
+            SELECT
+                id, external_user_id, subscription_id, provider, provider_transaction_id,
+                amount_cents, currency, status, created_at
+            FROM pay.payments
+            WHERE app_id = $1 AND external_user_id = $2
+              AND (created_at, id) < ($3, $4)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $5
+            "#,
+        )
+        .bind(app_id)
+        .bind(external_user_id)
+        .bind(created_at)
+        .bind(id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))
+    } else {
+        sqlx::query_as::<_, PaymentHistoryEntry>(
+            r#"
+            SELECT
+                id, external_user_id, subscription_id, provider, provider_transaction_id,
+                amount_cents, currency, status, created_at
+            FROM pay.payments
+            WHERE app_id = $1 AND external_user_id = $2
+            ORDER BY created_at DESC, id DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(app_id)
+        .bind(external_user_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))
+    }
 }
 
 pub async fn adopt_stale_payment(

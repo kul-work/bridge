@@ -39,6 +39,15 @@ pub async fn list_enabled_apps(pool: &PgPool) -> Result<Vec<App>, BridgeError> {
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
+pub async fn list_apps(pool: &PgPool) -> Result<Vec<App>, BridgeError> {
+    sqlx::query_as::<_, App>(
+        "SELECT * FROM pay.apps ORDER BY display_name"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
 /// Get app by webhook ingress token
 /// TODO: Used by webhook ingress handlers (not yet implemented) to map incoming webhooks to apps.
 #[allow(dead_code)]

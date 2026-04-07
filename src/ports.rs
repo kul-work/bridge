@@ -4,11 +4,13 @@ use uuid::Uuid;
 use crate::{
     db::{
         self,
+        agent::{AgentCredit, AgentTransaction},
         apps::App,
         checkout_idempotency::CachedCheckout,
+        payments::PaymentHistoryEntry,
         provider_configs::ProviderConfig,
         subscriptions::{Subscription, SubscriptionUpsertResult},
-        webhooks::{WebhookDelivery, WebhookProvider},
+        webhooks::{WebhookDelivery, WebhookProvider, WebhookRecord},
     },
     error::BridgeError,
 };
@@ -23,6 +25,17 @@ pub trait BridgeRepository: Send + Sync {
     async fn get_app_by_webhook_token(&self, token: Uuid) -> Result<App, BridgeError>;
 
     async fn list_enabled_apps(&self) -> Result<Vec<App>, BridgeError>;
+
+    async fn list_apps(&self) -> Result<Vec<App>, BridgeError>;
+
+    async fn count_failed_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError>;
+
+    async fn list_app_webhooks(
+        &self,
+        app_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<(WebhookDelivery, WebhookProvider)>, BridgeError>;
 
     async fn get_provider_config(
         &self,
@@ -94,6 +107,21 @@ pub trait BridgeRepository: Send + Sync {
         provider_transaction_id: &str,
     ) -> Result<Option<String>, BridgeError>;
 
+    async fn count_user_payments(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+    ) -> Result<i64, BridgeError>;
+
+    async fn list_user_payments_keyset(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        limit: i64,
+        after_created_at: Option<chrono::DateTime<chrono::Utc>>,
+        after_id: Option<Uuid>,
+    ) -> Result<Vec<PaymentHistoryEntry>, BridgeError>;
+
     async fn update_payment_status(
         &self,
         app_id: Uuid,
@@ -124,6 +152,18 @@ pub trait BridgeRepository: Send + Sync {
         amount_cents: i32,
         charge_id: &str,
     ) -> Result<bool, BridgeError>;
+
+    async fn get_agent_credit(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+    ) -> Result<Option<AgentCredit>, BridgeError>;
+
+    async fn list_agent_transactions(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+    ) -> Result<Vec<AgentTransaction>, BridgeError>;
 
     async fn record_payment_tx(
         &self,
@@ -219,6 +259,13 @@ pub trait BridgeRepository: Send + Sync {
 
     async fn mark_webhook_processed(&self, webhook_id: Uuid) -> Result<(), BridgeError>;
 
+    async fn list_user_webhook_records(
+        &self,
+        app_id: Uuid,
+        subscription_ids: &[String],
+        purchase_tokens: &[String],
+    ) -> Result<Vec<WebhookRecord>, BridgeError>;
+
     async fn apply_subscription_transition(
         &self,
         app_id: Uuid,
@@ -244,6 +291,23 @@ impl BridgeRepository for db::Database {
 
     async fn list_enabled_apps(&self) -> Result<Vec<App>, BridgeError> {
         db::apps::list_enabled_apps(&self.pool).await
+    }
+
+    async fn list_apps(&self) -> Result<Vec<App>, BridgeError> {
+        db::apps::list_apps(&self.pool).await
+    }
+
+    async fn count_failed_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError> {
+        db::webhooks::count_failed_webhooks(&self.pool, app_id).await
+    }
+
+    async fn list_app_webhooks(
+        &self,
+        app_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<(WebhookDelivery, WebhookProvider)>, BridgeError> {
+        db::webhooks::list_app_webhooks(&self.pool, app_id, limit, offset).await
     }
 
     async fn get_provider_config(
@@ -346,6 +410,33 @@ impl BridgeRepository for db::Database {
         db::payments::get_payment_status(&self.pool, app_id, provider_transaction_id).await
     }
 
+    async fn count_user_payments(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+    ) -> Result<i64, BridgeError> {
+        db::payments::count_user_payments(&self.pool, app_id, external_user_id).await
+    }
+
+    async fn list_user_payments_keyset(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        limit: i64,
+        after_created_at: Option<chrono::DateTime<chrono::Utc>>,
+        after_id: Option<Uuid>,
+    ) -> Result<Vec<PaymentHistoryEntry>, BridgeError> {
+        db::payments::list_user_payments_keyset(
+            &self.pool,
+            app_id,
+            external_user_id,
+            limit,
+            after_created_at,
+            after_id,
+        )
+        .await
+    }
+
     async fn update_payment_status(
         &self,
         app_id: Uuid,
@@ -390,6 +481,22 @@ impl BridgeRepository for db::Database {
         charge_id: &str,
     ) -> Result<bool, BridgeError> {
         db::agent::apply_topup_if_new(&self.pool, app_id, external_user_id, amount_cents, charge_id).await
+    }
+
+    async fn get_agent_credit(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+    ) -> Result<Option<AgentCredit>, BridgeError> {
+        db::agent::get_agent_credit(&self.pool, app_id, external_user_id).await
+    }
+
+    async fn list_agent_transactions(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+    ) -> Result<Vec<AgentTransaction>, BridgeError> {
+        db::agent::list_agent_transactions(&self.pool, app_id, external_user_id).await
     }
 
     async fn record_payment_tx(
@@ -573,6 +680,21 @@ impl BridgeRepository for db::Database {
             .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
         Ok(())
+    }
+
+    async fn list_user_webhook_records(
+        &self,
+        app_id: Uuid,
+        subscription_ids: &[String],
+        purchase_tokens: &[String],
+    ) -> Result<Vec<WebhookRecord>, BridgeError> {
+        db::webhooks::list_user_webhook_records(
+            &self.pool,
+            app_id,
+            subscription_ids,
+            purchase_tokens,
+        )
+        .await
     }
 
     async fn apply_subscription_transition(

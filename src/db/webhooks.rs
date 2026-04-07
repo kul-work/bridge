@@ -38,6 +38,14 @@ pub struct WebhookDelivery {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct WebhookRecord {
+    pub provider: String,
+    pub event_type: String,
+    pub payload: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Get webhook provider by ID
 pub async fn get_webhook_provider(pool: &PgPool, id: Uuid) -> Result<WebhookProvider, BridgeError> {
     sqlx::query_as::<_, WebhookProvider>(
@@ -186,6 +194,27 @@ pub async fn count_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, B
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
     Ok(count.0)
+}
+
+pub async fn list_user_webhook_records(
+    pool: &PgPool,
+    app_id: Uuid,
+    subscription_ids: &[String],
+    purchase_tokens: &[String],
+) -> Result<Vec<WebhookRecord>, BridgeError> {
+    sqlx::query_as::<_, WebhookRecord>(
+        "SELECT provider, event_type, payload, created_at
+         FROM pay.webhook_provider
+         WHERE app_id = $1
+           AND (subscription_id = ANY($2) OR purchase_token = ANY($3))
+         ORDER BY created_at DESC"
+    )
+    .bind(app_id)
+    .bind(subscription_ids)
+    .bind(purchase_tokens)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
 /// Create webhook provider record (idempotent via unique index)

@@ -11,6 +11,7 @@ pub struct AgentCredit {
     pub external_user_id: String,
     pub balance_cents: i32,
     pub lifetime_spent_cents: i32,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -26,6 +27,15 @@ pub struct AgentPaymentToken {
     pub expires_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct AgentTransaction {
+    pub request_type: String,
+    pub amount_cents: i32,
+    pub charge_id: Option<String>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+}
+
 pub async fn get_agent_credit(
     pool: &PgPool,
     app_id: Uuid,
@@ -37,6 +47,24 @@ pub async fn get_agent_credit(
     .bind(app_id)
     .bind(external_user_id)
     .fetch_optional(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
+pub async fn list_agent_transactions(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+) -> Result<Vec<AgentTransaction>, BridgeError> {
+    sqlx::query_as::<_, AgentTransaction>(
+        "SELECT request_type, amount_cents, charge_id, status, created_at
+         FROM pay.agent_transactions
+         WHERE app_id = $1 AND external_user_id = $2
+         ORDER BY created_at DESC"
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .fetch_all(pool)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }

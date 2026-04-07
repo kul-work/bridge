@@ -7,7 +7,12 @@ use std::sync::Arc;
 use uuid::Uuid;
 use tracing::info;
 
-use crate::{config::ADMIN_WEBHOOK_LIST_LIMIT, db::Database, error::BridgeError};
+use crate::{
+    config::ADMIN_WEBHOOK_LIST_LIMIT,
+    db::Database,
+    error::BridgeError,
+    ports::BridgeRepository,
+};
 
 /// Get admin dashboard page
 pub async fn admin_dashboard(
@@ -22,19 +27,11 @@ pub async fn admin_dashboard(
 pub async fn list_apps(
     State(db): State<Arc<Database>>,
 ) -> Result<axum::Json<Vec<AppSummary>>, BridgeError> {
-    // Query apps from database
-    let apps = sqlx::query_as::<_, crate::db::apps::App>(
-        "SELECT * FROM pay.apps ORDER BY display_name"
-    )
-    .fetch_all(&db.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let apps = db.list_apps().await?;
 
     let mut summaries = Vec::new();
     for app in apps {
-        let failed_webhooks = crate::db::webhooks::count_failed_webhooks(&db.pool, app.id)
-            .await
-            .unwrap_or(0);
+        let failed_webhooks = db.count_failed_webhooks(app.id).await.unwrap_or(0);
 
         summaries.push(AppSummary {
             id: app.id.to_string(),
@@ -56,7 +53,8 @@ pub async fn get_app_webhooks(
     let app_uuid = Uuid::parse_str(&app_id)
         .map_err(|_| BridgeError::ValidationError("Invalid app ID".to_string()))?;
 
-    let webhooks = crate::db::webhooks::list_app_webhooks(&db.pool, app_uuid, ADMIN_WEBHOOK_LIST_LIMIT, 0)
+    let webhooks = db
+        .list_app_webhooks(app_uuid, ADMIN_WEBHOOK_LIST_LIMIT, 0)
         .await?;
 
     let summaries = webhooks

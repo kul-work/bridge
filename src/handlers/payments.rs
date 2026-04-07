@@ -2,6 +2,7 @@ use crate::config::API_PAGINATION_LIMIT;
 use crate::config::MAX_PAGINATION_LIMIT;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
+use crate::ports::BridgeRepository;
 use axum::{
     extract::{State, Extension, Query},
     http::StatusCode,
@@ -10,7 +11,6 @@ use axum::{
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -68,52 +68,19 @@ pub async fn get_payments(
     let limit = query.limit.unwrap_or(API_PAGINATION_LIMIT).min(MAX_PAGINATION_LIMIT);
     let cursor = decode_cursor(query.after.as_deref())?;
 
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pay.payments WHERE app_id = $1 AND external_user_id = $2",
-    )
-    .bind(auth.app_id)
-    .bind(&query.external_user_id)
-    .fetch_one(&database.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let total = database
+        .count_user_payments(auth.app_id, &query.external_user_id)
+        .await?;
 
-    let rows = if let Some(cursor) = cursor.as_ref() {
-        sqlx::query(
-            r#"
-            SELECT
-                id, external_user_id, subscription_id, provider, provider_transaction_id, amount_cents, currency, status, created_at
-            FROM pay.payments
-            WHERE app_id = $1 AND external_user_id = $2
-              AND (created_at, id) < ($3, $4)
-            ORDER BY created_at DESC, id DESC
-            LIMIT $5
-            "#,
+    let rows = database
+        .list_user_payments_keyset(
+            auth.app_id,
+            &query.external_user_id,
+            limit + 1,
+            cursor.as_ref().map(|c| c.created_at),
+            cursor.as_ref().map(|c| c.id),
         )
-        .bind(auth.app_id)
-        .bind(&query.external_user_id)
-        .bind(cursor.created_at)
-        .bind(cursor.id)
-        .bind(limit + 1)
-        .fetch_all(&database.pool)
-        .await
-    } else {
-        sqlx::query(
-            r#"
-            SELECT
-                id, external_user_id, subscription_id, provider, provider_transaction_id, amount_cents, currency, status, created_at
-            FROM pay.payments
-            WHERE app_id = $1 AND external_user_id = $2
-            ORDER BY created_at DESC, id DESC
-            LIMIT $3
-            "#,
-        )
-        .bind(auth.app_id)
-        .bind(&query.external_user_id)
-        .bind(limit + 1)
-        .fetch_all(&database.pool)
-        .await
-    }
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+        .await?;
 
     let has_more = rows.len() > limit as usize;
     let page_rows: Vec<_> = rows.into_iter().take(limit as usize).collect();
@@ -121,25 +88,23 @@ pub async fn get_payments(
     let payments = page_rows
         .iter()
         .map(|row| PaymentDetail {
-            id: row.get::<Uuid, _>("id").to_string(),
-            external_user_id: row.get::<String, _>("external_user_id"),
-            subscription_id: row.get::<Option<String>, _>("subscription_id"),
-            provider: row.get::<String, _>("provider"),
-            provider_transaction_id: row.get::<String, _>("provider_transaction_id"),
-            amount_cents: row.get::<i32, _>("amount_cents") as i64,
-            currency: row.get::<String, _>("currency"),
-            status: row.get::<String, _>("status"),
-            created_at: row
-                .get::<chrono::DateTime<chrono::Utc>, _>("created_at")
-                .to_rfc3339(),
+            id: row.id.to_string(),
+            external_user_id: row.external_user_id.clone(),
+            subscription_id: row.subscription_id.clone(),
+            provider: row.provider.clone(),
+            provider_transaction_id: row.provider_transaction_id.clone(),
+            amount_cents: row.amount_cents as i64,
+            currency: row.currency.clone(),
+            status: row.status.clone(),
+            created_at: row.created_at.to_rfc3339(),
         })
         .collect();
 
     let next_cursor = if has_more {
         let last = page_rows.last().expect("has_more implies non-empty page");
         let cursor = PaymentsCursor {
-            created_at: last.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
-            id: last.get::<Uuid, _>("id"),
+            created_at: last.created_at,
+            id: last.id,
         };
         Some(encode_cursor(&cursor)?)
     } else {

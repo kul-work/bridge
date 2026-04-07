@@ -11,6 +11,7 @@ use crate::config::DATA_EXPORT_LIMIT;
 use crate::db::Database;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
+use crate::ports::BridgeRepository;
 
 #[derive(Deserialize)]
 pub struct AnonymizeRequest {
@@ -52,39 +53,48 @@ pub async fn data_export(
     let subscriptions = collect_all_subscriptions(&database.pool, auth.app_id, &external_user_id).await?;
     let payments = collect_all_payments(&database.pool, auth.app_id, &external_user_id).await?;
 
-    let agent_credits = sqlx::query!(
-        "SELECT balance_cents, lifetime_spent_cents, updated_at FROM pay.agent_credits WHERE app_id = $1 AND external_user_id = $2 LIMIT 1",
-        auth.app_id, external_user_id
-    )
-    .fetch_optional(&database.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?
-    .map(|c| json!({"balance_cents": c.balance_cents, "lifetime_spent_cents": c.lifetime_spent_cents, "updated_at": c.updated_at}));
+    let agent_credits = database
+        .get_agent_credit(auth.app_id, &external_user_id)
+        .await?
+        .map(|c| {
+            json!({
+                "balance_cents": c.balance_cents,
+                "lifetime_spent_cents": c.lifetime_spent_cents,
+                "updated_at": c.updated_at
+            })
+        });
 
-    let agent_transactions = sqlx::query!(
-        "SELECT request_type, amount_cents, charge_id, status, created_at FROM pay.agent_transactions WHERE app_id = $1 AND external_user_id = $2 ORDER BY created_at DESC",
-        auth.app_id, external_user_id
-    )
-    .fetch_all(&database.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?
-    .into_iter()
-    .map(|t| json!({"request_type": t.request_type, "amount_cents": t.amount_cents, "charge_id": t.charge_id, "status": t.status, "created_at": t.created_at}))
-    .collect::<Vec<_>>();
+    let agent_transactions = database
+        .list_agent_transactions(auth.app_id, &external_user_id)
+        .await?
+        .into_iter()
+        .map(|t| {
+            json!({
+                "request_type": t.request_type,
+                "amount_cents": t.amount_cents,
+                "charge_id": t.charge_id,
+                "status": t.status,
+                "created_at": t.created_at
+            })
+        })
+        .collect::<Vec<_>>();
 
     let sub_ids: Vec<String> = subscriptions.iter().map(|s| s.subscription_id.clone()).collect();
     let tokens: Vec<String> = payments.iter().map(|p| p.provider_transaction_id.clone()).collect();
 
-    let webhook_records = sqlx::query!(
-        "SELECT provider, event_type, payload, created_at FROM pay.webhook_provider WHERE app_id = $1 AND (subscription_id = ANY($2) OR purchase_token = ANY($3)) ORDER BY created_at DESC",
-        auth.app_id, &sub_ids, &tokens
-    )
-    .fetch_all(&database.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?
-    .into_iter()
-    .map(|w| json!({"provider": w.provider, "event_type": w.event_type, "payload": w.payload, "created_at": w.created_at}))
-    .collect::<Vec<_>>();
+    let webhook_records = database
+        .list_user_webhook_records(auth.app_id, &sub_ids, &tokens)
+        .await?
+        .into_iter()
+        .map(|w| {
+            json!({
+                "provider": w.provider,
+                "event_type": w.event_type,
+                "payload": w.payload,
+                "created_at": w.created_at
+            })
+        })
+        .collect::<Vec<_>>();
 
     Ok(Json(json!({
         "external_user_id": external_user_id,

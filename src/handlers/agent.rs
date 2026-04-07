@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::db::Database;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
+use crate::ports::BridgeRepository;
 
 const AGENT_TOKEN_EXPIRES_IN_SECONDS: i64 = 600;
 const SUPPORTED_AGENT_ENDPOINTS: [&str; 2] = ["story", "joke"];
@@ -60,7 +61,9 @@ pub async fn balance(
     Extension(auth): Extension<AppAuth>,
     Query(query): Query<AgentBalanceQuery>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let credit = crate::db::agent::get_agent_credit(&database.pool, auth.app_id, &query.external_user_id).await?;
+    let credit = database
+        .get_agent_credit(auth.app_id, &query.external_user_id)
+        .await?;
 
     Ok(Json(json!({
         "external_user_id": query.external_user_id,
@@ -84,7 +87,10 @@ pub async fn token(
     }
 
     // §40: Ensure agent_credits row exists with a zero balance if missing.
-    let credit = match crate::db::agent::get_agent_credit(&database.pool, auth.app_id, &external_user_id).await? {
+    let credit = match database
+        .get_agent_credit(auth.app_id, &external_user_id)
+        .await?
+    {
         Some(credit) => credit,
         None => crate::db::agent::upsert_agent_credit(&database.pool, auth.app_id, &external_user_id, 0, 0).await?,
     };
