@@ -39,6 +39,8 @@ pub struct CancelSubscriptionResponse {
     pub subscription_id: String,
 }
 
+const CANCELLED_RESPONSE_STATUS: &str = "cancelled";
+
 pub async fn cancel_subscription(
     State(database): State<Arc<crate::db::Database>>,
     Extension(auth): Extension<AppAuth>,
@@ -146,7 +148,7 @@ pub async fn cancel_subscription(
     Ok((
         StatusCode::OK,
         Json(CancelSubscriptionResponse {
-            status: updated_sub.status.clone(),
+            status: CANCELLED_RESPONSE_STATUS.to_string(),
             mode: mode.to_string(),
             subscription_id: updated_sub.subscription_id,
         }),

@@ -30,7 +30,6 @@ High-confidence mismatches worth attention first:
 
 | Priority | Spec Section(s) | Status | Finding | Code Evidence |
 |---|---|---|---|---|---|
-|#10| P1 | 8 | Partial | Scheduled cancellation keeps the subscription active in DB, which matches the lifecycle intent, but the API response differs from the documented contract. The spec says the response status is `"cancelled"`; code returns the row's actual status, which is typically still `active` for scheduled cancellation. | `src/handlers/subscriptions_actions.rs:85-111`, `src/handlers/subscriptions_actions.rs:142-151` |
 |#11| P1 | 9 | Partial | Resume behavior exists, but the response contract differs. The spec expects `{ "status": "active", "subscription_id": "..." }`; code returns `{ success, message }`. | `src/handlers/subscriptions_actions.rs:156-225` |
 |#12| P1 | 12 | Partial | The spec names Creem's signature header as `Webhook-Signature`. The code verifies `x-signature`. Header names are case-insensitive, but the actual header key is still a spec/code mismatch that should be resolved in one direction. | `docs.notes/BEHAVIORAL_SPEC.md:368`, `src/webhooks/ingress.rs:194`, `src/webhooks/ingress.rs:296` |
 |#13| P1 | 20 | Partial | Cancellation-scheduled callbacks are forwarded as `subscription.cancelled`, but the code explicitly overrides callback status to `active` so the event type and status no longer match each other. The spec describes a cancelled event carrying `current_period_end`; it does not describe this mixed payload. | `src/webhooks/processor.rs:1121-1152` |
