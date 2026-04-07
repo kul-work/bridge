@@ -49,23 +49,8 @@ pub async fn data_export(
     Extension(auth): Extension<AppAuth>,
     Path(external_user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let subscriptions = crate::db::subscriptions::get_user_subscriptions(
-        &database.pool,
-        auth.app_id,
-        &external_user_id,
-        DATA_EXPORT_LIMIT,
-        0,
-    )
-    .await?;
-    
-    let payments = crate::db::payments::get_user_payments(
-        &database.pool,
-        auth.app_id,
-        &external_user_id,
-        DATA_EXPORT_LIMIT,
-        0,
-    )
-    .await.unwrap_or_default();
+    let subscriptions = collect_all_subscriptions(&database.pool, auth.app_id, &external_user_id).await?;
+    let payments = collect_all_payments(&database.pool, auth.app_id, &external_user_id).await?;
 
     let agent_credits = sqlx::query!(
         "SELECT balance_cents, lifetime_spent_cents, updated_at FROM pay.agent_credits WHERE app_id = $1 AND external_user_id = $2 LIMIT 1",
@@ -73,7 +58,7 @@ pub async fn data_export(
     )
     .fetch_optional(&database.pool)
     .await
-    .unwrap_or_default()
+    .map_err(|e| BridgeError::DbError(e.to_string()))?
     .map(|c| json!({"balance_cents": c.balance_cents, "lifetime_spent_cents": c.lifetime_spent_cents, "updated_at": c.updated_at}));
 
     let agent_transactions = sqlx::query!(
@@ -82,7 +67,7 @@ pub async fn data_export(
     )
     .fetch_all(&database.pool)
     .await
-    .unwrap_or_default()
+    .map_err(|e| BridgeError::DbError(e.to_string()))?
     .into_iter()
     .map(|t| json!({"request_type": t.request_type, "amount_cents": t.amount_cents, "charge_id": t.charge_id, "status": t.status, "created_at": t.created_at}))
     .collect::<Vec<_>>();
@@ -96,7 +81,7 @@ pub async fn data_export(
     )
     .fetch_all(&database.pool)
     .await
-    .unwrap_or_default()
+    .map_err(|e| BridgeError::DbError(e.to_string()))?
     .into_iter()
     .map(|w| json!({"provider": w.provider, "event_type": w.event_type, "payload": w.payload, "created_at": w.created_at}))
     .collect::<Vec<_>>();
@@ -110,4 +95,66 @@ pub async fn data_export(
         "agent_transactions": agent_transactions,
         "webhook_records": webhook_records
     })))
+}
+
+async fn collect_all_subscriptions(
+    pool: &sqlx::PgPool,
+    app_id: uuid::Uuid,
+    external_user_id: &str,
+) -> Result<Vec<crate::db::subscriptions::Subscription>, BridgeError> {
+    let mut subscriptions = Vec::new();
+    let mut offset = 0;
+
+    loop {
+        let batch = crate::db::subscriptions::get_user_subscriptions(
+            pool,
+            app_id,
+            external_user_id,
+            DATA_EXPORT_LIMIT,
+            offset,
+        )
+        .await?;
+
+        let batch_len = batch.len() as i64;
+        subscriptions.extend(batch);
+
+        if batch_len < DATA_EXPORT_LIMIT {
+            break;
+        }
+
+        offset += DATA_EXPORT_LIMIT;
+    }
+
+    Ok(subscriptions)
+}
+
+async fn collect_all_payments(
+    pool: &sqlx::PgPool,
+    app_id: uuid::Uuid,
+    external_user_id: &str,
+) -> Result<Vec<crate::db::payments::Payment>, BridgeError> {
+    let mut payments = Vec::new();
+    let mut offset = 0;
+
+    loop {
+        let batch = crate::db::payments::get_user_payments(
+            pool,
+            app_id,
+            external_user_id,
+            DATA_EXPORT_LIMIT,
+            offset,
+        )
+        .await?;
+
+        let batch_len = batch.len() as i64;
+        payments.extend(batch);
+
+        if batch_len < DATA_EXPORT_LIMIT {
+            break;
+        }
+
+        offset += DATA_EXPORT_LIMIT;
+    }
+
+    Ok(payments)
 }
