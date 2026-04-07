@@ -9,7 +9,7 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::Database;
@@ -112,9 +112,63 @@ impl Default for RateLimitStore {
 
 fn extract_client_ip(request: &Request) -> Option<String> {
     request
-        .extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|connect_info| connect_info.0.ip().to_string())
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').find_map(parse_ip_candidate))
+        .or_else(|| {
+            request
+                .headers()
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .and_then(parse_ip_candidate)
+        })
+        .or_else(|| {
+            request
+                .extensions()
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|connect_info| connect_info.0.ip().to_string())
+        })
+}
+
+fn parse_ip_candidate(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    value
+        .parse::<IpAddr>()
+        .map(|ip| ip.to_string())
+        .ok()
+        .or_else(|| {
+            value
+                .parse::<SocketAddr>()
+                .ok()
+                .map(|socket_addr| socket_addr.ip().to_string())
+        })
+}
+
+fn rate_limit_override(rules: Option<&serde_json::Value>, group: &str) -> Option<usize> {
+    rules
+        .and_then(|rules| rules.get(group))
+        .and_then(|value| value.as_u64())
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+}
+
+fn effective_limit_for_group(
+    group: &str,
+    api_rate_limit_per_minute: i32,
+    rules: Option<&serde_json::Value>,
+) -> usize {
+    let group_limit = rate_limit_override(rules, group).unwrap_or_else(|| default_limit_for_group(group));
+
+    match usize::try_from(api_rate_limit_per_minute).ok().filter(|limit| *limit > 0) {
+        Some(app_limit) if group == "default" => app_limit,
+        Some(app_limit) => group_limit.min(app_limit),
+        None => group_limit,
+    }
 }
 
 fn default_limit_for_group(group: &str) -> usize {
@@ -177,22 +231,11 @@ pub async fn api_rate_limit_middleware(
 
     // Load app config to get rate limit settings
     let effective_limit = match crate::db::apps::get_app(&database.pool, auth.app_id).await {
-        Ok(app) => {
-            // Check endpoint-specific override in api_rate_limit_rules JSONB
-            let override_limit = app.api_rate_limit_rules.as_ref()
-                .and_then(|rules| rules.get(group))
-                .and_then(|v| v.as_i64())
-                .map(|v| v as usize);
-
-            override_limit
-                .unwrap_or_else(|| {
-                    if app.api_rate_limit_per_minute > 0 {
-                        app.api_rate_limit_per_minute as usize
-                    } else {
-                        default_limit_for_group(group)
-                    }
-                })
-        }
+        Ok(app) => effective_limit_for_group(
+            group,
+            app.api_rate_limit_per_minute,
+            app.api_rate_limit_rules.as_ref(),
+        ),
         Err(_) => default_limit_for_group(group),
     };
 
@@ -288,11 +331,12 @@ pub async fn unauthenticated_ip_rate_limit_middleware(
 
 #[cfg(test)]
 mod tests {
-    use super::{endpoint_group, extract_client_ip};
+    use super::{effective_limit_for_group, endpoint_group, extract_client_ip};
     use axum::extract::ConnectInfo;
     use axum::body::Body;
     use axum::http::Request;
     use axum::http::Method;
+    use serde_json::json;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     #[test]
@@ -308,7 +352,34 @@ mod tests {
     }
 
     #[test]
-    fn client_ip_uses_connect_info() {
+    fn client_ip_prefers_x_forwarded_for() {
+        let mut request = Request::builder()
+            .uri("/api/v1/checkout")
+            .header("x-forwarded-for", "198.51.100.5, 203.0.113.10")
+            .header("x-real-ip", "203.0.113.10")
+            .body(Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 9)),
+            443,
+        )));
+
+        assert_eq!(extract_client_ip(&request).as_deref(), Some("198.51.100.5"));
+    }
+
+    #[test]
+    fn client_ip_falls_back_to_x_real_ip() {
+        let request = Request::builder()
+            .uri("/api/v1/checkout")
+            .header("x-real-ip", "203.0.113.10")
+            .body(Body::empty())
+            .unwrap();
+
+        assert_eq!(extract_client_ip(&request).as_deref(), Some("203.0.113.10"));
+    }
+
+    #[test]
+    fn client_ip_falls_back_to_connect_info() {
         let request = Request::builder()
             .uri("/api/v1/checkout")
             .body(Body::empty())
@@ -320,5 +391,23 @@ mod tests {
         )));
 
         assert_eq!(extract_client_ip(&request).as_deref(), Some("203.0.113.10"));
+    }
+
+    #[test]
+    fn checkout_uses_documented_default_limit_when_only_global_default_exists() {
+        assert_eq!(effective_limit_for_group("checkout", 120, None), 20);
+    }
+
+    #[test]
+    fn tighter_app_limit_caps_endpoint_default() {
+        assert_eq!(effective_limit_for_group("checkout", 15, None), 15);
+    }
+
+    #[test]
+    fn endpoint_override_wins_but_stays_within_app_budget() {
+        let rules = json!({ "checkout": 90 });
+
+        assert_eq!(effective_limit_for_group("checkout", 60, Some(&rules)), 60);
+        assert_eq!(effective_limit_for_group("checkout", 120, Some(&rules)), 90);
     }
 }
