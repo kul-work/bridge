@@ -188,9 +188,6 @@ pub struct RegisterPurchaseRequest {
 
 #[derive(Debug, Serialize)]
 pub struct RegisterPurchaseResponse {
-    pub success: bool,
-    pub message: String,
-    pub subscription_id: String,
     pub status: String,
 }
 
@@ -209,7 +206,7 @@ pub async fn register_purchase(
     }
 
     // §6: Create pending subscription placeholder (not a manual grant)
-    let sub = crate::db::subscriptions::upsert_pending_subscription(
+    let _sub = crate::db::subscriptions::upsert_pending_subscription(
         &database.pool,
         auth.app_id,
         &request.external_user_id,
@@ -218,12 +215,9 @@ pub async fn register_purchase(
     ).await?;
 
     Ok((
-        StatusCode::CREATED,
+        StatusCode::OK,
         Json(RegisterPurchaseResponse {
-            success: true,
-            message: "Purchase registered as pending subscription".to_string(),
-            subscription_id: sub.subscription_id,
-            status: sub.status,
+            status: "registered".to_string(),
         }),
     ))
 }

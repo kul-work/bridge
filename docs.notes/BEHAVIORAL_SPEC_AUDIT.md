@@ -30,7 +30,6 @@ High-confidence mismatches worth attention first:
 
 | Priority | Spec Section(s) | Status | Finding | Code Evidence |
 |---|---|---|---|---|---|
-|#8| P1 | 6 | Partial | Purchase registration exists, but the response contract differs. The spec says `{"status":"registered"}`; code returns `201` with `{ success, message, subscription_id, status }`, where `status` is the DB state (`pending`). | `src/handlers/payments.rs:197-228`, `src/db/subscriptions.rs:195-219` |
 |#9| P1 | 7 | Partial | Subscription list pagination is implemented, but the default `limit` is `10` instead of the documented `20`. | `src/handlers/subscriptions.rs:82` |
 |#10| P1 | 8 | Partial | Scheduled cancellation keeps the subscription active in DB, which matches the lifecycle intent, but the API response differs from the documented contract. The spec says the response status is `"cancelled"`; code returns the row's actual status, which is typically still `active` for scheduled cancellation. | `src/handlers/subscriptions_actions.rs:85-111`, `src/handlers/subscriptions_actions.rs:142-151` |
 |#11| P1 | 9 | Partial | Resume behavior exists, but the response contract differs. The spec expects `{ "status": "active", "subscription_id": "..." }`; code returns `{ success, message }`. | `src/handlers/subscriptions_actions.rs:156-225` |
