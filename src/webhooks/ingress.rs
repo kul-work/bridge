@@ -18,8 +18,10 @@ pub async fn handle_google_play(
 ) -> Result<StatusCode, BridgeError> {
     info!("Received Google Play webhook with token: {}", token);
 
-    let token_uuid = Uuid::parse_str(&token)
-        .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
+    let token_uuid = match Uuid::parse_str(&token) {
+        Ok(token_uuid) => token_uuid,
+        Err(_) => return Ok(StatusCode::NOT_FOUND),
+    };
 
     let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
         Ok(app) => app,
@@ -171,8 +173,10 @@ pub async fn handle_creem(
 ) -> Result<StatusCode, BridgeError> {
     info!("Received Creem webhook with token: {}", token);
 
-    let token_uuid = Uuid::parse_str(&token)
-        .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
+    let token_uuid = match Uuid::parse_str(&token) {
+        Ok(token_uuid) => token_uuid,
+        Err(_) => return Ok(StatusCode::NOT_FOUND),
+    };
 
     let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
         Ok(app) => app,
@@ -273,8 +277,10 @@ pub async fn handle_lemonsqueezy(
 ) -> Result<StatusCode, BridgeError> {
     info!("Received LemonSqueezy webhook with token: {}", token);
 
-    let token_uuid = Uuid::parse_str(&token)
-        .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
+    let token_uuid = match Uuid::parse_str(&token) {
+        Ok(token_uuid) => token_uuid,
+        Err(_) => return Ok(StatusCode::NOT_FOUND),
+    };
 
     let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
         Ok(app) => app,
@@ -372,8 +378,10 @@ pub async fn handle_coinbase(
 ) -> Result<StatusCode, BridgeError> {
     info!("Received Coinbase webhook with token: {}", token);
 
-    let token_uuid = Uuid::parse_str(&token)
-        .map_err(|_| BridgeError::ValidationError("Invalid webhook token format".to_string()))?;
+    let token_uuid = match Uuid::parse_str(&token) {
+        Ok(token_uuid) => token_uuid,
+        Err(_) => return Ok(StatusCode::NOT_FOUND),
+    };
 
     let app = match crate::db::apps::get_app_by_webhook_token(&db.pool, token_uuid).await {
         Ok(app) => app,
