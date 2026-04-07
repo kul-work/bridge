@@ -1081,13 +1081,13 @@ pub async fn process_webhook(
                     .fetch_optional(pool)
                     .await
                     .map_err(|e| BridgeError::DbError(e.to_string()))?;
-                    if let Some(updated_sub) = updated {
-                        canonical_subscription = Some(updated_sub);
-                        callback_event_type = "subscription.cancelled".to_string();
-                        callback_status_override = Some("active".to_string());
-                        callback_cancellation_mode_override = Some("scheduled".to_string());
-                    } else {
-                        info!("Skipped stale cancellation_scheduled event for subscription {}", sub_id);
+                if let Some(updated_sub) = updated {
+                    canonical_subscription = Some(updated_sub);
+                    callback_event_type = "subscription.cancelled".to_string();
+                    callback_status_override = Some("cancelled".to_string());
+                    callback_cancellation_mode_override = Some("scheduled".to_string());
+                } else {
+                    info!("Skipped stale cancellation_scheduled event for subscription {}", sub_id);
                         return Ok(None);
                     }
                 }

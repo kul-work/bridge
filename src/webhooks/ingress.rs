@@ -9,6 +9,8 @@ use uuid::Uuid;
 
 use crate::{db::Database, error::BridgeError};
 
+const CREEM_SIGNATURE_HEADERS: [&str; 2] = ["Webhook-Signature", "x-signature"];
+
 /// Handle Google Play webhook
 pub async fn handle_google_play(
     State(db): State<Arc<Database>>,
@@ -194,10 +196,8 @@ pub async fn handle_creem(
     mac.update(body.as_bytes());
     let computed_sig = hex::encode(mac.finalize().into_bytes());
 
-    let provided_sig = headers
-        .get("x-signature")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    let provided_sig = extract_header_value(&headers, &CREEM_SIGNATURE_HEADERS)
+        .ok_or_else(|| BridgeError::WebhookError("Missing Webhook-Signature header".to_string()))?;
 
     if !constant_time_compare(provided_sig.as_bytes(), computed_sig.as_bytes()) {
         error!("Creem webhook signature verification failed");
@@ -576,4 +576,51 @@ fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
         result |= x ^ y;
     }
     result == 0
+}
+
+fn extract_header_value<'a>(headers: &'a HeaderMap, names: &[&str]) -> Option<&'a str> {
+    for name in names {
+        if let Some(value) = headers.get(*name).and_then(|v| v.to_str().ok()) {
+            return Some(value);
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue};
+
+    use super::{extract_header_value, CREEM_SIGNATURE_HEADERS};
+
+    #[test]
+    fn prefers_webhook_signature_over_legacy_signature_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert("Webhook-Signature", HeaderValue::from_static("primary-signature"));
+        headers.insert("x-signature", HeaderValue::from_static("legacy-signature"));
+
+        assert_eq!(
+            extract_header_value(&headers, &CREEM_SIGNATURE_HEADERS),
+            Some("primary-signature")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_legacy_signature_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-signature", HeaderValue::from_static("legacy-signature"));
+
+        assert_eq!(
+            extract_header_value(&headers, &CREEM_SIGNATURE_HEADERS),
+            Some("legacy-signature")
+        );
+    }
+
+    #[test]
+    fn missing_signature_header_returns_none() {
+        let headers = HeaderMap::new();
+
+        assert_eq!(extract_header_value(&headers, &CREEM_SIGNATURE_HEADERS), None);
+    }
 }
