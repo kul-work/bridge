@@ -1,7 +1,7 @@
 use crate::{
     db::webhooks::WebhookProvider,
     error::BridgeError,
-    ports::BridgeRepository,
+    ports::{BridgeRepository, TransactionOutcome},
     services::google_play::subscription_lifecycle::GooglePlayLifecycleOutcome,
     webhooks::processor::WebhookFields,
 };
@@ -26,27 +26,25 @@ pub async fn handle_otp_purchased<R: BridgeRepository + ?Sized>(
         .or(fields.provider_transaction_id.as_deref())
         .unwrap_or(&webhook.provider_webhook_id);
 
-    let mut tx = repo
-        .pool()
-        .begin()
-        .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    repo
+        .with_transaction(|tx| {
+            Box::pin(async {
+                repo.record_payment_tx(
+                    tx,
+                    app_id,
+                    user_id,
+                    &webhook.provider,
+                    txn_id,
+                    fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()),
+                    fields.amount_cents.unwrap_or(0),
+                    "success",
+                )
+                .await?;
 
-    repo.record_payment_tx(
-        &mut tx,
-        app_id,
-        user_id,
-        &webhook.provider,
-        txn_id,
-        fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()),
-        fields.amount_cents.unwrap_or(0),
-        "success",
-    )
-    .await?;
-
-    tx.commit()
-        .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+                Ok(TransactionOutcome::Commit(()))
+            })
+        })
+        .await?;
 
     let _ = timestamp_epoch_ms;
 
@@ -83,27 +81,25 @@ pub async fn handle_otp_cancelled<R: BridgeRepository + ?Sized>(
         return Ok(None);
     }
 
-    let mut tx = repo
-        .pool()
-        .begin()
-        .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    repo
+        .with_transaction(|tx| {
+            Box::pin(async {
+                repo.record_payment_tx(
+                    tx,
+                    app_id,
+                    user_id,
+                    &webhook.provider,
+                    token,
+                    fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()),
+                    fields.amount_cents.unwrap_or(0),
+                    "cancelled",
+                )
+                .await?;
 
-    repo.record_payment_tx(
-        &mut tx,
-        app_id,
-        user_id,
-        &webhook.provider,
-        token,
-        fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()),
-        fields.amount_cents.unwrap_or(0),
-        "cancelled",
-    )
-    .await?;
-
-    tx.commit()
-        .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+                Ok(TransactionOutcome::Commit(()))
+            })
+        })
+        .await?;
 
     let _ = timestamp_epoch_ms;
 

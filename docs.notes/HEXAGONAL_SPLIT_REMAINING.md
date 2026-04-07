@@ -7,7 +7,7 @@ Scope: Bridge only. HiHa is reference-only and is not part of this document.
 Bridge already has the first useful hexagonal pieces:
 
 - `src/application/` for checkout and verify-purchase use cases
-- `src/ports.rs` with `BridgeRepository`
+- `src/ports.rs` with `BridgeRepository` and the `with_transaction()` unit-of-work helper
 - `src/db/subscriptions.rs` with `SubscriptionWebhookTransition`
 - `src/webhooks/processor.rs` mostly rewritten to use repository methods
 - `src/webhooks/forwarding.rs` now uses repository methods for app, delivery, suppression, and retry updates
@@ -18,30 +18,7 @@ That means the remaining work is cleanup needed to make the split strict and con
 
 ## Remaining Findings
 
-### 1. Transaction-heavy flows still reach through `repo.pool()`
-
-These flows still carry SQLx transaction plumbing at the application boundary instead of hiding it behind a narrower port.
-
-Observed coupling:
-
-- `src/webhooks/processor.rs` opens transactions via `repo.pool()` in several event branches
-- `src/application/verify_purchase.rs` opens a transaction for payment and subscription writes
-- `src/services/google_play/product_lifecycle.rs` opens transactions for OTP purchase/cancel flows
-
-Relevant paths:
-
-- [src/webhooks/processor.rs](C:/share/tyde/bridge/src/webhooks/processor.rs#L691)
-- [src/application/verify_purchase.rs](C:/share/tyde/bridge/src/application/verify_purchase.rs#L201)
-- [src/services/google_play/product_lifecycle.rs](C:/share/tyde/bridge/src/services/google_play/product_lifecycle.rs#L30)
-- [src/services/google_play/product_lifecycle.rs](C:/share/tyde/bridge/src/services/google_play/product_lifecycle.rs#L87)
-
-Why this matters:
-
-- the port still leaks SQLx details upward
-- the application layer still owns transaction plumbing
-- these flows are harder to swap or test without the database shape
-
-### 2. A few HTTP handlers still bypass the repository port
+### 1. A few HTTP handlers still bypass the repository port
 
 Most handlers now go through `BridgeRepository`, but these still call `crate::db::*` directly:
 
@@ -65,18 +42,18 @@ Why this matters:
 - the split is uneven if only webhook flows are port-driven
 - read-side logic should move behind the application boundary or a narrower read port
 
-### 3. `BridgeRepository` is still broad and still exposes `pool()`
+### 2. `BridgeRepository` is still broad and still exposes `pool()`
 
 The port works, but it is still a catch-all and still leaks the database handle.
 
 Relevant paths:
 
 - [src/ports.rs](C:/share/tyde/bridge/src/ports.rs#L21)
-- [src/ports.rs](C:/share/tyde/bridge/src/ports.rs#L405)
+- [src/ports.rs](C:/share/tyde/bridge/src/ports.rs#L424)
 
 Why this matters:
 
-- `pool()` keeps transaction plumbing visible to callers
+- `pool()` is still part of the public surface, even though most transaction handling now goes through `with_transaction()`
 - the port still mixes unrelated concerns: apps, checkout, subscriptions, payments, webhooks, and agent flows
 - the next cleanup is splitting by use case or bounded context
 
@@ -84,25 +61,26 @@ Why this matters:
 
 These are no longer leftovers for raw DB access:
 
+- `src/webhooks/processor.rs`
+- `src/application/verify_purchase.rs`
+- `src/services/google_play/product_lifecycle.rs`
 - `src/webhooks/forwarding.rs`
 - `src/webhooks/scheduler.rs`
 - `src/services/google_play/subscription_lifecycle.rs`
 
 They still contain orchestration and business logic, but they are no longer the direct DB holdouts the earlier note described.
+Their transaction flow now goes through `BridgeRepository::with_transaction()` instead of opening SQLx transactions at the application boundary.
 
 ## Recommended Next Extraction Order
 
-1. `src/webhooks/processor.rs`
-2. `src/application/verify_purchase.rs`
-3. `src/services/google_play/product_lifecycle.rs`
-4. `src/handlers/api_key.rs`
-5. `src/handlers/subscriptions.rs`
-6. `src/handlers/users.rs`
-7. Split `BridgeRepository` into smaller ports and remove `pool()`
+1. `src/handlers/api_key.rs`
+2. `src/handlers/subscriptions.rs`
+3. `src/handlers/users.rs`
+4. Split `BridgeRepository` into smaller ports and remove `pool()`
 
 ## Short Checklist
 
-- [ ] Hide transaction plumbing behind a narrower port or dedicated unit of work API
+- [x] Hide transaction plumbing behind a narrower port or dedicated unit of work API
 - [ ] Move remaining handler read paths behind application or read ports
 - [ ] Split `BridgeRepository` into smaller, use-case-specific ports
 - [ ] Remove `pool()` from the public port surface if possible

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use std::{future::Future, pin::Pin};
 use uuid::Uuid;
 
 use crate::{
@@ -19,6 +20,18 @@ use crate::{
 #[async_trait]
 pub trait BridgeRepository: Send + Sync {
     fn pool(&self) -> &sqlx::PgPool;
+
+    fn with_transaction<'a, T, F>(
+        &'a self,
+        f: F,
+    ) -> Pin<Box<dyn Future<Output = Result<T, BridgeError>> + Send + 'a>>
+    where
+        T: Send + 'a,
+        F: for<'tx> FnOnce(
+                &'tx mut sqlx::Transaction<'a, sqlx::Postgres>,
+            ) -> Pin<Box<dyn Future<Output = Result<TransactionOutcome<T>, BridgeError>> + Send + 'tx>>
+            + Send
+            + 'a;
 
     async fn get_app(&self, app_id: Uuid) -> Result<App, BridgeError>;
 
@@ -400,10 +413,54 @@ pub trait BridgeRepository: Send + Sync {
     ) -> Result<Option<Subscription>, BridgeError>;
 }
 
+#[derive(Debug)]
+pub enum TransactionOutcome<T> {
+    Commit(T),
+    Rollback(T),
+}
+
 #[async_trait]
 impl BridgeRepository for db::Database {
     fn pool(&self) -> &sqlx::PgPool {
         &self.pool
+    }
+
+    fn with_transaction<'a, T, F>(
+        &'a self,
+        f: F,
+    ) -> Pin<Box<dyn Future<Output = Result<T, BridgeError>> + Send + 'a>>
+    where
+        T: Send + 'a,
+        F: for<'tx> FnOnce(
+                &'tx mut sqlx::Transaction<'a, sqlx::Postgres>,
+            ) -> Pin<Box<dyn Future<Output = Result<TransactionOutcome<T>, BridgeError>> + Send + 'tx>>
+            + Send
+            + 'a,
+    {
+        Box::pin(async move {
+            let mut tx = self
+                .pool
+                .begin()
+                .await
+                .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+            let outcome = f(&mut tx).await?;
+
+            match outcome {
+                TransactionOutcome::Commit(value) => {
+                    tx.commit()
+                        .await
+                        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+                    Ok(value)
+                }
+                TransactionOutcome::Rollback(value) => {
+                    tx.rollback()
+                        .await
+                        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+                    Ok(value)
+                }
+            }
+        })
     }
 
     async fn get_app(&self, app_id: Uuid) -> Result<App, BridgeError> {
