@@ -924,20 +924,20 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
 ## 46. Background Job: Reconciliation
 
 **Frequency**: Every `RECONCILIATION_INTERVAL_MINUTES` (default 1440 = 24 hours).  
-**Runs for**: Each app with Google Play / Apple configured.
+**Runs for**: Each enabled app with a supported provider config in `pay.provider_configs`.
 
-1. For each app in `apps` table with Google Play credentials:
-   - Load the Google Play provider config row for that app from `pay.provider_configs`.
-   - Query all active subscriptions for this `app_id` + `provider='google_play'`: `(external_user_id, subscription_id, purchase_token, current_period_end)`.
+1. For each enabled app in `apps`:
+   - Load provider configs for that app from `pay.provider_configs`.
+   - Query active subscriptions for each configured provider.
 2. For each subscription:
-   - Call Google Play API: `get_subscription(package_name, "", purchase_token)`.
-   - Parse `expiry_time` from response.
-   - If Google says expired but Bridge DB says active:
-     - `UPDATE subscriptions SET status='revoked', revoked_at=NOW(), revocation_reason='reconciliation_google_expired'`.
-     - Insert audit record in `webhook_log`.
+   - Call the provider-specific status API using the provider config for that subscription.
+   - Parse the returned period end / expiry data when available.
+   - If the provider status differs from Bridge DB status:
+     - Update the subscription to the provider-corrected status.
+     - Insert an audit record in `webhook_log`.
      - **Forward callback to app**: `reconciliation.drift_detected` event with `previous_status` and `corrected_status`.
      - Send admin alert email to Tyde support.
-3. Errors on individual subscriptions are logged but don't fail entire job.
+3. Errors on individual subscriptions are logged but don't fail the whole job.
 
 ---
 

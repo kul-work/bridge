@@ -30,27 +30,9 @@ High-confidence mismatches worth attention first:
 
 | Priority | Spec Section(s) | Status | Finding | Code Evidence |
 |---|---|---|---|---|---|
-|#19| P1 | 46 | Partial | Reconciliation exists, but the implementation differs from the spec in two ways: it runs for whatever providers have config rather than only Google Play/Apple, and it logs an admin alert message instead of sending an admin alert email. | `src/webhooks/scheduler.rs:93-143`, `src/webhooks/scheduler.rs:155-201`, `src/services/provider_api.rs:254-352` |
 |#20| P2 | 1 | Partial | Startup/background workers largely match the spec, but the implementation also starts a webhook retry worker that the startup section does not mention explicitly. This is not harmful, but it means the spec is incomplete about active background jobs. | `src/main.rs:82-89` |
 |#21| P2 | 4 | Partial | Checkout behavior is mostly aligned, but the implementation has an extra alias route (`/api/v1/payment/checkout`) that the spec does not document. | `src/main.rs:97-99` |
 
-## Section Status Matrix
-
-| Spec Section | Status | Notes |
-|---|---|---|
-| 1. Startup & Initialization | Partial | Core startup behavior exists; credential encryption path in spec is not implemented. |
-| 3. Rate Limiting | Partial | Middleware exists, but endpoint defaults and proxy IP extraction do not match spec. |
-| 6. Purchase Registration | Partial | Placeholder registration exists; response contract differs. |
-| 7. Subscription Queries | Partial | Query behavior is implemented; default page size differs. |
-| 8. Subscription Cancellation | Partial | Cancel flow exists; scheduled-cancel response contract differs. |
-| 9. Subscription Resume | Partial | Resume flow exists; response contract differs. |
-| 12. Webhook Ingress | Partial | Signature verification and async processing exist; invalid-token and missing-event-id semantics differ. |
-| 20. Cancellation Scheduled | Partial | DB change exists, but callback payload semantics differ from spec. |
-| 21. Subscription Expired / Inactive | Aligned | Expiry handling and callback are present. |
-| 44. User Anonymization | Diverged | Core anonymization exists, but the spec explicitly forbids extra callbacks and code sends one. |
-| 45. Data Export | Partial | Export exists, but completeness guarantees are weaker than spec. |
-| 46. Reconciliation | Partial | Job exists; provider scope and admin alert behavior differ. |
-| 47. Price Step-Up Expiry | Aligned | Scheduled auto-cancel flow is implemented. |
 
 ## Likely Stale-Spec Areas
 
@@ -59,10 +41,3 @@ These look more like documentation drift than broken code, but they should still
 - The spec still says provider credentials come from the `apps` table, while the implementation and schema have clearly standardized on `pay.provider_configs`.
 - The spec still describes an extra decryption step for provider credentials, but the current implementation reads provider config directly from `pay.provider_configs`.
 - Some response shapes in the spec (`register_purchase`, `resume_subscription`, `agent/token`, `agent/charge`) no longer match the actual API.
-
-## Suggested Next Actions
-
-1. Decide whether the source of truth is the spec or the shipped code for provider config storage. That decision affects a large amount of doc cleanup.
-2. Fix or explicitly bless the rate-limit behavior. Right now the documented endpoint defaults are misleading.
-3. Tighten webhook ingress semantics for malformed tokens and missing event IDs if the spec is intended to be exact.
-5. Resolve the GDPR mismatch around `user.anonymized` callbacks before other apps build against the current behavior.

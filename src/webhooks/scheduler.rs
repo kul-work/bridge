@@ -1,7 +1,7 @@
 use std::time::Duration;
 use crate::db::Database;
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use uuid::Uuid;
 
 pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
@@ -184,6 +184,21 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
                             );
                             error!("{}", alert);
 
+                            if let Err(e) = send_reconciliation_admin_alert_email(
+                                &database.pool,
+                                app_id,
+                                &provider,
+                                &subscription_id,
+                                &current_db_status,
+                                &provider_status,
+                            ).await {
+                                warn!(
+                                    "Failed to send reconciliation admin alert for subscription {}: {}",
+                                    subscription_id,
+                                    e
+                                );
+                            }
+
                             if let Err(e) = emit_scheduler_callback(
                                 &database.pool,
                                 app_id,
@@ -210,6 +225,67 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
             }
         }
     }
+
+    Ok(())
+}
+
+async fn send_reconciliation_admin_alert_email(
+    pool: &sqlx::PgPool,
+    app_id: uuid::Uuid,
+    provider: &str,
+    subscription_id: &str,
+    current_db_status: &str,
+    provider_status: &str,
+) -> Result<(), crate::error::BridgeError> {
+    let admin_email = match std::env::var("ADMIN_ALERT_EMAIL")
+        .or_else(|_| std::env::var("TYDE_SUPPORT_EMAIL"))
+    {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => {
+            warn!(
+                "Skipping reconciliation admin email for subscription {}: ADMIN_ALERT_EMAIL not configured",
+                subscription_id
+            );
+            return Ok(());
+        }
+    };
+
+    let app = crate::db::apps::get_app(pool, app_id).await?;
+    let subject = format!(
+        "Bridge reconciliation drift: {} ({})",
+        app.display_name,
+        subscription_id
+    );
+    let body = format!(
+        "A subscription reconciliation drift was detected.\n\n\
+         App: {}\n\
+         App slug: {}\n\
+         App ID: {}\n\
+         Provider: {}\n\
+         Subscription ID: {}\n\
+         Database status: {}\n\
+         Provider status: {}\n",
+        app.display_name,
+        app.slug,
+        app.id,
+        provider,
+        subscription_id,
+        current_db_status,
+        provider_status,
+    );
+
+    crate::services::email::send_email(&admin_email, &subject, &body)
+        .await
+        .map_err(|e| crate::error::BridgeError::InternalServerError(format!(
+            "Failed to send reconciliation admin alert email: {}",
+            e
+        )))?;
+
+    info!(
+        "Reconciliation admin email sent for app_id={} subscription_id={}",
+        app_id,
+        subscription_id
+    );
 
     Ok(())
 }
