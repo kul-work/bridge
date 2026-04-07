@@ -30,6 +30,15 @@ pub async fn get_app(pool: &PgPool, app_id: Uuid) -> Result<App, BridgeError> {
     .ok_or_else(|| BridgeError::ValidationError("App not found".to_string()))
 }
 
+pub async fn list_enabled_apps(pool: &PgPool) -> Result<Vec<App>, BridgeError> {
+    sqlx::query_as::<_, App>(
+        "SELECT * FROM pay.apps WHERE enabled = true"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
 /// Get app by webhook ingress token
 /// TODO: Used by webhook ingress handlers (not yet implemented) to map incoming webhooks to apps.
 #[allow(dead_code)]

@@ -22,6 +22,8 @@ pub trait BridgeRepository: Send + Sync {
 
     async fn get_app_by_webhook_token(&self, token: Uuid) -> Result<App, BridgeError>;
 
+    async fn list_enabled_apps(&self) -> Result<Vec<App>, BridgeError>;
+
     async fn get_provider_config(
         &self,
         app_id: Uuid,
@@ -199,7 +201,21 @@ pub trait BridgeRepository: Send + Sync {
 
     async fn get_webhook_delivery(&self, id: Uuid) -> Result<WebhookDelivery, BridgeError>;
 
+    async fn list_pending_webhook_deliveries(
+        &self,
+        app_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<WebhookDelivery>, BridgeError>;
+
     async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError>;
+
+    async fn update_webhook_delivery_attempt(
+        &self,
+        delivery_id: Uuid,
+        http_status: Option<i32>,
+        error: Option<String>,
+        forwarded: bool,
+    ) -> Result<(), BridgeError>;
 
     async fn mark_webhook_processed(&self, webhook_id: Uuid) -> Result<(), BridgeError>;
 
@@ -224,6 +240,10 @@ impl BridgeRepository for db::Database {
 
     async fn get_app_by_webhook_token(&self, token: Uuid) -> Result<App, BridgeError> {
         db::apps::get_app_by_webhook_token(&self.pool, token).await
+    }
+
+    async fn list_enabled_apps(&self) -> Result<Vec<App>, BridgeError> {
+        db::apps::list_enabled_apps(&self.pool).await
     }
 
     async fn get_provider_config(
@@ -516,8 +536,33 @@ impl BridgeRepository for db::Database {
         db::webhooks::get_webhook_delivery(&self.pool, id).await
     }
 
+    async fn list_pending_webhook_deliveries(
+        &self,
+        app_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<WebhookDelivery>, BridgeError> {
+        db::webhooks::list_pending_webhook_deliveries(&self.pool, app_id, limit).await
+    }
+
     async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError> {
         db::webhooks::suppress_webhook(&self.pool, webhook_id, reason).await
+    }
+
+    async fn update_webhook_delivery_attempt(
+        &self,
+        delivery_id: Uuid,
+        http_status: Option<i32>,
+        error: Option<String>,
+        forwarded: bool,
+    ) -> Result<(), BridgeError> {
+        db::webhooks::update_webhook_delivery_attempt(
+            &self.pool,
+            delivery_id,
+            http_status,
+            error,
+            forwarded,
+        )
+        .await
     }
 
     async fn mark_webhook_processed(&self, webhook_id: Uuid) -> Result<(), BridgeError> {

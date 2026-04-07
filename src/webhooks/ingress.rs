@@ -140,7 +140,6 @@ pub async fn handle_google_play(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let pool = db.pool().clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     tokio::spawn(async move {
@@ -149,7 +148,7 @@ pub async fn handle_google_play(
                 match db.create_webhook_delivery(app_id, webhook_id).await {
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
-                            &pool, app_id, delivery_id, canonical,
+                            db.as_ref(), app_id, delivery_id, canonical,
                         )
                         .await;
                     }
@@ -244,7 +243,6 @@ pub async fn handle_creem(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let pool = db.pool().clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     tokio::spawn(async move {
@@ -253,7 +251,7 @@ pub async fn handle_creem(
                 match db.create_webhook_delivery(app_id, webhook_id).await {
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
-                            &pool, app_id, delivery_id, canonical,
+                            db.as_ref(), app_id, delivery_id, canonical,
                         )
                         .await;
                     }
@@ -347,7 +345,6 @@ pub async fn handle_lemonsqueezy(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let pool = db.pool().clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     tokio::spawn(async move {
@@ -356,7 +353,7 @@ pub async fn handle_lemonsqueezy(
                 match db.create_webhook_delivery(app_id, webhook_id).await {
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
-                            &pool, app_id, delivery_id, canonical,
+                            db.as_ref(), app_id, delivery_id, canonical,
                         )
                         .await;
                     }
@@ -452,7 +449,6 @@ pub async fn handle_coinbase(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let pool = db.pool().clone();
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     tokio::spawn(async move {
@@ -461,7 +457,7 @@ pub async fn handle_coinbase(
                 match db.create_webhook_delivery(app_id, webhook_id).await {
                     Ok(delivery_id) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
-                            &pool, app_id, delivery_id, canonical,
+                            db.as_ref(), app_id, delivery_id, canonical,
                         )
                         .await;
                     }

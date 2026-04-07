@@ -82,6 +82,24 @@ pub async fn get_webhook_delivery(pool: &PgPool, id: Uuid) -> Result<WebhookDeli
     .ok_or_else(|| BridgeError::ValidationError("Webhook delivery not found".to_string()))
 }
 
+pub async fn list_pending_webhook_deliveries(
+    pool: &PgPool,
+    app_id: Uuid,
+    limit: i64,
+) -> Result<Vec<WebhookDelivery>, BridgeError> {
+    sqlx::query_as::<_, WebhookDelivery>(
+        "SELECT * FROM pay.webhook_delivery
+         WHERE app_id = $1 AND forwarded = false AND dead_lettered = false AND forward_attempts < 3
+         ORDER BY created_at ASC
+         LIMIT $2"
+    )
+    .bind(app_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
 /// Update webhook delivery after forward attempt
 pub async fn update_webhook_delivery_attempt(
     pool: &PgPool,

@@ -1,6 +1,7 @@
 use crate::db;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
+use crate::ports::BridgeRepository;
 use crate::services::provider_api;
 use axum::{
     extract::{State, Extension, Path, Query},
@@ -139,7 +140,7 @@ pub async fn cancel_subscription(
     };
 
     if let Err(e) = dispatch_subscription_callback(
-        &database.pool,
+        database.as_ref(),
         auth.app_id,
         &updated_sub,
         "subscription.cancelled",
@@ -209,7 +210,7 @@ pub async fn resume_subscription(
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     if let Err(e) = dispatch_subscription_callback(
-        &database.pool,
+        database.as_ref(),
         auth.app_id,
         &updated_sub,
         "subscription.resumed",
@@ -406,7 +407,7 @@ pub async fn accept_price_step_up(
     })?;
 
     if let Err(e) = dispatch_subscription_callback(
-        &database.pool,
+        database.as_ref(),
         auth.app_id,
         &updated_sub,
         "subscription.price_step_up",
@@ -483,15 +484,15 @@ pub async fn decline_price_step_up(
     ))
 }
 
-async fn dispatch_subscription_callback(
-    pool: &sqlx::PgPool,
+async fn dispatch_subscription_callback<R: BridgeRepository + ?Sized>(
+    repo: &R,
     app_id: Uuid,
     sub: &db::subscriptions::Subscription,
     event_type: &str,
     cancellation_mode: Option<&str>,
     new_price_cents: Option<i32>,
 ) -> Result<(), BridgeError> {
-    let app = db::apps::get_app(pool, app_id).await?;
+    let app = repo.get_app(app_id).await?;
     let provider_event_id = format!("manual-{}", Uuid::new_v4());
     let timestamp_epoch_ms = chrono::Utc::now().timestamp_millis();
     let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
@@ -508,8 +509,8 @@ async fn dispatch_subscription_callback(
         "new_price_cents": new_price_cents,
     });
 
-    let (webhook_provider_id, _) = db::webhooks::create_webhook_provider(
-        pool,
+    let (webhook_provider_id, _) = repo
+        .create_webhook_provider(
         app_id,
         &sub.provider,
         &provider_event_id,
@@ -521,7 +522,7 @@ async fn dispatch_subscription_callback(
     )
     .await?;
 
-    let delivery_id = db::webhooks::create_webhook_delivery(pool, app_id, webhook_provider_id).await?;
+    let delivery_id = repo.create_webhook_delivery(app_id, webhook_provider_id).await?;
 
     let canonical = crate::webhooks::processor::CanonicalWebhookPayload {
         event_id: format!("{}-{}", sub.provider, provider_event_id),
@@ -547,5 +548,5 @@ async fn dispatch_subscription_callback(
         cancellation_mode: cancellation_mode.map(str::to_string),
     };
 
-    crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, canonical).await
+    crate::webhooks::forwarding::forward_webhook(repo, app_id, delivery_id, canonical).await
 }

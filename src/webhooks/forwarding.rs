@@ -1,6 +1,6 @@
 use crate::error::BridgeError;
+use crate::ports::BridgeRepository;
 use std::time::Duration;
-use sqlx::PgPool;
 use uuid::Uuid;
 use reqwest::Client;
 use tracing::{info, warn, error};
@@ -16,17 +16,17 @@ const WEBHOOK_FORWARD_TIMEOUT_SECS: u64 = 10;
 /// Forward webhook to app callback URL with HMAC signature
 /// Used for future webhook delivery to app callbacks.
 #[allow(dead_code)]
-pub async fn forward_webhook(
-    pool: &PgPool,
+pub async fn forward_webhook<R: BridgeRepository + ?Sized>(
+    repo: &R,
     app_id: Uuid,
     webhook_delivery_id: Uuid,
     payload: crate::webhooks::processor::CanonicalWebhookPayload,
 ) -> Result<(), BridgeError> {
     // Get app details
-    let app = crate::db::apps::get_app(pool, app_id).await?;
+    let app = repo.get_app(app_id).await?;
 
     // Get delivery record
-    let delivery = crate::db::webhooks::get_webhook_delivery(pool, webhook_delivery_id).await?;
+    let delivery = repo.get_webhook_delivery(webhook_delivery_id).await?;
 
     // Don't retry if already forwarded or already dead-lettered.
     if delivery.forwarded || delivery.dead_lettered || delivery.forward_attempts >= 3 {
@@ -37,22 +37,14 @@ pub async fn forward_webhook(
     }
 
     if let Some(ref subscription_id) = payload.subscription_id {
-        if let Some(subscription) = crate::db::subscriptions::get_subscription_by_sub_id(
-            pool,
-            app_id,
-            subscription_id,
-        )
-        .await?
-        {
+        if let Some(subscription) = repo.get_subscription_by_sub_id(app_id, subscription_id).await? {
             if payload.timestamp_epoch_ms < subscription.last_event_time {
-                crate::db::webhooks::suppress_webhook(
-                    pool,
+                repo.suppress_webhook(
                     delivery.webhook_provider_id,
                     "superseded_before_forward",
                 )
                 .await?;
-                crate::db::webhooks::update_webhook_delivery_attempt(
-                    pool,
+                repo.update_webhook_delivery_attempt(
                     webhook_delivery_id,
                     None,
                     Some("Suppressed stale event before forward".to_string()),
@@ -113,8 +105,7 @@ pub async fn forward_webhook(
                     "Successfully forwarded webhook {} to app {} (status: {})",
                     webhook_delivery_id, app_id, status
                 );
-                crate::db::webhooks::update_webhook_delivery_attempt(
-                    pool,
+                repo.update_webhook_delivery_attempt(
                     webhook_delivery_id,
                     Some(status),
                     None,
@@ -127,8 +118,7 @@ pub async fn forward_webhook(
                     "Failed to forward webhook {} to app {}: {}",
                     webhook_delivery_id, app_id, error_msg
                 );
-                crate::db::webhooks::update_webhook_delivery_attempt(
-                    pool,
+                repo.update_webhook_delivery_attempt(
                     webhook_delivery_id,
                     Some(status),
                     Some(error_msg),
@@ -143,8 +133,7 @@ pub async fn forward_webhook(
                 "Failed to forward webhook {} to app {}: {}",
                 webhook_delivery_id, app_id, error_msg
             );
-            crate::db::webhooks::update_webhook_delivery_attempt(
-                pool,
+            repo.update_webhook_delivery_attempt(
                 webhook_delivery_id,
                 None,
                 Some(error_msg),

@@ -1,5 +1,6 @@
 use std::time::Duration;
 use crate::db::Database;
+use crate::ports::BridgeRepository;
 use std::sync::Arc;
 use tracing::{info, error, warn};
 use uuid::Uuid;
@@ -13,7 +14,7 @@ pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
         loop {
             interval.tick().await;
 
-            if let Err(e) = retry_webhooks(&database).await {
+            if let Err(e) = retry_webhooks(database.as_ref()).await {
                 error!("Webhook retry worker failed: {}", e);
             }
         }
@@ -36,27 +37,26 @@ pub fn spawn_reconciliation_worker(database: Arc<Database>) {
     });
 }
 
-pub async fn retry_webhooks(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
-    // 1. Get all active apps
-    let apps_result = sqlx::query_as::<_, crate::db::apps::App>("SELECT * FROM pay.apps WHERE enabled = true")
-        .fetch_all(&database.pool)
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+pub async fn retry_webhooks(repo: &impl BridgeRepository) -> Result<(), crate::error::BridgeError> {
+    let apps_result = repo.list_enabled_apps().await?;
 
     // 2. Iterate apps and retry
     for app in apps_result {
-        // Find deliveries that need retries
-        let deliveries = sqlx::query_as::<_, crate::db::webhooks::WebhookDelivery>(
-            "SELECT * FROM pay.webhook_delivery WHERE app_id = $1 AND forwarded = false AND dead_lettered = false AND forward_attempts < 3 ORDER BY created_at ASC LIMIT 50"
-        )
-        .bind(app.id)
-        .fetch_all(&database.pool)
-        .await
-        .unwrap_or_default();
+        let deliveries = match repo.list_pending_webhook_deliveries(app.id, 50).await {
+            Ok(deliveries) => deliveries,
+            Err(e) => {
+                error!(
+                    "Failed to load pending webhook deliveries for app {}: {}",
+                    app.id,
+                    e
+                );
+                continue;
+            }
+        };
 
         for delivery in deliveries {
             match crate::webhooks::processor::build_canonical_payload(
-                database.as_ref(),
+                repo,
                 delivery.webhook_provider_id,
                 app.id,
             )
@@ -64,15 +64,14 @@ pub async fn retry_webhooks(database: &Arc<Database>) -> Result<(), crate::error
             {
                 Ok(Some(canonical)) => {
                     let _ = crate::webhooks::forwarding::forward_webhook(
-                        &database.pool,
+                        repo,
                         app.id,
                         delivery.id,
                         canonical,
                     ).await;
                 }
                 Ok(None) => {
-                    crate::db::webhooks::update_webhook_delivery_attempt(
-                        &database.pool,
+                    repo.update_webhook_delivery_attempt(
                         delivery.id,
                         None,
                         Some("Suppressed before retry".to_string()),
@@ -200,7 +199,7 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
                             }
 
                             if let Err(e) = emit_scheduler_callback(
-                                &database.pool,
+                                database.as_ref(),
                                 app_id,
                                 &provider,
                                 &subscription_id,
@@ -369,7 +368,7 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
         }
 
         if let Err(e) = emit_scheduler_callback(
-            &database.pool,
+            database.as_ref(),
             app_id,
             &provider,
             &subscription_id,
@@ -443,7 +442,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
         }
 
         if let Err(e) = emit_scheduler_callback(
-            &database.pool,
+            database.as_ref(),
             app_id,
             &provider,
             &subscription_id,
@@ -480,7 +479,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
 
 #[allow(clippy::too_many_arguments)]
 async fn emit_scheduler_callback(
-    pool: &sqlx::PgPool,
+    repo: &impl BridgeRepository,
     app_id: Uuid,
     provider: &str,
     subscription_id: &str,
@@ -493,7 +492,7 @@ async fn emit_scheduler_callback(
     reconciliation_source: Option<String>,
     revocation_reason: Option<String>,
 ) -> Result<(), crate::error::BridgeError> {
-    let app = crate::db::apps::get_app(pool, app_id).await?;
+    let app = repo.get_app(app_id).await?;
     let provider_event_id = format!("scheduler-{}", Uuid::new_v4());
     let timestamp_epoch_ms = chrono::Utc::now().timestamp_millis();
     let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
@@ -513,8 +512,7 @@ async fn emit_scheduler_callback(
         "revocation_reason": revocation_reason,
     });
 
-    let (webhook_provider_id, _) = crate::db::webhooks::create_webhook_provider(
-        pool,
+    let (webhook_provider_id, _) = repo.create_webhook_provider(
         app_id,
         provider,
         &provider_event_id,
@@ -526,7 +524,7 @@ async fn emit_scheduler_callback(
     )
     .await?;
 
-    let delivery_id = crate::db::webhooks::create_webhook_delivery(pool, app_id, webhook_provider_id).await?;
+    let delivery_id = repo.create_webhook_delivery(app_id, webhook_provider_id).await?;
 
     let canonical = crate::webhooks::processor::CanonicalWebhookPayload {
         event_id: format!("{}-{}", provider, provider_event_id),
@@ -552,7 +550,7 @@ async fn emit_scheduler_callback(
         cancellation_mode: None,
     };
 
-    crate::webhooks::forwarding::forward_webhook(pool, app_id, delivery_id, canonical).await
+    crate::webhooks::forwarding::forward_webhook(repo, app_id, delivery_id, canonical).await
 }
 
 pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {

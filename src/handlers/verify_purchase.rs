@@ -463,7 +463,7 @@ pub(crate) async fn forward_verify_purchase_callback<R: crate::ports::BridgeRepo
         cancellation_mode: None,
     };
 
-    crate::webhooks::forwarding::forward_webhook(repo.pool(), app_id, delivery_id, callback_payload).await
+    crate::webhooks::forwarding::forward_webhook(repo, app_id, delivery_id, callback_payload).await
 }
 
 fn mock_external_apis_enabled() -> bool {
