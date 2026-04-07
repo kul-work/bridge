@@ -98,7 +98,7 @@ pub async fn handle_google_play(
     let event_id = payload["message"]["messageId"]
         .as_str()
         .or_else(|| google_play_event["eventId"].as_str())
-        .unwrap_or("unknown");
+        .ok_or_else(|| BridgeError::WebhookError("Missing provider event ID".to_string()))?;
 
     let event_type = extract_google_event_type(&google_play_event);
 
@@ -211,7 +211,9 @@ pub async fn handle_creem(
         BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
     })?;
 
-    let event_id = payload["id"].as_str().unwrap_or("unknown");
+    let event_id = payload["id"]
+        .as_str()
+        .ok_or_else(|| BridgeError::WebhookError("Missing provider event ID".to_string()))?;
     let event_type = payload["eventType"].as_str().unwrap_or("unknown");
 
     let subscription_id = payload["object"]["subscription"]["id"]
@@ -315,7 +317,9 @@ pub async fn handle_lemonsqueezy(
         BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
     })?;
 
-    let event_id = payload["meta"]["webhook_id"].as_str().unwrap_or("unknown");
+    let event_id = payload["meta"]["webhook_id"]
+        .as_str()
+        .ok_or_else(|| BridgeError::WebhookError("Missing provider event ID".to_string()))?;
     let event_type = payload["meta"]["event_name"].as_str().unwrap_or("unknown");
 
     let subscription_id = payload["data"]["id"]
@@ -416,7 +420,9 @@ pub async fn handle_coinbase(
         BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
     })?;
 
-    let event_id = payload["event"]["id"].as_str().unwrap_or("unknown");
+    let event_id = payload["event"]["id"]
+        .as_str()
+        .ok_or_else(|| BridgeError::WebhookError("Missing provider event ID".to_string()))?;
     let event_type = payload["event"]["type"].as_str().unwrap_or("unknown");
     let charge_id = payload["event"]["data"]["id"].as_str().map(|s| s.to_string());
 
