@@ -196,6 +196,15 @@ pub async fn count_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, B
     Ok(count.0)
 }
 
+pub async fn cleanup_old_webhook_provider(pool: &PgPool) -> Result<(), BridgeError> {
+    sqlx::query("SELECT pay.cleanup_old_webhook_provider()")
+        .execute(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
 pub async fn list_user_webhook_records(
     pool: &PgPool,
     app_id: Uuid,

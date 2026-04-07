@@ -122,6 +122,15 @@ pub async fn anonymize_user(
     Ok((sub_count, pay_count, anon_id))
 }
 
+pub async fn cleanup_purged_fraud_prevention(pool: &PgPool) -> Result<(), BridgeError> {
+    sqlx::query("SELECT pay.cleanup_purged_fraud_prevention()")
+        .execute(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
 /// Helper function to cancel a subscription at the provider level via API
 /// Logs errors but doesn't fail the anonymization operation
 async fn cancel_subscription_at_provider(

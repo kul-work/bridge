@@ -92,15 +92,10 @@ pub async fn retry_webhooks(repo: &impl BridgeRepository) -> Result<(), crate::e
 pub async fn reconcile_subscriptions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
     info!("Starting subscription reconciliation job");
     
-    // 1. Get all active apps
-    let apps_result = sqlx::query_as::<_, crate::db::apps::App>("SELECT * FROM pay.apps WHERE enabled = true")
-        .fetch_all(&database.pool)
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+    let apps_result = database.list_enabled_apps().await?;
 
-    // 2. For each app, reconcile subscriptions with providers
     for app in apps_result {
-        if let Err(e) = reconcile_app_subscriptions(database, app.id).await {
+        if let Err(e) = reconcile_app_subscriptions(database.as_ref(), app.id).await {
             error!("Reconciliation failed for app {}: {}", app.id, e);
             // Continue with next app, don't fail entire job
         }
@@ -110,117 +105,107 @@ pub async fn reconcile_subscriptions(database: &Arc<Database>) -> Result<(), cra
     Ok(())
 }
 
-async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uuid) -> Result<(), crate::error::BridgeError> {
-    // Get all active subscriptions for the app
-    let active_subs = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
-        "SELECT id::text, subscription_id, provider, external_user_id, purchase_token FROM pay.subscriptions WHERE app_id = $1 AND status IN ('active', 'trial', 'past_due')"
-    )
-    .bind(app_id)
-    .fetch_all(&database.pool)
-    .await
-    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+async fn reconcile_app_subscriptions(repo: &impl BridgeRepository, app_id: uuid::Uuid) -> Result<(), crate::error::BridgeError> {
+    let active_subs = repo.list_reconciliation_subscriptions(app_id).await?;
 
-    for (_sub_id, subscription_id, provider, external_user_id, purchase_token) in active_subs {
-        // Check current status with provider
-        let provider_config = sqlx::query_as::<_, crate::db::provider_configs::ProviderConfig>(
-            "SELECT * FROM pay.provider_configs WHERE app_id = $1 AND provider = $2"
+    for sub in active_subs {
+        let provider_config = match repo.get_provider_config(app_id, &sub.provider).await {
+            Ok(config) => config,
+            Err(e) => {
+                warn!(
+                    "Skipping reconciliation for subscription {} because provider config is missing: {}",
+                    sub.subscription_id,
+                    e
+                );
+                continue;
+            }
+        };
+
+        let provider_result = crate::services::provider_api::fetch_subscription_status(
+            &sub.provider,
+            &sub.subscription_id,
+            sub.purchase_token.as_deref(),
+            &provider_config.config,
         )
-        .bind(app_id)
-        .bind(&provider)
-        .fetch_optional(&database.pool)
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+        .await;
 
-        if let Some(config) = provider_config {
-            // Call provider API to get current subscription status
-            let provider_result = crate::services::provider_api::fetch_subscription_status(
-                &provider,
-                &subscription_id,
-                purchase_token.as_deref(),
-                &config.config,
-            ).await;
+        match provider_result {
+            Ok((provider_status, _)) => {
+                let current_db_status = sub.status.clone();
 
-            match provider_result {
-                Ok((provider_status, _)) => {
-                    // Compare with DB status and trigger corrective webhook if changed
-                    let db_status = sqlx::query_scalar::<_, String>(
-                        "SELECT status FROM pay.subscriptions WHERE app_id = $1 AND subscription_id = $2"
+                if current_db_status != provider_status {
+                    info!(
+                        "Subscription {} status drift detected: db={}, provider={}. Triggering corrective callback.",
+                        sub.subscription_id, current_db_status, provider_status
+                    );
+
+                    let event_time_ms = chrono::Utc::now().timestamp_millis();
+                    let updated = repo
+                        .update_subscription_status(
+                            app_id,
+                            &sub.subscription_id,
+                            &provider_status,
+                            event_time_ms,
+                        )
+                        .await?;
+
+                    if !updated {
+                        info!(
+                            "Skipped stale reconciliation update for subscription {} (provider={})",
+                            sub.subscription_id,
+                            sub.provider,
+                        );
+                        continue;
+                    }
+
+                    let alert = format!(
+                        "Admin alert: reconciliation drift app_id={} sub={} provider={} db_status={} provider_status={}",
+                        app_id, sub.subscription_id, sub.provider, current_db_status, provider_status
+                    );
+                    error!("{}", alert);
+
+                    if let Err(e) = send_reconciliation_admin_alert_email(
+                        repo,
+                        app_id,
+                        &sub.provider,
+                        &sub.subscription_id,
+                        &current_db_status,
+                        &provider_status,
                     )
-                    .bind(app_id)
-                    .bind(&subscription_id)
-                    .fetch_optional(&database.pool)
                     .await
-                    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+                    {
+                        warn!(
+                            "Failed to send reconciliation admin alert for subscription {}: {}",
+                            sub.subscription_id,
+                            e
+                        );
+                    }
 
-                    if let Some(current_db_status) = db_status {
-                        if current_db_status != provider_status {
-                            info!(
-                                "Subscription {} status drift detected: db={}, provider={}. Triggering corrective callback.",
-                                subscription_id, current_db_status, provider_status
-                            );
-                            let event_time_ms = chrono::Utc::now().timestamp_millis();
-                            let updated = crate::db::subscriptions::update_subscription_status(
-                                &database.pool,
-                                app_id,
-                                &subscription_id,
-                                &provider_status,
-                                event_time_ms,
-                            )
-                            .await?;
-
-                            if !updated {
-                                info!(
-                                    "Skipped stale reconciliation update for subscription {} (provider={})",
-                                    subscription_id,
-                                    provider,
-                                );
-                                continue;
-                            }
-
-                            let alert = format!(
-                                "Admin alert: reconciliation drift app_id={} sub={} provider={} db_status={} provider_status={}",
-                                app_id, subscription_id, provider, current_db_status, provider_status
-                            );
-                            error!("{}", alert);
-
-                            if let Err(e) = send_reconciliation_admin_alert_email(
-                                &database.pool,
-                                app_id,
-                                &provider,
-                                &subscription_id,
-                                &current_db_status,
-                                &provider_status,
-                            ).await {
-                                warn!(
-                                    "Failed to send reconciliation admin alert for subscription {}: {}",
-                                    subscription_id,
-                                    e
-                                );
-                            }
-
-                            if let Err(e) = emit_scheduler_callback(
-                                database.as_ref(),
-                                app_id,
-                                &provider,
-                                &subscription_id,
-                                Some(external_user_id.clone()),
-                                purchase_token.clone(),
-                                "reconciliation.drift_detected",
-                                Some(provider_status.clone()),
-                                Some(current_db_status),
-                                Some(provider_status),
-                                Some(provider.clone()),
-                                None,
-                            ).await {
-                                error!("Failed to forward reconciliation callback for {}: {}", subscription_id, e);
-                            }
-                        }
+                    if let Err(e) = emit_scheduler_callback(
+                        repo,
+                        app_id,
+                        &sub.provider,
+                        &sub.subscription_id,
+                        Some(sub.external_user_id.clone()),
+                        sub.purchase_token.clone(),
+                        "reconciliation.drift_detected",
+                        Some(provider_status.clone()),
+                        Some(current_db_status),
+                        Some(provider_status),
+                        Some(sub.provider.clone()),
+                        None,
+                    )
+                    .await
+                    {
+                        error!("Failed to forward reconciliation callback for {}: {}", sub.subscription_id, e);
                     }
                 }
-                Err(e) => {
-                    error!("Failed to fetch status for subscription {} from {}: {}", subscription_id, provider, e);
-                    // Skip this subscription, don't fail the whole job
-                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to fetch status for subscription {} from {}: {}",
+                    sub.subscription_id, sub.provider, e
+                );
             }
         }
     }
@@ -229,7 +214,7 @@ async fn reconcile_app_subscriptions(database: &Arc<Database>, app_id: uuid::Uui
 }
 
 async fn send_reconciliation_admin_alert_email(
-    pool: &sqlx::PgPool,
+    repo: &impl BridgeRepository,
     app_id: uuid::Uuid,
     provider: &str,
     subscription_id: &str,
@@ -249,7 +234,7 @@ async fn send_reconciliation_admin_alert_email(
         }
     };
 
-    let app = crate::db::apps::get_app(pool, app_id).await?;
+    let app = repo.get_app(app_id).await?;
     let subject = format!(
         "Bridge reconciliation drift: {} ({})",
         app.display_name,
@@ -305,65 +290,37 @@ pub fn spawn_price_step_up_expiry_worker(database: Arc<Database>) {
 }
 
 async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
-    let expired = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, String, String, String, Option<String>)>(
-        "SELECT id, app_id, external_user_id, subscription_id, provider, purchase_token 
-         FROM pay.subscriptions 
-         WHERE google_requires_price_step_up_consent = true 
-           AND google_price_step_up_consent_deadline IS NOT NULL 
-           AND google_price_step_up_consent_deadline < NOW()
-         LIMIT 100"
-    )
-    .fetch_all(&database.pool)
-    .await
-    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+    let expired = database.list_price_step_up_expired_subscriptions(100).await?;
 
-    for (id, app_id, external_user_id, subscription_id, provider, purchase_token) in expired {
+    for sub in expired {
+        let id = sub.id;
+        let app_id = sub.app_id;
+        let external_user_id = sub.external_user_id.clone();
+        let subscription_id = sub.subscription_id.clone();
+        let provider = sub.provider.clone();
+        let purchase_token = sub.purchase_token.clone();
         info!("Price step-up expired for subscription {}, auto-cancelling", subscription_id);
 
-        // Try to cancel with provider
-        let provider_config = sqlx::query_as::<_, crate::db::provider_configs::ProviderConfig>(
-            "SELECT * FROM pay.provider_configs WHERE app_id = $1 AND provider = $2"
-        )
-        .bind(app_id)
-        .bind(&provider)
-        .fetch_optional(&database.pool)
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
-
-        if let Some(config) = provider_config {
+        if let Ok(config) = database.get_provider_config(app_id, &provider).await {
             if let Err(e) = crate::services::provider_api::cancel_subscription(
                 &provider,
                 &subscription_id,
                 purchase_token.as_deref(),
                 None,
                 &config.config,
-            ).await {
+            )
+            .await
+            {
                 error!("Failed to cancel price step-up expired sub {}: {}", subscription_id, e);
             }
         }
 
-        // Update local DB regardless (clear consent flags, set auto_renewing=false)
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let result = sqlx::query(
-            "UPDATE pay.subscriptions 
-             SET google_requires_price_step_up_consent = false,
-                 google_price_step_up_consent_deadline = NULL,
-                 status = 'cancelled',
-                 revocation_reason = 'price_step_up_expiry',
-                 auto_renewing = false,
-                 version = version + 1,
-                 last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
-                 updated_at = NOW()
-             WHERE id = $2"
-        )
-        .bind(now_ms)
-        .bind(id)
-        .execute(&database.pool)
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
-
-        if result.rows_affected() == 0 {
-            info!("Skipped price step-up expiry transition for subscription {} because it was already updated", subscription_id);
+        if !database.mark_subscription_price_step_up_expired(id, now_ms).await? {
+            info!(
+                "Skipped price step-up expiry transition for subscription {} because it was already updated",
+                subscription_id
+            );
             continue;
         }
 
@@ -380,7 +337,9 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
             None,
             None,
             Some("price_step_up_expiry".to_string()),
-        ).await {
+        )
+        .await
+        {
             error!("Failed to forward price step-up expiry callback for {}: {}", subscription_id, e);
         }
     }
@@ -404,40 +363,23 @@ pub fn spawn_pause_scheduler_worker(database: Arc<Database>) {
 }
 
 async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
-    // 1. Pause transition: subscriptions scheduled to pause
-    let pending_pause = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, String, String, String, Option<String>)>(
-        "SELECT id, app_id, external_user_id, subscription_id, provider, purchase_token FROM pay.subscriptions 
-         WHERE google_pause_scheduled_at IS NOT NULL 
-           AND google_pause_scheduled_at <= NOW() 
-           AND status != 'paused'
-         LIMIT 100"
-    )
-    .fetch_all(&database.pool)
-    .await
-    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+    let pending_pause = database.list_pending_pause_subscriptions(100).await?;
 
-    for (id, app_id, external_user_id, subscription_id, provider, purchase_token) in pending_pause {
+    for sub in pending_pause {
+        let id = sub.id;
+        let app_id = sub.app_id;
+        let external_user_id = sub.external_user_id.clone();
+        let subscription_id = sub.subscription_id.clone();
+        let provider = sub.provider.clone();
+        let purchase_token = sub.purchase_token.clone();
         info!("Transitioning subscription {} to paused (scheduled pause)", subscription_id);
 
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let result = sqlx::query(
-            "UPDATE pay.subscriptions 
-             SET status = 'paused',
-                 auto_renewing = false,
-                 google_paused_at = NOW(),
-                 version = version + 1,
-                 last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
-                 updated_at = NOW()
-             WHERE id = $2 AND status != 'paused'"
-        )
-        .bind(now_ms)
-        .bind(id)
-        .execute(&database.pool)
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
-
-        if result.rows_affected() == 0 {
-            info!("Skipped pause transition callback for subscription {} because state was already updated", subscription_id);
+        if !database.mark_subscription_paused(id, now_ms).await? {
+            info!(
+                "Skipped pause transition callback for subscription {} because state was already updated",
+                subscription_id
+            );
             continue;
         }
 
@@ -454,24 +396,16 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
             None,
             None,
             None,
-        ).await {
+        )
+        .await
+        {
             error!("Failed to forward pause transition callback for {}: {}", subscription_id, e);
         }
     }
 
-    // 2. Orphaned pending cleanup: remove stale register_purchase placeholders
-    let deleted = sqlx::query(
-        "DELETE FROM pay.subscriptions 
-         WHERE status = 'pending' 
-           AND purchase_token IS NULL 
-           AND created_at < NOW() - INTERVAL '30 minutes'"
-    )
-    .execute(&database.pool)
-    .await
-    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
-
-    if deleted.rows_affected() > 0 {
-        info!("Cleaned up {} orphaned pending subscriptions", deleted.rows_affected());
+    let deleted = database.delete_orphaned_pending_subscriptions().await?;
+    if deleted > 0 {
+        info!("Cleaned up {} orphaned pending subscriptions", deleted);
     }
 
     Ok(())
@@ -571,22 +505,9 @@ pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {
 async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
     info!("Starting data retention cleanup");
 
-    // §49: Webhook log cleanup (90-day retention)
-    sqlx::query("SELECT pay.cleanup_old_webhook_provider()")
-        .execute(&database.pool)
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
-
-    // Also clean up expired agent tokens and fraud prevention records
-    sqlx::query("SELECT pay.cleanup_expired_agent_tokens()")
-        .execute(&database.pool)
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
-
-    sqlx::query("SELECT pay.cleanup_purged_fraud_prevention()")
-        .execute(&database.pool)
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+    database.cleanup_old_webhook_provider().await?;
+    database.cleanup_expired_agent_tokens().await?;
+    database.cleanup_purged_fraud_prevention().await?;
 
     info!("Data retention cleanup completed");
     Ok(())

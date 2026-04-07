@@ -247,6 +247,43 @@ pub trait BridgeRepository: Send + Sync {
         limit: i64,
     ) -> Result<Vec<WebhookDelivery>, BridgeError>;
 
+    async fn list_reconciliation_subscriptions(
+        &self,
+        app_id: Uuid,
+    ) -> Result<Vec<Subscription>, BridgeError>;
+
+    async fn list_price_step_up_expired_subscriptions(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<Subscription>, BridgeError>;
+
+    async fn list_pending_pause_subscriptions(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<Subscription>, BridgeError>;
+
+    async fn update_subscription_status(
+        &self,
+        app_id: Uuid,
+        subscription_id: &str,
+        new_status: &str,
+        event_time_ms: i64,
+    ) -> Result<bool, BridgeError>;
+
+    async fn mark_subscription_price_step_up_expired(
+        &self,
+        id: Uuid,
+        event_time_ms: i64,
+    ) -> Result<bool, BridgeError>;
+
+    async fn mark_subscription_paused(
+        &self,
+        id: Uuid,
+        event_time_ms: i64,
+    ) -> Result<bool, BridgeError>;
+
+    async fn delete_orphaned_pending_subscriptions(&self) -> Result<u64, BridgeError>;
+
     async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError>;
 
     async fn update_webhook_delivery_attempt(
@@ -258,6 +295,12 @@ pub trait BridgeRepository: Send + Sync {
     ) -> Result<(), BridgeError>;
 
     async fn mark_webhook_processed(&self, webhook_id: Uuid) -> Result<(), BridgeError>;
+
+    async fn cleanup_old_webhook_provider(&self) -> Result<(), BridgeError>;
+
+    async fn cleanup_expired_agent_tokens(&self) -> Result<(), BridgeError>;
+
+    async fn cleanup_purged_fraud_prevention(&self) -> Result<(), BridgeError>;
 
     async fn list_user_webhook_records(
         &self,
@@ -651,6 +694,64 @@ impl BridgeRepository for db::Database {
         db::webhooks::list_pending_webhook_deliveries(&self.pool, app_id, limit).await
     }
 
+    async fn list_reconciliation_subscriptions(
+        &self,
+        app_id: Uuid,
+    ) -> Result<Vec<Subscription>, BridgeError> {
+        db::subscriptions::list_reconciliation_subscriptions(&self.pool, app_id).await
+    }
+
+    async fn list_price_step_up_expired_subscriptions(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<Subscription>, BridgeError> {
+        db::subscriptions::list_price_step_up_expired_subscriptions(&self.pool, limit).await
+    }
+
+    async fn list_pending_pause_subscriptions(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<Subscription>, BridgeError> {
+        db::subscriptions::list_pending_pause_subscriptions(&self.pool, limit).await
+    }
+
+    async fn update_subscription_status(
+        &self,
+        app_id: Uuid,
+        subscription_id: &str,
+        new_status: &str,
+        event_time_ms: i64,
+    ) -> Result<bool, BridgeError> {
+        db::subscriptions::update_subscription_status(
+            &self.pool,
+            app_id,
+            subscription_id,
+            new_status,
+            event_time_ms,
+        )
+        .await
+    }
+
+    async fn mark_subscription_price_step_up_expired(
+        &self,
+        id: Uuid,
+        event_time_ms: i64,
+    ) -> Result<bool, BridgeError> {
+        db::subscriptions::mark_subscription_price_step_up_expired(&self.pool, id, event_time_ms).await
+    }
+
+    async fn mark_subscription_paused(
+        &self,
+        id: Uuid,
+        event_time_ms: i64,
+    ) -> Result<bool, BridgeError> {
+        db::subscriptions::mark_subscription_paused(&self.pool, id, event_time_ms).await
+    }
+
+    async fn delete_orphaned_pending_subscriptions(&self) -> Result<u64, BridgeError> {
+        db::subscriptions::delete_orphaned_pending_subscriptions(&self.pool).await
+    }
+
     async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError> {
         db::webhooks::suppress_webhook(&self.pool, webhook_id, reason).await
     }
@@ -680,6 +781,18 @@ impl BridgeRepository for db::Database {
             .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
         Ok(())
+    }
+
+    async fn cleanup_old_webhook_provider(&self) -> Result<(), BridgeError> {
+        db::webhooks::cleanup_old_webhook_provider(&self.pool).await
+    }
+
+    async fn cleanup_expired_agent_tokens(&self) -> Result<(), BridgeError> {
+        db::agent::cleanup_expired_agent_tokens(&self.pool).await
+    }
+
+    async fn cleanup_purged_fraud_prevention(&self) -> Result<(), BridgeError> {
+        db::users::cleanup_purged_fraud_prevention(&self.pool).await
     }
 
     async fn list_user_webhook_records(

@@ -471,6 +471,118 @@ pub async fn get_user_subscriptions(
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
+pub async fn list_reconciliation_subscriptions(
+    pool: &PgPool,
+    app_id: Uuid,
+) -> Result<Vec<Subscription>, BridgeError> {
+    sqlx::query_as::<_, Subscription>(
+        "SELECT * FROM pay.subscriptions
+         WHERE app_id = $1 AND status IN ('active', 'trial', 'past_due')"
+    )
+    .bind(app_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
+pub async fn list_price_step_up_expired_subscriptions(
+    pool: &PgPool,
+    limit: i64,
+) -> Result<Vec<Subscription>, BridgeError> {
+    sqlx::query_as::<_, Subscription>(
+        "SELECT * FROM pay.subscriptions
+         WHERE google_requires_price_step_up_consent = true
+           AND google_price_step_up_consent_deadline IS NOT NULL
+           AND google_price_step_up_consent_deadline < NOW()
+         LIMIT $1"
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
+pub async fn list_pending_pause_subscriptions(
+    pool: &PgPool,
+    limit: i64,
+) -> Result<Vec<Subscription>, BridgeError> {
+    sqlx::query_as::<_, Subscription>(
+        "SELECT * FROM pay.subscriptions
+         WHERE google_pause_scheduled_at IS NOT NULL
+           AND google_pause_scheduled_at <= NOW()
+           AND status != 'paused'
+         LIMIT $1"
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
+pub async fn mark_subscription_price_step_up_expired(
+    pool: &PgPool,
+    id: Uuid,
+    event_time_ms: i64,
+) -> Result<bool, BridgeError> {
+    let result = sqlx::query(
+        "UPDATE pay.subscriptions
+         SET google_requires_price_step_up_consent = false,
+             google_price_step_up_consent_deadline = NULL,
+             status = 'cancelled',
+             revocation_reason = 'price_step_up_expiry',
+             auto_renewing = false,
+             version = version + 1,
+             last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
+             updated_at = NOW()
+         WHERE id = $2"
+    )
+    .bind(event_time_ms)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn mark_subscription_paused(
+    pool: &PgPool,
+    id: Uuid,
+    event_time_ms: i64,
+) -> Result<bool, BridgeError> {
+    let result = sqlx::query(
+        "UPDATE pay.subscriptions
+         SET status = 'paused',
+             auto_renewing = false,
+             google_paused_at = NOW(),
+             version = version + 1,
+             last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
+             updated_at = NOW()
+         WHERE id = $2 AND status != 'paused'"
+    )
+    .bind(event_time_ms)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn delete_orphaned_pending_subscriptions(pool: &PgPool) -> Result<u64, BridgeError> {
+    let result = sqlx::query(
+        "DELETE FROM pay.subscriptions
+         WHERE status = 'pending'
+           AND purchase_token IS NULL
+           AND created_at < NOW() - INTERVAL '30 minutes'"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(result.rows_affected())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_subscription_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

@@ -69,6 +69,15 @@ pub async fn list_agent_transactions(
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
+pub async fn cleanup_expired_agent_tokens(pool: &PgPool) -> Result<(), BridgeError> {
+    sqlx::query("SELECT pay.cleanup_expired_agent_tokens()")
+        .execute(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
 #[allow(dead_code)]
 pub async fn upsert_agent_credit(
     pool: &PgPool,
