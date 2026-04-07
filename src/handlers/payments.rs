@@ -173,13 +173,14 @@ pub async fn register_purchase(
     }
 
     // §6: Create pending subscription placeholder (not a manual grant)
-    let _sub = crate::db::subscriptions::upsert_pending_subscription(
-        &database.pool,
-        auth.app_id,
-        &request.external_user_id,
-        &request.subscription_id,
-        &request.provider,
-    ).await?;
+    let _sub = database
+        .upsert_pending_subscription(
+            auth.app_id,
+            &request.external_user_id,
+            &request.subscription_id,
+            &request.provider,
+        )
+        .await?;
 
     Ok((
         StatusCode::OK,

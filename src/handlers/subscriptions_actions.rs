@@ -67,14 +67,14 @@ pub async fn cancel_subscription(
     let provider = query.provider.trim().to_ascii_lowercase();
     let mode = request.mode.as_deref().unwrap_or("scheduled");
 
-    let sub = db::subscriptions::get_subscription(
-        &database.pool,
-        auth.app_id,
-        query.external_user_id.trim(),
-        &subscription_id,
-        &provider,
-    )
-    .await?;
+    let sub = database
+        .get_subscription(
+            auth.app_id,
+            query.external_user_id.trim(),
+            &subscription_id,
+            &provider,
+        )
+        .await?;
 
     let purchase_token = request
         .purchase_token
@@ -87,11 +87,9 @@ pub async fn cancel_subscription(
         ));
     }
 
-    let provider_config = db::provider_configs::get_provider_config(
-        &database.pool,
-        auth.app_id,
-        &sub.provider,
-    ).await?;
+    let provider_config = database
+        .get_provider_config(auth.app_id, &sub.provider)
+        .await?;
 
     provider_api::cancel_subscription(
         &sub.provider,
@@ -102,36 +100,8 @@ pub async fn cancel_subscription(
     ).await?;
 
     let updated_sub = match mode {
-        "scheduled" => {
-            sqlx::query_as::<_, db::subscriptions::Subscription>(
-                "UPDATE pay.subscriptions
-                 SET auto_renewing = false, cancellation_initiated_at = NOW(), updated_at = NOW()
-                 WHERE id = $1
-                 RETURNING *",
-            )
-            .bind(sub.id)
-            .fetch_one(&database.pool)
-            .await
-            .map_err(|e| BridgeError::DbError(e.to_string()))?
-        }
-        "immediate" => {
-            sqlx::query_as::<_, db::subscriptions::Subscription>(
-                "UPDATE pay.subscriptions
-                 SET status = 'cancelled',
-                     auto_renewing = false,
-                     cancellation_initiated_at = NOW(),
-                     current_period_end = NOW(),
-                     revocation_reason = 'immediate_cancel',
-                     revoked_at = NOW(),
-                     updated_at = NOW()
-                 WHERE id = $1
-                 RETURNING *",
-            )
-            .bind(sub.id)
-            .fetch_one(&database.pool)
-            .await
-            .map_err(|e| BridgeError::DbError(e.to_string()))?
-        }
+        "scheduled" => database.cancel_subscription_scheduled(sub.id).await?,
+        "immediate" => database.cancel_subscription_immediate(sub.id).await?,
         _ => {
             return Err(BridgeError::ValidationError(
                 "mode must be either 'scheduled' or 'immediate'".to_string(),
@@ -177,20 +147,18 @@ pub async fn resume_subscription(
     }
 
     let provider = query.provider.trim().to_ascii_lowercase();
-    let sub = db::subscriptions::get_subscription(
-        &database.pool,
-        auth.app_id,
-        query.external_user_id.trim(),
-        &subscription_id,
-        &provider,
-    )
-    .await?;
+    let sub = database
+        .get_subscription(
+            auth.app_id,
+            query.external_user_id.trim(),
+            &subscription_id,
+            &provider,
+        )
+        .await?;
 
-    let provider_config = db::provider_configs::get_provider_config(
-        &database.pool,
-        auth.app_id,
-        &sub.provider,
-    ).await?;
+    let provider_config = database
+        .get_provider_config(auth.app_id, &sub.provider)
+        .await?;
 
     provider_api::resume_subscription(
         &sub.provider,
@@ -198,16 +166,7 @@ pub async fn resume_subscription(
         &provider_config.config,
     ).await?;
 
-    let updated_sub = sqlx::query_as::<_, db::subscriptions::Subscription>(
-        "UPDATE pay.subscriptions
-         SET status = 'active', auto_renewing = true, cancellation_initiated_at = NULL, updated_at = NOW()
-         WHERE id = $1
-         RETURNING *",
-    )
-    .bind(sub.id)
-    .fetch_one(&database.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let updated_sub = database.resume_subscription(sub.id).await?;
 
     if let Err(e) = dispatch_subscription_callback(
         database.as_ref(),
@@ -242,45 +201,24 @@ pub async fn acknowledge_subscription(
     Path(subscription_id): Path<String>,
     Json(request): Json<AcknowledgeRequest>,
 ) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription_by_sub_id(
-        &database.pool,
-        auth.app_id,
-        &subscription_id,
-    )
-    .await?
+    let sub = database
+        .get_subscription_by_sub_id(auth.app_id, &subscription_id)
+        .await?
     .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
 
     if sub.external_user_id != request.external_user_id {
         return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
     }
 
-    if let Some(purchase_token) = sub.purchase_token.as_deref() {
-        sqlx::query(
-            "UPDATE pay.payments
-             SET acknowledged_at = COALESCE(acknowledged_at, NOW())
-             WHERE app_id = $1 AND external_user_id = $2 AND provider = $3 AND provider_transaction_id = $4",
+    database
+        .mark_payment_acknowledged_for_subscription(
+            auth.app_id,
+            &sub.external_user_id,
+            &sub.provider,
+            &sub.subscription_id,
+            sub.purchase_token.as_deref(),
         )
-        .bind(auth.app_id)
-        .bind(&sub.external_user_id)
-        .bind(&sub.provider)
-        .bind(purchase_token)
-        .execute(&database.pool)
-        .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
-    } else {
-        sqlx::query(
-            "UPDATE pay.payments
-             SET acknowledged_at = COALESCE(acknowledged_at, NOW())
-             WHERE app_id = $1 AND external_user_id = $2 AND provider = $3 AND subscription_id = $4",
-        )
-        .bind(auth.app_id)
-        .bind(&sub.external_user_id)
-        .bind(&sub.provider)
-        .bind(&sub.subscription_id)
-        .execute(&database.pool)
-        .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
-    }
+        .await?;
 
     Ok((
         StatusCode::OK,
@@ -312,14 +250,14 @@ pub async fn create_billing_portal(
 
     let provider = query.provider.trim().to_ascii_lowercase();
 
-    let sub = db::subscriptions::get_subscription(
-        &database.pool,
-        auth.app_id,
-        query.external_user_id.trim(),
-        &subscription_id,
-        &provider,
-    )
-    .await?;
+    let sub = database
+        .get_subscription(
+            auth.app_id,
+            query.external_user_id.trim(),
+            &subscription_id,
+            &provider,
+        )
+        .await?;
 
     let customer_id = sub.provider_customer_id.as_deref().ok_or_else(|| {
         BridgeError::ValidationError(
@@ -327,11 +265,9 @@ pub async fn create_billing_portal(
         )
     })?;
 
-    let provider_config = db::provider_configs::get_provider_config(
-        &database.pool,
-        auth.app_id,
-        &sub.provider,
-    ).await?;
+    let provider_config = database
+        .get_provider_config(auth.app_id, &sub.provider)
+        .await?;
 
     let url = provider_api::create_billing_portal(
         &sub.provider,
@@ -368,12 +304,9 @@ pub async fn accept_price_step_up(
     Path(subscription_id): Path<String>,
     Json(request): Json<PriceStepUpRequest>,
 ) -> Result<(StatusCode, Json<PriceStepUpAcceptResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription_by_sub_id(
-        &database.pool,
-        auth.app_id,
-        &subscription_id,
-    )
-    .await?
+    let sub = database
+        .get_subscription_by_sub_id(auth.app_id, &subscription_id)
+        .await?
     .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
 
     if sub.external_user_id != request.external_user_id {
@@ -386,19 +319,7 @@ pub async fn accept_price_step_up(
         ));
     }
 
-    let updated_sub = sqlx::query_as::<_, db::subscriptions::Subscription>(
-        "UPDATE pay.subscriptions
-         SET google_requires_price_step_up_consent = false,
-             google_price_step_up_consent_status = 'accepted',
-             google_price_step_up_consent_deadline = NULL,
-             updated_at = NOW()
-         WHERE id = $1
-         RETURNING *",
-    )
-    .bind(sub.id)
-    .fetch_one(&database.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let updated_sub = database.accept_price_step_up(sub.id).await?;
 
     let new_price_cents = updated_sub.google_new_price_cents.ok_or_else(|| {
         BridgeError::ValidationError(
@@ -434,12 +355,9 @@ pub async fn decline_price_step_up(
     Path(subscription_id): Path<String>,
     Json(request): Json<PriceStepUpRequest>,
 ) -> Result<(StatusCode, Json<PriceStepUpDeclineResponse>), BridgeError> {
-    let sub = db::subscriptions::get_subscription_by_sub_id(
-        &database.pool,
-        auth.app_id,
-        &subscription_id,
-    )
-    .await?
+    let sub = database
+        .get_subscription_by_sub_id(auth.app_id, &subscription_id)
+        .await?
     .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
 
     if sub.external_user_id != request.external_user_id {
@@ -452,23 +370,7 @@ pub async fn decline_price_step_up(
         ));
     }
 
-    let updated_sub = sqlx::query_as::<_, db::subscriptions::Subscription>(
-        "UPDATE pay.subscriptions
-         SET google_requires_price_step_up_consent = false,
-             google_price_step_up_consent_status = 'rejected',
-             google_price_step_up_consent_deadline = NULL,
-             google_pending_cancellation = true,
-             google_pending_cancellation_at = NOW(),
-             auto_renewing = false,
-             cancellation_initiated_at = NOW(),
-             updated_at = NOW()
-         WHERE id = $1
-         RETURNING *",
-    )
-    .bind(sub.id)
-    .fetch_one(&database.pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let updated_sub = database.decline_price_step_up(sub.id).await?;
 
     let cancellation_effective_at = updated_sub
         .current_period_end

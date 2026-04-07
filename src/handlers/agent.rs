@@ -92,7 +92,9 @@ pub async fn token(
         .await?
     {
         Some(credit) => credit,
-        None => crate::db::agent::upsert_agent_credit(&database.pool, auth.app_id, &external_user_id, 0, 0).await?,
+        None => database
+            .upsert_agent_credit(auth.app_id, &external_user_id, 0, 0)
+            .await?,
     };
 
     if credit.balance_cents < 0 {
@@ -102,15 +104,15 @@ pub async fn token(
     }
 
     let nonce = Uuid::new_v4().to_string();
-    let token = crate::db::agent::insert_agent_token(
-        &database.pool,
-        auth.app_id,
-        &external_user_id,
-        &endpoint,
-        request.amount_cents,
-        &nonce,
-    )
-    .await?;
+    let token = database
+        .insert_agent_token(
+            auth.app_id,
+            &external_user_id,
+            &endpoint,
+            request.amount_cents,
+            &nonce,
+        )
+        .await?;
 
     Ok(Json(AgentTokenResponse {
         token: token.id.to_string(),
@@ -131,14 +133,9 @@ pub async fn charge(
         BridgeError::ValidationError("token must be a valid UUID".to_string())
     })?;
 
-    let (_new_balance, amount_charged) = crate::db::agent::charge_agent(
-        &database.pool,
-        auth.app_id,
-        &external_user_id,
-        token_id,
-        &endpoint,
-    )
-    .await?;
+    let (_new_balance, amount_charged) = database
+        .charge_agent(auth.app_id, &external_user_id, token_id, &endpoint)
+        .await?;
 
     Ok(Json(AgentChargeResponse {
         charged: true,
@@ -151,40 +148,14 @@ pub async fn topup(
     Extension(auth): Extension<AppAuth>,
     Json(request): Json<AgentTopUpRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let mut tx = database.pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    // Upsert credit within transaction
-    let credit = sqlx::query_as::<_, crate::db::agent::AgentCredit>(
-        r#"
-        INSERT INTO pay.agent_credits (app_id, external_user_id, balance_cents, lifetime_spent_cents, updated_at)
-        VALUES ($1, $2, $3, $4, NOW())
-        ON CONFLICT (app_id, external_user_id)
-        DO UPDATE SET
-            balance_cents = pay.agent_credits.balance_cents + EXCLUDED.balance_cents,
-            lifetime_spent_cents = pay.agent_credits.lifetime_spent_cents + EXCLUDED.lifetime_spent_cents,
-            updated_at = NOW()
-        RETURNING *
-        "#
-    )
-    .bind(auth.app_id)
-    .bind(&request.external_user_id)
-    .bind(request.amount_cents)
-    .bind(0)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    crate::db::agent::record_agent_transaction(
-        &mut tx,
-        auth.app_id,
-        &request.external_user_id,
-        "topup",
-        request.amount_cents,
-        request.charge_id.as_deref(),
-    )
-    .await?;
-
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let credit = database
+        .topup_agent(
+            auth.app_id,
+            &request.external_user_id,
+            request.amount_cents,
+            request.charge_id.as_deref(),
+        )
+        .await?;
 
     Ok(Json(json!({
         "credited": true,

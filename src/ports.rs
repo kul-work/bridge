@@ -153,6 +153,54 @@ pub trait BridgeRepository: Send + Sync {
         charge_id: &str,
     ) -> Result<bool, BridgeError>;
 
+    async fn upsert_agent_credit(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        balance_delta: i32,
+        spent_delta: i32,
+    ) -> Result<AgentCredit, BridgeError>;
+
+    async fn insert_agent_token(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        endpoint: &str,
+        amount_cents: i32,
+        nonce: &str,
+    ) -> Result<crate::db::agent::AgentPaymentToken, BridgeError>;
+
+    async fn upsert_pending_subscription(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        subscription_id: &str,
+        provider: &str,
+    ) -> Result<Subscription, BridgeError>;
+
+    async fn anonymize_user(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        reason: Option<&str>,
+    ) -> Result<(i64, i64, String), BridgeError>;
+
+    async fn charge_agent(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        token_id: Uuid,
+        endpoint: &str,
+    ) -> Result<(i32, i32), BridgeError>;
+
+    async fn topup_agent(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        amount_cents: i32,
+        charge_id: Option<&str>,
+    ) -> Result<AgentCredit, BridgeError>;
+
     async fn get_agent_credit(
         &self,
         app_id: Uuid,
@@ -270,6 +318,40 @@ pub trait BridgeRepository: Send + Sync {
         event_time_ms: i64,
     ) -> Result<bool, BridgeError>;
 
+    async fn cancel_subscription_scheduled(
+        &self,
+        id: Uuid,
+    ) -> Result<Subscription, BridgeError>;
+
+    async fn cancel_subscription_immediate(
+        &self,
+        id: Uuid,
+    ) -> Result<Subscription, BridgeError>;
+
+    async fn resume_subscription(
+        &self,
+        id: Uuid,
+    ) -> Result<Subscription, BridgeError>;
+
+    async fn mark_payment_acknowledged_for_subscription(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        provider: &str,
+        subscription_id: &str,
+        purchase_token: Option<&str>,
+    ) -> Result<(), BridgeError>;
+
+    async fn accept_price_step_up(
+        &self,
+        id: Uuid,
+    ) -> Result<Subscription, BridgeError>;
+
+    async fn decline_price_step_up(
+        &self,
+        id: Uuid,
+    ) -> Result<Subscription, BridgeError>;
+
     async fn mark_subscription_price_step_up_expired(
         &self,
         id: Uuid,
@@ -384,6 +466,32 @@ impl BridgeRepository for db::Database {
             response_payload,
         )
         .await
+    }
+
+    async fn upsert_pending_subscription(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        subscription_id: &str,
+        provider: &str,
+    ) -> Result<Subscription, BridgeError> {
+        db::subscriptions::upsert_pending_subscription(
+            &self.pool,
+            app_id,
+            external_user_id,
+            subscription_id,
+            provider,
+        )
+        .await
+    }
+
+    async fn anonymize_user(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        reason: Option<&str>,
+    ) -> Result<(i64, i64, String), BridgeError> {
+        db::users::anonymize_user(&self.pool, app_id, external_user_id, reason).await
     }
 
     async fn get_subscription(
@@ -524,6 +632,62 @@ impl BridgeRepository for db::Database {
         charge_id: &str,
     ) -> Result<bool, BridgeError> {
         db::agent::apply_topup_if_new(&self.pool, app_id, external_user_id, amount_cents, charge_id).await
+    }
+
+    async fn upsert_agent_credit(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        balance_delta: i32,
+        spent_delta: i32,
+    ) -> Result<AgentCredit, BridgeError> {
+        db::agent::upsert_agent_credit(
+            &self.pool,
+            app_id,
+            external_user_id,
+            balance_delta,
+            spent_delta,
+        )
+        .await
+    }
+
+    async fn insert_agent_token(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        endpoint: &str,
+        amount_cents: i32,
+        nonce: &str,
+    ) -> Result<crate::db::agent::AgentPaymentToken, BridgeError> {
+        db::agent::insert_agent_token(
+            &self.pool,
+            app_id,
+            external_user_id,
+            endpoint,
+            amount_cents,
+            nonce,
+        )
+        .await
+    }
+
+    async fn charge_agent(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        token_id: Uuid,
+        endpoint: &str,
+    ) -> Result<(i32, i32), BridgeError> {
+        db::agent::charge_agent(&self.pool, app_id, external_user_id, token_id, endpoint).await
+    }
+
+    async fn topup_agent(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        amount_cents: i32,
+        charge_id: Option<&str>,
+    ) -> Result<AgentCredit, BridgeError> {
+        db::agent::topup_agent(&self.pool, app_id, external_user_id, amount_cents, charge_id).await
     }
 
     async fn get_agent_credit(
@@ -730,6 +894,60 @@ impl BridgeRepository for db::Database {
             event_time_ms,
         )
         .await
+    }
+
+    async fn cancel_subscription_scheduled(
+        &self,
+        id: Uuid,
+    ) -> Result<Subscription, BridgeError> {
+        db::subscriptions::cancel_subscription_scheduled(&self.pool, id).await
+    }
+
+    async fn cancel_subscription_immediate(
+        &self,
+        id: Uuid,
+    ) -> Result<Subscription, BridgeError> {
+        db::subscriptions::cancel_subscription_immediate(&self.pool, id).await
+    }
+
+    async fn resume_subscription(
+        &self,
+        id: Uuid,
+    ) -> Result<Subscription, BridgeError> {
+        db::subscriptions::resume_subscription(&self.pool, id).await
+    }
+
+    async fn mark_payment_acknowledged_for_subscription(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        provider: &str,
+        subscription_id: &str,
+        purchase_token: Option<&str>,
+    ) -> Result<(), BridgeError> {
+        db::subscriptions::mark_payment_acknowledged_for_subscription(
+            &self.pool,
+            app_id,
+            external_user_id,
+            provider,
+            subscription_id,
+            purchase_token,
+        )
+        .await
+    }
+
+    async fn accept_price_step_up(
+        &self,
+        id: Uuid,
+    ) -> Result<Subscription, BridgeError> {
+        db::subscriptions::accept_price_step_up(&self.pool, id).await
+    }
+
+    async fn decline_price_step_up(
+        &self,
+        id: Uuid,
+    ) -> Result<Subscription, BridgeError> {
+        db::subscriptions::decline_price_step_up(&self.pool, id).await
     }
 
     async fn mark_subscription_price_step_up_expired(

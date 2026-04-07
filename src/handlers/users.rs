@@ -24,13 +24,8 @@ pub async fn anonymize(
     Path(external_user_id): Path<String>,
     Json(request): Json<AnonymizeRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let (subscriptions_cancelled, payments_anonymized, new_anonymous_id) = 
-        crate::db::users::anonymize_user(
-            &database.pool,
-            auth.app_id,
-            &external_user_id,
-            request.reason.as_deref(),
-        )
+    let (subscriptions_cancelled, payments_anonymized, new_anonymous_id) = database
+        .anonymize_user(auth.app_id, &external_user_id, request.reason.as_deref())
         .await?;
 
     if subscriptions_cancelled == 0 && payments_anonymized == 0 {

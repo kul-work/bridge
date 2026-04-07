@@ -78,6 +78,50 @@ pub async fn cleanup_expired_agent_tokens(pool: &PgPool) -> Result<(), BridgeErr
     Ok(())
 }
 
+pub async fn topup_agent(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+    amount_cents: i32,
+    charge_id: Option<&str>,
+) -> Result<AgentCredit, BridgeError> {
+    let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    let credit = sqlx::query_as::<_, AgentCredit>(
+        r#"
+        INSERT INTO pay.agent_credits (app_id, external_user_id, balance_cents, lifetime_spent_cents, updated_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (app_id, external_user_id)
+        DO UPDATE SET
+            balance_cents = pay.agent_credits.balance_cents + EXCLUDED.balance_cents,
+            lifetime_spent_cents = pay.agent_credits.lifetime_spent_cents + EXCLUDED.lifetime_spent_cents,
+            updated_at = NOW()
+        RETURNING *
+        "#,
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .bind(amount_cents)
+    .bind(0)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    record_agent_transaction(
+        &mut tx,
+        app_id,
+        external_user_id,
+        "topup",
+        amount_cents,
+        charge_id,
+    )
+    .await?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(credit)
+}
+
 #[allow(dead_code)]
 pub async fn upsert_agent_credit(
     pool: &PgPool,

@@ -681,6 +681,141 @@ pub async fn upsert_pending_subscription(
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
+pub async fn cancel_subscription_scheduled(
+    pool: &PgPool,
+    id: Uuid,
+) -> Result<Subscription, BridgeError> {
+    sqlx::query_as::<_, Subscription>(
+        "UPDATE pay.subscriptions
+         SET auto_renewing = false, cancellation_initiated_at = NOW(), updated_at = NOW()
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
+pub async fn cancel_subscription_immediate(
+    pool: &PgPool,
+    id: Uuid,
+) -> Result<Subscription, BridgeError> {
+    sqlx::query_as::<_, Subscription>(
+        "UPDATE pay.subscriptions
+         SET status = 'cancelled',
+             auto_renewing = false,
+             cancellation_initiated_at = NOW(),
+             current_period_end = NOW(),
+             revocation_reason = 'immediate_cancel',
+             revoked_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
+pub async fn resume_subscription(
+    pool: &PgPool,
+    id: Uuid,
+) -> Result<Subscription, BridgeError> {
+    sqlx::query_as::<_, Subscription>(
+        "UPDATE pay.subscriptions
+         SET status = 'active', auto_renewing = true, cancellation_initiated_at = NULL, updated_at = NOW()
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
+pub async fn mark_payment_acknowledged_for_subscription(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+    provider: &str,
+    subscription_id: &str,
+    purchase_token: Option<&str>,
+) -> Result<(), BridgeError> {
+    if let Some(purchase_token) = purchase_token {
+        sqlx::query(
+            "UPDATE pay.payments
+             SET acknowledged_at = COALESCE(acknowledged_at, NOW())
+             WHERE app_id = $1 AND external_user_id = $2 AND provider = $3 AND provider_transaction_id = $4",
+        )
+        .bind(app_id)
+        .bind(external_user_id)
+        .bind(provider)
+        .bind(purchase_token)
+        .execute(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    } else {
+        sqlx::query(
+            "UPDATE pay.payments
+             SET acknowledged_at = COALESCE(acknowledged_at, NOW())
+             WHERE app_id = $1 AND external_user_id = $2 AND provider = $3 AND subscription_id = $4",
+        )
+        .bind(app_id)
+        .bind(external_user_id)
+        .bind(provider)
+        .bind(subscription_id)
+        .execute(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    }
+
+    Ok(())
+}
+
+pub async fn accept_price_step_up(
+    pool: &PgPool,
+    id: Uuid,
+) -> Result<Subscription, BridgeError> {
+    sqlx::query_as::<_, Subscription>(
+        "UPDATE pay.subscriptions
+         SET google_requires_price_step_up_consent = false,
+             google_price_step_up_consent_status = 'accepted',
+             google_price_step_up_consent_deadline = NULL,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
+pub async fn decline_price_step_up(
+    pool: &PgPool,
+    id: Uuid,
+) -> Result<Subscription, BridgeError> {
+    sqlx::query_as::<_, Subscription>(
+        "UPDATE pay.subscriptions
+         SET google_requires_price_step_up_consent = false,
+             google_price_step_up_consent_status = 'rejected',
+             google_price_step_up_consent_deadline = NULL,
+             google_pending_cancellation = true,
+             google_pending_cancellation_at = NOW(),
+             auto_renewing = false,
+             cancellation_initiated_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
 pub async fn lookup_user_by_subscription_id(
     pool: &PgPool,
     app_id: Uuid,
