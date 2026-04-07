@@ -99,6 +99,7 @@ struct VerifiedPurchase {
     payment_state: Option<i32>,
     acknowledgement: PaymentAcknowledgement,
     obfuscated_account_id: Option<String>,
+    resubscribe_obfuscated_account_id: Option<String>,
 }
 
 enum PaymentAcknowledgement {
@@ -109,6 +110,7 @@ enum PaymentAcknowledgement {
 
 struct VerifyPurchaseCallback<'a> {
     request: &'a VerifyPurchaseRequest,
+    resolved_external_user_id: &'a str,
     product_type: ProductType,
     status: &'a str,
     current_period_end: Option<&'a str>,
@@ -192,11 +194,68 @@ pub async fn verify_purchase(
         VerificationOutcome::Verified(verified) => verified,
     };
 
+    let mut resolved_external_user_id = payload.external_user_id.clone();
+
+    if payload.provider == "google_play" {
+        if let Some(resubscribe_obfuscated_account_id) =
+            verified.resubscribe_obfuscated_account_id.as_deref()
+        {
+            resolved_external_user_id = match db::subscriptions::lookup_user_by_google_obfuscated_id(
+                &database.pool,
+                auth.app_id,
+                resubscribe_obfuscated_account_id,
+            )
+            .await?
+            {
+                Some(original_external_user_id) => original_external_user_id,
+                None => {
+                    return Ok((
+                        StatusCode::OK,
+                        Json(VerifyPurchaseResponse {
+                            status: "linking_required".to_string(),
+                            subscription_id: payload.subscription_id.clone(),
+                            current_period_end: None,
+                            auto_renewing: None,
+                            amount_cents: verified.amount_cents,
+                            is_new: false,
+                            message: Some(
+                                "This purchase belongs to a different Google Play account and must be linked first"
+                                    .to_string(),
+                            ),
+                            obfuscated_account_id: Some(
+                                resubscribe_obfuscated_account_id.to_string(),
+                            ),
+                        }),
+                    ));
+                }
+            };
+        } else if let Some(owner_hash) = verified.obfuscated_account_id.as_deref() {
+            if compute_obfuscated_id_hash(&payload.external_user_id) != owner_hash {
+                return Ok((
+                    StatusCode::OK,
+                    Json(VerifyPurchaseResponse {
+                        status: "linking_required".to_string(),
+                        subscription_id: payload.subscription_id.clone(),
+                        current_period_end: None,
+                        auto_renewing: None,
+                        amount_cents: verified.amount_cents,
+                        is_new: false,
+                        message: Some(
+                            "This purchase belongs to a different Google Play account and must be linked first"
+                                .to_string(),
+                        ),
+                        obfuscated_account_id: Some(owner_hash.to_string()),
+                    }),
+                ));
+            }
+        }
+    }
+
     let existing_subscription = if product_type.is_subscription() {
         match db::subscriptions::get_subscription(
             &database.pool,
             auth.app_id,
-            &payload.external_user_id,
+            &resolved_external_user_id,
             &payload.subscription_id,
             &payload.provider,
         )
@@ -266,7 +325,7 @@ pub async fn verify_purchase(
     let payment_record_result = db::payments::record_payment_tx(
         &mut tx,
         auth.app_id,
-        &payload.external_user_id,
+        &resolved_external_user_id,
         &payload.provider,
         &payload.purchase_token,
         Some(&payload.subscription_id),
@@ -319,7 +378,7 @@ pub async fn verify_purchase(
         let subscription = db::subscriptions::upsert_subscription_tx(
             &mut tx,
             auth.app_id,
-            &payload.external_user_id,
+            &resolved_external_user_id,
             &payload.subscription_id,
             &payload.provider,
             &verified.status,
@@ -340,8 +399,25 @@ pub async fn verify_purchase(
                 .and_then(|subscription| subscription.provider_customer_id.as_deref()),
             Utc::now().timestamp_millis(),
         )
-        .await?
-        .subscription;
+            .await?
+            .subscription;
+
+        if payload.provider == "google_play" {
+            sqlx::query(
+                "UPDATE pay.subscriptions
+                 SET google_obfuscated_account_id = COALESCE($1, google_obfuscated_account_id),
+                     updated_at = NOW()
+                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND provider = $5"
+            )
+            .bind(verified.obfuscated_account_id.as_deref())
+            .bind(auth.app_id)
+            .bind(&resolved_external_user_id)
+            .bind(&payload.subscription_id)
+            .bind(&payload.provider)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?;
+        }
 
         response_auto_renewing = subscription.auto_renewing;
     }
@@ -419,6 +495,7 @@ pub async fn verify_purchase(
             &app.slug,
             VerifyPurchaseCallback {
                 request: &payload,
+                resolved_external_user_id: &resolved_external_user_id,
                 product_type,
                 status: &callback_status,
                 current_period_end: response.current_period_end.as_deref(),
@@ -584,6 +661,7 @@ async fn verify_creem(
         payment_state: None,
         acknowledgement: PaymentAcknowledgement::NotApplicable,
         obfuscated_account_id: None,
+        resubscribe_obfuscated_account_id: None,
     })
 }
 
@@ -641,6 +719,7 @@ async fn verify_lemonsqueezy(
         payment_state: None,
         acknowledgement: PaymentAcknowledgement::NotApplicable,
         obfuscated_account_id: None,
+        resubscribe_obfuscated_account_id: None,
     })
 }
 
@@ -715,6 +794,7 @@ async fn verify_coinbase(
         payment_state: None,
         acknowledgement: PaymentAcknowledgement::NotApplicable,
         obfuscated_account_id: None,
+        resubscribe_obfuscated_account_id: None,
     })
 }
 
@@ -737,7 +817,7 @@ async fn forward_verify_purchase_callback(
         Some(callback.request.purchase_token.clone()),
         serde_json::json!({
             "source": "verify_purchase",
-            "external_user_id": callback.request.external_user_id,
+            "external_user_id": callback.resolved_external_user_id,
             "subscription_id": callback.request.subscription_id,
             "provider": callback.request.provider,
             "status": callback.status,
@@ -758,7 +838,7 @@ async fn forward_verify_purchase_callback(
         subscription_id: callback.product_type
             .is_subscription()
             .then(|| callback.request.subscription_id.clone()),
-        external_user_id: Some(callback.request.external_user_id.clone()),
+        external_user_id: Some(callback.resolved_external_user_id.to_string()),
         amount_cents: callback.amount_cents,
         new_price_cents: None,
         auto_renewing: callback.auto_renewing,
@@ -860,25 +940,19 @@ fn map_google_subscription_verification(
         .as_ref()
         .and_then(|ids| ids.obfuscated_account_id.clone());
 
-    if let Some(expired_identifiers) = purchase
+    let resubscribe_obfuscated_account_id = purchase
         .out_of_app_purchase_context
         .as_ref()
         .and_then(|ctx| ctx.expired_external_account_identifiers.as_ref())
-    {
-        if let Some(expired_id) = expired_identifiers.obfuscated_account_id.clone() {
-            if compute_obfuscated_id_hash(external_user_id) != expired_id {
+        .and_then(|ids| ids.obfuscated_account_id.clone());
+
+    if resubscribe_obfuscated_account_id.is_none() {
+        if let Some(owner_hash) = obfuscated_account_id.clone() {
+            if compute_obfuscated_id_hash(external_user_id) != owner_hash {
                 return Ok(VerificationOutcome::LinkingRequired {
-                    obfuscated_account_id: expired_id,
+                    obfuscated_account_id: owner_hash,
                 });
             }
-        }
-    }
-
-    if let Some(owner_hash) = obfuscated_account_id.clone() {
-        if compute_obfuscated_id_hash(external_user_id) != owner_hash {
-            return Ok(VerificationOutcome::LinkingRequired {
-                obfuscated_account_id: owner_hash,
-            });
         }
     }
 
@@ -929,6 +1003,7 @@ fn map_google_subscription_verification(
         payment_state: None,
         acknowledgement,
         obfuscated_account_id,
+        resubscribe_obfuscated_account_id,
     }))
 }
 
@@ -957,6 +1032,7 @@ fn map_google_product_verification(
         payment_state: Some(purchase.purchase_state),
         acknowledgement,
         obfuscated_account_id: purchase.obfuscated_account_id,
+        resubscribe_obfuscated_account_id: None,
     }
 }
 
@@ -1004,6 +1080,21 @@ fn mock_verify_google_play(
                 });
             }
 
+            if purchase_token.contains("oap") || purchase_token.contains("resubscribe") {
+                let obfuscated_account_id = compute_obfuscated_id_hash(external_user_id);
+
+                return Ok(VerificationOutcome::Verified(VerifiedPurchase {
+                    status: "active".to_string(),
+                    current_period_end: Some(Utc::now() + Duration::days(30)),
+                    auto_renewing: Some(true),
+                    amount_cents: None,
+                    payment_state: None,
+                    acknowledgement: PaymentAcknowledgement::Pending,
+                    obfuscated_account_id: Some(obfuscated_account_id.clone()),
+                    resubscribe_obfuscated_account_id: Some(obfuscated_account_id),
+                }));
+            }
+
             let status = if purchase_token.contains("pending") {
                 "pending"
             } else if purchase_token.contains("on_hold") {
@@ -1027,6 +1118,7 @@ fn mock_verify_google_play(
                 payment_state: None,
                 acknowledgement: PaymentAcknowledgement::Pending,
                 obfuscated_account_id: Some(compute_obfuscated_id_hash(external_user_id)),
+                resubscribe_obfuscated_account_id: None,
             }))
         }
         ProductType::OneTimeProduct => {
@@ -1063,6 +1155,7 @@ fn mock_verify_google_play(
                 }),
                 acknowledgement: PaymentAcknowledgement::Pending,
                 obfuscated_account_id: None,
+                resubscribe_obfuscated_account_id: None,
             }))
         }
     }
@@ -1092,7 +1185,9 @@ fn compute_obfuscated_id_hash(external_user_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::google_play::models::{AutoRenewingPlan, SubscriptionLineItem};
+    use crate::services::google_play::models::{
+        AutoRenewingPlan, ExternalAccountIdentifiers, OutOfAppPurchaseContext, SubscriptionLineItem,
+    };
 
     #[test]
     fn google_subscription_verification_returns_recurring_price_cents() {
@@ -1126,6 +1221,70 @@ mod tests {
             }
             VerificationOutcome::LinkingRequired { .. } => {
                 panic!("expected a verified purchase response")
+            }
+        }
+    }
+
+    #[test]
+    fn google_subscription_verification_prefers_expired_obfuscated_account_id_for_resubscribe() {
+        let purchase = SubscriptionPurchaseV2 {
+            subscription_state: Some("SUBSCRIPTION_STATE_ACTIVE".to_string()),
+            acknowledgement_state: Some("ACKNOWLEDGEMENT_STATE_PENDING".to_string()),
+            external_account_identifiers: Some(ExternalAccountIdentifiers {
+                obfuscated_account_id: Some("current-owner-hash".to_string()),
+                obfuscated_profile_id: None,
+            }),
+            out_of_app_purchase_context: Some(OutOfAppPurchaseContext {
+                expired_external_account_identifiers: Some(ExternalAccountIdentifiers {
+                    obfuscated_account_id: Some("expired-owner-hash".to_string()),
+                    obfuscated_profile_id: None,
+                }),
+                expired_purchase_token: Some("old-token".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        let verification = map_google_subscription_verification(purchase, "user-123")
+            .expect("google subscription verification should succeed");
+
+        match verification {
+            VerificationOutcome::Verified(verified) => {
+                assert_eq!(
+                    verified.resubscribe_obfuscated_account_id,
+                    Some("expired-owner-hash".to_string())
+                );
+                assert_eq!(
+                    verified.obfuscated_account_id,
+                    Some("current-owner-hash".to_string())
+                );
+            }
+            VerificationOutcome::LinkingRequired { .. } => {
+                panic!("expected resubscribe verification to continue")
+            }
+        }
+    }
+
+    #[test]
+    fn google_subscription_verification_requires_linking_when_owner_hash_differs() {
+        let purchase = SubscriptionPurchaseV2 {
+            subscription_state: Some("SUBSCRIPTION_STATE_ACTIVE".to_string()),
+            acknowledgement_state: Some("ACKNOWLEDGEMENT_STATE_PENDING".to_string()),
+            external_account_identifiers: Some(ExternalAccountIdentifiers {
+                obfuscated_account_id: Some("owner-hash".to_string()),
+                obfuscated_profile_id: None,
+            }),
+            ..Default::default()
+        };
+
+        let verification = map_google_subscription_verification(purchase, "user-123")
+            .expect("google subscription verification should succeed");
+
+        match verification {
+            VerificationOutcome::LinkingRequired { obfuscated_account_id } => {
+                assert_eq!(obfuscated_account_id, "owner-hash");
+            }
+            VerificationOutcome::Verified(_) => {
+                panic!("expected linking_required for mismatched owner hash")
             }
         }
     }
