@@ -30,7 +30,6 @@ High-confidence mismatches worth attention first:
 
 | Priority | Spec Section(s) | Status | Finding | Code Evidence |
 |---|---|---|---|---|---|
-|#20| P2 | 1 | Partial | Startup/background workers largely match the spec, but the implementation also starts a webhook retry worker that the startup section does not mention explicitly. This is not harmful, but it means the spec is incomplete about active background jobs. | `src/main.rs:82-89` |
 |#21| P2 | 4 | Partial | Checkout behavior is mostly aligned, but the implementation has an extra alias route (`/api/v1/payment/checkout`) that the spec does not document. | `src/main.rs:97-99` |
 
 

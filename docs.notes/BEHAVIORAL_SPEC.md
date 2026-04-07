@@ -84,7 +84,7 @@ This document captures **every behavioral action** that Bridge must perform. Eac
 3. **Production safeguard**: If `MOCK_EXTERNAL_APIS=true` in production → panic with error.
 4. Connect to PostgreSQL (Bridge's own database, separate from any app DB).
 5. No provider credentials are loaded at startup; provider config is fetched on demand for the active app/provider pair.
-6. If `enable_background_jobs=true`: start background tasks (reconciliation, price step-up, pause scheduler, webhook log cleanup).
+6. If `enable_background_jobs=true`: start background tasks (webhook retry, reconciliation, price step-up, pause scheduler, webhook log cleanup).
 7. **Provider loading is dynamic, per-app**: Unlike the monolith (which loads providers at startup from env vars), Bridge loads provider credentials from `pay.provider_configs` on each request. Provider instances may be cached per `app_id` with TTL.
 8. Build router:
    - **Public**: `GET /health`
