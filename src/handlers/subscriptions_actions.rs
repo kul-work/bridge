@@ -33,6 +33,12 @@ pub struct SubscriptionActionResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ResumeSubscriptionResponse {
+    pub status: String,
+    pub subscription_id: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct CancelSubscriptionResponse {
     pub status: String,
     pub mode: String,
@@ -160,7 +166,7 @@ pub async fn resume_subscription(
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Query(query): Query<SubscriptionActionQuery>,
-) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
+) -> Result<(StatusCode, Json<ResumeSubscriptionResponse>), BridgeError> {
     if query.external_user_id.trim().is_empty() {
         return Err(BridgeError::ValidationError("external_user_id is required".to_string()));
     }
@@ -217,9 +223,9 @@ pub async fn resume_subscription(
 
     Ok((
         StatusCode::OK,
-        Json(SubscriptionActionResponse {
-            success: true,
-            message: "Subscription resumed".to_string(),
+        Json(ResumeSubscriptionResponse {
+            status: updated_sub.status,
+            subscription_id: updated_sub.subscription_id,
         }),
     ))
 }
