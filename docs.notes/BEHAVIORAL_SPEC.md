@@ -310,7 +310,9 @@ RETURNING request_count
    - If mode is `"scheduled"`:
      - `UPDATE subscriptions SET auto_renewing=false`.
      - Subscription remains active until `current_period_end`.
-10. **Forward callback to app**: `subscription.cancelled` event with `mode` info.
+     - This is a soft transition: the row may still read as `active` until the effective end is reached.
+10. **Forward callback to app**: `subscription.cancelled` event with `mode` info and `current_period_end` when available.
+   - For scheduled cancels, `status` in the payload may still reflect the current DB lifecycle state. Apps should use `current_period_end` as the access cutoff.
 11. Return `{ "status": "cancelled", "mode": "...", "subscription_id": "..." }`.
 
 ---
@@ -539,7 +541,7 @@ If provider supports enrichment (Google Play):
 
 1. Lookup `external_user_id` by `subscription_id`.
 2. **Google Play**: store cancellation context with `event_time_millis`.
-3. Update: `SET auto_renewing=false`. Subscription status remains active.
+3. Update: `SET auto_renewing=false`. Subscription status remains active until the effective end.
 4. **Forward callback to app**: `subscription.cancelled` event with `current_period_end`.
    - App should retain access until `current_period_end`.
 
@@ -565,7 +567,8 @@ If provider supports enrichment (Google Play):
 1. Lookup user (see [§53](#53-user-lookup-strategies-webhook--user-resolution)).
 2. Normalize status: `"trialing"→"trial"`, `"paid"/"active"/"completed"→"active"`, `"canceled"→"cancelled"`, etc.
 3. **Google Play**: enrich with Google API (`current_period_end`, `auto_renewing`).
-4. UPSERT subscription with normalized status `"cancelled"`.
+4. UPSERT subscription with the normalized lifecycle state from the provider event.
+   - For scheduled cancellations, that may still be `active` until the effective end.
 5. **Forward callback to app**: `subscription.cancelled` event with `current_period_end`.
    - App decides: retain access until `current_period_end` or revoke immediately.
 
