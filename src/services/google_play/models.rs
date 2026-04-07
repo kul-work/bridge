@@ -141,6 +141,7 @@ pub struct SubscriptionLineItem {
 #[serde(rename_all = "camelCase")]
 pub struct AutoRenewingPlan {
     pub auto_renew_enabled: Option<bool>,
+    pub recurring_price: Option<Money>,
     // subscription_notes omitted
 }
 
@@ -206,6 +207,7 @@ pub struct ProductPurchase {
     pub kind: String,
     pub purchase_state: i32,
     pub purchase_time_millis: String,
+    pub order_id: Option<String>,
     /// User ID hash from Google Play. Must match hash of authenticated user ID for security.
     /// This validates the purchase belongs to the current user.
     pub obfuscated_account_id: Option<String>,

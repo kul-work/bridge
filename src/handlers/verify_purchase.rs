@@ -3,7 +3,7 @@ use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::services::google_play::{
     client::GooglePlayClient,
-    models::{ProductPurchase, SubscriptionPurchaseV2},
+    models::{Money, ProductPurchase, SubscriptionPurchaseV2},
 };
 use crate::webhooks::processor::CanonicalWebhookPayload;
 use axum::{
@@ -501,8 +501,27 @@ async fn verify_google_play(
                 .await
                 .map_err(|e| BridgeError::ProviderError(format!("Google Play verify failed: {}", e)))?;
 
+            let amount_cents = match purchase.order_id.as_deref() {
+                Some(order_id) => match client
+                    .get_order_amount_cents(google_package_name(config)?, order_id)
+                    .await
+                {
+                    Ok(amount_cents) => amount_cents,
+                    Err(err) => {
+                        tracing::warn!(
+                            "Google Play order amount lookup failed for order {}: {}",
+                            order_id,
+                            err
+                        );
+                        None
+                    }
+                },
+                None => None,
+            };
+
             Ok(VerificationOutcome::Verified(map_google_product_verification(
                 purchase,
+                amount_cents,
             )))
         }
     }
@@ -554,13 +573,14 @@ async fn verify_creem(
     let period_end = resp_json["current_period_end"].as_str()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
+    let amount_cents = first_minor_unit_amount(&resp_json, &["/price", "/total", "/amount"]);
 
     tracing::info!("Creem subscription {} verified with status: {}", subscription_id, sub_status);
     Ok(VerifiedPurchase {
         status: sub_status,
         current_period_end: period_end,
         auto_renewing: None,
-        amount_cents: None,
+        amount_cents,
         payment_state: None,
         acknowledgement: PaymentAcknowledgement::NotApplicable,
         obfuscated_account_id: None,
@@ -607,13 +627,17 @@ async fn verify_lemonsqueezy(
     let period_end = resp_json["data"]["attributes"]["renews_at"].as_str()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
+    let amount_cents = first_minor_unit_amount(
+        &resp_json,
+        &["/data/attributes/total_cents", "/data/attributes/total"],
+    );
 
     tracing::info!("LemonSqueezy subscription {} verified with status: {}", subscription_id, sub_status);
     Ok(VerifiedPurchase {
         status: sub_status,
         current_period_end: period_end,
         auto_renewing: None,
-        amount_cents: None,
+        amount_cents,
         payment_state: None,
         acknowledgement: PaymentAcknowledgement::NotApplicable,
         obfuscated_account_id: None,
@@ -660,6 +684,25 @@ async fn verify_coinbase(
     let confirmed = resp_json["data"]["confirmed_at"].as_str()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
+    let amount_cents = resp_json["data"]["payments"]
+        .as_array()
+        .and_then(|payments| {
+            let total = payments
+                .iter()
+                .filter(|payment| payment["status"].as_str() == Some("CONFIRMED"))
+                .filter_map(|payment| {
+                    payment["value"]["local"]["amount"]
+                        .as_str()
+                        .and_then(|amount| amount.parse::<f64>().ok())
+                })
+                .map(|amount| (amount * 100.0).round() as i64)
+                .sum::<i64>();
+
+            (total > 0)
+                .then_some(total)
+                .and_then(|total| i32::try_from(total).ok())
+        })
+        .or_else(|| parse_major_unit_amount_to_cents(&resp_json["data"]["pricing"]["local"]["amount"]));
 
     let verified_status = if charge_status == "completed" { "active".to_string() } else { "pending".to_string() };
     
@@ -668,7 +711,7 @@ async fn verify_coinbase(
         status: verified_status,
         current_period_end: confirmed,
         auto_renewing: None,
-        amount_cents: None,
+        amount_cents,
         payment_state: None,
         acknowledgement: PaymentAcknowledgement::NotApplicable,
         obfuscated_account_id: None,
@@ -766,6 +809,48 @@ async fn build_google_play_client(config: &serde_json::Value) -> Result<GooglePl
         .map_err(|e| BridgeError::ConfigError(format!("Failed to init Google Play client: {}", e)))
 }
 
+fn parse_minor_unit_amount(value: &serde_json::Value) -> Option<i32> {
+    value
+        .as_i64()
+        .and_then(|amount| i32::try_from(amount).ok())
+        .or_else(|| {
+            value
+                .as_str()
+                .and_then(|amount| amount.parse::<i64>().ok())
+                .and_then(|amount| i32::try_from(amount).ok())
+        })
+}
+
+fn parse_major_unit_amount_to_cents(value: &serde_json::Value) -> Option<i32> {
+    let amount = value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|amount| amount.parse::<f64>().ok()))?;
+
+    let cents = (amount * 100.0).round();
+    if !cents.is_finite() || cents < 0.0 || cents > i32::MAX as f64 {
+        return None;
+    }
+
+    Some(cents as i32)
+}
+
+fn first_minor_unit_amount(resp_json: &serde_json::Value, paths: &[&str]) -> Option<i32> {
+    paths
+        .iter()
+        .find_map(|path| resp_json.pointer(path).and_then(parse_minor_unit_amount))
+}
+
+fn google_money_to_cents(money: &Money) -> Option<i32> {
+    let units = money.units.as_deref()?.parse::<i64>().ok()?;
+    if units < 0 {
+        return None;
+    }
+
+    let nanos = i64::from(money.nanos.unwrap_or(0)).clamp(0, 999_999_999);
+    let total_cents = units.checked_mul(100)?.checked_add(nanos / 10_000_000)?;
+    i32::try_from(total_cents).ok()
+}
+
 fn map_google_subscription_verification(
     purchase: SubscriptionPurchaseV2,
     external_user_id: &str,
@@ -824,6 +909,13 @@ fn map_google_subscription_verification(
             .and_then(|plan| plan.auto_renew_enabled)
     });
 
+    let amount_cents = purchase
+        .line_items
+        .iter()
+        .find_map(|line_item| line_item.auto_renewing_plan.as_ref())
+        .and_then(|plan| plan.recurring_price.as_ref())
+        .and_then(google_money_to_cents);
+
     let acknowledgement = match purchase.acknowledgement_state.as_deref() {
         Some("ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED") => PaymentAcknowledgement::AlreadyAcknowledged,
         _ => PaymentAcknowledgement::Pending,
@@ -833,14 +925,17 @@ fn map_google_subscription_verification(
         status,
         current_period_end,
         auto_renewing,
-        amount_cents: None,
+        amount_cents,
         payment_state: None,
         acknowledgement,
         obfuscated_account_id,
     }))
 }
 
-fn map_google_product_verification(purchase: ProductPurchase) -> VerifiedPurchase {
+fn map_google_product_verification(
+    purchase: ProductPurchase,
+    amount_cents: Option<i32>,
+) -> VerifiedPurchase {
     let status = match purchase.purchase_state {
         0 => "active",
         1 => "cancelled",
@@ -858,7 +953,7 @@ fn map_google_product_verification(purchase: ProductPurchase) -> VerifiedPurchas
         status,
         current_period_end: None,
         auto_renewing: None,
-        amount_cents: None,
+        amount_cents,
         payment_state: Some(purchase.purchase_state),
         acknowledgement,
         obfuscated_account_id: purchase.obfuscated_account_id,
@@ -939,6 +1034,7 @@ fn mock_verify_google_play(
             {
                 return Ok(VerificationOutcome::Verified(map_google_product_verification(
                     purchase,
+                    None,
                 )));
             }
 
@@ -991,4 +1087,64 @@ fn compute_obfuscated_id_hash(external_user_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(external_user_id.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::google_play::models::{AutoRenewingPlan, SubscriptionLineItem};
+
+    #[test]
+    fn google_subscription_verification_returns_recurring_price_cents() {
+        let purchase = SubscriptionPurchaseV2 {
+            auto_renewing: Some(true),
+            subscription_state: Some("SUBSCRIPTION_STATE_ACTIVE".to_string()),
+            acknowledgement_state: Some("ACKNOWLEDGEMENT_STATE_PENDING".to_string()),
+            line_items: vec![SubscriptionLineItem {
+                product_id: "premium_monthly".to_string(),
+                expiry_time: Some("2026-04-30T00:00:00Z".to_string()),
+                auto_renewing_plan: Some(AutoRenewingPlan {
+                    auto_renew_enabled: Some(true),
+                    recurring_price: Some(Money {
+                        currency_code: Some("USD".to_string()),
+                        units: Some("12".to_string()),
+                        nanos: Some(990_000_000),
+                    }),
+                }),
+                offer_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let verification = map_google_subscription_verification(purchase, "user-123")
+            .expect("google subscription verification should succeed");
+
+        match verification {
+            VerificationOutcome::Verified(verified) => {
+                assert_eq!(verified.amount_cents, Some(1299));
+                assert_eq!(verified.status, "active");
+            }
+            VerificationOutcome::LinkingRequired { .. } => {
+                panic!("expected a verified purchase response")
+            }
+        }
+    }
+
+    #[test]
+    fn google_product_verification_uses_enriched_order_amount() {
+        let purchase = ProductPurchase {
+            kind: "androidpublisher".to_string(),
+            purchase_state: 0,
+            purchase_time_millis: "1712448000000".to_string(),
+            order_id: Some("GPA.1234-5678-9012-34567".to_string()),
+            obfuscated_account_id: None,
+            acknowledgement_state: Some(1),
+        };
+
+        let verified = map_google_product_verification(purchase, Some(499));
+
+        assert_eq!(verified.amount_cents, Some(499));
+        assert_eq!(verified.status, "active");
+        assert_eq!(verified.payment_state, Some(0));
+    }
 }

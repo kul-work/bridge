@@ -225,6 +225,43 @@ impl GooglePlayClient {
         Ok(purchase)
     }
 
+    pub async fn get_order_amount_cents(
+        &self,
+        package_name: &str,
+        order_id: &str,
+    ) -> Result<Option<i32>> {
+        tracing::debug!("GooglePlayClient: get_order_amount_cents - package: {}, order_id: {}", package_name, order_id);
+
+        let access_token = self.get_access_token().await?;
+
+        let url = format!(
+            "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/orders/{}",
+            package_name, order_id
+        );
+
+        let res = self.client
+            .get(&url)
+            .bearer_auth(access_token)
+            .send()
+            .await?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let text = res.text().await?;
+            tracing::error!(
+                "GooglePlayClient: Orders API error - package: {}, order_id: {}, status: {}, response: {}",
+                package_name,
+                order_id,
+                status,
+                text
+            );
+            return Err(anyhow::anyhow!("Failed to get order: {}, response: {}", url, text));
+        }
+
+        let order: serde_json::Value = res.json().await?;
+        Ok(order_amount_cents_from_payload(&order))
+    }
+
     pub async fn cancel_subscription(
         &self,
         package_name: &str,
@@ -738,4 +775,25 @@ impl GooglePlayClient {
         tracing::debug!("Pub/Sub JWT signature verification passed");
         Ok(true)
     }
+}
+
+fn order_amount_cents_from_payload(order: &serde_json::Value) -> Option<i32> {
+    let total_cents = order["lineItems"]
+        .as_array()?
+        .iter()
+        .filter_map(|line_item| money_cents_from_value(&line_item["total"]))
+        .try_fold(0i64, |sum, amount| sum.checked_add(i64::from(amount)))?;
+
+    i32::try_from(total_cents).ok()
+}
+
+fn money_cents_from_value(value: &serde_json::Value) -> Option<i32> {
+    let units = value["units"].as_str()?.parse::<i64>().ok()?;
+    if units < 0 {
+        return None;
+    }
+
+    let nanos = i64::from(value["nanos"].as_i64().unwrap_or(0) as i32).clamp(0, 999_999_999);
+    let cents = units.checked_mul(100)?.checked_add(nanos / 10_000_000)?;
+    i32::try_from(cents).ok()
 }
