@@ -53,22 +53,22 @@ pub struct CanonicalWebhookPayload {
 }
 
 #[allow(dead_code)]
-struct WebhookFields {
-    subscription_id: Option<String>,
-    purchase_token: Option<String>,
-    amount_cents: Option<i32>,
-    auto_renewing: Option<bool>,
-    current_period_end: Option<String>,
-    provider_transaction_id: Option<String>,
-    provider_customer_id: Option<String>,
-    product_id: Option<String>,
-    cancel_reason: Option<String>,
-    status: Option<String>,
-    google_subscription_state: Option<i32>,
-    google_cancellation_context: Option<String>,
-    google_cancellation_feedback: Option<String>,
-    google_new_price_cents: Option<i32>,
-    google_price_step_up_consent_deadline: Option<String>,
+pub(crate) struct WebhookFields {
+    pub(crate) subscription_id: Option<String>,
+    pub(crate) purchase_token: Option<String>,
+    pub(crate) amount_cents: Option<i32>,
+    pub(crate) auto_renewing: Option<bool>,
+    pub(crate) current_period_end: Option<String>,
+    pub(crate) provider_transaction_id: Option<String>,
+    pub(crate) provider_customer_id: Option<String>,
+    pub(crate) product_id: Option<String>,
+    pub(crate) cancel_reason: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) google_subscription_state: Option<i32>,
+    pub(crate) google_cancellation_context: Option<String>,
+    pub(crate) google_cancellation_feedback: Option<String>,
+    pub(crate) google_new_price_cents: Option<i32>,
+    pub(crate) google_price_step_up_consent_deadline: Option<String>,
 }
 
 fn extract_metadata_user_id(payload: &serde_json::Value) -> Option<String> {
@@ -872,40 +872,22 @@ pub async fn process_webhook(
 
         // §16 - Revoked
         "subscription.revoked" => {
-            if let Some(ref _user_id) = external_user_id {
-                let sub_id = fields.subscription_id.as_deref()
-                    .or(webhook.subscription_id.as_deref())
-                    .unwrap_or("");
-                if let Some(token) = fields.purchase_token.as_deref().or(webhook.purchase_token.as_deref()) {
-                    if repo.get_payment_status(app_id, token).await?.as_deref() == Some("refunded") {
-                        info!("Skipped revoked event for subscription {} because payment {} is already refunded", sub_id, token);
-                        return Ok(None);
-                    }
+            if let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_revoked(
+                repo,
+                app_id,
+                &webhook,
+                &fields,
+                timestamp_epoch_ms,
+            ).await? {
+                canonical_subscription = outcome.canonical_subscription;
+                if let Some(event_type) = outcome.callback_event_type {
+                    callback_event_type = event_type;
                 }
-
-                let revocation_reason = fields
-                    .cancel_reason
-                    .clone()
-                    .or_else(|| fields.google_cancellation_context.clone())
-                    .unwrap_or_else(|| "unknown".to_string());
-
-                let updated = repo.apply_subscription_transition(
-                    app_id,
-                    sub_id,
-                    timestamp_epoch_ms,
-                    SubscriptionWebhookTransition::Revoked {
-                        revocation_reason: Some(revocation_reason.clone()),
-                    },
-                ).await?;
-                if let Some(sub) = updated {
-                    canonical_subscription = Some(sub);
-                    callback_event_type = "subscription.revoked".to_string();
-                    callback_status_override = Some("revoked".to_string());
-                    callback_revocation_reason_override = Some(revocation_reason);
-                } else {
-                    info!("Skipped stale revoked event for subscription {}", sub_id);
-                    return Ok(None);
-                }
+                callback_status_override = outcome.callback_status_override;
+                callback_revocation_reason_override = outcome.callback_revocation_reason_override;
+                callback_cancellation_mode_override = outcome.callback_cancellation_mode_override;
+            } else {
+                return Ok(None);
             }
         }
 
@@ -961,54 +943,39 @@ pub async fn process_webhook(
 
         // §19 - Restarted/Resumed (guard: only if current status is paused)
         "subscription.resumed" => {
-            if let Some(ref _user_id) = external_user_id {
-                let sub_id = fields.subscription_id.clone().unwrap_or_default();
-                if let Ok(Some(sub)) = repo.get_subscription_by_sub_id(app_id, &sub_id).await {
-                    if sub.status == "paused" {
-                        let updated = repo.apply_subscription_transition(
-                            app_id,
-                            &sub_id,
-                            timestamp_epoch_ms,
-                            SubscriptionWebhookTransition::Resumed,
-                        ).await?;
-                        if let Some(updated_sub) = updated {
-                            canonical_subscription = Some(updated_sub);
-                            callback_event_type = "subscription.resumed".to_string();
-                            callback_status_override = Some("active".to_string());
-                        } else {
-                            info!("Skipped stale resumed event for subscription {}", sub_id);
-                            return Ok(None);
-                        }
-                    } else {
-                        info!("Ignoring resume event for subscription {} in status '{}' (not paused)", sub_id, sub.status);
-                    }
+            if let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_resumed(
+                repo,
+                app_id,
+                &webhook,
+                &fields,
+                timestamp_epoch_ms,
+            ).await? {
+                canonical_subscription = outcome.canonical_subscription;
+                if let Some(event_type) = outcome.callback_event_type {
+                    callback_event_type = event_type;
                 }
+                callback_status_override = outcome.callback_status_override;
+                callback_revocation_reason_override = outcome.callback_revocation_reason_override;
+                callback_cancellation_mode_override = outcome.callback_cancellation_mode_override;
             }
         }
 
         // §20 - Cancellation Scheduled
         "subscription.cancellation_scheduled" => {
-            if let Some(ref _user_id) = external_user_id {
-                if let Some(sub_id) = fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()) {
-                    let updated = repo.apply_subscription_transition(
-                        app_id,
-                        sub_id,
-                        timestamp_epoch_ms,
-                        SubscriptionWebhookTransition::CancellationScheduled {
-                            google_cancellation_context: fields.google_cancellation_context.clone(),
-                            google_cancellation_feedback: fields.google_cancellation_feedback.clone(),
-                        },
-                    ).await?;
-                    if let Some(updated_sub) = updated {
-                        canonical_subscription = Some(updated_sub);
-                        callback_event_type = "subscription.cancelled".to_string();
-                        callback_status_override = Some("cancelled".to_string());
-                        callback_cancellation_mode_override = Some("scheduled".to_string());
-                    } else {
-                        info!("Skipped stale cancellation_scheduled event for subscription {}", sub_id);
-                        return Ok(None);
-                    }
+            if let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_cancellation_scheduled(
+                repo,
+                app_id,
+                &webhook,
+                &fields,
+                timestamp_epoch_ms,
+            ).await? {
+                canonical_subscription = outcome.canonical_subscription;
+                if let Some(event_type) = outcome.callback_event_type {
+                    callback_event_type = event_type;
                 }
+                callback_status_override = outcome.callback_status_override;
+                callback_revocation_reason_override = outcome.callback_revocation_reason_override;
+                callback_cancellation_mode_override = outcome.callback_cancellation_mode_override;
             }
         }
 
@@ -1035,30 +1002,20 @@ pub async fn process_webhook(
 
         // §22 - Cancelled
         "subscription.cancelled" => {
-            if let Some(ref _user_id) = external_user_id {
-                let sub_id = fields.subscription_id.clone().unwrap_or_default();
-                let cancel_period_end = fields
-                    .current_period_end
-                    .as_deref()
-                    .and_then(parse_rfc3339_utc);
-                let updated = repo.apply_subscription_transition(
-                    app_id,
-                    &sub_id,
-                    timestamp_epoch_ms,
-                    SubscriptionWebhookTransition::Cancelled {
-                        current_period_end: cancel_period_end,
-                        google_cancellation_context: fields.google_cancellation_context.clone(),
-                        google_cancellation_feedback: fields.google_cancellation_feedback.clone(),
-                    },
-                ).await?;
-                if let Some(updated_sub) = updated {
-                    canonical_subscription = Some(updated_sub);
-                    callback_event_type = "subscription.cancelled".to_string();
-                    callback_status_override = Some("cancelled".to_string());
-                } else {
-                    info!("Skipped stale cancelled event for subscription {}", sub_id);
-                    return Ok(None);
+            if let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_cancelled_with_context(
+                repo,
+                app_id,
+                &webhook,
+                &fields,
+                timestamp_epoch_ms,
+            ).await? {
+                canonical_subscription = outcome.canonical_subscription;
+                if let Some(event_type) = outcome.callback_event_type {
+                    callback_event_type = event_type;
                 }
+                callback_status_override = outcome.callback_status_override;
+                callback_revocation_reason_override = outcome.callback_revocation_reason_override;
+                callback_cancellation_mode_override = outcome.callback_cancellation_mode_override;
             }
         }
 
@@ -1151,43 +1108,44 @@ pub async fn process_webhook(
 
         // §25 - One-Time Product Purchased
         "purchase.one_time" => {
-            if let Some(ref user_id) = external_user_id {
-                let txn_id = fields.purchase_token.as_deref()
-                    .or(fields.provider_transaction_id.as_deref())
-                    .unwrap_or(&webhook.provider_webhook_id);
-                let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-                repo.record_payment_tx(
-                    &mut tx, app_id, user_id, &webhook.provider, txn_id,
-                    fields.subscription_id.as_deref(),
-                    fields.amount_cents.unwrap_or(0), "success",
-                ).await?;
-                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+            if let Some(outcome) = crate::services::google_play::product_lifecycle::handle_otp_purchased(
+                repo,
+                app_id,
+                &webhook,
+                &fields,
+                external_user_id.as_deref(),
+                timestamp_epoch_ms,
+            ).await? {
+                canonical_subscription = outcome.canonical_subscription;
+                if let Some(event_type) = outcome.callback_event_type {
+                    callback_event_type = event_type;
+                }
+                callback_status_override = outcome.callback_status_override;
+                callback_revocation_reason_override = outcome.callback_revocation_reason_override;
+                callback_cancellation_mode_override = outcome.callback_cancellation_mode_override;
             }
-            callback_event_type = "purchase.one_time".to_string();
-            callback_status_override = Some("completed".to_string());
         }
 
         // §26 - One-Time Product Cancelled
         "purchase.one_time_cancelled" => {
-            if let Some(ref user_id) = external_user_id {
-                let token = fields.purchase_token.as_deref()
-                    .or(fields.provider_transaction_id.as_deref())
-                    .unwrap_or("");
-                let existing = repo.get_payment_status(app_id, token).await?;
-                if matches!(existing.as_deref(), Some("refunded") | Some("cancelled")) {
-                    info!("Skipping duplicate one-time cancellation for payment {}", token);
-                    return Ok(None);
+            if let Some(outcome) = crate::services::google_play::product_lifecycle::handle_otp_cancelled(
+                repo,
+                app_id,
+                &webhook,
+                &fields,
+                external_user_id.as_deref(),
+                timestamp_epoch_ms,
+            ).await? {
+                canonical_subscription = outcome.canonical_subscription;
+                if let Some(event_type) = outcome.callback_event_type {
+                    callback_event_type = event_type;
                 }
-                let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-                repo.record_payment_tx(
-                    &mut tx, app_id, user_id, &webhook.provider, token,
-                    fields.subscription_id.as_deref(),
-                    fields.amount_cents.unwrap_or(0), "cancelled",
-                ).await?;
-                tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+                callback_status_override = outcome.callback_status_override;
+                callback_revocation_reason_override = outcome.callback_revocation_reason_override;
+                callback_cancellation_mode_override = outcome.callback_cancellation_mode_override;
+            } else {
+                return Ok(None);
             }
-            callback_event_type = "purchase.one_time".to_string();
-            callback_status_override = Some("cancelled".to_string());
         }
 
         // §27 - Purchase Voided (Refund)
@@ -1270,22 +1228,22 @@ pub async fn process_webhook(
         }
 
         "subscription.pending_purchase_cancelled" => {
-            if let Some(ref _user_id) = external_user_id {
-                let sub_id = fields.subscription_id.clone().unwrap_or_default();
-                let updated = repo.apply_subscription_transition(
-                    app_id,
-                    &sub_id,
-                    timestamp_epoch_ms,
-                    SubscriptionWebhookTransition::PendingPurchaseCancelled,
-                ).await?;
-                if let Some(updated_sub) = updated {
-                    canonical_subscription = Some(updated_sub);
-                    callback_event_type = "subscription.cancelled".to_string();
-                    callback_status_override = Some("cancelled".to_string());
-                } else {
-                    info!("Skipped stale pending_purchase_cancelled event for subscription {}", sub_id);
-                    return Ok(None);
+            if let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_pending_purchase_cancelled(
+                repo,
+                app_id,
+                &webhook,
+                &fields,
+                timestamp_epoch_ms,
+            ).await? {
+                canonical_subscription = outcome.canonical_subscription;
+                if let Some(event_type) = outcome.callback_event_type {
+                    callback_event_type = event_type;
                 }
+                callback_status_override = outcome.callback_status_override;
+                callback_revocation_reason_override = outcome.callback_revocation_reason_override;
+                callback_cancellation_mode_override = outcome.callback_cancellation_mode_override;
+            } else {
+                return Ok(None);
             }
         }
 
@@ -1358,24 +1316,20 @@ pub async fn process_webhook(
         }
 
         "subscription.price_step_up" => {
-            if let Some(sub_id) = fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()) {
-                let deadline = fields.google_price_step_up_consent_deadline.as_deref()
-                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| dt.with_timezone(&chrono::Utc));
-
-                let updated = repo.apply_subscription_transition(
-                    app_id,
-                    sub_id,
-                    timestamp_epoch_ms,
-                    SubscriptionWebhookTransition::PriceStepUp {
-                        google_new_price_cents: fields.google_new_price_cents,
-                        google_price_step_up_consent_deadline: deadline,
-                    },
-                ).await?;
-
-                if updated.is_none() {
-                    info!("Skipped stale price_step_up event for subscription {}", sub_id);
+            if let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_price_step_up_consent_required(
+                repo,
+                app_id,
+                &webhook,
+                &fields,
+                timestamp_epoch_ms,
+            ).await? {
+                canonical_subscription = outcome.canonical_subscription;
+                if let Some(event_type) = outcome.callback_event_type {
+                    callback_event_type = event_type;
                 }
+                callback_status_override = outcome.callback_status_override;
+                callback_revocation_reason_override = outcome.callback_revocation_reason_override;
+                callback_cancellation_mode_override = outcome.callback_cancellation_mode_override;
             }
         }
 

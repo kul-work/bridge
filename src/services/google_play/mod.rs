@@ -10,5 +10,5 @@ pub mod models;
 // pub mod validation;
 // pub mod trace;
 // pub mod notifications;
-// pub mod product_lifecycle;
-// pub mod subscription_lifecycle;
+pub mod product_lifecycle;
+pub mod subscription_lifecycle;
