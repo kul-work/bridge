@@ -5,7 +5,7 @@ use crate::{
         webhooks::WebhookProvider,
     },
     error::BridgeError,
-    ports::{BridgeRepository, TransactionOutcome},
+    ports::{TransactionOutcome, WebhookProcessingRepository},
 };
 use uuid::Uuid;
 use tracing::{error, info, warn};
@@ -82,7 +82,7 @@ fn extract_metadata_user_id(payload: &serde_json::Value) -> Option<String> {
     .find_map(|pointer| payload.pointer(pointer).and_then(|value| value.as_str()).map(|value| value.to_string()))
 }
 
-async fn suppress_unresolved_webhook<R: BridgeRepository>(
+async fn suppress_unresolved_webhook<R: WebhookProcessingRepository>(
     repo: &R,
     webhook_provider_id: Uuid,
     webhook: &WebhookProvider,
@@ -96,7 +96,7 @@ async fn suppress_unresolved_webhook<R: BridgeRepository>(
     repo.suppress_webhook(webhook_provider_id, "unresolved_external_user_id").await
 }
 
-async fn ensure_resolved_user<R: BridgeRepository>(
+async fn ensure_resolved_user<R: WebhookProcessingRepository>(
     repo: &R,
     webhook_provider_id: Uuid,
     webhook: &WebhookProvider,
@@ -380,7 +380,7 @@ fn google_cancellation_context_from_resource(
     (None, None)
 }
 
-async fn enrich_google_play_fields<R: BridgeRepository>(
+async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -464,7 +464,7 @@ async fn enrich_google_play_fields<R: BridgeRepository>(
 }
 
 /// Resolve external_user_id via §53 cascade
-async fn resolve_user<R: BridgeRepository>(
+async fn resolve_user<R: WebhookProcessingRepository>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -526,7 +526,7 @@ async fn resolve_user<R: BridgeRepository>(
     None
 }
 
-pub async fn build_canonical_payload<R: BridgeRepository>(
+pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
     repo: &R,
     webhook_provider_id: Uuid,
     app_id: Uuid,
@@ -672,7 +672,7 @@ pub async fn build_canonical_payload<R: BridgeRepository>(
 /// Process webhook: dedup, ordering, normalization, DB mutations
 #[allow(dead_code)]
 pub async fn process_webhook(
-    repo: &impl BridgeRepository,
+    repo: &impl WebhookProcessingRepository,
     webhook_provider_id: Uuid,
     app_id: Uuid,
 ) -> Result<Option<CanonicalWebhookPayload>, BridgeError> {

@@ -1,6 +1,7 @@
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::application;
+use crate::ports::{WebhookForwardRepository, WebhookWriteRepository};
 use crate::services::google_play::{
     client::GooglePlayClient,
     models::{Money, ProductPurchase, SubscriptionPurchaseV2},
@@ -407,7 +408,9 @@ async fn verify_coinbase(
     })
 }
 
-pub(crate) async fn forward_verify_purchase_callback<R: crate::ports::BridgeRepository + ?Sized>(
+pub(crate) async fn forward_verify_purchase_callback<
+    R: WebhookWriteRepository + WebhookForwardRepository + ?Sized,
+>(
     repo: &R,
     app_id: uuid::Uuid,
     app_slug: &str,

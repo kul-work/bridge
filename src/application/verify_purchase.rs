@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::db::subscriptions::Subscription;
 use crate::error::BridgeError;
-use crate::ports::{BridgeRepository, TransactionOutcome};
+use crate::ports::{TransactionOutcome, VerifyPurchaseRepository};
 use crate::handlers::verify_purchase::{
     compute_obfuscated_id_hash, forward_verify_purchase_callback, verify_purchase_with_provider,
     PaymentAcknowledgement, ProductType, VerificationOutcome, VerifyPurchaseCallback,
@@ -21,7 +21,7 @@ enum VerifyPurchaseTxOutcome {
     },
 }
 
-pub async fn verify_purchase<R: BridgeRepository + ?Sized>(
+pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     payload: VerifyPurchaseRequest,

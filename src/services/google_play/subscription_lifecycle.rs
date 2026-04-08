@@ -5,7 +5,7 @@ use crate::{
         webhooks::WebhookProvider,
     },
     error::BridgeError,
-    ports::BridgeRepository,
+    ports::WebhookProcessingRepository,
     webhooks::processor::WebhookFields,
 };
 use chrono::{DateTime, Utc};
@@ -43,7 +43,7 @@ fn outcome_with_subscription(subscription: db::subscriptions::Subscription) -> G
     }
 }
 
-pub async fn handle_subscription_revoked<R: BridgeRepository + ?Sized>(
+pub async fn handle_subscription_revoked<R: WebhookProcessingRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -94,7 +94,7 @@ pub async fn handle_subscription_revoked<R: BridgeRepository + ?Sized>(
     }))
 }
 
-pub async fn handle_subscription_resumed<R: BridgeRepository + ?Sized>(
+pub async fn handle_subscription_resumed<R: WebhookProcessingRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -138,7 +138,7 @@ pub async fn handle_subscription_resumed<R: BridgeRepository + ?Sized>(
     }))
 }
 
-pub async fn handle_subscription_cancelled_with_context<R: BridgeRepository + ?Sized>(
+pub async fn handle_subscription_cancelled_with_context<R: WebhookProcessingRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -180,7 +180,7 @@ pub async fn handle_subscription_cancelled_with_context<R: BridgeRepository + ?S
     }))
 }
 
-pub async fn handle_subscription_cancellation_scheduled<R: BridgeRepository + ?Sized>(
+pub async fn handle_subscription_cancellation_scheduled<R: WebhookProcessingRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -216,7 +216,7 @@ pub async fn handle_subscription_cancellation_scheduled<R: BridgeRepository + ?S
     }))
 }
 
-pub async fn handle_price_step_up_consent_required<R: BridgeRepository + ?Sized>(
+pub async fn handle_price_step_up_consent_required<R: WebhookProcessingRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -251,7 +251,7 @@ pub async fn handle_price_step_up_consent_required<R: BridgeRepository + ?Sized>
     Ok(Some(outcome_with_subscription(subscription)))
 }
 
-pub async fn handle_subscription_pending_purchase_cancelled<R: BridgeRepository + ?Sized>(
+pub async fn handle_subscription_pending_purchase_cancelled<R: WebhookProcessingRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,

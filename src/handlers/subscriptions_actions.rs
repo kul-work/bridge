@@ -1,7 +1,10 @@
 use crate::db;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
-use crate::ports::BridgeRepository;
+use crate::ports::{
+    AppProviderRepository, SubscriptionReadRepository, SubscriptionWriteRepository,
+    WebhookForwardRepository, WebhookWriteRepository,
+};
 use crate::services::provider_api;
 use axum::{
     extract::{State, Extension, Path, Query},
@@ -386,7 +389,9 @@ pub async fn decline_price_step_up(
     ))
 }
 
-async fn dispatch_subscription_callback<R: BridgeRepository + ?Sized>(
+async fn dispatch_subscription_callback<
+    R: AppProviderRepository + WebhookWriteRepository + WebhookForwardRepository + ?Sized,
+>(
     repo: &R,
     app_id: Uuid,
     sub: &db::subscriptions::Subscription,

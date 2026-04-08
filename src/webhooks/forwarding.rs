@@ -1,5 +1,5 @@
 use crate::error::BridgeError;
-use crate::ports::BridgeRepository;
+use crate::ports::WebhookForwardRepository;
 use std::time::Duration;
 use uuid::Uuid;
 use reqwest::Client;
@@ -16,7 +16,7 @@ const WEBHOOK_FORWARD_TIMEOUT_SECS: u64 = 10;
 /// Forward webhook to app callback URL with HMAC signature
 /// Used for future webhook delivery to app callbacks.
 #[allow(dead_code)]
-pub async fn forward_webhook<R: BridgeRepository + ?Sized>(
+pub async fn forward_webhook<R: WebhookForwardRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     webhook_delivery_id: Uuid,

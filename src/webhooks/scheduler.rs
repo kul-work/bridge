@@ -1,6 +1,9 @@
 use std::time::Duration;
 use crate::db::Database;
-use crate::ports::BridgeRepository;
+use crate::ports::{
+    AppProviderRepository, SchedulerRepository, WebhookForwardRepository,
+    WebhookProcessingRepository, WebhookWriteRepository,
+};
 use std::sync::Arc;
 use tracing::{info, error, warn};
 use uuid::Uuid;
@@ -37,12 +40,18 @@ pub fn spawn_reconciliation_worker(database: Arc<Database>) {
     });
 }
 
-pub async fn retry_webhooks(repo: &impl BridgeRepository) -> Result<(), crate::error::BridgeError> {
-    let apps_result = repo.list_enabled_apps().await?;
+pub async fn retry_webhooks(
+    repo: &(
+        impl SchedulerRepository
+        + WebhookForwardRepository
+        + WebhookProcessingRepository
+    ),
+) -> Result<(), crate::error::BridgeError> {
+    let apps_result = SchedulerRepository::list_enabled_apps(repo).await?;
 
     // 2. Iterate apps and retry
     for app in apps_result {
-        let deliveries = match repo.list_pending_webhook_deliveries(app.id, 50).await {
+        let deliveries = match SchedulerRepository::list_pending_webhook_deliveries(repo, app.id, 50).await {
             Ok(deliveries) => deliveries,
             Err(e) => {
                 error!(
@@ -71,7 +80,8 @@ pub async fn retry_webhooks(repo: &impl BridgeRepository) -> Result<(), crate::e
                     ).await;
                 }
                 Ok(None) => {
-                    repo.update_webhook_delivery_attempt(
+                    WebhookForwardRepository::update_webhook_delivery_attempt(
+                        repo,
                         delivery.id,
                         None,
                         Some("Suppressed before retry".to_string()),
@@ -92,7 +102,7 @@ pub async fn retry_webhooks(repo: &impl BridgeRepository) -> Result<(), crate::e
 pub async fn reconcile_subscriptions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
     info!("Starting subscription reconciliation job");
     
-    let apps_result = database.list_enabled_apps().await?;
+    let apps_result = SchedulerRepository::list_enabled_apps(database.as_ref()).await?;
 
     for app in apps_result {
         if let Err(e) = reconcile_app_subscriptions(database.as_ref(), app.id).await {
@@ -105,11 +115,14 @@ pub async fn reconcile_subscriptions(database: &Arc<Database>) -> Result<(), cra
     Ok(())
 }
 
-async fn reconcile_app_subscriptions(repo: &impl BridgeRepository, app_id: uuid::Uuid) -> Result<(), crate::error::BridgeError> {
-    let active_subs = repo.list_reconciliation_subscriptions(app_id).await?;
+async fn reconcile_app_subscriptions(
+    repo: &(impl SchedulerRepository + WebhookForwardRepository),
+    app_id: uuid::Uuid,
+) -> Result<(), crate::error::BridgeError> {
+    let active_subs = SchedulerRepository::list_reconciliation_subscriptions(repo, app_id).await?;
 
     for sub in active_subs {
-        let provider_config = match repo.get_provider_config(app_id, &sub.provider).await {
+        let provider_config = match AppProviderRepository::get_provider_config(repo, app_id, &sub.provider).await {
             Ok(config) => config,
             Err(e) => {
                 warn!(
@@ -140,8 +153,8 @@ async fn reconcile_app_subscriptions(repo: &impl BridgeRepository, app_id: uuid:
                     );
 
                     let event_time_ms = chrono::Utc::now().timestamp_millis();
-                    let updated = repo
-                        .update_subscription_status(
+                    let updated = SchedulerRepository::update_subscription_status(
+                            repo,
                             app_id,
                             &sub.subscription_id,
                             &provider_status,
@@ -214,7 +227,7 @@ async fn reconcile_app_subscriptions(repo: &impl BridgeRepository, app_id: uuid:
 }
 
 async fn send_reconciliation_admin_alert_email(
-    repo: &impl BridgeRepository,
+    repo: &impl AppProviderRepository,
     app_id: uuid::Uuid,
     provider: &str,
     subscription_id: &str,
@@ -234,7 +247,7 @@ async fn send_reconciliation_admin_alert_email(
         }
     };
 
-    let app = repo.get_app(app_id).await?;
+    let app = AppProviderRepository::get_app(repo, app_id).await?;
     let subject = format!(
         "Bridge reconciliation drift: {} ({})",
         app.display_name,
@@ -290,7 +303,7 @@ pub fn spawn_price_step_up_expiry_worker(database: Arc<Database>) {
 }
 
 async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
-    let expired = database.list_price_step_up_expired_subscriptions(100).await?;
+    let expired = SchedulerRepository::list_price_step_up_expired_subscriptions(database.as_ref(), 100).await?;
 
     for sub in expired {
         let id = sub.id;
@@ -301,7 +314,7 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
         let purchase_token = sub.purchase_token.clone();
         info!("Price step-up expired for subscription {}, auto-cancelling", subscription_id);
 
-        if let Ok(config) = database.get_provider_config(app_id, &provider).await {
+        if let Ok(config) = AppProviderRepository::get_provider_config(database.as_ref(), app_id, &provider).await {
             if let Err(e) = crate::services::provider_api::cancel_subscription(
                 &provider,
                 &subscription_id,
@@ -316,7 +329,7 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
         }
 
         let now_ms = chrono::Utc::now().timestamp_millis();
-        if !database.mark_subscription_price_step_up_expired(id, now_ms).await? {
+        if !SchedulerRepository::mark_subscription_price_step_up_expired(database.as_ref(), id, now_ms).await? {
             info!(
                 "Skipped price step-up expiry transition for subscription {} because it was already updated",
                 subscription_id
@@ -363,7 +376,7 @@ pub fn spawn_pause_scheduler_worker(database: Arc<Database>) {
 }
 
 async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
-    let pending_pause = database.list_pending_pause_subscriptions(100).await?;
+    let pending_pause = SchedulerRepository::list_pending_pause_subscriptions(database.as_ref(), 100).await?;
 
     for sub in pending_pause {
         let id = sub.id;
@@ -375,7 +388,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
         info!("Transitioning subscription {} to paused (scheduled pause)", subscription_id);
 
         let now_ms = chrono::Utc::now().timestamp_millis();
-        if !database.mark_subscription_paused(id, now_ms).await? {
+        if !SchedulerRepository::mark_subscription_paused(database.as_ref(), id, now_ms).await? {
             info!(
                 "Skipped pause transition callback for subscription {} because state was already updated",
                 subscription_id
@@ -403,7 +416,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
         }
     }
 
-    let deleted = database.delete_orphaned_pending_subscriptions().await?;
+    let deleted = SchedulerRepository::delete_orphaned_pending_subscriptions(database.as_ref()).await?;
     if deleted > 0 {
         info!("Cleaned up {} orphaned pending subscriptions", deleted);
     }
@@ -413,7 +426,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
 
 #[allow(clippy::too_many_arguments)]
 async fn emit_scheduler_callback(
-    repo: &impl BridgeRepository,
+    repo: &(impl SchedulerRepository + WebhookForwardRepository),
     app_id: Uuid,
     provider: &str,
     subscription_id: &str,
@@ -426,7 +439,7 @@ async fn emit_scheduler_callback(
     reconciliation_source: Option<String>,
     revocation_reason: Option<String>,
 ) -> Result<(), crate::error::BridgeError> {
-    let app = repo.get_app(app_id).await?;
+    let app = AppProviderRepository::get_app(repo, app_id).await?;
     let provider_event_id = format!("scheduler-{}", Uuid::new_v4());
     let timestamp_epoch_ms = chrono::Utc::now().timestamp_millis();
     let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
@@ -446,7 +459,8 @@ async fn emit_scheduler_callback(
         "revocation_reason": revocation_reason,
     });
 
-    let (webhook_provider_id, _) = repo.create_webhook_provider(
+    let (webhook_provider_id, _) = WebhookWriteRepository::create_webhook_provider(
+        repo,
         app_id,
         provider,
         &provider_event_id,
@@ -458,7 +472,7 @@ async fn emit_scheduler_callback(
     )
     .await?;
 
-    let delivery_id = repo.create_webhook_delivery(app_id, webhook_provider_id).await?;
+    let delivery_id = WebhookWriteRepository::create_webhook_delivery(repo, app_id, webhook_provider_id).await?;
 
     let canonical = crate::webhooks::processor::CanonicalWebhookPayload {
         event_id: format!("{}-{}", provider, provider_event_id),
@@ -505,9 +519,9 @@ pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {
 async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
     info!("Starting data retention cleanup");
 
-    database.cleanup_old_webhook_provider().await?;
-    database.cleanup_expired_agent_tokens().await?;
-    database.cleanup_purged_fraud_prevention().await?;
+    SchedulerRepository::cleanup_old_webhook_provider(database.as_ref()).await?;
+    SchedulerRepository::cleanup_expired_agent_tokens(database.as_ref()).await?;
+    SchedulerRepository::cleanup_purged_fraud_prevention(database.as_ref()).await?;
 
     info!("Data retention cleanup completed");
     Ok(())

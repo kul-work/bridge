@@ -11,7 +11,10 @@ use crate::config::DATA_EXPORT_LIMIT;
 use crate::db::{payments::Payment, subscriptions::Subscription, Database};
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
-use crate::ports::BridgeRepository;
+use crate::ports::{
+    AgentReadRepository, PaymentReadRepository, SubscriptionReadRepository, UserRepository,
+    WebhookReadRepository,
+};
 
 #[derive(Deserialize)]
 pub struct AnonymizeRequest {
@@ -104,7 +107,7 @@ pub async fn data_export(
 }
 
 async fn collect_all_subscriptions(
-    repository: &impl BridgeRepository,
+    repository: &impl SubscriptionReadRepository,
     app_id: uuid::Uuid,
     external_user_id: &str,
 ) -> Result<Vec<Subscription>, BridgeError> {
@@ -135,7 +138,7 @@ async fn collect_all_subscriptions(
 }
 
 async fn collect_all_payments(
-    repository: &impl BridgeRepository,
+    repository: &impl PaymentReadRepository,
     app_id: uuid::Uuid,
     external_user_id: &str,
 ) -> Result<Vec<Payment>, BridgeError> {

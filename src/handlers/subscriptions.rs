@@ -2,7 +2,7 @@ use crate::config::API_PAGINATION_LIMIT;
 use crate::config::MAX_PAGINATION_LIMIT;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
-use crate::ports::BridgeRepository;
+use crate::ports::SubscriptionReadRepository;
 use axum::{
     extract::{Extension, Path, Query, State},
     http::StatusCode,

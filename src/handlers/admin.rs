@@ -11,7 +11,7 @@ use crate::{
     config::ADMIN_WEBHOOK_LIST_LIMIT,
     db::Database,
     error::BridgeError,
-    ports::BridgeRepository,
+    ports::AdminRepository,
 };
 
 /// Get admin dashboard page

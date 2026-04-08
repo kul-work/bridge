@@ -1,13 +1,13 @@
 use crate::{
     db::webhooks::WebhookProvider,
     error::BridgeError,
-    ports::{BridgeRepository, TransactionOutcome},
+    ports::{TransactionOutcome, WebhookProcessingRepository},
     services::google_play::subscription_lifecycle::GooglePlayLifecycleOutcome,
     webhooks::processor::WebhookFields,
 };
 use uuid::Uuid;
 
-pub async fn handle_otp_purchased<R: BridgeRepository + ?Sized>(
+pub async fn handle_otp_purchased<R: WebhookProcessingRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -57,7 +57,7 @@ pub async fn handle_otp_purchased<R: BridgeRepository + ?Sized>(
     }))
 }
 
-pub async fn handle_otp_cancelled<R: BridgeRepository + ?Sized>(
+pub async fn handle_otp_cancelled<R: WebhookProcessingRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,

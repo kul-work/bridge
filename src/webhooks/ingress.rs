@@ -7,7 +7,11 @@ use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::{db::Database, error::BridgeError, ports::BridgeRepository};
+use crate::{
+    db::Database,
+    error::BridgeError,
+    ports::{AppProviderRepository, WebhookIngressRepository, WebhookWriteRepository},
+};
 
 const CREEM_SIGNATURE_HEADERS: [&str; 2] = ["Webhook-Signature", "x-signature"];
 
@@ -541,7 +545,7 @@ fn extract_google_event_type(payload: &serde_json::Value) -> String {
     "unknown".to_string()
 }
 
-async fn get_provider_webhook_secret<R: BridgeRepository + ?Sized>(
+async fn get_provider_webhook_secret<R: WebhookIngressRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     provider: &str,

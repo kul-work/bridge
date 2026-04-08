@@ -2,7 +2,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use uuid::Uuid;
 
-use crate::ports::BridgeRepository;
+use crate::ports::CheckoutRepository;
 use crate::error::BridgeError;
 use crate::handlers::checkout::{
     coinbase_amount_from_config, compute_request_fingerprint, extract_checkout_id,
@@ -11,7 +11,7 @@ use crate::handlers::checkout::{
     CheckoutRequest, CheckoutResponse,
 };
 
-pub async fn create_checkout<R: BridgeRepository + ?Sized>(
+pub async fn create_checkout<R: CheckoutRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     payload: CheckoutRequest,

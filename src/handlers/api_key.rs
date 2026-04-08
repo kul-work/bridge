@@ -1,5 +1,5 @@
 use crate::error::BridgeError;
-use crate::ports::BridgeRepository;
+use crate::ports::ApiKeyRepository;
 use axum::{
     extract::{Request, State},
     http::Method,

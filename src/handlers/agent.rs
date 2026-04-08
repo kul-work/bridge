@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::db::Database;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
-use crate::ports::BridgeRepository;
+use crate::ports::{AgentReadRepository, AgentRepository};
 
 const AGENT_TOKEN_EXPIRES_IN_SECONDS: i64 = 600;
 const SUPPORTED_AGENT_ENDPOINTS: [&str; 2] = ["story", "joke"];

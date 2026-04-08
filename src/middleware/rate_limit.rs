@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::Database;
 use crate::handlers::api_key::AppAuth;
-use crate::ports::BridgeRepository;
+use crate::ports::AppProviderRepository;
 
 const UNAUTHENTICATED_IP_LIMIT: usize = 10;
 const UNAUTHENTICATED_IP_WINDOW_SECS: u64 = 60;
@@ -231,7 +231,7 @@ pub async fn api_rate_limit_middleware(
     let key = format!("api:{}:{}", auth.api_key_id, group);
 
     // Load app config to get rate limit settings
-    let effective_limit = match database.get_app(auth.app_id).await {
+    let effective_limit = match AppProviderRepository::get_app(&*database, auth.app_id).await {
         Ok(app) => effective_limit_for_group(
             group,
             app.api_rate_limit_per_minute,
