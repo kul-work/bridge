@@ -4,10 +4,12 @@ use uuid::Uuid;
 use crate::db::subscriptions::Subscription;
 use crate::error::BridgeError;
 use crate::ports::{TransactionOutcome, VerifyPurchaseRepository};
-use crate::handlers::verify_purchase::{
-    compute_obfuscated_id_hash, forward_verify_purchase_callback, verify_purchase_with_provider,
-    PaymentAcknowledgement, ProductType, VerificationOutcome, VerifyPurchaseCallback,
-    VerifyPurchaseRequest, VerifyPurchaseResponse,
+use crate::application::verify_purchase_types::{
+    compute_obfuscated_id_hash, PaymentAcknowledgement, ProductType, VerificationOutcome,
+    VerifyPurchaseCallback, VerifyPurchaseRequest, VerifyPurchaseResponse,
+};
+use crate::application::verify_purchase_provider::{
+    acknowledge_google_play, forward_verify_purchase_callback, verify_purchase_with_provider,
 };
 
 enum VerifyPurchaseTxOutcome {
@@ -316,7 +318,7 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
                     PaymentAcknowledgement::Pending
                         if provider_for_tx == "google_play" && !payment_acknowledged =>
                     {
-                        if let Err(err) = crate::handlers::verify_purchase::acknowledge_google_play(
+                        if let Err(err) = acknowledge_google_play(
                             &subscription_id_for_tx,
                             &purchase_token_for_tx,
                             product_type,
