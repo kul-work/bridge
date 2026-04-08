@@ -10,7 +10,10 @@ use crate::config::DATA_EXPORT_LIMIT;
 use crate::db::{payments::Payment, subscriptions::Subscription};
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
-use crate::ports::{PaymentReadRepository, SubscriptionReadRepository};
+use crate::ports::{
+    AgentReadRepository, PaymentReadRepository, SubscriptionReadRepository, UserRepository,
+    WebhookReadRepository,
+};
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -24,8 +27,9 @@ pub async fn anonymize(
     Path(external_user_id): Path<String>,
     Json(request): Json<AnonymizeRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let (subscriptions_cancelled, payments_anonymized, new_anonymous_id) = state
-        .user_repo
+    let database = state.database();
+    let (subscriptions_cancelled, payments_anonymized, new_anonymous_id) = database
+        .as_ref()
         .anonymize_user(auth.app_id, &external_user_id, request.reason.as_deref())
         .await?;
 
@@ -46,21 +50,13 @@ pub async fn data_export(
     Extension(auth): Extension<AppAuth>,
     Path(external_user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let subscriptions = collect_all_subscriptions(
-        state.subscription_read_repo.as_ref(),
-        auth.app_id,
-        &external_user_id,
-    )
-    .await?;
-    let payments = collect_all_payments(
-        state.payment_read_repo.as_ref(),
-        auth.app_id,
-        &external_user_id,
-    )
-    .await?;
+    let database = state.database();
+    let subscriptions =
+        collect_all_subscriptions(database.as_ref(), auth.app_id, &external_user_id).await?;
+    let payments = collect_all_payments(database.as_ref(), auth.app_id, &external_user_id).await?;
 
-    let agent_credits = state
-        .agent_read_repo
+    let agent_credits = database
+        .as_ref()
         .get_agent_credit(auth.app_id, &external_user_id)
         .await?
         .map(|c| {
@@ -71,8 +67,8 @@ pub async fn data_export(
             })
         });
 
-    let agent_transactions = state
-        .agent_read_repo
+    let agent_transactions = database
+        .as_ref()
         .list_agent_transactions(auth.app_id, &external_user_id)
         .await?
         .into_iter()
@@ -90,8 +86,8 @@ pub async fn data_export(
     let sub_ids: Vec<String> = subscriptions.iter().map(|s| s.subscription_id.clone()).collect();
     let tokens: Vec<String> = payments.iter().map(|p| p.provider_transaction_id.clone()).collect();
 
-    let webhook_records = state
-        .webhook_read_repo
+    let webhook_records = database
+        .as_ref()
         .list_user_webhook_records(auth.app_id, &sub_ids, &tokens)
         .await?
         .into_iter()

@@ -9,6 +9,7 @@ use tracing::info;
 use crate::{
     config::ADMIN_WEBHOOK_LIST_LIMIT,
     error::BridgeError,
+    ports::AdminRepository,
     state::AppState,
 };
 
@@ -23,12 +24,13 @@ pub async fn admin_dashboard() -> Result<Html<String>, BridgeError> {
 pub async fn list_apps(
     State(state): State<AppState>,
 ) -> Result<axum::Json<Vec<AppSummary>>, BridgeError> {
-    let apps = state.admin_repo.list_apps().await?;
+    let database = state.database();
+    let apps = database.as_ref().list_apps().await?;
 
     let mut summaries = Vec::new();
     for app in apps {
-        let failed_webhooks = state
-            .admin_repo
+        let failed_webhooks = database
+            .as_ref()
             .count_failed_webhooks(app.id)
             .await
             .unwrap_or(0);
@@ -50,11 +52,12 @@ pub async fn get_app_webhooks(
     State(state): State<AppState>,
     Path(app_id): Path<String>,
 ) -> Result<axum::Json<Vec<WebhookSummary>>, BridgeError> {
+    let database = state.database();
     let app_uuid = Uuid::parse_str(&app_id)
         .map_err(|_| BridgeError::ValidationError("Invalid app ID".to_string()))?;
 
-    let webhooks = state
-        .admin_repo
+    let webhooks = database
+        .as_ref()
         .list_app_webhooks(app_uuid, ADMIN_WEBHOOK_LIST_LIMIT, 0)
         .await?;
 

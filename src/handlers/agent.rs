@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
+use crate::ports::{AgentReadRepository, AgentRepository};
 use crate::state::AppState;
 
 const AGENT_TOKEN_EXPIRES_IN_SECONDS: i64 = 600;
@@ -59,8 +60,9 @@ pub async fn balance(
     Extension(auth): Extension<AppAuth>,
     Query(query): Query<AgentBalanceQuery>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let credit = state
-        .agent_repo
+    let database = state.database();
+    let credit = database
+        .as_ref()
         .get_agent_credit(auth.app_id, &query.external_user_id)
         .await?;
 
@@ -76,6 +78,7 @@ pub async fn token(
     Extension(auth): Extension<AppAuth>,
     Json(request): Json<AgentTokenRequest>,
 ) -> Result<Json<AgentTokenResponse>, BridgeError> {
+    let database = state.database();
     let external_user_id = normalize_agent_required_field(&request.external_user_id, "external_user_id")?;
     validate_agent_email(&external_user_id)?;
 
@@ -86,14 +89,14 @@ pub async fn token(
     }
 
     // §40: Ensure agent_credits row exists with a zero balance if missing.
-    let credit = match state
-        .agent_repo
+    let credit = match database
+        .as_ref()
         .get_agent_credit(auth.app_id, &external_user_id)
         .await?
     {
         Some(credit) => credit,
-        None => state
-            .agent_repo
+        None => database
+            .as_ref()
             .upsert_agent_credit(auth.app_id, &external_user_id, 0, 0)
             .await?,
     };
@@ -105,8 +108,8 @@ pub async fn token(
     }
 
     let nonce = Uuid::new_v4().to_string();
-    let token = state
-        .agent_repo
+    let token = database
+        .as_ref()
         .insert_agent_token(
             auth.app_id,
             &external_user_id,
@@ -127,6 +130,7 @@ pub async fn charge(
     Extension(auth): Extension<AppAuth>,
     Json(request): Json<AgentChargeRequest>,
 ) -> Result<Json<AgentChargeResponse>, BridgeError> {
+    let database = state.database();
     let external_user_id = normalize_agent_required_field(&request.external_user_id, "external_user_id")?;
     validate_agent_email(&external_user_id)?;
 
@@ -135,8 +139,8 @@ pub async fn charge(
         BridgeError::ValidationError("token must be a valid UUID".to_string())
     })?;
 
-    let (_new_balance, amount_charged) = state
-        .agent_repo
+    let (_new_balance, amount_charged) = database
+        .as_ref()
         .charge_agent(auth.app_id, &external_user_id, token_id, &endpoint)
         .await?;
 
@@ -151,8 +155,9 @@ pub async fn topup(
     Extension(auth): Extension<AppAuth>,
     Json(request): Json<AgentTopUpRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let credit = state
-        .agent_repo
+    let database = state.database();
+    let credit = database
+        .as_ref()
         .topup_agent(
             auth.app_id,
             &request.external_user_id,

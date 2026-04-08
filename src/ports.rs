@@ -313,7 +313,9 @@ pub trait WebhookWriteRepository: Send + Sync {
 }
 
 #[async_trait]
-pub trait WebhookIngressRepository: AppProviderRepository + WebhookWriteRepository + Send + Sync {
+pub trait WebhookIngressRepository:
+    AppLookupRepository + ProviderConfigLookupRepository + WebhookWriteRepository + Send + Sync
+{
     async fn get_app_by_webhook_token(&self, token: Uuid) -> Result<AppSnapshot, BridgeError>;
 }
 
@@ -329,13 +331,6 @@ pub trait ProviderConfigLookupRepository: Send + Sync {
         app_id: Uuid,
         provider: &str,
     ) -> Result<ProviderConfigSnapshot, BridgeError>;
-}
-
-pub trait AppProviderRepository: AppLookupRepository + ProviderConfigLookupRepository + Send + Sync {}
-
-impl<T> AppProviderRepository for T where
-    T: AppLookupRepository + ProviderConfigLookupRepository + Send + Sync + ?Sized
-{
 }
 
 #[async_trait]
@@ -490,7 +485,8 @@ pub trait WebhookProcessingMutationRepository: WebhookSuppressionRepository + Se
 
 #[async_trait]
 pub trait WebhookProcessingRepository:
-    AppProviderRepository
+    AppLookupRepository
+    + ProviderConfigLookupRepository
     + WebhookProcessingLookupRepository
     + WebhookProcessingMutationRepository
     + WebhookProcessingTransactionRepository

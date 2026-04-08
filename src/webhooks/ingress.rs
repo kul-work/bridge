@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::{
     db::Database,
     error::BridgeError,
-    ports::WebhookIngressRepository,
+    ports::{ProviderConfigLookupRepository, WebhookIngressRepository, WebhookWriteRepository},
     state::AppState,
 };
 
@@ -51,6 +51,7 @@ pub async fn handle_google_play(
     headers: HeaderMap,
     body: String,
 ) -> Result<StatusCode, BridgeError> {
+    let database = state.database();
     info!("Received Google Play webhook with token: {}", token);
 
     let token_uuid = match Uuid::parse_str(&token) {
@@ -58,13 +59,13 @@ pub async fn handle_google_play(
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    let app = match state.webhook_ingress_repo.get_app_by_webhook_token(token_uuid).await {
+    let app = match database.as_ref().get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    let provider_config = state
-        .webhook_ingress_repo
+    let provider_config = database
+        .as_ref()
         .get_provider_config(app.id, "google_play")
         .await?;
 
@@ -155,8 +156,8 @@ pub async fn handle_google_play(
         .and_then(|s| s.parse::<i64>().ok())
         .or_else(|| google_play_event["eventTimeMillis"].as_i64());
 
-    let (webhook_id, is_new) = state
-        .webhook_ingress_repo
+    let (webhook_id, is_new) = database
+        .as_ref()
         .create_webhook_provider(
             app.id,
             "google_play",
@@ -177,7 +178,7 @@ pub async fn handle_google_play(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    spawn_process_and_forward_webhook(state.database(), app.id, webhook_id, "Google Play", event_id.to_string());
+    spawn_process_and_forward_webhook(database, app.id, webhook_id, "Google Play", event_id.to_string());
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -189,6 +190,7 @@ pub async fn handle_creem(
     headers: HeaderMap,
     body: String,
 ) -> Result<StatusCode, BridgeError> {
+    let database = state.database();
     info!("Received Creem webhook with token: {}", token);
 
     let token_uuid = match Uuid::parse_str(&token) {
@@ -196,7 +198,7 @@ pub async fn handle_creem(
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    let app = match state.webhook_ingress_repo.get_app_by_webhook_token(token_uuid).await {
+    let app = match database.as_ref().get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
@@ -205,7 +207,7 @@ pub async fn handle_creem(
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
 
-    let webhook_secret = get_provider_webhook_secret(state.webhook_ingress_repo.as_ref(), app.id, "creem").await?;
+    let webhook_secret = get_provider_webhook_secret(database.as_ref(), app.id, "creem").await?;
     let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
 
@@ -243,8 +245,8 @@ pub async fn handle_creem(
             .map(|dt| dt.timestamp_millis())
     });
 
-    let (webhook_id, is_new) = state
-        .webhook_ingress_repo
+    let (webhook_id, is_new) = database
+        .as_ref()
         .create_webhook_provider(
             app.id,
             "creem",
@@ -262,7 +264,7 @@ pub async fn handle_creem(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    spawn_process_and_forward_webhook(state.database(), app.id, webhook_id, "Creem", event_id.to_string());
+    spawn_process_and_forward_webhook(database, app.id, webhook_id, "Creem", event_id.to_string());
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -274,6 +276,7 @@ pub async fn handle_lemonsqueezy(
     headers: HeaderMap,
     body: String,
 ) -> Result<StatusCode, BridgeError> {
+    let database = state.database();
     info!("Received LemonSqueezy webhook with token: {}", token);
 
     let token_uuid = match Uuid::parse_str(&token) {
@@ -281,7 +284,7 @@ pub async fn handle_lemonsqueezy(
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    let app = match state.webhook_ingress_repo.get_app_by_webhook_token(token_uuid).await {
+    let app = match database.as_ref().get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
@@ -290,7 +293,7 @@ pub async fn handle_lemonsqueezy(
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
 
-    let webhook_secret = get_provider_webhook_secret(state.webhook_ingress_repo.as_ref(), app.id, "lemonsqueezy").await?;
+    let webhook_secret = get_provider_webhook_secret(database.as_ref(), app.id, "lemonsqueezy").await?;
     let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
 
@@ -324,8 +327,8 @@ pub async fn handle_lemonsqueezy(
         .or_else(|| payload["data"]["attributes"]["subscription_id"].as_str())
         .map(|s| s.to_string());
 
-    let (webhook_id, is_new) = state
-        .webhook_ingress_repo
+    let (webhook_id, is_new) = database
+        .as_ref()
         .create_webhook_provider(
             app.id,
             "lemonsqueezy",
@@ -346,7 +349,7 @@ pub async fn handle_lemonsqueezy(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    spawn_process_and_forward_webhook(state.database(), app.id, webhook_id, "LemonSqueezy", event_id.to_string());
+    spawn_process_and_forward_webhook(database, app.id, webhook_id, "LemonSqueezy", event_id.to_string());
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -358,6 +361,7 @@ pub async fn handle_coinbase(
     headers: HeaderMap,
     body: String,
 ) -> Result<StatusCode, BridgeError> {
+    let database = state.database();
     info!("Received Coinbase webhook with token: {}", token);
 
     let token_uuid = match Uuid::parse_str(&token) {
@@ -365,7 +369,7 @@ pub async fn handle_coinbase(
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    let app = match state.webhook_ingress_repo.get_app_by_webhook_token(token_uuid).await {
+    let app = match database.as_ref().get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
@@ -374,7 +378,7 @@ pub async fn handle_coinbase(
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
 
-    let webhook_secret = get_provider_webhook_secret(state.webhook_ingress_repo.as_ref(), app.id, "coinbase").await?;
+    let webhook_secret = get_provider_webhook_secret(database.as_ref(), app.id, "coinbase").await?;
     let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
 
@@ -410,8 +414,8 @@ pub async fn handle_coinbase(
             .map(|dt| dt.timestamp_millis())
     });
 
-    let (webhook_id, is_new) = state
-        .webhook_ingress_repo
+    let (webhook_id, is_new) = database
+        .as_ref()
         .create_webhook_provider(
             app.id,
             "coinbase",
@@ -432,7 +436,7 @@ pub async fn handle_coinbase(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    spawn_process_and_forward_webhook(state.database(), app.id, webhook_id, "Coinbase", event_id.to_string());
+    spawn_process_and_forward_webhook(database, app.id, webhook_id, "Coinbase", event_id.to_string());
 
     Ok(StatusCode::NO_CONTENT)
 }

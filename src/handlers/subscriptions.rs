@@ -2,6 +2,7 @@ use crate::config::API_PAGINATION_LIMIT;
 use crate::config::MAX_PAGINATION_LIMIT;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
+use crate::ports::SubscriptionReadRepository;
 use crate::state::AppState;
 use axum::{
     extract::{Extension, Path, Query, State},
@@ -74,6 +75,7 @@ pub async fn list_subscriptions(
     Extension(auth): Extension<AppAuth>,
     Query(query): Query<ListSubscriptionsQuery>,
 ) -> Result<(StatusCode, Json<ListSubscriptionsResponse>), BridgeError> {
+    let database = state.database();
     if query.external_user_id.is_empty() {
         return Err(BridgeError::ValidationError(
             "external_user_id is required".to_string(),
@@ -84,7 +86,7 @@ pub async fn list_subscriptions(
 
     let cursor = decode_cursor(query.after.as_deref())?;
 
-    let subs = state.subscription_read_repo.get_user_subscriptions_keyset(
+    let subs = database.as_ref().get_user_subscriptions_keyset(
         auth.app_id,
         &query.external_user_id,
         limit + 1, // Fetch one extra to check if there are more
@@ -158,6 +160,7 @@ pub async fn get_subscription(
     Path(subscription_id): Path<String>,
     Query(query): Query<GetSubscriptionQuery>,
 ) -> Result<(StatusCode, Json<SubscriptionDetailFull>), BridgeError> {
+    let database = state.database();
     if query.external_user_id.is_empty() {
         return Err(BridgeError::ValidationError(
             "external_user_id is required".to_string(),
@@ -170,7 +173,7 @@ pub async fn get_subscription(
         ));
     }
 
-    let sub = state.subscription_read_repo.get_subscription(
+    let sub = database.as_ref().get_subscription(
         auth.app_id,
         &query.external_user_id,
         &subscription_id,
