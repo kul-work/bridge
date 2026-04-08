@@ -354,7 +354,13 @@ pub(crate) async fn forward_verify_purchase_callback<
         cancellation_mode: None,
     };
 
-    crate::webhooks::forwarding::forward_webhook(repo, app_id, delivery_id, callback_payload).await
+    crate::webhooks::forwarding::queue_and_forward_webhook(
+        repo,
+        app_id,
+        delivery_id,
+        callback_payload,
+    )
+    .await
 }
 
 pub(crate) async fn acknowledge_google_play(

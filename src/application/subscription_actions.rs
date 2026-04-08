@@ -421,5 +421,6 @@ where
         cancellation_mode: cancellation_mode.map(str::to_string),
     };
 
-    crate::webhooks::forwarding::forward_webhook(repo, app_id, delivery_id, canonical).await
+    crate::webhooks::forwarding::queue_and_forward_webhook(repo, app_id, delivery_id, canonical)
+        .await
 }

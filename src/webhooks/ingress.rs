@@ -150,18 +150,18 @@ pub async fn handle_google_play(
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     let database = state.database();
-    let delivery_repo = state.app_webhook_repo.clone();
     tokio::spawn(async move {
         match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
-                match delivery_repo.create_webhook_delivery(app_id, webhook_id).await {
-                    Ok(delivery_id) => {
-                        let _ = crate::webhooks::forwarding::forward_webhook(
-                            database.as_ref(), app_id, delivery_id, canonical,
-                        )
-                        .await;
-                    }
-                    Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
+                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
+                    database.as_ref(),
+                    app_id,
+                    webhook_id,
+                    canonical,
+                )
+                .await
+                {
+                    error!("Failed to forward webhook for {}: {}", event_id_owned, e);
                 }
                 info!("Google Play webhook processed: {}", event_id_owned);
             }
@@ -256,18 +256,18 @@ pub async fn handle_creem(
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     let database = state.database();
-    let delivery_repo = state.app_webhook_repo.clone();
     tokio::spawn(async move {
         match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
-                match delivery_repo.create_webhook_delivery(app_id, webhook_id).await {
-                    Ok(delivery_id) => {
-                        let _ = crate::webhooks::forwarding::forward_webhook(
-                            database.as_ref(), app_id, delivery_id, canonical,
-                        )
-                        .await;
-                    }
-                    Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
+                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
+                    database.as_ref(),
+                    app_id,
+                    webhook_id,
+                    canonical,
+                )
+                .await
+                {
+                    error!("Failed to forward webhook for {}: {}", event_id_owned, e);
                 }
                 info!("Creem webhook processed: {}", event_id_owned);
             }
@@ -361,18 +361,18 @@ pub async fn handle_lemonsqueezy(
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     let database = state.database();
-    let delivery_repo = state.app_webhook_repo.clone();
     tokio::spawn(async move {
         match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
-                match delivery_repo.create_webhook_delivery(app_id, webhook_id).await {
-                    Ok(delivery_id) => {
-                        let _ = crate::webhooks::forwarding::forward_webhook(
-                            database.as_ref(), app_id, delivery_id, canonical,
-                        )
-                        .await;
-                    }
-                    Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
+                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
+                    database.as_ref(),
+                    app_id,
+                    webhook_id,
+                    canonical,
+                )
+                .await
+                {
+                    error!("Failed to forward webhook for {}: {}", event_id_owned, e);
                 }
                 info!("LemonSqueezy webhook processed: {}", event_id_owned);
             }
@@ -468,18 +468,18 @@ pub async fn handle_coinbase(
     let app_id = app.id;
     let event_id_owned = event_id.to_string();
     let database = state.database();
-    let delivery_repo = state.app_webhook_repo.clone();
     tokio::spawn(async move {
         match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
-                match delivery_repo.create_webhook_delivery(app_id, webhook_id).await {
-                    Ok(delivery_id) => {
-                        let _ = crate::webhooks::forwarding::forward_webhook(
-                            database.as_ref(), app_id, delivery_id, canonical,
-                        )
-                        .await;
-                    }
-                    Err(e) => error!("Failed to create delivery for {}: {}", event_id_owned, e),
+                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
+                    database.as_ref(),
+                    app_id,
+                    webhook_id,
+                    canonical,
+                )
+                .await
+                {
+                    error!("Failed to forward webhook for {}: {}", event_id_owned, e);
                 }
                 info!("Coinbase webhook processed: {}", event_id_owned);
             }

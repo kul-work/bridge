@@ -1,5 +1,5 @@
 use crate::error::BridgeError;
-use crate::ports::{AppProviderRepository, WebhookForwardRepository};
+use crate::ports::{AppProviderRepository, AppWebhookRepository, WebhookForwardRepository};
 use std::time::Duration;
 use uuid::Uuid;
 use reqwest::Client;
@@ -144,6 +144,21 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppProviderRepository
     }
 
     Ok(())
+}
+
+/// Create a webhook delivery and forward it in one step.
+#[allow(dead_code)]
+pub async fn queue_and_forward_webhook<R: AppWebhookRepository + ?Sized>(
+    repo: &R,
+    app_id: Uuid,
+    webhook_provider_id: Uuid,
+    payload: crate::webhooks::processor::CanonicalWebhookPayload,
+) -> Result<(), BridgeError> {
+    let delivery_id = repo
+        .create_webhook_delivery(app_id, webhook_provider_id)
+        .await?;
+
+    forward_webhook(repo, app_id, delivery_id, payload).await
 }
 
 /// Create HMAC-SHA256 signature for webhook

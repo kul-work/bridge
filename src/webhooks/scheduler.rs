@@ -473,8 +473,6 @@ async fn emit_scheduler_callback(
     )
     .await?;
 
-    let delivery_id = WebhookWriteRepository::create_webhook_delivery(repo, app_id, webhook_provider_id).await?;
-
     let canonical = crate::webhooks::processor::CanonicalWebhookPayload {
         event_id: format!("{}-{}", provider, provider_event_id),
         event_type: event_type.to_string(),
@@ -499,7 +497,13 @@ async fn emit_scheduler_callback(
         cancellation_mode: None,
     };
 
-    crate::webhooks::forwarding::forward_webhook(repo, app_id, delivery_id, canonical).await
+    crate::webhooks::forwarding::queue_and_forward_webhook(
+        repo,
+        app_id,
+        webhook_provider_id,
+        canonical,
+    )
+    .await
 }
 
 pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {

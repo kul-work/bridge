@@ -18,12 +18,13 @@ What is now fixed:
 4. `checkout` no longer exposes handler-owned DTO/helper logic to the application layer.
 5. `AppState` no longer exposes `database_ref()`.
 6. `subscriptions_actions` orchestration moved into `src/application/subscription_actions.rs`.
+7. Repeated webhook delivery wiring is now centralized behind `queue_and_forward_webhook` for ingress and callback emitters.
 
 What still needs work:
 
 1. Some repository traits and seams are still broader than necessary.
 2. Some handlers still do their own orchestration.
-3. Boilerplate forwarding and duplicated shapes still exist in a few port implementations.
+3. A few direct forwarding paths still exist where they are the right boundary, but the repeated create-delivery-then-forward shape is no longer duplicated.
 
 ### Verdict
 The repo is materially better than the original review state. The hot paths now look like lean hexagonal architecture, but the overall port layer is still more infrastructure-shaped than it needs to be.
@@ -48,9 +49,9 @@ The repo is materially better than the original review state. The hot paths now 
 ### Issue 5: Boilerplate Forwarding Without Payoff
 
 **Severity**: MEDIUM  
-**Status**: Still present in a few port implementations
+**Status**: Mostly addressed; direct retry forwarding remains intentional
 
-The repo still has thin forwarding in a number of places.
+The repeated create-delivery-then-forward shape now lives in one helper. The remaining direct `forward_webhook` path is for retrying an existing delivery, which is a stable boundary rather than avoidable duplication.
 
 **Why this matters**
 - More code to maintain.
@@ -104,7 +105,7 @@ Stay with lean hexagonal, not full hexagonal.
 ### Remaining Cleanup Targets
 
 - `src/ports.rs` still has broad traits and DB-shaped seams outside the fixed hot paths.
-- Reduce boilerplate forwarding only when it eliminates meaningful duplication or unlocks a stable boundary.
+- Reduce boilerplate forwarding only when it eliminates meaningful duplication or unlocks a stable boundary; the ingress and callback emitters already share the delivery helper.
 - Audit remaining handlers for orchestration that belongs in application services before introducing new abstractions.
 
 ---
@@ -117,7 +118,7 @@ Stay with lean hexagonal, not full hexagonal.
 | Ports -> DB types | Partially leaky | Hidden where feasible |
 | Boundary consistency | Improved | Enforced |
 | Port granularity | Better for hot paths | Focused/use-case-shaped |
-| Forwarding boilerplate | Reduced in hot paths | Minimal |
+| Forwarding boilerplate | Consolidated for ingress/callback emission | Minimal |
 | Orchestration location | Handlers + application services | Application services |
 | Testing benefit | Better for fixed paths | Real, focused mocks |
 | Code clarity | Better than before | Clear, single path |
