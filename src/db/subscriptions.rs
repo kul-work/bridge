@@ -49,41 +49,7 @@ pub struct SubscriptionUpsertResult {
     pub applied: bool,
 }
 
-#[derive(Debug, Clone)]
-pub enum SubscriptionWebhookTransition {
-    Pending,
-    GracePeriod {
-        grace_period_end: Option<DateTime<Utc>>,
-    },
-    Revoked {
-        revocation_reason: Option<String>,
-    },
-    OnHold,
-    Paused,
-    Resumed,
-    CancellationScheduled {
-        google_cancellation_context: Option<String>,
-        google_cancellation_feedback: Option<String>,
-    },
-    Expired,
-    Cancelled {
-        current_period_end: Option<DateTime<Utc>>,
-        google_cancellation_context: Option<String>,
-        google_cancellation_feedback: Option<String>,
-    },
-    PaymentFailed,
-    PendingPurchaseCancelled,
-    PriceStepUp {
-        google_new_price_cents: Option<i32>,
-        google_price_step_up_consent_deadline: Option<DateTime<Utc>>,
-    },
-    PauseScheduled {
-        google_pause_scheduled_at: DateTime<Utc>,
-    },
-    Deferred {
-        google_deferred_until: DateTime<Utc>,
-    },
-}
+pub use crate::ports::SubscriptionWebhookTransition;
 
 pub async fn apply_webhook_transition(
     pool: &PgPool,

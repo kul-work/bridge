@@ -223,6 +223,42 @@ pub struct SubscriptionLookupSnapshot {
     pub last_event_time: i64,
 }
 
+#[derive(Debug, Clone)]
+pub enum SubscriptionWebhookTransition {
+    Pending,
+    GracePeriod {
+        grace_period_end: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    Revoked {
+        revocation_reason: Option<String>,
+    },
+    OnHold,
+    Paused,
+    Resumed,
+    CancellationScheduled {
+        google_cancellation_context: Option<String>,
+        google_cancellation_feedback: Option<String>,
+    },
+    Expired,
+    Cancelled {
+        current_period_end: Option<chrono::DateTime<chrono::Utc>>,
+        google_cancellation_context: Option<String>,
+        google_cancellation_feedback: Option<String>,
+    },
+    PaymentFailed,
+    PendingPurchaseCancelled,
+    PriceStepUp {
+        google_new_price_cents: Option<i32>,
+        google_price_step_up_consent_deadline: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    PauseScheduled {
+        google_pause_scheduled_at: chrono::DateTime<chrono::Utc>,
+    },
+    Deferred {
+        google_deferred_until: chrono::DateTime<chrono::Utc>,
+    },
+}
+
 #[async_trait]
 pub trait VerifyPurchaseRepository: Send + Sync {
     async fn get_subscription(
@@ -451,6 +487,19 @@ pub struct WebhookSubscriptionSnapshot {
     pub revocation_reason: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct WebhookProviderSnapshot {
+    pub provider: String,
+    pub provider_webhook_id: String,
+    pub event_type: String,
+    pub subscription_id: Option<String>,
+    pub purchase_token: Option<String>,
+    pub payload: serde_json::Value,
+    pub timestamp_epoch_ms: Option<i64>,
+    pub suppressed: bool,
+    pub suppressed_reason: Option<String>,
+}
+
 #[async_trait]
 pub trait WebhookProcessingTransactionRepository: Send + Sync {
     async fn record_webhook_payment(
@@ -499,7 +548,7 @@ pub trait PurchaseOwnerLookupRepository: Send + Sync {
 
 #[async_trait]
 pub trait WebhookProviderLookupRepository: Send + Sync {
-    async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProvider, BridgeError>;
+    async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProviderSnapshot, BridgeError>;
 }
 
 #[async_trait]
@@ -525,7 +574,7 @@ pub trait WebhookProcessingMutationRepository: WebhookSuppressionRepository + Se
         app_id: Uuid,
         subscription_id: &str,
         event_time_ms: i64,
-        transition: db::subscriptions::SubscriptionWebhookTransition,
+        transition: SubscriptionWebhookTransition,
     ) -> Result<Option<Subscription>, BridgeError>;
 
     async fn link_replacement_subscriptions(
@@ -1388,8 +1437,19 @@ impl PurchaseOwnerLookupRepository for db::Database {
 
 #[async_trait]
 impl WebhookProviderLookupRepository for db::Database {
-    async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProvider, BridgeError> {
-        db::webhooks::get_webhook_provider(self.pool(), id).await
+    async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProviderSnapshot, BridgeError> {
+        let webhook = db::webhooks::get_webhook_provider(self.pool(), id).await?;
+        Ok(WebhookProviderSnapshot {
+            provider: webhook.provider,
+            provider_webhook_id: webhook.provider_webhook_id,
+            event_type: webhook.event_type,
+            subscription_id: webhook.subscription_id,
+            purchase_token: webhook.purchase_token,
+            payload: webhook.payload,
+            timestamp_epoch_ms: webhook.timestamp_epoch_ms,
+            suppressed: webhook.suppressed,
+            suppressed_reason: webhook.suppressed_reason,
+        })
     }
 }
 
@@ -1420,7 +1480,7 @@ impl WebhookProcessingMutationRepository for db::Database {
         app_id: Uuid,
         subscription_id: &str,
         event_time_ms: i64,
-        transition: db::subscriptions::SubscriptionWebhookTransition,
+        transition: SubscriptionWebhookTransition,
     ) -> Result<Option<Subscription>, BridgeError> {
         db::subscriptions::apply_webhook_transition(
             self.pool(),

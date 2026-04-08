@@ -1,11 +1,8 @@
 use crate::{
-    db::{
-        subscriptions::SubscriptionWebhookTransition,
-        webhooks::WebhookProvider,
-    },
     error::BridgeError,
     ports::{
-        WebhookProcessingLookupRepository, WebhookProcessingMutationRepository,
+        SubscriptionWebhookTransition, WebhookProcessingLookupRepository,
+        WebhookProcessingMutationRepository, WebhookProviderSnapshot,
         WebhookSubscriptionSnapshot,
     },
     webhooks::processor::WebhookFields,
@@ -30,7 +27,7 @@ fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
 
 fn subscription_id_for_event<'a>(
     fields: &'a WebhookFields,
-    webhook: &'a WebhookProvider,
+    webhook: &'a WebhookProviderSnapshot,
 ) -> Option<&'a str> {
     fields
         .subscription_id
@@ -50,7 +47,7 @@ pub async fn handle_subscription_revoked<
 >(
     repo: &R,
     app_id: Uuid,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
@@ -103,7 +100,7 @@ pub async fn handle_subscription_resumed<
 >(
     repo: &R,
     app_id: Uuid,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
@@ -149,7 +146,7 @@ pub async fn handle_subscription_cancelled_with_context<
 >(
     repo: &R,
     app_id: Uuid,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
@@ -193,7 +190,7 @@ pub async fn handle_subscription_cancellation_scheduled<
 >(
     repo: &R,
     app_id: Uuid,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
@@ -231,7 +228,7 @@ pub async fn handle_price_step_up_consent_required<
 >(
     repo: &R,
     app_id: Uuid,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
@@ -268,7 +265,7 @@ pub async fn handle_subscription_pending_purchase_cancelled<
 >(
     repo: &R,
     app_id: Uuid,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {

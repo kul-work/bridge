@@ -1,12 +1,9 @@
 use crate::{
     application::app_context::AppSnapshot,
-    db::{
-        subscriptions::SubscriptionWebhookTransition,
-        webhooks::WebhookProvider,
-    },
     error::BridgeError,
     ports::{
-        WebhookPaymentRecordRequest, WebhookProcessingRepository,
+        SubscriptionWebhookTransition, WebhookPaymentRecordRequest,
+        WebhookProcessingRepository, WebhookProviderSnapshot,
         WebhookSubscriptionCommitRequest, WebhookSubscriptionSnapshot,
     },
 };
@@ -88,7 +85,7 @@ fn extract_metadata_user_id(payload: &serde_json::Value) -> Option<String> {
 async fn suppress_unresolved_webhook<R: WebhookProcessingRepository>(
     repo: &R,
     webhook_provider_id: Uuid,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
 ) -> Result<(), BridgeError> {
     error!(
         "Webhook {} discarded: unable to resolve external_user_id (provider={}, event={})",
@@ -102,7 +99,7 @@ async fn suppress_unresolved_webhook<R: WebhookProcessingRepository>(
 async fn ensure_resolved_user<R: WebhookProcessingRepository>(
     repo: &R,
     webhook_provider_id: Uuid,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
     external_user_id: &Option<String>,
 ) -> Result<bool, BridgeError> {
     if external_user_id.is_some() {
@@ -113,7 +110,7 @@ async fn ensure_resolved_user<R: WebhookProcessingRepository>(
     Ok(false)
 }
 
-fn extract_customer_email_for_dispute(webhook: &WebhookProvider) -> Option<String> {
+fn extract_customer_email_for_dispute(webhook: &WebhookProviderSnapshot) -> Option<String> {
     let payload = &webhook.payload;
     [
         "/customer/email",
@@ -130,7 +127,7 @@ fn extract_customer_email_for_dispute(webhook: &WebhookProvider) -> Option<Strin
 
 async fn send_dispute_admin_alert_email(
     app: &AppSnapshot,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     external_user_id: Option<&str>,
 ) -> Result<(), BridgeError> {
@@ -201,7 +198,7 @@ async fn send_dispute_admin_alert_email(
     Ok(())
 }
 
-fn extract_webhook_fields(webhook: &WebhookProvider) -> WebhookFields {
+fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> WebhookFields {
     let p = &webhook.payload;
     match webhook.provider.as_str() {
         "google_play" => WebhookFields {
@@ -386,7 +383,7 @@ fn google_cancellation_context_from_resource(
 async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     repo: &R,
     app_id: Uuid,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
     mut fields: WebhookFields,
 ) -> Result<WebhookFields, BridgeError> {
     let Some(purchase_token) = fields.purchase_token.as_deref().or(webhook.purchase_token.as_deref()) else {
@@ -470,7 +467,7 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
 async fn resolve_user<R: WebhookProcessingRepository>(
     repo: &R,
     app_id: Uuid,
-    webhook: &WebhookProvider,
+    webhook: &WebhookProviderSnapshot,
 ) -> Option<String> {
     // 1. subscription_id lookup
     if let Some(ref sub_id) = webhook.subscription_id {
