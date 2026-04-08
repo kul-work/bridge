@@ -261,7 +261,7 @@ pub enum SubscriptionWebhookTransition {
 
 #[async_trait]
 pub trait VerifyPurchaseRepository: Send + Sync {
-    async fn get_subscription(
+    async fn get_subscription_snapshot(
         &self,
         app_id: Uuid,
         external_user_id: &str,
@@ -338,6 +338,18 @@ pub trait SubscriptionWriteRepository: Send + Sync {
 }
 
 #[async_trait]
+pub trait SubscriptionRepository:
+    SubscriptionReadRepository
+    + SubscriptionWriteRepository
+    + SubscriptionLookupRepository
+    + PurchaseOwnerLookupRepository
+    + GooglePlayAccountLookupRepository
+    + Send
+    + Sync
+{
+}
+
+#[async_trait]
 pub trait WebhookWriteRepository: Send + Sync {
     async fn create_webhook_provider(
         &self,
@@ -360,7 +372,7 @@ pub trait WebhookWriteRepository: Send + Sync {
 
 #[async_trait]
 pub trait WebhookIngressRepository:
-    AppLookupRepository + ProviderConfigLookupRepository + WebhookWriteRepository + Send + Sync
+    AppConfigRepository + WebhookRepository + Send + Sync
 {
     async fn get_app_by_webhook_token(&self, token: Uuid) -> Result<AppSnapshot, BridgeError>;
 }
@@ -380,6 +392,9 @@ pub trait ProviderConfigLookupRepository: Send + Sync {
 }
 
 #[async_trait]
+pub trait AppConfigRepository: AppLookupRepository + ProviderConfigLookupRepository + Send + Sync {}
+
+#[async_trait]
 pub trait WebhookForwardRepository:
     WebhookSuppressionRepository + SubscriptionLookupRepository + Send + Sync
 {
@@ -395,14 +410,11 @@ pub trait WebhookForwardRepository:
 }
 
 pub(crate) trait VerifyPurchaseHandlerRepository:
-    AppLookupRepository
-    + GooglePlayAccountLookupRepository
-    + PaymentAcknowledgementRepository
-    + ProviderConfigLookupRepository
-    + SubscriptionLookupRepository
+    AppConfigRepository
+    + PaymentRepository
+    + SubscriptionRepository
     + VerifyPurchaseRepository
-    + WebhookForwardRepository
-    + WebhookWriteRepository
+    + WebhookRepository
     + Send
     + Sync
 {
@@ -410,54 +422,35 @@ pub(crate) trait VerifyPurchaseHandlerRepository:
 
 impl<T> VerifyPurchaseHandlerRepository for T
 where
-    T: AppLookupRepository
-        + GooglePlayAccountLookupRepository
-        + PaymentAcknowledgementRepository
-        + ProviderConfigLookupRepository
-        + SubscriptionLookupRepository
+    T: AppConfigRepository
+        + PaymentRepository
+        + SubscriptionRepository
         + VerifyPurchaseRepository
-        + WebhookForwardRepository
-        + WebhookWriteRepository
+        + WebhookRepository
         + Send
         + Sync,
 {
 }
 
 pub(crate) trait SubscriptionActionsHandlerRepository:
-    AppLookupRepository
-    + ProviderConfigLookupRepository
-    + SubscriptionLookupRepository
-    + SubscriptionReadRepository
-    + SubscriptionWriteRepository
-    + WebhookForwardRepository
-    + WebhookWriteRepository
-    + Send
-    + Sync
+    AppConfigRepository + SubscriptionRepository + WebhookRepository + Send + Sync
 {
 }
 
 impl<T> SubscriptionActionsHandlerRepository for T
 where
-    T: AppLookupRepository
-        + ProviderConfigLookupRepository
-        + SubscriptionLookupRepository
-        + SubscriptionReadRepository
-        + SubscriptionWriteRepository
-        + WebhookForwardRepository
-        + WebhookWriteRepository
-        + Send
-        + Sync,
+    T: AppConfigRepository + SubscriptionRepository + WebhookRepository + Send + Sync,
 {
 }
 
 pub(crate) trait CheckoutHandlerRepository:
-    AppLookupRepository + CheckoutRepository + ProviderConfigLookupRepository + Send + Sync
+    AppConfigRepository + CheckoutRepository + Send + Sync
 {
 }
 
 impl<T> CheckoutHandlerRepository for T
 where
-    T: AppLookupRepository + CheckoutRepository + ProviderConfigLookupRepository + Send + Sync,
+    T: AppConfigRepository + CheckoutRepository + Send + Sync,
 {
 }
 
@@ -563,12 +556,30 @@ pub trait WebhookProviderLookupRepository: Send + Sync {
 }
 
 #[async_trait]
+pub trait WebhookRepository:
+    WebhookWriteRepository
+    + WebhookReadRepository
+    + WebhookForwardRepository
+    + WebhookSuppressionRepository
+    + WebhookProviderLookupRepository
+    + Send
+    + Sync
+{
+}
+
+#[async_trait]
 pub trait PaymentStatusLookupRepository: Send + Sync {
     async fn get_payment_status(
         &self,
         app_id: Uuid,
         provider_transaction_id: &str,
     ) -> Result<Option<String>, BridgeError>;
+}
+
+#[async_trait]
+pub trait PaymentRepository:
+    PaymentReadRepository + PaymentAcknowledgementRepository + PaymentStatusLookupRepository + Send + Sync
+{
 }
 
 #[async_trait]
@@ -609,8 +620,10 @@ pub trait WebhookProcessingMutationRepository: WebhookSuppressionRepository + Se
 
 #[async_trait]
 pub trait WebhookProcessingRepository:
-    AppLookupRepository
-    + ProviderConfigLookupRepository
+    AppConfigRepository
+    + SubscriptionRepository
+    + PaymentRepository
+    + WebhookRepository
     + WebhookProcessingLookupRepository
     + WebhookProcessingMutationRepository
     + WebhookProcessingTransactionRepository
@@ -1055,6 +1068,9 @@ impl SubscriptionWriteRepository for db::Database {
 }
 
 #[async_trait]
+impl SubscriptionRepository for db::Database {}
+
+#[async_trait]
 impl AgentReadRepository for db::Database {
     async fn get_agent_credit(
         &self,
@@ -1126,6 +1142,9 @@ impl ProviderConfigLookupRepository for db::Database {
     }
 }
 
+#[async_trait]
+impl AppConfigRepository for db::Database {}
+
 
 #[async_trait]
 impl GooglePlayAccountLookupRepository for db::Database {
@@ -1191,7 +1210,7 @@ impl CheckoutRepository for db::Database {
 
 #[async_trait]
 impl VerifyPurchaseRepository for db::Database {
-    async fn get_subscription(
+    async fn get_subscription_snapshot(
         &self,
         app_id: Uuid,
         external_user_id: &str,
@@ -1465,6 +1484,9 @@ impl WebhookProviderLookupRepository for db::Database {
 }
 
 #[async_trait]
+impl WebhookRepository for db::Database {}
+
+#[async_trait]
 impl PaymentStatusLookupRepository for db::Database {
     async fn get_payment_status(
         &self,
@@ -1474,6 +1496,9 @@ impl PaymentStatusLookupRepository for db::Database {
         db::payments::get_payment_status(self.pool(), app_id, provider_transaction_id).await
     }
 }
+
+#[async_trait]
+impl PaymentRepository for db::Database {}
 
 #[async_trait]
 impl WebhookProcessingMutationRepository for db::Database {

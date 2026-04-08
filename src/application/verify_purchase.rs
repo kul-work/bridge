@@ -128,7 +128,7 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
     }
 
     let existing_subscription = if product_type.is_subscription() {
-        repo.get_subscription(
+        repo.get_subscription_snapshot(
             app_id,
             &resolved_external_user_id,
             &payload.subscription_id,
