@@ -1,6 +1,6 @@
 use crate::{
+    application::app_context::AppSnapshot,
     db::{
-        apps::App,
         subscriptions::{Subscription, SubscriptionWebhookTransition},
         webhooks::WebhookProvider,
     },
@@ -126,7 +126,7 @@ fn extract_customer_email_for_dispute(webhook: &WebhookProvider) -> Option<Strin
 }
 
 async fn send_dispute_admin_alert_email(
-    app: &App,
+    app: &AppSnapshot,
     webhook: &WebhookProvider,
     fields: &WebhookFields,
     external_user_id: Option<&str>,

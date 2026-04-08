@@ -1,21 +1,19 @@
-use axum::http::StatusCode;
-use axum::Json;
 use uuid::Uuid;
 
-use crate::ports::CheckoutRepository;
 use crate::error::BridgeError;
-use crate::handlers::checkout::{
+use crate::application::checkout_helpers::{
     coinbase_amount_from_config, compute_request_fingerprint, extract_checkout_id,
     extract_checkout_url, extract_coinbase_checkout_id, extract_coinbase_checkout_url,
     normalize_provider_name, normalize_required_field, resolve_checkout_redirect_urls,
-    CheckoutRequest, CheckoutResponse,
 };
+use crate::application::checkout_types::{CheckoutRequest, CheckoutResponse};
+use crate::ports::CheckoutRepository;
 
 pub async fn create_checkout<R: CheckoutRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     payload: CheckoutRequest,
-) -> Result<(StatusCode, Json<CheckoutResponse>), BridgeError> {
+) -> Result<CheckoutResponse, BridgeError> {
     let external_user_id = normalize_required_field(&payload.external_user_id, "external_user_id")?;
     let email = normalize_required_field(&payload.email, "email")?;
     let provider = normalize_provider_name(&normalize_required_field(&payload.provider, "provider")?);
@@ -53,7 +51,7 @@ pub async fn create_checkout<R: CheckoutRepository + ?Sized>(
 
             let cached_response: CheckoutResponse = serde_json::from_value(cached.response_payload)
                 .map_err(|e| BridgeError::InternalServerError(format!("Invalid cached checkout payload: {}", e)))?;
-            return Ok((StatusCode::OK, Json(cached_response)));
+            return Ok(cached_response);
         }
     }
 
@@ -382,5 +380,5 @@ pub async fn create_checkout<R: CheckoutRepository + ?Sized>(
         .await?;
     }
 
-    Ok((StatusCode::CREATED, Json(response)))
+    Ok(response)
 }

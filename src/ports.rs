@@ -3,6 +3,7 @@ use std::{future::Future, pin::Pin};
 use uuid::Uuid;
 
 use crate::{
+    application::app_context::{AppSnapshot, ProviderConfigSnapshot},
     application::verify_purchase_types::{
         VerifyPurchaseCommitRequest, VerifyPurchaseCommitResult,
         VerifyPurchaseSubscriptionSnapshot,
@@ -14,7 +15,6 @@ use crate::{
         apps::App,
         checkout_idempotency::CachedCheckout,
         payments::{Payment, PaymentHistoryEntry},
-        provider_configs::ProviderConfig,
         subscriptions::{Subscription, SubscriptionUpsertResult},
         webhooks::{WebhookDelivery, WebhookProvider, WebhookRecord},
     },
@@ -297,18 +297,18 @@ pub trait WebhookWriteRepository: Send + Sync {
 
 #[async_trait]
 pub trait WebhookIngressRepository: AppProviderRepository + WebhookWriteRepository + Send + Sync {
-    async fn get_app_by_webhook_token(&self, token: Uuid) -> Result<App, BridgeError>;
+    async fn get_app_by_webhook_token(&self, token: Uuid) -> Result<AppSnapshot, BridgeError>;
 }
 
 #[async_trait]
 pub trait AppProviderRepository: Send + Sync {
-    async fn get_app(&self, app_id: Uuid) -> Result<App, BridgeError>;
+    async fn get_app(&self, app_id: Uuid) -> Result<AppSnapshot, BridgeError>;
 
     async fn get_provider_config(
         &self,
         app_id: Uuid,
         provider: &str,
-    ) -> Result<ProviderConfig, BridgeError>;
+    ) -> Result<ProviderConfigSnapshot, BridgeError>;
 }
 
 pub trait AppWebhookRepository:
@@ -358,13 +358,13 @@ pub trait WebhookProcessingRepository: Send + Sync {
 
     async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProvider, BridgeError>;
 
-    async fn get_app(&self, app_id: Uuid) -> Result<App, BridgeError>;
+    async fn get_app(&self, app_id: Uuid) -> Result<AppSnapshot, BridgeError>;
 
     async fn get_provider_config(
         &self,
         app_id: Uuid,
         provider: &str,
-    ) -> Result<ProviderConfig, BridgeError>;
+    ) -> Result<ProviderConfigSnapshot, BridgeError>;
 
     async fn lookup_user_by_subscription_id(
         &self,
@@ -901,16 +901,33 @@ impl WebhookReadRepository for db::Database {
 
 #[async_trait]
 impl AppProviderRepository for db::Database {
-    async fn get_app(&self, app_id: Uuid) -> Result<App, BridgeError> {
-        db::apps::get_app(self.pool(), app_id).await
+    async fn get_app(&self, app_id: Uuid) -> Result<AppSnapshot, BridgeError> {
+        db::apps::get_app(self.pool(), app_id)
+            .await
+            .map(|app| AppSnapshot {
+                id: app.id,
+                slug: app.slug,
+                display_name: app.display_name,
+                webhook_callback_url: app.webhook_callback_url,
+                webhook_callback_secret: app.webhook_callback_secret,
+                api_rate_limit_per_minute: app.api_rate_limit_per_minute,
+                api_rate_limit_rules: app.api_rate_limit_rules,
+                app_url: app.app_url,
+                google_package_name: app.google_package_name,
+                apple_bundle_id: app.apple_bundle_id,
+            })
     }
 
     async fn get_provider_config(
         &self,
         app_id: Uuid,
         provider: &str,
-    ) -> Result<ProviderConfig, BridgeError> {
-        db::provider_configs::get_provider_config(self.pool(), app_id, provider).await
+    ) -> Result<ProviderConfigSnapshot, BridgeError> {
+        db::provider_configs::get_provider_config(self.pool(), app_id, provider)
+            .await
+            .map(|provider_config| ProviderConfigSnapshot {
+                config: provider_config.config,
+            })
     }
 }
 
@@ -1143,8 +1160,21 @@ impl WebhookWriteRepository for db::Database {
 
 #[async_trait]
 impl WebhookIngressRepository for db::Database {
-    async fn get_app_by_webhook_token(&self, token: Uuid) -> Result<App, BridgeError> {
-        db::apps::get_app_by_webhook_token(self.pool(), token).await
+    async fn get_app_by_webhook_token(&self, token: Uuid) -> Result<AppSnapshot, BridgeError> {
+        db::apps::get_app_by_webhook_token(self.pool(), token)
+            .await
+            .map(|app| AppSnapshot {
+                id: app.id,
+                slug: app.slug,
+                display_name: app.display_name,
+                webhook_callback_url: app.webhook_callback_url,
+                webhook_callback_secret: app.webhook_callback_secret,
+                api_rate_limit_per_minute: app.api_rate_limit_per_minute,
+                api_rate_limit_rules: app.api_rate_limit_rules,
+                app_url: app.app_url,
+                google_package_name: app.google_package_name,
+                apple_bundle_id: app.apple_bundle_id,
+            })
     }
 }
 
@@ -1206,16 +1236,33 @@ impl WebhookProcessingRepository for db::Database {
         db::webhooks::get_webhook_provider(self.pool(), id).await
     }
 
-    async fn get_app(&self, app_id: Uuid) -> Result<App, BridgeError> {
-        db::apps::get_app(self.pool(), app_id).await
+    async fn get_app(&self, app_id: Uuid) -> Result<AppSnapshot, BridgeError> {
+        db::apps::get_app(self.pool(), app_id)
+            .await
+            .map(|app| AppSnapshot {
+                id: app.id,
+                slug: app.slug,
+                display_name: app.display_name,
+                webhook_callback_url: app.webhook_callback_url,
+                webhook_callback_secret: app.webhook_callback_secret,
+                api_rate_limit_per_minute: app.api_rate_limit_per_minute,
+                api_rate_limit_rules: app.api_rate_limit_rules,
+                app_url: app.app_url,
+                google_package_name: app.google_package_name,
+                apple_bundle_id: app.apple_bundle_id,
+            })
     }
 
     async fn get_provider_config(
         &self,
         app_id: Uuid,
         provider: &str,
-    ) -> Result<ProviderConfig, BridgeError> {
-        db::provider_configs::get_provider_config(self.pool(), app_id, provider).await
+    ) -> Result<ProviderConfigSnapshot, BridgeError> {
+        db::provider_configs::get_provider_config(self.pool(), app_id, provider)
+            .await
+            .map(|provider_config| ProviderConfigSnapshot {
+                config: provider_config.config,
+            })
     }
 
     async fn lookup_user_by_subscription_id(

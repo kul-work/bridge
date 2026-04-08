@@ -29,84 +29,6 @@ The repo is materially better than the original review state. The hot paths now 
 
 ---
 
-## What's Fixed So Far
-
-### 1. `verify_purchase` is now application-owned
-
-- [`src/application/verify_purchase.rs`](file:///c:/share/tyde/bridge/src/application/verify_purchase.rs) no longer imports Axum or returns HTTP-shaped results.
-- Request/response DTOs now live in [`src/application/verify_purchase_types.rs`](file:///c:/share/tyde/bridge/src/application/verify_purchase_types.rs).
-- Provider verification and callback forwarding moved to [`src/application/verify_purchase_provider.rs`](file:///c:/share/tyde/bridge/src/application/verify_purchase_provider.rs).
-- The handler is now a thin adapter in [`src/handlers/verify_purchase.rs`](file:///c:/share/tyde/bridge/src/handlers/verify_purchase.rs).
-
-### 2. `VerifyPurchaseRepository` no longer leaks transaction internals
-
-- The `verify_purchase` use case no longer passes `sqlx::Transaction` through the port boundary.
-- The repository now commits the transaction internally.
-- The verify-purchase path now uses application snapshots instead of raw `db::Subscription` values.
-
-### 3. `AppState` no longer exposes the old database escape hatch
-
-- [`src/state.rs`](file:///c:/share/tyde/bridge/src/state.rs) no longer has `database_ref()`.
-- The direct handler bypass used by `verify_purchase` was removed.
-
-### 4. Subscription action orchestration moved out of handlers
-
-- [`src/handlers/subscriptions_actions.rs`](file:///c:/share/tyde/bridge/src/handlers/subscriptions_actions.rs) now delegates to [`src/application/subscription_actions.rs`](file:///c:/share/tyde/bridge/src/application/subscription_actions.rs).
-- Cancel/resume/billing-portal/price-step-up workflows are application services now.
-- Request/response DTOs live in [`src/application/subscription_actions_types.rs`](file:///c:/share/tyde/bridge/src/application/subscription_actions_types.rs).
-
----
-
-## Critical Issues
-
-### Issue 1: Application Layer Coupled to HTTP Framework
-
-**Severity**: HIGH  
-**Status**: FIXED for `verify_purchase`; still present in `src/application/checkout.rs`
-
-The verify-purchase application flow no longer imports Axum types and no longer returns HTTP-shaped results.
-
-**Why this mattered**
-- The core was not framework-agnostic.
-- Orchestration logic could not be reused from CLI, jobs, or consumers.
-- Testing depended on HTTP types.
-
-**Current note**
-- This issue is no longer true for `verify_purchase`.
-- It still applies to `checkout`.
-
----
-
-### Issue 2: Ports Leak Persistence Implementation Details
-
-**Severity**: HIGH  
-**Status**: FIXED for the `verify_purchase` path; still true in other repository traits
-
-The `verify_purchase` path no longer leaks `sqlx::Transaction`.
-Its repository now returns application snapshots and owns the transaction internally.
-
-**Why this still matters elsewhere**
-- Several other ports still return `db::*` structs.
-- The abstraction is still partly shaped by infrastructure instead of business needs.
-
-**Correct approach**
-- Keep returning application DTOs where the seam is meant to be stable.
-- Avoid DB-shaped return types in application-facing ports when possible.
-
----
-
-### Issue 3: Inconsistent Abstraction Boundary
-
-**Severity**: HIGH  
-**Status**: FIXED for `verify_purchase`
-
-`AppState` no longer exposes `database_ref()`, and the `verify_purchase` handler no longer bypasses the repository boundary.
-
-**Residual risk**
-- Other parts of the codebase still have direct DB access or mixed access patterns.
-
----
-
 ## Design Problems
 
 ### Issue 4: Wide, Infrastructure-Shaped Ports
@@ -164,28 +86,6 @@ The subscription action workflows have been moved into `src/application/subscrip
 - This issue is fixed for the subscription action handlers.
 - It remains a useful review check for other handlers.
 
----
-
-## What Is Working Well
-
-### 1. Read/Write Repository Split
-
-- `SubscriptionReadRepository` vs `SubscriptionWriteRepository`
-- `PaymentReadRepository`
-
-This remains a good pattern.
-
-### 2. Composed Capability Traits
-
-- `AppWebhookRepository`
-
-Small trait composition is still useful when the capability is focused.
-
-### 3. Leaner Verify-Purchase Boundary
-
-- `verify_purchase` is now a real application service.
-- The handler is a transport adapter.
-- The repository owns the transaction boundary.
 
 ---
 
@@ -220,28 +120,6 @@ Stay with lean hexagonal, not full hexagonal.
 | Orchestration location | Handlers + application services | Application services |
 | Testing benefit | Better for fixed paths | Real, focused mocks |
 | Code clarity | Better than before | Clear, single path |
-
----
-
-## Files Requiring Changes
-
-### Already Addressed
-
-- `src/application/verify_purchase.rs`
-- `src/application/verify_purchase_provider.rs`
-- `src/application/verify_purchase_types.rs`
-- `src/application/subscription_actions.rs`
-- `src/application/subscription_actions_types.rs`
-- `src/handlers/verify_purchase.rs`
-- `src/handlers/subscriptions_actions.rs`
-- `src/state.rs`
-- `src/ports.rs` for the `verify_purchase` boundary
-
-### Next Candidates
-
-- `src/application/checkout.rs`
-- Remaining broad ports in `src/ports.rs`
-- Any handlers that still mix validation, provider calls, repository reads, writes, and callback dispatch
 
 ---
 
