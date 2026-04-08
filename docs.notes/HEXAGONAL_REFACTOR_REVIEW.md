@@ -2,7 +2,7 @@
 
 **Date**: April 8, 2026  
 **Scope**: SHA `c084dff065a2df7ac2384c2b1e5f90cc47b26dff` -> HEAD  
-**Status**: Lean hexagonal boundary established for `verify_purchase` and subscription actions; broader port cleanup still pending
+**Status**: Lean hexagonal boundary established for `verify_purchase`, `checkout`, and subscription actions; broader port cleanup still pending
 
 ---
 
@@ -14,15 +14,16 @@ What is now fixed:
 
 1. `verify_purchase` no longer depends on Axum from the application layer.
 2. `verify_purchase` no longer passes `sqlx::Transaction` through the port boundary.
-3. `AppState` no longer exposes `database_ref()`.
-4. `subscriptions_actions` orchestration moved into `src/application/subscription_actions.rs`.
+3. `checkout` no longer depends on Axum from the application layer.
+4. `checkout` no longer exposes handler-owned DTO/helper logic to the application layer.
+5. `AppState` no longer exposes `database_ref()`.
+6. `subscriptions_actions` orchestration moved into `src/application/subscription_actions.rs`.
 
 What still needs work:
 
-1. Other repository traits still expose DB-shaped structs.
-2. Some ports are still broader than necessary.
-3. Some handlers still do their own orchestration.
-4. `checkout` still has application-layer transport coupling.
+1. Some repository traits and seams are still broader than necessary.
+2. Some handlers still do their own orchestration.
+3. Boilerplate forwarding and duplicated shapes still exist in a few port implementations.
 
 ### Verdict
 The repo is materially better than the original review state. The hot paths now look like lean hexagonal architecture, but the overall port layer is still more infrastructure-shaped than it needs to be.
@@ -34,7 +35,7 @@ The repo is materially better than the original review state. The hot paths now 
 ### Issue 4: Wide, Infrastructure-Shaped Ports
 
 **Severity**: MEDIUM-HIGH  
-**Status**: Improved for `verify_purchase`; still relevant for broader ports
+**Status**: Still relevant for broader ports and handler seams
 
 `VerifyPurchaseRepository` is now narrower than it was, but the repo still has broad, infrastructure-shaped traits elsewhere.
 
@@ -47,7 +48,7 @@ The repo is materially better than the original review state. The hot paths now 
 ### Issue 5: Boilerplate Forwarding Without Payoff
 
 **Severity**: MEDIUM  
-**Status**: Still present in several port implementations
+**Status**: Still present in a few port implementations
 
 The repo still has thin forwarding in a number of places.
 
@@ -61,7 +62,7 @@ The repo still has thin forwarding in a number of places.
 ### Issue 6: Duplication Across Ports
 
 **Severity**: MEDIUM  
-**Status**: Still present
+**Status**: Still present in a few repository traits
 
 Repeated shapes still exist across repository traits and implementations.
 
@@ -96,15 +97,15 @@ The subscription action workflows have been moved into `src/application/subscrip
 Stay with lean hexagonal, not full hexagonal.
 
 - Keep ports for provider integrations, webhook dispatch, and the small set of application services that genuinely need them.
-- Keep moving orchestration out of handlers.
-- Continue replacing DB-shaped return types where the seam matters.
+- Keep moving orchestration out of handlers where any mixed transport/business flow still remains.
 - Do not reintroduce transport types into application services.
+- Avoid adding new ports unless they carry a stable business seam.
 
 ### Remaining Cleanup Targets
 
-- `src/application/checkout.rs` should be reviewed next for the same coupling pattern that was already fixed in `verify_purchase`.
-- `src/ports.rs` still has ports that are broader than necessary.
-- Remaining handlers should be checked for orchestration that belongs in application services.
+- `src/ports.rs` still has broad traits and DB-shaped seams outside the fixed hot paths.
+- Reduce boilerplate forwarding only when it eliminates meaningful duplication or unlocks a stable boundary.
+- Audit remaining handlers for orchestration that belongs in application services before introducing new abstractions.
 
 ---
 
