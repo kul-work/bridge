@@ -200,24 +200,31 @@ pub trait SubscriptionLookupRepository: Send + Sync {
         &self,
         app_id: Uuid,
         subscription_id: &str,
-    ) -> Result<Option<Subscription>, BridgeError>;
+    ) -> Result<Option<SubscriptionLookupSnapshot>, BridgeError>;
 
     async fn get_subscription_by_purchase_token(
         &self,
         app_id: Uuid,
         purchase_token: &str,
-    ) -> Result<Option<Subscription>, BridgeError>;
+    ) -> Result<Option<SubscriptionLookupSnapshot>, BridgeError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct SubscriptionLookupSnapshot {
+    pub id: Uuid,
+    pub external_user_id: String,
+    pub provider: String,
+    pub subscription_id: String,
+    pub purchase_token: Option<String>,
+    pub status: String,
+    pub current_period_end: Option<chrono::DateTime<chrono::Utc>>,
+    pub auto_renewing: Option<bool>,
+    pub revocation_reason: Option<String>,
+    pub last_event_time: i64,
 }
 
 #[async_trait]
-pub trait VerifyPurchaseRepository:
-    WebhookWriteRepository
-    + WebhookForwardRepository
-    + GooglePlayAccountLookupRepository
-    + SubscriptionLookupRepository
-    + Send
-    + Sync
-{
+pub trait VerifyPurchaseRepository: Send + Sync {
     async fn get_subscription(
         &self,
         app_id: Uuid,
@@ -226,6 +233,14 @@ pub trait VerifyPurchaseRepository:
         provider: &str,
     ) -> Result<Option<VerifyPurchaseSubscriptionSnapshot>, BridgeError>;
 
+    async fn commit_verified_purchase(
+        &self,
+        request: VerifyPurchaseCommitRequest<'_>,
+    ) -> Result<VerifyPurchaseCommitResult, BridgeError>;
+}
+
+#[async_trait]
+pub trait PaymentAcknowledgementRepository: Send + Sync {
     async fn payment_acknowledged_at(
         &self,
         app_id: Uuid,
@@ -239,11 +254,6 @@ pub trait VerifyPurchaseRepository:
         provider: &str,
         provider_transaction_id: &str,
     ) -> Result<(), BridgeError>;
-
-    async fn commit_verified_purchase(
-        &self,
-        request: VerifyPurchaseCommitRequest<'_>,
-    ) -> Result<VerifyPurchaseCommitResult, BridgeError>;
 }
 
 #[async_trait]
@@ -346,6 +356,62 @@ pub trait WebhookForwardRepository:
         error: Option<String>,
         forwarded: bool,
     ) -> Result<(), BridgeError>;
+}
+
+pub(crate) trait VerifyPurchaseHandlerRepository:
+    AppLookupRepository
+    + GooglePlayAccountLookupRepository
+    + PaymentAcknowledgementRepository
+    + ProviderConfigLookupRepository
+    + SubscriptionLookupRepository
+    + VerifyPurchaseRepository
+    + WebhookForwardRepository
+    + WebhookWriteRepository
+    + Send
+    + Sync
+{
+}
+
+impl<T> VerifyPurchaseHandlerRepository for T
+where
+    T: AppLookupRepository
+        + GooglePlayAccountLookupRepository
+        + PaymentAcknowledgementRepository
+        + ProviderConfigLookupRepository
+        + SubscriptionLookupRepository
+        + VerifyPurchaseRepository
+        + WebhookForwardRepository
+        + WebhookWriteRepository
+        + Send
+        + Sync,
+{
+}
+
+pub(crate) trait SubscriptionActionsHandlerRepository:
+    AppLookupRepository
+    + ProviderConfigLookupRepository
+    + SubscriptionLookupRepository
+    + SubscriptionReadRepository
+    + SubscriptionWriteRepository
+    + WebhookForwardRepository
+    + WebhookWriteRepository
+    + Send
+    + Sync
+{
+}
+
+impl<T> SubscriptionActionsHandlerRepository for T
+where
+    T: AppLookupRepository
+        + ProviderConfigLookupRepository
+        + SubscriptionLookupRepository
+        + SubscriptionReadRepository
+        + SubscriptionWriteRepository
+        + WebhookForwardRepository
+        + WebhookWriteRepository
+        + Send
+        + Sync,
+{
 }
 
 #[derive(Debug, Clone)]
@@ -591,6 +657,21 @@ impl From<Subscription> for WebhookSubscriptionSnapshot {
             auto_renewing: subscription.auto_renewing,
             revocation_reason: subscription.revocation_reason,
         }
+    }
+}
+
+fn map_subscription_lookup_snapshot(subscription: Subscription) -> SubscriptionLookupSnapshot {
+    SubscriptionLookupSnapshot {
+        id: subscription.id,
+        external_user_id: subscription.external_user_id,
+        provider: subscription.provider,
+        subscription_id: subscription.subscription_id,
+        purchase_token: subscription.purchase_token,
+        status: subscription.status,
+        current_period_end: subscription.current_period_end,
+        auto_renewing: subscription.auto_renewing,
+        revocation_reason: subscription.revocation_reason,
+        last_event_time: subscription.last_event_time,
     }
 }
 
@@ -1003,16 +1084,20 @@ impl SubscriptionLookupRepository for db::Database {
         &self,
         app_id: Uuid,
         subscription_id: &str,
-    ) -> Result<Option<Subscription>, BridgeError> {
-        db::subscriptions::get_subscription_by_sub_id(self.pool(), app_id, subscription_id).await
+    ) -> Result<Option<SubscriptionLookupSnapshot>, BridgeError> {
+        db::subscriptions::get_subscription_by_sub_id(self.pool(), app_id, subscription_id)
+            .await
+            .map(|subscription| subscription.map(map_subscription_lookup_snapshot))
     }
 
     async fn get_subscription_by_purchase_token(
         &self,
         app_id: Uuid,
         purchase_token: &str,
-    ) -> Result<Option<Subscription>, BridgeError> {
-        db::subscriptions::get_subscription_by_purchase_token(self.pool(), app_id, purchase_token).await
+    ) -> Result<Option<SubscriptionLookupSnapshot>, BridgeError> {
+        db::subscriptions::get_subscription_by_purchase_token(self.pool(), app_id, purchase_token)
+            .await
+            .map(|subscription| subscription.map(map_subscription_lookup_snapshot))
     }
 }
 
@@ -1065,36 +1150,6 @@ impl VerifyPurchaseRepository for db::Database {
         .map(Some)
     }
 
-    async fn payment_acknowledged_at(
-        &self,
-        app_id: Uuid,
-        provider: &str,
-        provider_transaction_id: &str,
-    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, BridgeError> {
-        db::payments::get_payment_acknowledged_at(
-            self.pool(),
-            app_id,
-            provider,
-            provider_transaction_id,
-        )
-        .await
-    }
-
-    async fn mark_payment_acknowledged(
-        &self,
-        app_id: Uuid,
-        provider: &str,
-        provider_transaction_id: &str,
-    ) -> Result<(), BridgeError> {
-        db::payments::mark_payment_acknowledged(
-            self.pool(),
-            app_id,
-            provider,
-            provider_transaction_id,
-        )
-        .await
-    }
-
     async fn commit_verified_purchase(
         &self,
         request: VerifyPurchaseCommitRequest<'_>,
@@ -1110,7 +1165,7 @@ impl VerifyPurchaseRepository for db::Database {
         let google_obfuscated_account_id = request
             .google_obfuscated_account_id
             .map(|value| value.to_string());
-        let current_period_end = request.current_period_end.clone();
+        let current_period_end = request.current_period_end;
         let auto_renewing = request.auto_renewing;
         let payment_state = request.payment_state;
         let amount_cents = request.amount_cents;
@@ -1176,6 +1231,39 @@ impl VerifyPurchaseRepository for db::Database {
                 Ok(TransactionOutcome::Commit(VerifyPurchaseCommitResult { subscription }))
             })
         })
+        .await
+    }
+}
+
+#[async_trait]
+impl PaymentAcknowledgementRepository for db::Database {
+    async fn payment_acknowledged_at(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        provider_transaction_id: &str,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, BridgeError> {
+        db::payments::get_payment_acknowledged_at(
+            self.pool(),
+            app_id,
+            provider,
+            provider_transaction_id,
+        )
+        .await
+    }
+
+    async fn mark_payment_acknowledged(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        provider_transaction_id: &str,
+    ) -> Result<(), BridgeError> {
+        db::payments::mark_payment_acknowledged(
+            self.pool(),
+            app_id,
+            provider,
+            provider_transaction_id,
+        )
         .await
     }
 }

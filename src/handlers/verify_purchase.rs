@@ -14,9 +14,9 @@ pub async fn verify_purchase(
     Extension(auth): Extension<AppAuth>,
     Json(payload): Json<VerifyPurchaseRequest>,
 ) -> Result<(StatusCode, Json<VerifyPurchaseResponse>), BridgeError> {
-    let database = state.database();
+    let repo = state.verify_purchase_repo();
     let response = application::verify_purchase::verify_purchase(
-        database.as_ref(),
+        repo,
         auth.app_id,
         payload,
     )

@@ -13,15 +13,19 @@ use crate::ports::{
 };
 use crate::services::provider_api;
 
+pub(crate) struct CancelSubscriptionInput {
+    pub app_id: Uuid,
+    pub subscription_id: String,
+    pub query: SubscriptionActionQuery,
+    pub request: Option<CancelSubscriptionRequest>,
+}
+
 pub async fn cancel_subscription<R, C, S, W>(
     app_repo: &R,
     callback_repo: &C,
     subscription_repo: &S,
     subscription_write_repo: &W,
-    app_id: Uuid,
-    subscription_id: &str,
-    query: SubscriptionActionQuery,
-    request: Option<CancelSubscriptionRequest>,
+    input: CancelSubscriptionInput,
 ) -> Result<CancelSubscriptionResponse, BridgeError>
 where
     R: ProviderConfigLookupRepository + Send + Sync + ?Sized,
@@ -29,6 +33,13 @@ where
     S: SubscriptionReadRepository + Send + Sync + ?Sized,
     W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
+    let CancelSubscriptionInput {
+        app_id,
+        subscription_id,
+        query,
+        request,
+    } = input;
+
     if query.external_user_id.trim().is_empty() {
         return Err(BridgeError::ValidationError("external_user_id is required".to_string()));
     }
@@ -45,7 +56,7 @@ where
         .get_subscription(
             app_id,
             query.external_user_id.trim(),
-            subscription_id,
+            &subscription_id,
             &provider,
         )
         .await?;

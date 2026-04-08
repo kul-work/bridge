@@ -3,7 +3,9 @@ use uuid::Uuid;
 
 use crate::error::BridgeError;
 use crate::ports::{
-    AppLookupRepository, ProviderConfigLookupRepository, VerifyPurchaseRepository,
+    AppLookupRepository, GooglePlayAccountLookupRepository, PaymentAcknowledgementRepository,
+    ProviderConfigLookupRepository, SubscriptionLookupRepository, VerifyPurchaseRepository,
+    WebhookForwardRepository, WebhookWriteRepository,
 };
 use crate::application::verify_purchase_types::{
     compute_obfuscated_id_hash, PaymentAcknowledgement, ProductType, VerificationOutcome,
@@ -15,7 +17,15 @@ use crate::application::verify_purchase_provider::{
 };
 
 pub async fn verify_purchase<
-    R: VerifyPurchaseRepository + AppLookupRepository + ProviderConfigLookupRepository + ?Sized,
+    R: AppLookupRepository
+        + GooglePlayAccountLookupRepository
+        + PaymentAcknowledgementRepository
+        + ProviderConfigLookupRepository
+        + SubscriptionLookupRepository
+        + VerifyPurchaseRepository
+        + WebhookForwardRepository
+        + WebhookWriteRepository
+        + ?Sized,
 >(
     repo: &R,
     app_id: Uuid,
@@ -187,7 +197,7 @@ pub async fn verify_purchase<
     let current_period_end = verified.current_period_end.or_else(|| {
         existing_subscription
             .as_ref()
-            .and_then(|subscription| subscription.current_period_end.clone())
+            .and_then(|subscription| subscription.current_period_end)
     });
     let response_current_period_end = current_period_end.as_ref().map(|d| d.to_rfc3339());
     let payment_status = product_type.payment_status(&verified.status).to_string();
@@ -201,7 +211,7 @@ pub async fn verify_purchase<
             purchase_token: &payload.purchase_token,
             subscription_status: &verified.status,
             payment_status: &payment_status,
-            current_period_end: current_period_end.clone(),
+            current_period_end,
             auto_renewing: verified.auto_renewing.or_else(|| {
                 existing_subscription
                     .as_ref()

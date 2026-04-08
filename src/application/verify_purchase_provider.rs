@@ -9,8 +9,7 @@ use crate::application::verify_purchase_types::{
 };
 use crate::error::BridgeError;
 use crate::ports::{
-    AppLookupRepository, VerifyPurchaseRepository, WebhookForwardRepository,
-    WebhookWriteRepository,
+    AppLookupRepository, WebhookForwardRepository, WebhookWriteRepository,
 };
 use crate::services::google_play::{
     client::GooglePlayClient,
@@ -300,7 +299,7 @@ async fn verify_coinbase(
 }
 
 pub(crate) async fn forward_verify_purchase_callback<
-    R: VerifyPurchaseRepository + AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + ?Sized,
+    R: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + ?Sized,
 >(
     repo: &R,
     app_id: uuid::Uuid,

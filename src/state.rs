@@ -4,6 +4,7 @@ use axum::extract::FromRef;
 
 use crate::{
     db::Database,
+    ports::{SubscriptionActionsHandlerRepository, VerifyPurchaseHandlerRepository},
 };
 
 #[derive(Clone)]
@@ -26,5 +27,13 @@ impl FromRef<AppState> for Arc<Database> {
 impl AppState {
     pub fn database(&self) -> Arc<Database> {
         self.database.clone()
+    }
+
+    pub(crate) fn verify_purchase_repo(&self) -> &(dyn VerifyPurchaseHandlerRepository + '_) {
+        self.database.as_ref()
+    }
+
+    pub(crate) fn subscription_actions_repo(&self) -> &(dyn SubscriptionActionsHandlerRepository + '_) {
+        self.database.as_ref()
     }
 }
