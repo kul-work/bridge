@@ -8,7 +8,10 @@ use crate::application::verify_purchase_types::{
     VerifyPurchaseCallback, VerifiedPurchase,
 };
 use crate::error::BridgeError;
-use crate::ports::VerifyPurchaseRepository;
+use crate::ports::{
+    AppLookupRepository, VerifyPurchaseRepository, WebhookForwardRepository,
+    WebhookWriteRepository,
+};
 use crate::services::google_play::{
     client::GooglePlayClient,
     models::{Money, ProductPurchase, SubscriptionPurchaseV2},
@@ -297,7 +300,7 @@ async fn verify_coinbase(
 }
 
 pub(crate) async fn forward_verify_purchase_callback<
-    R: VerifyPurchaseRepository + crate::ports::AppProviderRepository + ?Sized,
+    R: VerifyPurchaseRepository + AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + ?Sized,
 >(
     repo: &R,
     app_id: uuid::Uuid,
@@ -307,26 +310,13 @@ pub(crate) async fn forward_verify_purchase_callback<
     let now = chrono::Utc::now();
     let event_id = format!("verify-purchase-{}", Uuid::new_v4());
 
-    let (webhook_id, _) = repo
-        .create_webhook_provider(
-        app_id,
-        &callback.request.provider,
-        &event_id,
-        "verify_purchase.succeeded",
-        Some(callback.request.subscription_id.clone()),
-        Some(callback.request.purchase_token.clone()),
-        serde_json::json!({
-            "source": "verify_purchase",
-            "external_user_id": callback.resolved_external_user_id,
-            "subscription_id": callback.request.subscription_id,
-            "provider": callback.request.provider,
-            "status": callback.status,
-        }),
-        Some(now.timestamp_millis()),
-    )
-    .await?;
-
-    let delivery_id = repo.create_webhook_delivery(app_id, webhook_id).await?;
+    let provider_payload = serde_json::json!({
+        "source": "verify_purchase",
+        "external_user_id": callback.resolved_external_user_id,
+        "subscription_id": callback.request.subscription_id,
+        "provider": callback.request.provider,
+        "status": callback.status,
+    });
 
     let callback_payload = CanonicalWebhookPayload {
         event_id: event_id.clone(),
@@ -346,7 +336,7 @@ pub(crate) async fn forward_verify_purchase_callback<
         current_period_end: callback.current_period_end.map(|s| s.to_string()),
         status: Some(callback.status.to_string()),
         provider: callback.request.provider.clone(),
-        provider_event_id: event_id,
+        provider_event_id: event_id.clone(),
         previous_status: None,
         corrected_status: None,
         reconciliation_source: None,
@@ -354,10 +344,16 @@ pub(crate) async fn forward_verify_purchase_callback<
         cancellation_mode: None,
     };
 
-    crate::webhooks::forwarding::queue_and_forward_webhook(
+    crate::webhooks::forwarding::create_and_forward_webhook(
         repo,
         app_id,
-        delivery_id,
+        &callback.request.provider,
+        &event_id,
+        "verify_purchase.succeeded",
+        Some(callback.request.subscription_id.clone()),
+        Some(callback.request.purchase_token.clone()),
+        provider_payload,
+        Some(now.timestamp_millis()),
         callback_payload,
     )
     .await

@@ -7,7 +7,9 @@ use crate::application::checkout_helpers::{
     normalize_provider_name, normalize_required_field, resolve_checkout_redirect_urls,
 };
 use crate::application::checkout_types::{CheckoutRequest, CheckoutResponse};
-use crate::ports::{AppProviderRepository, CheckoutRepository};
+use crate::ports::{
+    AppLookupRepository, CheckoutRepository, ProviderConfigLookupRepository,
+};
 
 pub async fn create_checkout<C, A>(
     checkout_repo: &C,
@@ -17,7 +19,7 @@ pub async fn create_checkout<C, A>(
 ) -> Result<CheckoutResponse, BridgeError>
 where
     C: CheckoutRepository + ?Sized,
-    A: AppProviderRepository + ?Sized,
+    A: AppLookupRepository + ProviderConfigLookupRepository + ?Sized,
 {
     let app = app_repo.get_app(app_id).await?;
 

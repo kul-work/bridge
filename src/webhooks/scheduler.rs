@@ -1,8 +1,8 @@
 use std::time::Duration;
 use crate::db::Database;
 use crate::ports::{
-    AppProviderRepository, SchedulerRepository, WebhookForwardRepository,
-    WebhookProcessingRepository, WebhookWriteRepository,
+    AppLookupRepository, ProviderConfigLookupRepository, SchedulerRepository,
+    WebhookForwardRepository, WebhookProcessingRepository, WebhookWriteRepository,
 };
 use std::sync::Arc;
 use tracing::{info, error, warn};
@@ -44,7 +44,6 @@ pub async fn retry_webhooks(
     repo: &(
         impl SchedulerRepository
         + WebhookForwardRepository
-        + AppProviderRepository
         + WebhookProcessingRepository
     ),
 ) -> Result<(), crate::error::BridgeError> {
@@ -117,13 +116,13 @@ pub async fn reconcile_subscriptions(database: &Arc<Database>) -> Result<(), cra
 }
 
 async fn reconcile_app_subscriptions(
-    repo: &(impl SchedulerRepository + WebhookForwardRepository + AppProviderRepository + WebhookWriteRepository),
+    repo: &(impl SchedulerRepository + WebhookForwardRepository + AppLookupRepository + ProviderConfigLookupRepository + WebhookWriteRepository),
     app_id: uuid::Uuid,
 ) -> Result<(), crate::error::BridgeError> {
     let active_subs = SchedulerRepository::list_reconciliation_subscriptions(repo, app_id).await?;
 
     for sub in active_subs {
-        let provider_config = match AppProviderRepository::get_provider_config(repo, app_id, &sub.provider).await {
+        let provider_config = match repo.get_provider_config(app_id, &sub.provider).await {
             Ok(config) => config,
             Err(e) => {
                 warn!(
@@ -228,7 +227,7 @@ async fn reconcile_app_subscriptions(
 }
 
 async fn send_reconciliation_admin_alert_email(
-    repo: &impl AppProviderRepository,
+    repo: &impl AppLookupRepository,
     app_id: uuid::Uuid,
     provider: &str,
     subscription_id: &str,
@@ -248,7 +247,7 @@ async fn send_reconciliation_admin_alert_email(
         }
     };
 
-    let app = AppProviderRepository::get_app(repo, app_id).await?;
+    let app = repo.get_app(app_id).await?;
     let subject = format!(
         "Bridge reconciliation drift: {} ({})",
         app.display_name,
@@ -315,7 +314,7 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
         let purchase_token = sub.purchase_token.clone();
         info!("Price step-up expired for subscription {}, auto-cancelling", subscription_id);
 
-        if let Ok(config) = AppProviderRepository::get_provider_config(database.as_ref(), app_id, &provider).await {
+        if let Ok(config) = database.as_ref().get_provider_config(app_id, &provider).await {
             if let Err(e) = crate::services::provider_api::cancel_subscription(
                 &provider,
                 &subscription_id,
@@ -427,7 +426,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
 
 #[allow(clippy::too_many_arguments)]
 async fn emit_scheduler_callback(
-    repo: &(impl SchedulerRepository + WebhookForwardRepository + AppProviderRepository + WebhookWriteRepository),
+    repo: &(impl WebhookForwardRepository + AppLookupRepository + WebhookWriteRepository),
     app_id: Uuid,
     provider: &str,
     subscription_id: &str,
@@ -440,7 +439,7 @@ async fn emit_scheduler_callback(
     reconciliation_source: Option<String>,
     revocation_reason: Option<String>,
 ) -> Result<(), crate::error::BridgeError> {
-    let app = AppProviderRepository::get_app(repo, app_id).await?;
+    let app = repo.get_app(app_id).await?;
     let provider_event_id = format!("scheduler-{}", Uuid::new_v4());
     let timestamp_epoch_ms = chrono::Utc::now().timestamp_millis();
     let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
@@ -460,19 +459,6 @@ async fn emit_scheduler_callback(
         "revocation_reason": revocation_reason,
     });
 
-    let (webhook_provider_id, _) = WebhookWriteRepository::create_webhook_provider(
-        repo,
-        app_id,
-        provider,
-        &provider_event_id,
-        event_type,
-        Some(subscription_id.to_string()),
-        purchase_token.clone(),
-        payload,
-        Some(timestamp_epoch_ms),
-    )
-    .await?;
-
     let canonical = crate::webhooks::processor::CanonicalWebhookPayload {
         event_id: format!("{}-{}", provider, provider_event_id),
         event_type: event_type.to_string(),
@@ -485,11 +471,11 @@ async fn emit_scheduler_callback(
         amount_cents: None,
         new_price_cents: None,
         auto_renewing: None,
-        purchase_token,
+        purchase_token: purchase_token.clone(),
         current_period_end: None,
         status,
         provider: provider.to_string(),
-        provider_event_id,
+        provider_event_id: provider_event_id.clone(),
         previous_status,
         corrected_status,
         reconciliation_source,
@@ -497,10 +483,16 @@ async fn emit_scheduler_callback(
         cancellation_mode: None,
     };
 
-    crate::webhooks::forwarding::queue_and_forward_webhook(
+    crate::webhooks::forwarding::create_and_forward_webhook(
         repo,
         app_id,
-        webhook_provider_id,
+        provider,
+        &provider_event_id,
+        event_type,
+        Some(subscription_id.to_string()),
+        purchase_token.clone(),
+        payload,
+        Some(timestamp_epoch_ms),
         canonical,
     )
     .await

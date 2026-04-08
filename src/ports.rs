@@ -186,27 +186,44 @@ pub trait CheckoutRepository: Send + Sync {
 }
 
 #[async_trait]
-pub trait VerifyPurchaseRepository:
-    WebhookWriteRepository + WebhookForwardRepository + Send + Sync
-{
+pub trait GooglePlayAccountLookupRepository: Send + Sync {
     async fn lookup_user_by_google_obfuscated_id(
         &self,
         app_id: Uuid,
         obfuscated_id: &str,
     ) -> Result<Option<String>, BridgeError>;
+}
 
+#[async_trait]
+pub trait SubscriptionLookupRepository: Send + Sync {
+    async fn get_subscription_by_sub_id(
+        &self,
+        app_id: Uuid,
+        subscription_id: &str,
+    ) -> Result<Option<Subscription>, BridgeError>;
+
+    async fn get_subscription_by_purchase_token(
+        &self,
+        app_id: Uuid,
+        purchase_token: &str,
+    ) -> Result<Option<Subscription>, BridgeError>;
+}
+
+#[async_trait]
+pub trait VerifyPurchaseRepository:
+    WebhookWriteRepository
+    + WebhookForwardRepository
+    + GooglePlayAccountLookupRepository
+    + SubscriptionLookupRepository
+    + Send
+    + Sync
+{
     async fn get_subscription(
         &self,
         app_id: Uuid,
         external_user_id: &str,
         subscription_id: &str,
         provider: &str,
-    ) -> Result<Option<VerifyPurchaseSubscriptionSnapshot>, BridgeError>;
-
-    async fn get_subscription_by_purchase_token(
-        &self,
-        app_id: Uuid,
-        purchase_token: &str,
     ) -> Result<Option<VerifyPurchaseSubscriptionSnapshot>, BridgeError>;
 
     async fn payment_acknowledged_at(
@@ -301,9 +318,12 @@ pub trait WebhookIngressRepository: AppProviderRepository + WebhookWriteReposito
 }
 
 #[async_trait]
-pub trait AppProviderRepository: Send + Sync {
+pub trait AppLookupRepository: Send + Sync {
     async fn get_app(&self, app_id: Uuid) -> Result<AppSnapshot, BridgeError>;
+}
 
+#[async_trait]
+pub trait ProviderConfigLookupRepository: Send + Sync {
     async fn get_provider_config(
         &self,
         app_id: Uuid,
@@ -311,27 +331,18 @@ pub trait AppProviderRepository: Send + Sync {
     ) -> Result<ProviderConfigSnapshot, BridgeError>;
 }
 
-pub trait AppWebhookRepository:
-    AppProviderRepository + WebhookForwardRepository + WebhookWriteRepository + Send + Sync
-{
-}
+pub trait AppProviderRepository: AppLookupRepository + ProviderConfigLookupRepository + Send + Sync {}
 
-impl<T> AppWebhookRepository for T where
-    T: AppProviderRepository + WebhookForwardRepository + WebhookWriteRepository + Send + Sync + ?Sized
+impl<T> AppProviderRepository for T where
+    T: AppLookupRepository + ProviderConfigLookupRepository + Send + Sync + ?Sized
 {
 }
 
 #[async_trait]
-pub trait WebhookForwardRepository: Send + Sync {
+pub trait WebhookForwardRepository:
+    WebhookSuppressionRepository + SubscriptionLookupRepository + Send + Sync
+{
     async fn get_webhook_delivery(&self, id: Uuid) -> Result<WebhookDelivery, BridgeError>;
-
-    async fn get_subscription_by_sub_id(
-        &self,
-        app_id: Uuid,
-        subscription_id: &str,
-    ) -> Result<Option<Subscription>, BridgeError>;
-
-    async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError>;
 
     async fn update_webhook_delivery_attempt(
         &self,
@@ -395,9 +406,19 @@ pub trait WebhookProcessingTransactionRepository: Send + Sync {
 }
 
 #[async_trait]
-pub trait WebhookProcessingLookupRepository: Send + Sync {
-    async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProvider, BridgeError>;
+pub trait WebhookProcessingLookupRepository:
+    GooglePlayAccountLookupRepository
+    + SubscriptionLookupRepository
+    + PurchaseOwnerLookupRepository
+    + WebhookProviderLookupRepository
+    + PaymentStatusLookupRepository
+    + Send
+    + Sync
+{
+}
 
+#[async_trait]
+pub trait PurchaseOwnerLookupRepository: Send + Sync {
     async fn lookup_user_by_subscription_id(
         &self,
         app_id: Uuid,
@@ -415,25 +436,15 @@ pub trait WebhookProcessingLookupRepository: Send + Sync {
         app_id: Uuid,
         purchase_token: &str,
     ) -> Result<Option<String>, BridgeError>;
+}
 
-    async fn lookup_user_by_google_obfuscated_id(
-        &self,
-        app_id: Uuid,
-        obfuscated_id: &str,
-    ) -> Result<Option<String>, BridgeError>;
+#[async_trait]
+pub trait WebhookProviderLookupRepository: Send + Sync {
+    async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProvider, BridgeError>;
+}
 
-    async fn get_subscription_by_sub_id(
-        &self,
-        app_id: Uuid,
-        subscription_id: &str,
-    ) -> Result<Option<Subscription>, BridgeError>;
-
-    async fn get_subscription_by_purchase_token(
-        &self,
-        app_id: Uuid,
-        purchase_token: &str,
-    ) -> Result<Option<Subscription>, BridgeError>;
-
+#[async_trait]
+pub trait PaymentStatusLookupRepository: Send + Sync {
     async fn get_payment_status(
         &self,
         app_id: Uuid,
@@ -442,7 +453,7 @@ pub trait WebhookProcessingLookupRepository: Send + Sync {
 }
 
 #[async_trait]
-pub trait WebhookProcessingMutationRepository: Send + Sync {
+pub trait WebhookProcessingMutationRepository: WebhookSuppressionRepository + Send + Sync {
     async fn update_payment_status(
         &self,
         app_id: Uuid,
@@ -474,8 +485,6 @@ pub trait WebhookProcessingMutationRepository: Send + Sync {
         charge_id: &str,
     ) -> Result<bool, BridgeError>;
 
-    async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError>;
-
     async fn mark_webhook_processed(&self, webhook_id: Uuid) -> Result<(), BridgeError>;
 }
 
@@ -488,6 +497,11 @@ pub trait WebhookProcessingRepository:
     + Send
     + Sync
 {
+}
+
+#[async_trait]
+pub trait WebhookSuppressionRepository: Send + Sync {
+    async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError>;
 }
 
 #[async_trait]
@@ -554,9 +568,6 @@ fn map_verify_purchase_subscription(
     subscription: Subscription,
 ) -> VerifyPurchaseSubscriptionSnapshot {
     VerifyPurchaseSubscriptionSnapshot {
-        external_user_id: subscription.external_user_id,
-        subscription_id: subscription.subscription_id,
-        provider: subscription.provider,
         current_period_end: subscription.current_period_end,
         auto_renewing: subscription.auto_renewing,
         payment_state: subscription.payment_state,
@@ -910,7 +921,7 @@ impl WebhookReadRepository for db::Database {
 }
 
 #[async_trait]
-impl AppProviderRepository for db::Database {
+impl AppLookupRepository for db::Database {
     async fn get_app(&self, app_id: Uuid) -> Result<AppSnapshot, BridgeError> {
         db::apps::get_app(self.pool(), app_id)
             .await
@@ -927,7 +938,10 @@ impl AppProviderRepository for db::Database {
                 apple_bundle_id: app.apple_bundle_id,
             })
     }
+}
 
+#[async_trait]
+impl ProviderConfigLookupRepository for db::Database {
     async fn get_provider_config(
         &self,
         app_id: Uuid,
@@ -938,6 +952,37 @@ impl AppProviderRepository for db::Database {
             .map(|provider_config| ProviderConfigSnapshot {
                 config: provider_config.config,
             })
+    }
+}
+
+
+#[async_trait]
+impl GooglePlayAccountLookupRepository for db::Database {
+    async fn lookup_user_by_google_obfuscated_id(
+        &self,
+        app_id: Uuid,
+        obfuscated_id: &str,
+    ) -> Result<Option<String>, BridgeError> {
+        db::subscriptions::lookup_user_by_google_obfuscated_id(self.pool(), app_id, obfuscated_id).await
+    }
+}
+
+#[async_trait]
+impl SubscriptionLookupRepository for db::Database {
+    async fn get_subscription_by_sub_id(
+        &self,
+        app_id: Uuid,
+        subscription_id: &str,
+    ) -> Result<Option<Subscription>, BridgeError> {
+        db::subscriptions::get_subscription_by_sub_id(self.pool(), app_id, subscription_id).await
+    }
+
+    async fn get_subscription_by_purchase_token(
+        &self,
+        app_id: Uuid,
+        purchase_token: &str,
+    ) -> Result<Option<Subscription>, BridgeError> {
+        db::subscriptions::get_subscription_by_purchase_token(self.pool(), app_id, purchase_token).await
     }
 }
 
@@ -971,14 +1016,6 @@ impl CheckoutRepository for db::Database {
 
 #[async_trait]
 impl VerifyPurchaseRepository for db::Database {
-    async fn lookup_user_by_google_obfuscated_id(
-        &self,
-        app_id: Uuid,
-        obfuscated_id: &str,
-    ) -> Result<Option<String>, BridgeError> {
-        db::subscriptions::lookup_user_by_google_obfuscated_id(self.pool(), app_id, obfuscated_id).await
-    }
-
     async fn get_subscription(
         &self,
         app_id: Uuid,
@@ -996,16 +1033,6 @@ impl VerifyPurchaseRepository for db::Database {
         .await
         .map(map_verify_purchase_subscription)
         .map(Some)
-    }
-
-    async fn get_subscription_by_purchase_token(
-        &self,
-        app_id: Uuid,
-        purchase_token: &str,
-    ) -> Result<Option<VerifyPurchaseSubscriptionSnapshot>, BridgeError> {
-        db::subscriptions::get_subscription_by_purchase_token(self.pool(), app_id, purchase_token)
-            .await
-            .map(|subscription| subscription.map(map_verify_purchase_subscription))
     }
 
     async fn payment_acknowledged_at(
@@ -1180,21 +1207,16 @@ impl WebhookIngressRepository for db::Database {
 }
 
 #[async_trait]
+impl WebhookSuppressionRepository for db::Database {
+    async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError> {
+        db::webhooks::suppress_webhook(self.pool(), webhook_id, reason).await
+    }
+}
+
+#[async_trait]
 impl WebhookForwardRepository for db::Database {
     async fn get_webhook_delivery(&self, id: Uuid) -> Result<WebhookDelivery, BridgeError> {
         db::webhooks::get_webhook_delivery(self.pool(), id).await
-    }
-
-    async fn get_subscription_by_sub_id(
-        &self,
-        app_id: Uuid,
-        subscription_id: &str,
-    ) -> Result<Option<Subscription>, BridgeError> {
-        db::subscriptions::get_subscription_by_sub_id(self.pool(), app_id, subscription_id).await
-    }
-
-    async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError> {
-        db::webhooks::suppress_webhook(self.pool(), webhook_id, reason).await
     }
 
     async fn update_webhook_delivery_attempt(
@@ -1217,10 +1239,10 @@ impl WebhookForwardRepository for db::Database {
 
 #[async_trait]
 impl WebhookProcessingLookupRepository for db::Database {
-    async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProvider, BridgeError> {
-        db::webhooks::get_webhook_provider(self.pool(), id).await
-    }
+}
 
+#[async_trait]
+impl PurchaseOwnerLookupRepository for db::Database {
     async fn lookup_user_by_subscription_id(
         &self,
         app_id: Uuid,
@@ -1244,31 +1266,17 @@ impl WebhookProcessingLookupRepository for db::Database {
     ) -> Result<Option<String>, BridgeError> {
         db::payments::lookup_user_by_purchase_token_payment(self.pool(), app_id, purchase_token).await
     }
+}
 
-    async fn lookup_user_by_google_obfuscated_id(
-        &self,
-        app_id: Uuid,
-        obfuscated_id: &str,
-    ) -> Result<Option<String>, BridgeError> {
-        db::subscriptions::lookup_user_by_google_obfuscated_id(self.pool(), app_id, obfuscated_id).await
+#[async_trait]
+impl WebhookProviderLookupRepository for db::Database {
+    async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProvider, BridgeError> {
+        db::webhooks::get_webhook_provider(self.pool(), id).await
     }
+}
 
-    async fn get_subscription_by_sub_id(
-        &self,
-        app_id: Uuid,
-        subscription_id: &str,
-    ) -> Result<Option<Subscription>, BridgeError> {
-        db::subscriptions::get_subscription_by_sub_id(self.pool(), app_id, subscription_id).await
-    }
-
-    async fn get_subscription_by_purchase_token(
-        &self,
-        app_id: Uuid,
-        purchase_token: &str,
-    ) -> Result<Option<Subscription>, BridgeError> {
-        db::subscriptions::get_subscription_by_purchase_token(self.pool(), app_id, purchase_token).await
-    }
-
+#[async_trait]
+impl PaymentStatusLookupRepository for db::Database {
     async fn get_payment_status(
         &self,
         app_id: Uuid,
@@ -1338,10 +1346,6 @@ impl WebhookProcessingMutationRepository for db::Database {
             charge_id,
         )
         .await
-    }
-
-    async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError> {
-        db::webhooks::suppress_webhook(self.pool(), webhook_id, reason).await
     }
 
     async fn mark_webhook_processed(&self, webhook_id: Uuid) -> Result<(), BridgeError> {

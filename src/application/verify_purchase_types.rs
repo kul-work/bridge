@@ -106,9 +106,6 @@ pub(crate) struct VerifyPurchaseCallback<'a> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct VerifyPurchaseSubscriptionSnapshot {
-    pub external_user_id: String,
-    pub subscription_id: String,
-    pub provider: String,
     pub current_period_end: Option<DateTime<Utc>>,
     pub auto_renewing: Option<bool>,
     pub payment_state: Option<i32>,

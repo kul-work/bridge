@@ -6,9 +6,9 @@ use crate::{
     db::Database,
     ports::{
         AdminRepository, AgentReadRepository, AgentRepository, ApiKeyRepository,
-        AppProviderRepository, AppWebhookRepository, CheckoutRepository,
-        PaymentReadRepository, SubscriptionReadRepository, SubscriptionWriteRepository,
-        UserRepository, WebhookIngressRepository, WebhookReadRepository,
+        AppProviderRepository, CheckoutRepository, PaymentReadRepository,
+        SubscriptionReadRepository, SubscriptionWriteRepository, UserRepository,
+        WebhookIngressRepository, WebhookReadRepository,
     },
 };
 
@@ -18,7 +18,6 @@ pub struct AppState {
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
     pub admin_repo: Arc<dyn AdminRepository>,
     pub app_provider_repo: Arc<dyn AppProviderRepository>,
-    pub app_webhook_repo: Arc<dyn AppWebhookRepository>,
     pub checkout_repo: Arc<dyn CheckoutRepository>,
     pub webhook_ingress_repo: Arc<dyn WebhookIngressRepository>,
     pub subscription_read_repo: Arc<dyn SubscriptionReadRepository>,
@@ -35,7 +34,6 @@ impl AppState {
         let api_key_repo: Arc<dyn ApiKeyRepository> = database.clone();
         let admin_repo: Arc<dyn AdminRepository> = database.clone();
         let app_provider_repo: Arc<dyn AppProviderRepository> = database.clone();
-        let app_webhook_repo: Arc<dyn AppWebhookRepository> = database.clone();
         let checkout_repo: Arc<dyn CheckoutRepository> = database.clone();
         let webhook_ingress_repo: Arc<dyn WebhookIngressRepository> = database.clone();
         let subscription_read_repo: Arc<dyn SubscriptionReadRepository> = database.clone();
@@ -51,7 +49,6 @@ impl AppState {
             api_key_repo,
             admin_repo,
             app_provider_repo,
-            app_webhook_repo,
             checkout_repo,
             webhook_ingress_repo,
             subscription_read_repo,

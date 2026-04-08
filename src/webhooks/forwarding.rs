@@ -1,5 +1,7 @@
 use crate::error::BridgeError;
-use crate::ports::{AppProviderRepository, AppWebhookRepository, WebhookForwardRepository};
+use crate::ports::{
+    AppLookupRepository, WebhookForwardRepository, WebhookWriteRepository,
+};
 use std::time::Duration;
 use uuid::Uuid;
 use reqwest::Client;
@@ -16,7 +18,7 @@ const WEBHOOK_FORWARD_TIMEOUT_SECS: u64 = 10;
 /// Forward webhook to app callback URL with HMAC signature
 /// Used for future webhook delivery to app callbacks.
 #[allow(dead_code)]
-pub async fn forward_webhook<R: WebhookForwardRepository + AppProviderRepository + ?Sized>(
+pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     webhook_delivery_id: Uuid,
@@ -148,7 +150,9 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppProviderRepository
 
 /// Create a webhook delivery and forward it in one step.
 #[allow(dead_code)]
-pub async fn queue_and_forward_webhook<R: AppWebhookRepository + ?Sized>(
+pub async fn queue_and_forward_webhook<
+    R: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + ?Sized,
+>(
     repo: &R,
     app_id: Uuid,
     webhook_provider_id: Uuid,
@@ -159,6 +163,38 @@ pub async fn queue_and_forward_webhook<R: AppWebhookRepository + ?Sized>(
         .await?;
 
     forward_webhook(repo, app_id, delivery_id, payload).await
+}
+
+/// Create a webhook provider record, enqueue a delivery, and forward it.
+#[allow(dead_code)]
+pub async fn create_and_forward_webhook<
+    R: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + ?Sized,
+>(
+    repo: &R,
+    app_id: Uuid,
+    provider: &str,
+    provider_webhook_id: &str,
+    event_type: &str,
+    subscription_id: Option<String>,
+    purchase_token: Option<String>,
+    provider_payload: serde_json::Value,
+    timestamp_epoch_ms: Option<i64>,
+    canonical_payload: crate::webhooks::processor::CanonicalWebhookPayload,
+) -> Result<(), BridgeError> {
+    let (webhook_provider_id, _) = repo
+        .create_webhook_provider(
+            app_id,
+            provider,
+            provider_webhook_id,
+            event_type,
+            subscription_id,
+            purchase_token,
+            provider_payload,
+            timestamp_epoch_ms,
+        )
+        .await?;
+
+    queue_and_forward_webhook(repo, app_id, webhook_provider_id, canonical_payload).await
 }
 
 /// Create HMAC-SHA256 signature for webhook

@@ -3,16 +3,46 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use base64::Engine;
+use std::sync::Arc;
 use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::{
+    db::Database,
     error::BridgeError,
     ports::WebhookIngressRepository,
     state::AppState,
 };
 
 const CREEM_SIGNATURE_HEADERS: [&str; 2] = ["Webhook-Signature", "x-signature"];
+
+fn spawn_process_and_forward_webhook(
+    database: Arc<Database>,
+    app_id: Uuid,
+    webhook_id: Uuid,
+    provider_name: &'static str,
+    event_id: String,
+) {
+    tokio::spawn(async move {
+        match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
+            Ok(Some(canonical)) => {
+                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
+                    database.as_ref(),
+                    app_id,
+                    webhook_id,
+                    canonical,
+                )
+                .await
+                {
+                    error!("Failed to forward webhook for {}: {}", event_id, e);
+                }
+                info!("{} webhook processed: {}", provider_name, event_id);
+            }
+            Ok(None) => info!("{} webhook suppressed: {}", provider_name, event_id),
+            Err(e) => error!("{} webhook processing failed {}: {}", provider_name, event_id, e),
+        }
+    });
+}
 
 /// Handle Google Play webhook
 pub async fn handle_google_play(
@@ -147,28 +177,7 @@ pub async fn handle_google_play(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let app_id = app.id;
-    let event_id_owned = event_id.to_string();
-    let database = state.database();
-    tokio::spawn(async move {
-        match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
-            Ok(Some(canonical)) => {
-                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
-                    database.as_ref(),
-                    app_id,
-                    webhook_id,
-                    canonical,
-                )
-                .await
-                {
-                    error!("Failed to forward webhook for {}: {}", event_id_owned, e);
-                }
-                info!("Google Play webhook processed: {}", event_id_owned);
-            }
-            Ok(None) => info!("Google Play webhook suppressed: {}", event_id_owned),
-            Err(e) => error!("Google Play webhook processing failed {}: {}", event_id_owned, e),
-        }
-    });
+    spawn_process_and_forward_webhook(state.database(), app.id, webhook_id, "Google Play", event_id.to_string());
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -253,28 +262,7 @@ pub async fn handle_creem(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let app_id = app.id;
-    let event_id_owned = event_id.to_string();
-    let database = state.database();
-    tokio::spawn(async move {
-        match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
-            Ok(Some(canonical)) => {
-                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
-                    database.as_ref(),
-                    app_id,
-                    webhook_id,
-                    canonical,
-                )
-                .await
-                {
-                    error!("Failed to forward webhook for {}: {}", event_id_owned, e);
-                }
-                info!("Creem webhook processed: {}", event_id_owned);
-            }
-            Ok(None) => info!("Creem webhook suppressed: {}", event_id_owned),
-            Err(e) => error!("Creem webhook processing failed {}: {}", event_id_owned, e),
-        }
-    });
+    spawn_process_and_forward_webhook(state.database(), app.id, webhook_id, "Creem", event_id.to_string());
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -358,28 +346,7 @@ pub async fn handle_lemonsqueezy(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let app_id = app.id;
-    let event_id_owned = event_id.to_string();
-    let database = state.database();
-    tokio::spawn(async move {
-        match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
-            Ok(Some(canonical)) => {
-                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
-                    database.as_ref(),
-                    app_id,
-                    webhook_id,
-                    canonical,
-                )
-                .await
-                {
-                    error!("Failed to forward webhook for {}: {}", event_id_owned, e);
-                }
-                info!("LemonSqueezy webhook processed: {}", event_id_owned);
-            }
-            Ok(None) => info!("LemonSqueezy webhook suppressed: {}", event_id_owned),
-            Err(e) => error!("LemonSqueezy webhook processing failed {}: {}", event_id_owned, e),
-        }
-    });
+    spawn_process_and_forward_webhook(state.database(), app.id, webhook_id, "LemonSqueezy", event_id.to_string());
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -465,28 +432,7 @@ pub async fn handle_coinbase(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let app_id = app.id;
-    let event_id_owned = event_id.to_string();
-    let database = state.database();
-    tokio::spawn(async move {
-        match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
-            Ok(Some(canonical)) => {
-                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
-                    database.as_ref(),
-                    app_id,
-                    webhook_id,
-                    canonical,
-                )
-                .await
-                {
-                    error!("Failed to forward webhook for {}: {}", event_id_owned, e);
-                }
-                info!("Coinbase webhook processed: {}", event_id_owned);
-            }
-            Ok(None) => info!("Coinbase webhook suppressed: {}", event_id_owned),
-            Err(e) => error!("Coinbase webhook processing failed {}: {}", event_id_owned, e),
-        }
-    });
+    spawn_process_and_forward_webhook(state.database(), app.id, webhook_id, "Coinbase", event_id.to_string());
 
     Ok(StatusCode::NO_CONTENT)
 }
