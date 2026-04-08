@@ -19,32 +19,9 @@ That means the remaining work is cleanup needed to make the split strict and con
 
 ## Remaining Findings
 
-### 1. A few ingress paths still depend on concrete `Database`
+### 1. `Database` no longer exposes its pool publicly
 
-Most HTTP handlers and middleware now go through `AppState` and repository traits. The remaining concrete `Database` state usage is concentrated in these ingress paths:
-
-Observed coupling:
-
-- `src/handlers/verify_purchase.rs`
-- `src/webhooks/ingress.rs`
-
-Relevant paths:
-
-- [src/handlers/verify_purchase.rs](C:/share/tyde/bridge/src/handlers/verify_purchase.rs#L123)
-- [src/webhooks/ingress.rs](C:/share/tyde/bridge/src/webhooks/ingress.rs#L20)
-- [src/webhooks/ingress.rs](C:/share/tyde/bridge/src/webhooks/ingress.rs#L173)
-- [src/webhooks/ingress.rs](C:/share/tyde/bridge/src/webhooks/ingress.rs#L276)
-- [src/webhooks/ingress.rs](C:/share/tyde/bridge/src/webhooks/ingress.rs#L378)
-
-Why this matters:
-
-- these are still coupled to the database module shape instead of a narrow read or use-case port
-- the split is uneven if only webhook processor and application flows are port-driven
-- ingress-only logic should move behind the application boundary or a narrower port where it is reused
-
-### 2. `Database` still exposes its pool publicly
-
-The port split is already in place, but the raw connection pool still leaks through the public struct field.
+The port split is already in place, and the raw connection pool is now private to `Database`.
 
 Relevant paths:
 
@@ -54,9 +31,9 @@ Relevant paths:
 
 Why this matters:
 
-- `pub pool: PgPool` still makes the concrete database handle available to callers
-- most transaction handling now goes through `with_transaction()`, so the remaining leak is the public field itself
-- hiding the field would make the dependency direction stricter and make accidental raw SQL use harder
+- `pool: PgPool` keeps the handle private to `Database`
+- most transaction handling now goes through `with_transaction()`, so the remaining access is internal only
+- hiding the field from the public surface makes the dependency direction stricter and makes accidental raw SQL use harder
 
 ## Resolved Since the Last Review
 
@@ -68,30 +45,24 @@ These are no longer leftovers for raw DB access:
 - `src/webhooks/forwarding.rs`
 - `src/webhooks/scheduler.rs`
 - `src/services/google_play/subscription_lifecycle.rs`
+- `src/handlers/verify_purchase.rs`
+- `src/webhooks/ingress.rs`
 
 They still contain orchestration and business logic, but they are no longer the direct DB holdouts the earlier note described.
 Their transaction flow now goes through the `with_transaction()` helper exposed by the repository implementations on `Database` instead of opening SQLx transactions at the application boundary.
 In the current code, that means the relevant logic has moved behind narrow repository traits on `Database`.
-- The earlier handler and middleware holdouts now use `AppState` and repository traits instead of the raw database state.
 
 ## Recommended Next Extraction Order
 
-1. `src/handlers/api_key.rs`
-2. `src/handlers/subscriptions.rs`
-3. `src/handlers/users.rs`
-4. `src/handlers/agent.rs`
-5. `src/handlers/subscriptions_actions.rs`
-6. `src/handlers/verify_purchase.rs`
-7. `src/webhooks/ingress.rs`
-8. Hide `Database.pool` if the codebase can be updated cleanly
+1. Audit any remaining internal callers if you want to push the field fully private later
 
 ## Short Checklist
 
 - [x] Hide transaction plumbing behind a narrower port or dedicated unit of work API
-- [ ] Move remaining handler and middleware database access behind application or read ports
+- [x] Move remaining handler and middleware database access behind application or read ports
 - [x] Split the old monolithic repository surface into smaller traits on `Database`
-- [ ] Hide `Database.pool` from the public surface if possible
-- [ ] Re-run `cargo check` and `cargo test` after each extraction
+- [x] Hide `Database.pool` from the public surface if possible
+- [x] Re-run `cargo check` and `cargo test` after each extraction
 
 ## Practical Target
 
@@ -107,4 +78,4 @@ Not:
 
 Bridge is already partially hexagonal.
 
-The remaining work is to move the last direct handler and middleware reads behind smaller ports and, if possible, stop exposing the raw pool field so the application layer stops depending on concrete persistence details.
+The remaining work is limited to any internal-only cleanup if you want to push the pool field fully private later.

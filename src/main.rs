@@ -12,7 +12,6 @@ mod state;
 use axum::{
     routing::get,
     Router,
-    middleware::from_fn_with_state,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;

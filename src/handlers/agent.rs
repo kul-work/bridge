@@ -5,13 +5,11 @@ use axum::{
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::Arc;
 use std::sync::OnceLock;
 use uuid::Uuid;
 
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
-use crate::ports::{AgentReadRepository, AgentRepository};
 use crate::state::AppState;
 
 const AGENT_TOKEN_EXPIRES_IN_SECONDS: i64 = 600;

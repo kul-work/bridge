@@ -1,7 +1,7 @@
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::application;
-use crate::ports::{WebhookForwardRepository, WebhookWriteRepository};
+use crate::state::AppState;
 use crate::services::google_play::{
     client::GooglePlayClient,
     models::{Money, ProductPurchase, SubscriptionPurchaseV2},
@@ -16,7 +16,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs, sync::Arc};
+use std::fs;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -120,11 +120,11 @@ pub(crate) struct VerifyPurchaseCallback<'a> {
 }
 
 pub async fn verify_purchase(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Json(payload): Json<VerifyPurchaseRequest>,
 ) -> Result<(StatusCode, Json<VerifyPurchaseResponse>), BridgeError> {
-    application::verify_purchase::verify_purchase(database.as_ref(), auth.app_id, payload).await
+    application::verify_purchase::verify_purchase(state.database_ref(), auth.app_id, payload).await
 }
 
 pub(crate) async fn verify_purchase_with_provider(
@@ -409,7 +409,7 @@ async fn verify_coinbase(
 }
 
 pub(crate) async fn forward_verify_purchase_callback<
-    R: WebhookWriteRepository + WebhookForwardRepository + ?Sized,
+    R: crate::ports::VerifyPurchaseRepository + ?Sized,
 >(
     repo: &R,
     app_id: uuid::Uuid,

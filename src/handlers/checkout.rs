@@ -9,7 +9,6 @@ use axum::{
 };
 use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
 pub struct CheckoutRequest {

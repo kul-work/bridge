@@ -1,5 +1,4 @@
 use crate::error::BridgeError;
-use crate::ports::ApiKeyRepository;
 use crate::state::AppState;
 use axum::{
     extract::{Request, State},
@@ -7,7 +6,6 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Clone)]

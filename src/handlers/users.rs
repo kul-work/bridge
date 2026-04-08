@@ -5,16 +5,12 @@ use axum::{
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
-use std::sync::Arc;
 
 use crate::config::DATA_EXPORT_LIMIT;
 use crate::db::{payments::Payment, subscriptions::Subscription};
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
-use crate::ports::{
-    AgentReadRepository, PaymentReadRepository, SubscriptionReadRepository, UserRepository,
-    WebhookReadRepository,
-};
+use crate::ports::{PaymentReadRepository, SubscriptionReadRepository};
 use crate::state::AppState;
 
 #[derive(Deserialize)]

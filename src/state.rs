@@ -8,7 +8,7 @@ use crate::{
         AdminRepository, AgentReadRepository, AgentRepository, ApiKeyRepository,
         AppProviderRepository, AppWebhookRepository, CheckoutRepository,
         PaymentReadRepository, SubscriptionReadRepository, SubscriptionWriteRepository,
-        UserRepository, WebhookReadRepository,
+        UserRepository, WebhookIngressRepository, WebhookReadRepository,
     },
 };
 
@@ -20,6 +20,7 @@ pub struct AppState {
     pub app_provider_repo: Arc<dyn AppProviderRepository>,
     pub app_webhook_repo: Arc<dyn AppWebhookRepository>,
     pub checkout_repo: Arc<dyn CheckoutRepository>,
+    pub webhook_ingress_repo: Arc<dyn WebhookIngressRepository>,
     pub subscription_read_repo: Arc<dyn SubscriptionReadRepository>,
     pub subscription_write_repo: Arc<dyn SubscriptionWriteRepository>,
     pub payment_read_repo: Arc<dyn PaymentReadRepository>,
@@ -36,6 +37,7 @@ impl AppState {
         let app_provider_repo: Arc<dyn AppProviderRepository> = database.clone();
         let app_webhook_repo: Arc<dyn AppWebhookRepository> = database.clone();
         let checkout_repo: Arc<dyn CheckoutRepository> = database.clone();
+        let webhook_ingress_repo: Arc<dyn WebhookIngressRepository> = database.clone();
         let subscription_read_repo: Arc<dyn SubscriptionReadRepository> = database.clone();
         let subscription_write_repo: Arc<dyn SubscriptionWriteRepository> = database.clone();
         let payment_read_repo: Arc<dyn PaymentReadRepository> = database.clone();
@@ -51,6 +53,7 @@ impl AppState {
             app_provider_repo,
             app_webhook_repo,
             checkout_repo,
+            webhook_ingress_repo,
             subscription_read_repo,
             subscription_write_repo,
             payment_read_repo,
@@ -65,5 +68,15 @@ impl AppState {
 impl FromRef<AppState> for Arc<Database> {
     fn from_ref(state: &AppState) -> Self {
         state.database.clone()
+    }
+}
+
+impl AppState {
+    pub fn database(&self) -> Arc<Database> {
+        self.database.clone()
+    }
+
+    pub fn database_ref(&self) -> &Database {
+        self.database.as_ref()
     }
 }

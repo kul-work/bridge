@@ -14,7 +14,7 @@ use std::str::FromStr;
 use tracing::info;
 
 pub struct Database {
-    pub pool: PgPool,
+    pool: PgPool,
 }
 
 impl Clone for Database {
@@ -26,6 +26,10 @@ impl Clone for Database {
 }
 
 impl Database {
+    pub(crate) fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     /// Create a new database connection pool and run migrations
     pub async fn new(
         database_url: &str,

@@ -2,7 +2,6 @@ use crate::config::API_PAGINATION_LIMIT;
 use crate::config::MAX_PAGINATION_LIMIT;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
-use crate::ports::{PaymentReadRepository, SubscriptionWriteRepository};
 use crate::state::AppState;
 use axum::{
     extract::{State, Extension, Query},
@@ -12,7 +11,6 @@ use axum::{
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]

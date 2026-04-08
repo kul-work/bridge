@@ -3,7 +3,6 @@ use axum::{
     http::StatusCode,
     response::Html,
 };
-use std::sync::Arc;
 use uuid::Uuid;
 use tracing::info;
 

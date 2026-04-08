@@ -6,14 +6,12 @@ use axum::{
     Json,
 };
 use serde_json::json;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::handlers::api_key::AppAuth;
-use crate::ports::AppProviderRepository;
 use crate::state::AppState;
 
 const UNAUTHENTICATED_IP_LIMIT: usize = 10;

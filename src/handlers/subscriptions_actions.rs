@@ -1,10 +1,7 @@
 use crate::db;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
-use crate::ports::{
-    AppProviderRepository, AppWebhookRepository, SubscriptionReadRepository,
-    SubscriptionWriteRepository,
-};
+use crate::ports::AppWebhookRepository;
 use crate::services::provider_api;
 use crate::state::AppState;
 use axum::{
@@ -13,7 +10,6 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::warn;
 use uuid::Uuid;
 
