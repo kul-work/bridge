@@ -10,7 +10,8 @@ use uuid::Uuid;
 use crate::{
     db::Database,
     error::BridgeError,
-    ports::{ProviderConfigLookupRepository, WebhookIngressRepository, WebhookWriteRepository},
+    ports::{ProviderConfigLookupRepository, WebhookWriteRepository},
+    ports::composites::WebhookIngressRepository,
     state::AppState,
 };
 
