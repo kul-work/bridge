@@ -78,6 +78,19 @@ pub async fn suppress_webhook(
     Ok(())
 }
 
+pub async fn mark_webhook_processed(
+    pool: &PgPool,
+    webhook_id: Uuid,
+) -> Result<(), BridgeError> {
+    sqlx::query("UPDATE pay.webhook_provider SET processed = true WHERE id = $1")
+        .bind(webhook_id)
+        .execute(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
 /// Get webhook delivery by ID
 pub async fn get_webhook_delivery(pool: &PgPool, id: Uuid) -> Result<WebhookDelivery, BridgeError> {
     sqlx::query_as::<_, WebhookDelivery>(

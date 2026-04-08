@@ -8,7 +8,8 @@ use crate::application::subscription_actions_types::{
 use crate::db;
 use crate::error::BridgeError;
 use crate::ports::{
-    AppWebhookRepository, SubscriptionReadRepository, SubscriptionWriteRepository,
+    AppProviderRepository, AppWebhookRepository, SubscriptionReadRepository,
+    SubscriptionWriteRepository,
 };
 use crate::services::provider_api;
 
@@ -22,7 +23,7 @@ pub async fn cancel_subscription<R, S, W>(
     request: Option<CancelSubscriptionRequest>,
 ) -> Result<CancelSubscriptionResponse, BridgeError>
 where
-    R: AppWebhookRepository + Send + Sync + ?Sized,
+    R: AppWebhookRepository + AppProviderRepository + Send + Sync + ?Sized,
     S: SubscriptionReadRepository + Send + Sync + ?Sized,
     W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
@@ -112,7 +113,7 @@ pub async fn resume_subscription<R, S, W>(
     query: SubscriptionActionQuery,
 ) -> Result<ResumeSubscriptionResponse, BridgeError>
 where
-    R: AppWebhookRepository + Send + Sync + ?Sized,
+    R: AppWebhookRepository + AppProviderRepository + Send + Sync + ?Sized,
     S: SubscriptionReadRepository + Send + Sync + ?Sized,
     W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
@@ -176,7 +177,7 @@ pub async fn acknowledge_subscription<R, W>(
     external_user_id: &str,
 ) -> Result<SubscriptionActionResponse, BridgeError>
 where
-    R: AppWebhookRepository + Send + Sync + ?Sized,
+    R: AppWebhookRepository + AppProviderRepository + Send + Sync + ?Sized,
     W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
     let sub = app_repo
@@ -214,7 +215,7 @@ pub async fn create_billing_portal<R, S>(
     query: SubscriptionActionQuery,
 ) -> Result<BillingPortalResponse, BridgeError>
 where
-    R: AppWebhookRepository + Send + Sync + ?Sized,
+    R: AppWebhookRepository + AppProviderRepository + Send + Sync + ?Sized,
     S: SubscriptionReadRepository + Send + Sync + ?Sized,
 {
     if query.external_user_id.trim().is_empty() {
@@ -261,7 +262,7 @@ pub async fn accept_price_step_up<R, W>(
     request: PriceStepUpRequest,
 ) -> Result<PriceStepUpAcceptResponse, BridgeError>
 where
-    R: AppWebhookRepository + Send + Sync + ?Sized,
+    R: AppWebhookRepository + AppProviderRepository + Send + Sync + ?Sized,
     W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
     let sub = app_repo
@@ -320,7 +321,7 @@ pub async fn decline_price_step_up<R, W>(
     request: PriceStepUpRequest,
 ) -> Result<PriceStepUpDeclineResponse, BridgeError>
 where
-    R: AppWebhookRepository + Send + Sync + ?Sized,
+    R: AppWebhookRepository + AppProviderRepository + Send + Sync + ?Sized,
     W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
     let sub = _app_repo
@@ -362,7 +363,7 @@ async fn dispatch_subscription_callback<R>(
     new_price_cents: Option<i32>,
 ) -> Result<(), BridgeError>
 where
-    R: AppWebhookRepository + Send + Sync + ?Sized,
+    R: AppWebhookRepository + AppProviderRepository + Send + Sync + ?Sized,
 {
     let app = repo.get_app(app_id).await?;
     let provider_event_id = format!("manual-{}", Uuid::new_v4());

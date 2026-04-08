@@ -5,7 +5,7 @@ use crate::{
         webhooks::WebhookProvider,
     },
     error::BridgeError,
-    ports::{TransactionOutcome, WebhookProcessingRepository},
+    ports::{AppProviderRepository, TransactionOutcome, WebhookProcessingRepository},
 };
 use uuid::Uuid;
 use tracing::{error, info, warn};
@@ -394,7 +394,7 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
         return Ok(fields);
     };
 
-    let provider_config = match repo.get_provider_config(app_id, "google_play").await {
+    let provider_config = match AppProviderRepository::get_provider_config(repo, app_id, "google_play").await {
         Ok(config) => config,
         Err(_) => return Ok(fields),
     };
@@ -489,7 +489,7 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     // 3. Google Play Strategy 3 (obfuscated_account_id lookup)
     if webhook.provider == "google_play" {
         if let Some(ref token) = webhook.purchase_token {
-            if let Ok(config) = repo.get_provider_config(app_id, "google_play").await {
+            if let Ok(config) = AppProviderRepository::get_provider_config(repo, app_id, "google_play").await {
                 let pkg = config.config.get("package_name").and_then(|v| v.as_str()).unwrap_or("");
                 let sa = config.config.get("service_account_json").and_then(|v| v.as_str()).unwrap_or("");
                 
@@ -541,7 +541,9 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         return Ok(None);
     }
 
-    let app = repo.get_app(app_id).await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let app = AppProviderRepository::get_app(repo, app_id)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     let external_user_id = resolve_user(repo, app_id, &webhook).await;
     if !ensure_resolved_user(repo, webhook_provider_id, &webhook, &external_user_id).await? {
@@ -687,7 +689,9 @@ pub async fn process_webhook(
         return Ok(None);
     }
 
-    let app = repo.get_app(app_id).await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let app = AppProviderRepository::get_app(repo, app_id)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     let canonical_event = normalize_event_type(&webhook.provider, &webhook.event_type);
 

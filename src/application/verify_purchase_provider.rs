@@ -297,7 +297,7 @@ async fn verify_coinbase(
 }
 
 pub(crate) async fn forward_verify_purchase_callback<
-    R: VerifyPurchaseRepository + ?Sized,
+    R: VerifyPurchaseRepository + crate::ports::AppProviderRepository + ?Sized,
 >(
     repo: &R,
     app_id: uuid::Uuid,

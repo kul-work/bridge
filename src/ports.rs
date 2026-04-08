@@ -169,7 +169,7 @@ pub trait WebhookReadRepository: Send + Sync {
 }
 
 #[async_trait]
-pub trait CheckoutRepository: AppProviderRepository + Send + Sync {
+pub trait CheckoutRepository: Send + Sync {
     async fn get_cached_checkout(
         &self,
         app_id: Uuid,
@@ -187,7 +187,7 @@ pub trait CheckoutRepository: AppProviderRepository + Send + Sync {
 
 #[async_trait]
 pub trait VerifyPurchaseRepository:
-    AppProviderRepository + WebhookWriteRepository + WebhookForwardRepository + Send + Sync
+    WebhookWriteRepository + WebhookForwardRepository + Send + Sync
 {
     async fn lookup_user_by_google_obfuscated_id(
         &self,
@@ -312,17 +312,17 @@ pub trait AppProviderRepository: Send + Sync {
 }
 
 pub trait AppWebhookRepository:
-    WebhookForwardRepository + WebhookWriteRepository + Send + Sync
+    AppProviderRepository + WebhookForwardRepository + WebhookWriteRepository + Send + Sync
 {
 }
 
 impl<T> AppWebhookRepository for T where
-    T: WebhookForwardRepository + WebhookWriteRepository + Send + Sync + ?Sized
+    T: AppProviderRepository + WebhookForwardRepository + WebhookWriteRepository + Send + Sync + ?Sized
 {
 }
 
 #[async_trait]
-pub trait WebhookForwardRepository: AppProviderRepository + Send + Sync {
+pub trait WebhookForwardRepository: Send + Sync {
     async fn get_webhook_delivery(&self, id: Uuid) -> Result<WebhookDelivery, BridgeError>;
 
     async fn get_subscription_by_sub_id(
@@ -343,7 +343,7 @@ pub trait WebhookForwardRepository: AppProviderRepository + Send + Sync {
 }
 
 #[async_trait]
-pub trait WebhookProcessingRepository: Send + Sync {
+pub trait WebhookProcessingTransactionRepository: Send + Sync {
     fn with_transaction<'a, T, F>(
         &'a self,
         f: F,
@@ -356,15 +356,47 @@ pub trait WebhookProcessingRepository: Send + Sync {
             + Send
             + 'a;
 
-    async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProvider, BridgeError>;
-
-    async fn get_app(&self, app_id: Uuid) -> Result<AppSnapshot, BridgeError>;
-
-    async fn get_provider_config(
+    async fn record_payment_tx(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         app_id: Uuid,
+        external_user_id: &str,
         provider: &str,
-    ) -> Result<ProviderConfigSnapshot, BridgeError>;
+        provider_transaction_id: &str,
+        subscription_id: Option<&str>,
+        amount_cents: i32,
+        status: &str,
+    ) -> Result<(), BridgeError>;
+
+    async fn upsert_subscription_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        app_id: Uuid,
+        external_user_id: &str,
+        subscription_id: &str,
+        provider: &str,
+        status: &str,
+        current_period_end: Option<chrono::DateTime<chrono::Utc>>,
+        purchase_token: Option<&str>,
+        auto_renewing: Option<bool>,
+        payment_state: Option<i32>,
+        provider_customer_id: Option<&str>,
+        event_time_ms: i64,
+    ) -> Result<SubscriptionUpsertResult, BridgeError>;
+
+    #[allow(dead_code)]
+    async fn adopt_stale_payment(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        app_id: Uuid,
+        external_user_id: &str,
+        subscription_id: &str,
+    ) -> Result<(), BridgeError>;
+}
+
+#[async_trait]
+pub trait WebhookProcessingLookupRepository: Send + Sync {
+    async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProvider, BridgeError>;
 
     async fn lookup_user_by_subscription_id(
         &self,
@@ -407,7 +439,10 @@ pub trait WebhookProcessingRepository: Send + Sync {
         app_id: Uuid,
         provider_transaction_id: &str,
     ) -> Result<Option<String>, BridgeError>;
+}
 
+#[async_trait]
+pub trait WebhookProcessingMutationRepository: Send + Sync {
     async fn update_payment_status(
         &self,
         app_id: Uuid,
@@ -422,42 +457,6 @@ pub trait WebhookProcessingRepository: Send + Sync {
         event_time_ms: i64,
         transition: db::subscriptions::SubscriptionWebhookTransition,
     ) -> Result<Option<Subscription>, BridgeError>;
-
-    async fn upsert_subscription_tx(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        subscription_id: &str,
-        provider: &str,
-        status: &str,
-        current_period_end: Option<chrono::DateTime<chrono::Utc>>,
-        purchase_token: Option<&str>,
-        auto_renewing: Option<bool>,
-        payment_state: Option<i32>,
-        provider_customer_id: Option<&str>,
-        event_time_ms: i64,
-    ) -> Result<SubscriptionUpsertResult, BridgeError>;
-
-    async fn record_payment_tx(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        provider: &str,
-        provider_transaction_id: &str,
-        subscription_id: Option<&str>,
-        amount_cents: i32,
-        status: &str,
-    ) -> Result<(), BridgeError>;
-
-    async fn adopt_stale_payment(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        subscription_id: &str,
-    ) -> Result<(), BridgeError>;
 
     async fn link_replacement_subscriptions(
         &self,
@@ -481,7 +480,18 @@ pub trait WebhookProcessingRepository: Send + Sync {
 }
 
 #[async_trait]
-pub trait SchedulerRepository: AppProviderRepository + WebhookWriteRepository + Send + Sync {
+pub trait WebhookProcessingRepository:
+    AppProviderRepository
+    + WebhookProcessingLookupRepository
+    + WebhookProcessingMutationRepository
+    + WebhookProcessingTransactionRepository
+    + Send
+    + Sync
+{
+}
+
+#[async_trait]
+pub trait SchedulerRepository: Send + Sync {
     async fn list_enabled_apps(&self) -> Result<Vec<App>, BridgeError>;
 
     async fn list_pending_webhook_deliveries(
@@ -1004,16 +1014,13 @@ impl VerifyPurchaseRepository for db::Database {
         provider: &str,
         provider_transaction_id: &str,
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, BridgeError> {
-        sqlx::query_scalar(
-            "SELECT acknowledged_at FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3",
+        db::payments::get_payment_acknowledged_at(
+            self.pool(),
+            app_id,
+            provider,
+            provider_transaction_id,
         )
-        .bind(app_id)
-        .bind(provider)
-        .bind(provider_transaction_id)
-        .fetch_optional(self.pool())
         .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))
-        .map(|row| row.flatten())
     }
 
     async fn mark_payment_acknowledged(
@@ -1022,19 +1029,13 @@ impl VerifyPurchaseRepository for db::Database {
         provider: &str,
         provider_transaction_id: &str,
     ) -> Result<(), BridgeError> {
-        sqlx::query(
-            "UPDATE pay.payments
-             SET acknowledged_at = COALESCE(acknowledged_at, NOW())
-             WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3",
+        db::payments::mark_payment_acknowledged(
+            self.pool(),
+            app_id,
+            provider,
+            provider_transaction_id,
         )
-        .bind(app_id)
-        .bind(provider)
-        .bind(provider_transaction_id)
-        .execute(self.pool())
         .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-        Ok(())
     }
 
     async fn commit_verified_purchase(
@@ -1215,54 +1216,9 @@ impl WebhookForwardRepository for db::Database {
 }
 
 #[async_trait]
-impl WebhookProcessingRepository for db::Database {
-    fn with_transaction<'a, T, F>(
-        &'a self,
-        f: F,
-    ) -> Pin<Box<dyn Future<Output = Result<T, BridgeError>> + Send + 'a>>
-    where
-        T: Send + 'a,
-        F: for<'tx> FnOnce(
-                &'tx mut sqlx::Transaction<'a, sqlx::Postgres>,
-            ) -> Pin<Box<dyn Future<Output = Result<TransactionOutcome<T>, BridgeError>> + Send + 'tx>>
-            + Send
-            + 'a,
-    {
-        let pool = self.pool();
-        with_transaction_impl(pool, f)
-    }
-
+impl WebhookProcessingLookupRepository for db::Database {
     async fn get_webhook_provider(&self, id: Uuid) -> Result<WebhookProvider, BridgeError> {
         db::webhooks::get_webhook_provider(self.pool(), id).await
-    }
-
-    async fn get_app(&self, app_id: Uuid) -> Result<AppSnapshot, BridgeError> {
-        db::apps::get_app(self.pool(), app_id)
-            .await
-            .map(|app| AppSnapshot {
-                id: app.id,
-                slug: app.slug,
-                display_name: app.display_name,
-                webhook_callback_url: app.webhook_callback_url,
-                webhook_callback_secret: app.webhook_callback_secret,
-                api_rate_limit_per_minute: app.api_rate_limit_per_minute,
-                api_rate_limit_rules: app.api_rate_limit_rules,
-                app_url: app.app_url,
-                google_package_name: app.google_package_name,
-                apple_bundle_id: app.apple_bundle_id,
-            })
-    }
-
-    async fn get_provider_config(
-        &self,
-        app_id: Uuid,
-        provider: &str,
-    ) -> Result<ProviderConfigSnapshot, BridgeError> {
-        db::provider_configs::get_provider_config(self.pool(), app_id, provider)
-            .await
-            .map(|provider_config| ProviderConfigSnapshot {
-                config: provider_config.config,
-            })
     }
 
     async fn lookup_user_by_subscription_id(
@@ -1320,7 +1276,10 @@ impl WebhookProcessingRepository for db::Database {
     ) -> Result<Option<String>, BridgeError> {
         db::payments::get_payment_status(self.pool(), app_id, provider_transaction_id).await
     }
+}
 
+#[async_trait]
+impl WebhookProcessingMutationRepository for db::Database {
     async fn update_payment_status(
         &self,
         app_id: Uuid,
@@ -1345,6 +1304,67 @@ impl WebhookProcessingRepository for db::Database {
             transition,
         )
         .await
+    }
+
+    async fn link_replacement_subscriptions(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        current_subscription_id: &str,
+        last_event_time: i64,
+    ) -> Result<(), BridgeError> {
+        db::subscriptions::link_replacement_subscriptions(
+            self.pool(),
+            app_id,
+            external_user_id,
+            current_subscription_id,
+            last_event_time,
+        )
+        .await
+    }
+
+    async fn apply_topup_if_new(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        amount_cents: i32,
+        charge_id: &str,
+    ) -> Result<bool, BridgeError> {
+        db::agent::apply_topup_if_new(
+            self.pool(),
+            app_id,
+            external_user_id,
+            amount_cents,
+            charge_id,
+        )
+        .await
+    }
+
+    async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError> {
+        db::webhooks::suppress_webhook(self.pool(), webhook_id, reason).await
+    }
+
+    async fn mark_webhook_processed(&self, webhook_id: Uuid) -> Result<(), BridgeError> {
+        db::webhooks::mark_webhook_processed(self.pool(), webhook_id).await
+    }
+}
+
+#[async_trait]
+impl WebhookProcessingTransactionRepository for db::Database {
+    fn with_transaction<'a, T, F>(
+        &'a self,
+        f: F,
+    ) -> Pin<Box<dyn Future<Output = Result<T, BridgeError>> + Send + 'a>>
+    where
+        T: Send + 'a,
+        F: for<'tx> FnOnce(
+                &'tx mut sqlx::Transaction<'a, sqlx::Postgres>,
+            ) -> Pin<Box<dyn Future<Output = Result<TransactionOutcome<T>, BridgeError>> + Send + 'tx>>
+            + Send
+            + 'a,
+    {
+        let pool = self.pool();
+        with_transaction_impl(pool, f)
     }
 
     async fn upsert_subscription_tx(
@@ -1412,56 +1432,10 @@ impl WebhookProcessingRepository for db::Database {
     ) -> Result<(), BridgeError> {
         db::payments::adopt_stale_payment(tx, app_id, external_user_id, subscription_id).await
     }
-
-    async fn link_replacement_subscriptions(
-        &self,
-        app_id: Uuid,
-        external_user_id: &str,
-        current_subscription_id: &str,
-        last_event_time: i64,
-    ) -> Result<(), BridgeError> {
-        db::subscriptions::link_replacement_subscriptions(
-            self.pool(),
-            app_id,
-            external_user_id,
-            current_subscription_id,
-            last_event_time,
-        )
-        .await
-    }
-
-    async fn apply_topup_if_new(
-        &self,
-        app_id: Uuid,
-        external_user_id: &str,
-        amount_cents: i32,
-        charge_id: &str,
-    ) -> Result<bool, BridgeError> {
-        db::agent::apply_topup_if_new(
-            self.pool(),
-            app_id,
-            external_user_id,
-            amount_cents,
-            charge_id,
-        )
-        .await
-    }
-
-    async fn suppress_webhook(&self, webhook_id: Uuid, reason: &str) -> Result<(), BridgeError> {
-        db::webhooks::suppress_webhook(self.pool(), webhook_id, reason).await
-    }
-
-    async fn mark_webhook_processed(&self, webhook_id: Uuid) -> Result<(), BridgeError> {
-        let pool = self.pool();
-        sqlx::query("UPDATE pay.webhook_provider SET processed = true WHERE id = $1")
-            .bind(webhook_id)
-            .execute(pool)
-            .await
-            .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-        Ok(())
-    }
 }
+
+#[async_trait]
+impl WebhookProcessingRepository for db::Database {}
 
 #[async_trait]
 impl SchedulerRepository for db::Database {

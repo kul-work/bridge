@@ -5,7 +5,7 @@ use crate::{
         webhooks::WebhookProvider,
     },
     error::BridgeError,
-    ports::WebhookProcessingRepository,
+    ports::{WebhookProcessingLookupRepository, WebhookProcessingMutationRepository},
     webhooks::processor::WebhookFields,
 };
 use chrono::{DateTime, Utc};
@@ -43,7 +43,9 @@ fn outcome_with_subscription(subscription: db::subscriptions::Subscription) -> G
     }
 }
 
-pub async fn handle_subscription_revoked<R: WebhookProcessingRepository + ?Sized>(
+pub async fn handle_subscription_revoked<
+    R: WebhookProcessingLookupRepository + WebhookProcessingMutationRepository + ?Sized,
+>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -94,7 +96,9 @@ pub async fn handle_subscription_revoked<R: WebhookProcessingRepository + ?Sized
     }))
 }
 
-pub async fn handle_subscription_resumed<R: WebhookProcessingRepository + ?Sized>(
+pub async fn handle_subscription_resumed<
+    R: WebhookProcessingLookupRepository + WebhookProcessingMutationRepository + ?Sized,
+>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -138,7 +142,9 @@ pub async fn handle_subscription_resumed<R: WebhookProcessingRepository + ?Sized
     }))
 }
 
-pub async fn handle_subscription_cancelled_with_context<R: WebhookProcessingRepository + ?Sized>(
+pub async fn handle_subscription_cancelled_with_context<
+    R: WebhookProcessingLookupRepository + WebhookProcessingMutationRepository + ?Sized,
+>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -180,7 +186,9 @@ pub async fn handle_subscription_cancelled_with_context<R: WebhookProcessingRepo
     }))
 }
 
-pub async fn handle_subscription_cancellation_scheduled<R: WebhookProcessingRepository + ?Sized>(
+pub async fn handle_subscription_cancellation_scheduled<
+    R: WebhookProcessingLookupRepository + WebhookProcessingMutationRepository + ?Sized,
+>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -216,7 +224,9 @@ pub async fn handle_subscription_cancellation_scheduled<R: WebhookProcessingRepo
     }))
 }
 
-pub async fn handle_price_step_up_consent_required<R: WebhookProcessingRepository + ?Sized>(
+pub async fn handle_price_step_up_consent_required<
+    R: WebhookProcessingLookupRepository + WebhookProcessingMutationRepository + ?Sized,
+>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,
@@ -251,7 +261,9 @@ pub async fn handle_price_step_up_consent_required<R: WebhookProcessingRepositor
     Ok(Some(outcome_with_subscription(subscription)))
 }
 
-pub async fn handle_subscription_pending_purchase_cancelled<R: WebhookProcessingRepository + ?Sized>(
+pub async fn handle_subscription_pending_purchase_cancelled<
+    R: WebhookProcessingLookupRepository + WebhookProcessingMutationRepository + ?Sized,
+>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProvider,

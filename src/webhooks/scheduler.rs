@@ -44,6 +44,7 @@ pub async fn retry_webhooks(
     repo: &(
         impl SchedulerRepository
         + WebhookForwardRepository
+        + AppProviderRepository
         + WebhookProcessingRepository
     ),
 ) -> Result<(), crate::error::BridgeError> {
@@ -116,7 +117,7 @@ pub async fn reconcile_subscriptions(database: &Arc<Database>) -> Result<(), cra
 }
 
 async fn reconcile_app_subscriptions(
-    repo: &(impl SchedulerRepository + WebhookForwardRepository),
+    repo: &(impl SchedulerRepository + WebhookForwardRepository + AppProviderRepository + WebhookWriteRepository),
     app_id: uuid::Uuid,
 ) -> Result<(), crate::error::BridgeError> {
     let active_subs = SchedulerRepository::list_reconciliation_subscriptions(repo, app_id).await?;
@@ -426,7 +427,7 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
 
 #[allow(clippy::too_many_arguments)]
 async fn emit_scheduler_callback(
-    repo: &(impl SchedulerRepository + WebhookForwardRepository),
+    repo: &(impl SchedulerRepository + WebhookForwardRepository + AppProviderRepository + WebhookWriteRepository),
     app_id: Uuid,
     provider: &str,
     subscription_id: &str,

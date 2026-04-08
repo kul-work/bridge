@@ -114,6 +114,45 @@ pub async fn update_payment_status(
     Ok(())
 }
 
+pub async fn get_payment_acknowledged_at(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    provider: &str,
+    provider_transaction_id: &str,
+) -> Result<Option<DateTime<Utc>>, crate::error::BridgeError> {
+    sqlx::query_scalar(
+        "SELECT acknowledged_at FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3",
+    )
+    .bind(app_id)
+    .bind(provider)
+    .bind(provider_transaction_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))
+    .map(|row| row.flatten())
+}
+
+pub async fn mark_payment_acknowledged(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    provider: &str,
+    provider_transaction_id: &str,
+) -> Result<(), crate::error::BridgeError> {
+    sqlx::query(
+        "UPDATE pay.payments
+         SET acknowledged_at = COALESCE(acknowledged_at, NOW())
+         WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3",
+    )
+    .bind(app_id)
+    .bind(provider)
+    .bind(provider_transaction_id)
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
 pub async fn lookup_user_by_purchase_token_payment(
     pool: &sqlx::PgPool,
     app_id: Uuid,

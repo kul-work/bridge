@@ -2,7 +2,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::error::BridgeError;
-use crate::ports::VerifyPurchaseRepository;
+use crate::ports::{AppProviderRepository, VerifyPurchaseRepository};
 use crate::application::verify_purchase_types::{
     compute_obfuscated_id_hash, PaymentAcknowledgement, ProductType, VerificationOutcome,
     VerifyPurchaseCallback, VerifyPurchaseCommitRequest, VerifyPurchaseRequest,
@@ -12,7 +12,7 @@ use crate::application::verify_purchase_provider::{
     acknowledge_google_play, forward_verify_purchase_callback, verify_purchase_with_provider,
 };
 
-pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
+pub async fn verify_purchase<R: VerifyPurchaseRepository + AppProviderRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     payload: VerifyPurchaseRequest,
@@ -45,8 +45,8 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
 
     let product_type = ProductType::parse(&payload.product_type)?;
 
-    let app = repo.get_app(app_id).await?;
-    let provider_config = repo.get_provider_config(app_id, &payload.provider).await?;
+    let app = AppProviderRepository::get_app(repo, app_id).await?;
+    let provider_config = AppProviderRepository::get_provider_config(repo, app_id, &payload.provider).await?;
 
     let verification = verify_purchase_with_provider(
         &payload.provider,
