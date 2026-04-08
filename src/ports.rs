@@ -3,6 +3,10 @@ use std::{future::Future, pin::Pin};
 use uuid::Uuid;
 
 use crate::{
+    application::verify_purchase_types::{
+        VerifyPurchaseCommitRequest, VerifyPurchaseCommitResult,
+        VerifyPurchaseSubscriptionSnapshot,
+    },
     db::{
         self,
         api_keys::AuthenticatedApiKey,
@@ -185,18 +189,6 @@ pub trait CheckoutRepository: AppProviderRepository + Send + Sync {
 pub trait VerifyPurchaseRepository:
     AppProviderRepository + WebhookWriteRepository + WebhookForwardRepository + Send + Sync
 {
-    fn with_transaction<'a, T, F>(
-        &'a self,
-        f: F,
-    ) -> Pin<Box<dyn Future<Output = Result<T, BridgeError>> + Send + 'a>>
-    where
-        T: Send + 'a,
-        F: for<'tx> FnOnce(
-                &'tx mut sqlx::Transaction<'a, sqlx::Postgres>,
-            ) -> Pin<Box<dyn Future<Output = Result<TransactionOutcome<T>, BridgeError>> + Send + 'tx>>
-            + Send
-            + 'a;
-
     async fn lookup_user_by_google_obfuscated_id(
         &self,
         app_id: Uuid,
@@ -209,67 +201,32 @@ pub trait VerifyPurchaseRepository:
         external_user_id: &str,
         subscription_id: &str,
         provider: &str,
-    ) -> Result<Subscription, BridgeError>;
+    ) -> Result<Option<VerifyPurchaseSubscriptionSnapshot>, BridgeError>;
 
     async fn get_subscription_by_purchase_token(
         &self,
         app_id: Uuid,
         purchase_token: &str,
-    ) -> Result<Option<Subscription>, BridgeError>;
+    ) -> Result<Option<VerifyPurchaseSubscriptionSnapshot>, BridgeError>;
 
-    async fn record_payment_tx(
+    async fn payment_acknowledged_at(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        provider: &str,
-        provider_transaction_id: &str,
-        subscription_id: Option<&str>,
-        amount_cents: i32,
-        status: &str,
-    ) -> Result<(), BridgeError>;
-
-    async fn upsert_subscription_tx(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        subscription_id: &str,
-        provider: &str,
-        status: &str,
-        current_period_end: Option<chrono::DateTime<chrono::Utc>>,
-        purchase_token: Option<&str>,
-        auto_renewing: Option<bool>,
-        payment_state: Option<i32>,
-        provider_customer_id: Option<&str>,
-        event_time_ms: i64,
-    ) -> Result<SubscriptionUpsertResult, BridgeError>;
-
-    async fn update_subscription_google_obfuscated_account_id(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        subscription_id: &str,
-        provider: &str,
-        google_obfuscated_account_id: Option<&str>,
-    ) -> Result<(), BridgeError>;
-
-    async fn payment_acknowledged_at_tx(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         app_id: Uuid,
         provider: &str,
         provider_transaction_id: &str,
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, BridgeError>;
 
-    async fn mark_payment_acknowledged_tx(
+    async fn mark_payment_acknowledged(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         app_id: Uuid,
         provider: &str,
         provider_transaction_id: &str,
     ) -> Result<(), BridgeError>;
+
+    async fn commit_verified_purchase(
+        &self,
+        request: VerifyPurchaseCommitRequest<'_>,
+    ) -> Result<VerifyPurchaseCommitResult, BridgeError>;
 }
 
 #[async_trait]
@@ -581,6 +538,20 @@ pub trait SchedulerRepository: AppProviderRepository + WebhookWriteRepository + 
 pub enum TransactionOutcome<T> {
     Commit(T),
     Rollback(T),
+}
+
+fn map_verify_purchase_subscription(
+    subscription: Subscription,
+) -> VerifyPurchaseSubscriptionSnapshot {
+    VerifyPurchaseSubscriptionSnapshot {
+        external_user_id: subscription.external_user_id,
+        subscription_id: subscription.subscription_id,
+        provider: subscription.provider,
+        current_period_end: subscription.current_period_end,
+        auto_renewing: subscription.auto_renewing,
+        payment_state: subscription.payment_state,
+        provider_customer_id: subscription.provider_customer_id,
+    }
 }
 
 fn with_transaction_impl<'a, T, F>(
@@ -973,22 +944,6 @@ impl CheckoutRepository for db::Database {
 
 #[async_trait]
 impl VerifyPurchaseRepository for db::Database {
-    fn with_transaction<'a, T, F>(
-        &'a self,
-        f: F,
-    ) -> Pin<Box<dyn Future<Output = Result<T, BridgeError>> + Send + 'a>>
-    where
-        T: Send + 'a,
-        F: for<'tx> FnOnce(
-                &'tx mut sqlx::Transaction<'a, sqlx::Postgres>,
-            ) -> Pin<Box<dyn Future<Output = Result<TransactionOutcome<T>, BridgeError>> + Send + 'tx>>
-            + Send
-            + 'a,
-    {
-        let pool = self.pool();
-        with_transaction_impl(pool, f)
-    }
-
     async fn lookup_user_by_google_obfuscated_id(
         &self,
         app_id: Uuid,
@@ -1003,7 +958,7 @@ impl VerifyPurchaseRepository for db::Database {
         external_user_id: &str,
         subscription_id: &str,
         provider: &str,
-    ) -> Result<Subscription, BridgeError> {
+    ) -> Result<Option<VerifyPurchaseSubscriptionSnapshot>, BridgeError> {
         db::subscriptions::get_subscription(
             self.pool(),
             app_id,
@@ -1012,117 +967,141 @@ impl VerifyPurchaseRepository for db::Database {
             provider,
         )
         .await
+        .map(map_verify_purchase_subscription)
+        .map(Some)
     }
 
     async fn get_subscription_by_purchase_token(
         &self,
         app_id: Uuid,
         purchase_token: &str,
-    ) -> Result<Option<Subscription>, BridgeError> {
-        db::subscriptions::get_subscription_by_purchase_token(self.pool(), app_id, purchase_token).await
+    ) -> Result<Option<VerifyPurchaseSubscriptionSnapshot>, BridgeError> {
+        db::subscriptions::get_subscription_by_purchase_token(self.pool(), app_id, purchase_token)
+            .await
+            .map(|subscription| subscription.map(map_verify_purchase_subscription))
     }
 
-    async fn record_payment_tx(
+    async fn payment_acknowledged_at(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         app_id: Uuid,
-        external_user_id: &str,
         provider: &str,
         provider_transaction_id: &str,
-        subscription_id: Option<&str>,
-        amount_cents: i32,
-        status: &str,
-    ) -> Result<(), BridgeError> {
-        db::payments::record_payment_tx(
-            tx,
-            app_id,
-            external_user_id,
-            provider,
-            provider_transaction_id,
-            subscription_id,
-            amount_cents,
-            status,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, BridgeError> {
+        sqlx::query_scalar(
+            "SELECT acknowledged_at FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3",
         )
+        .bind(app_id)
+        .bind(provider)
+        .bind(provider_transaction_id)
+        .fetch_optional(self.pool())
         .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))
+        .map(|row| row.flatten())
     }
 
-    async fn upsert_subscription_tx(
+    async fn mark_payment_acknowledged(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         app_id: Uuid,
-        external_user_id: &str,
-        subscription_id: &str,
         provider: &str,
-        status: &str,
-        current_period_end: Option<chrono::DateTime<chrono::Utc>>,
-        purchase_token: Option<&str>,
-        auto_renewing: Option<bool>,
-        payment_state: Option<i32>,
-        provider_customer_id: Option<&str>,
-        event_time_ms: i64,
-    ) -> Result<SubscriptionUpsertResult, BridgeError> {
-        db::subscriptions::upsert_subscription_tx(
-            tx,
-            app_id,
-            external_user_id,
-            subscription_id,
-            provider,
-            status,
-            current_period_end,
-            purchase_token,
-            auto_renewing,
-            payment_state,
-            provider_customer_id,
-            event_time_ms,
-        )
-        .await
-    }
-
-    async fn update_subscription_google_obfuscated_account_id(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        subscription_id: &str,
-        provider: &str,
-        google_obfuscated_account_id: Option<&str>,
+        provider_transaction_id: &str,
     ) -> Result<(), BridgeError> {
         sqlx::query(
-            "UPDATE pay.subscriptions
-             SET google_obfuscated_account_id = COALESCE($1, google_obfuscated_account_id),
-                 updated_at = NOW()
-             WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND provider = $5",
+            "UPDATE pay.payments
+             SET acknowledged_at = COALESCE(acknowledged_at, NOW())
+             WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3",
         )
-        .bind(google_obfuscated_account_id)
         .bind(app_id)
-        .bind(external_user_id)
-        .bind(subscription_id)
         .bind(provider)
-        .execute(&mut **tx)
+        .bind(provider_transaction_id)
+        .execute(self.pool())
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
         Ok(())
     }
 
-    async fn payment_acknowledged_at_tx(
+    async fn commit_verified_purchase(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        provider: &str,
-        provider_transaction_id: &str,
-    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, BridgeError> {
-        db::payments::payment_acknowledged_at_tx(tx, app_id, provider, provider_transaction_id).await
-    }
+        request: VerifyPurchaseCommitRequest<'_>,
+    ) -> Result<VerifyPurchaseCommitResult, BridgeError> {
+        let app_id = request.app_id;
+        let resolved_external_user_id = request.resolved_external_user_id.to_string();
+        let provider = request.provider.to_string();
+        let subscription_id = request.subscription_id.to_string();
+        let purchase_token = request.purchase_token.to_string();
+        let subscription_status = request.subscription_status.to_string();
+        let payment_status = request.payment_status.to_string();
+        let provider_customer_id = request.provider_customer_id.map(|value| value.to_string());
+        let google_obfuscated_account_id = request
+            .google_obfuscated_account_id
+            .map(|value| value.to_string());
+        let current_period_end = request.current_period_end.clone();
+        let auto_renewing = request.auto_renewing;
+        let payment_state = request.payment_state;
+        let amount_cents = request.amount_cents;
+        let event_time_ms = request.event_time_ms;
+        let is_subscription = request.is_subscription;
 
-    async fn mark_payment_acknowledged_tx(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        provider: &str,
-        provider_transaction_id: &str,
-    ) -> Result<(), BridgeError> {
-        db::payments::mark_payment_acknowledged_tx(tx, app_id, provider, provider_transaction_id).await
+        let pool = self.pool();
+        with_transaction_impl(pool, move |tx| {
+            Box::pin(async move {
+                db::payments::record_payment_tx(
+                    tx,
+                    app_id,
+                    &resolved_external_user_id,
+                    &provider,
+                    &purchase_token,
+                    Some(&subscription_id),
+                    amount_cents,
+                    &payment_status,
+                )
+                .await?;
+
+                let mut subscription = None;
+
+                if is_subscription {
+                    let upsert_result = db::subscriptions::upsert_subscription_tx(
+                        tx,
+                        app_id,
+                        &resolved_external_user_id,
+                        &subscription_id,
+                        &provider,
+                        &subscription_status,
+                        current_period_end,
+                        Some(&purchase_token),
+                        auto_renewing,
+                        payment_state,
+                        provider_customer_id.as_deref(),
+                        event_time_ms,
+                    )
+                    .await?;
+
+                    if provider == "google_play" {
+                        sqlx::query(
+                            "UPDATE pay.subscriptions
+                             SET google_obfuscated_account_id = COALESCE($1, google_obfuscated_account_id),
+                                 updated_at = NOW()
+                             WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND provider = $5",
+                        )
+                        .bind(google_obfuscated_account_id.as_deref())
+                        .bind(app_id)
+                        .bind(&resolved_external_user_id)
+                        .bind(&subscription_id)
+                        .bind(&provider)
+                        .execute(&mut **tx)
+                        .await
+                        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+                    }
+
+                    subscription = Some(map_verify_purchase_subscription(
+                        upsert_result.subscription,
+                    ));
+                }
+
+                Ok(TransactionOutcome::Commit(VerifyPurchaseCommitResult { subscription }))
+            })
+        })
+        .await
     }
 }
 

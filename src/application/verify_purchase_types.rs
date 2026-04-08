@@ -104,6 +104,39 @@ pub(crate) struct VerifyPurchaseCallback<'a> {
     pub(crate) amount_cents: Option<i32>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct VerifyPurchaseSubscriptionSnapshot {
+    pub external_user_id: String,
+    pub subscription_id: String,
+    pub provider: String,
+    pub current_period_end: Option<DateTime<Utc>>,
+    pub auto_renewing: Option<bool>,
+    pub payment_state: Option<i32>,
+    pub provider_customer_id: Option<String>,
+}
+
+pub(crate) struct VerifyPurchaseCommitRequest<'a> {
+    pub app_id: uuid::Uuid,
+    pub resolved_external_user_id: &'a str,
+    pub provider: &'a str,
+    pub subscription_id: &'a str,
+    pub purchase_token: &'a str,
+    pub subscription_status: &'a str,
+    pub payment_status: &'a str,
+    pub current_period_end: Option<DateTime<Utc>>,
+    pub auto_renewing: Option<bool>,
+    pub payment_state: Option<i32>,
+    pub provider_customer_id: Option<&'a str>,
+    pub google_obfuscated_account_id: Option<&'a str>,
+    pub amount_cents: i32,
+    pub event_time_ms: i64,
+    pub is_subscription: bool,
+}
+
+pub(crate) struct VerifyPurchaseCommitResult {
+    pub subscription: Option<VerifyPurchaseSubscriptionSnapshot>,
+}
+
 pub(crate) fn compute_obfuscated_id_hash(external_user_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(external_user_id.as_bytes());
