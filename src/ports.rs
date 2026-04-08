@@ -15,7 +15,7 @@ use crate::{
         apps::App,
         checkout_idempotency::CachedCheckout,
         payments::{Payment, PaymentHistoryEntry},
-        subscriptions::{Subscription, SubscriptionUpsertResult},
+        subscriptions::Subscription,
         webhooks::{WebhookDelivery, WebhookProvider, WebhookRecord},
     },
     error::BridgeError,
@@ -348,56 +348,54 @@ pub trait WebhookForwardRepository:
     ) -> Result<(), BridgeError>;
 }
 
+#[derive(Debug, Clone)]
+pub struct WebhookPaymentRecordRequest<'a> {
+    pub app_id: Uuid,
+    pub external_user_id: &'a str,
+    pub provider: &'a str,
+    pub provider_transaction_id: &'a str,
+    pub subscription_id: Option<&'a str>,
+    pub amount_cents: i32,
+    pub status: &'a str,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebhookSubscriptionCommitRequest<'a> {
+    pub app_id: Uuid,
+    pub external_user_id: &'a str,
+    pub subscription_id: &'a str,
+    pub provider: &'a str,
+    pub status: &'a str,
+    pub current_period_end: Option<chrono::DateTime<chrono::Utc>>,
+    pub purchase_token: Option<&'a str>,
+    pub auto_renewing: Option<bool>,
+    pub payment_state: Option<i32>,
+    pub provider_customer_id: Option<&'a str>,
+    pub event_time_ms: i64,
+    pub payment: Option<WebhookPaymentRecordRequest<'a>>,
+    pub adopt_stale_payment: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebhookSubscriptionSnapshot {
+    pub purchase_token: Option<String>,
+    pub status: String,
+    pub current_period_end: Option<chrono::DateTime<chrono::Utc>>,
+    pub auto_renewing: Option<bool>,
+    pub revocation_reason: Option<String>,
+}
+
 #[async_trait]
 pub trait WebhookProcessingTransactionRepository: Send + Sync {
-    fn with_transaction<'a, T, F>(
-        &'a self,
-        f: F,
-    ) -> Pin<Box<dyn Future<Output = Result<T, BridgeError>> + Send + 'a>>
-    where
-        T: Send + 'a,
-        F: for<'tx> FnOnce(
-                &'tx mut sqlx::Transaction<'a, sqlx::Postgres>,
-            ) -> Pin<Box<dyn Future<Output = Result<TransactionOutcome<T>, BridgeError>> + Send + 'tx>>
-            + Send
-            + 'a;
-
-    async fn record_payment_tx(
+    async fn record_webhook_payment(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        provider: &str,
-        provider_transaction_id: &str,
-        subscription_id: Option<&str>,
-        amount_cents: i32,
-        status: &str,
+        request: WebhookPaymentRecordRequest<'_>,
     ) -> Result<(), BridgeError>;
 
-    async fn upsert_subscription_tx(
+    async fn commit_webhook_subscription(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        subscription_id: &str,
-        provider: &str,
-        status: &str,
-        current_period_end: Option<chrono::DateTime<chrono::Utc>>,
-        purchase_token: Option<&str>,
-        auto_renewing: Option<bool>,
-        payment_state: Option<i32>,
-        provider_customer_id: Option<&str>,
-        event_time_ms: i64,
-    ) -> Result<SubscriptionUpsertResult, BridgeError>;
-
-    #[allow(dead_code)]
-    async fn adopt_stale_payment(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        subscription_id: &str,
-    ) -> Result<(), BridgeError>;
+        request: WebhookSubscriptionCommitRequest<'_>,
+    ) -> Result<Option<WebhookSubscriptionSnapshot>, BridgeError>;
 }
 
 #[async_trait]
@@ -558,6 +556,42 @@ pub trait SchedulerRepository: Send + Sync {
 pub enum TransactionOutcome<T> {
     Commit(T),
     Rollback(T),
+}
+
+struct OwnedWebhookPaymentRecord {
+    app_id: Uuid,
+    external_user_id: String,
+    provider: String,
+    provider_transaction_id: String,
+    subscription_id: Option<String>,
+    amount_cents: i32,
+    status: String,
+}
+
+impl<'a> From<WebhookPaymentRecordRequest<'a>> for OwnedWebhookPaymentRecord {
+    fn from(request: WebhookPaymentRecordRequest<'a>) -> Self {
+        Self {
+            app_id: request.app_id,
+            external_user_id: request.external_user_id.to_string(),
+            provider: request.provider.to_string(),
+            provider_transaction_id: request.provider_transaction_id.to_string(),
+            subscription_id: request.subscription_id.map(str::to_string),
+            amount_cents: request.amount_cents,
+            status: request.status.to_string(),
+        }
+    }
+}
+
+impl From<Subscription> for WebhookSubscriptionSnapshot {
+    fn from(subscription: Subscription) -> Self {
+        Self {
+            purchase_token: subscription.purchase_token,
+            status: subscription.status,
+            current_period_end: subscription.current_period_end,
+            auto_renewing: subscription.auto_renewing,
+            revocation_reason: subscription.revocation_reason,
+        }
+    }
 }
 
 fn map_verify_purchase_subscription(
@@ -1351,86 +1385,102 @@ impl WebhookProcessingMutationRepository for db::Database {
 
 #[async_trait]
 impl WebhookProcessingTransactionRepository for db::Database {
-    fn with_transaction<'a, T, F>(
-        &'a self,
-        f: F,
-    ) -> Pin<Box<dyn Future<Output = Result<T, BridgeError>> + Send + 'a>>
-    where
-        T: Send + 'a,
-        F: for<'tx> FnOnce(
-                &'tx mut sqlx::Transaction<'a, sqlx::Postgres>,
-            ) -> Pin<Box<dyn Future<Output = Result<TransactionOutcome<T>, BridgeError>> + Send + 'tx>>
-            + Send
-            + 'a,
-    {
+    async fn record_webhook_payment(
+        &self,
+        request: WebhookPaymentRecordRequest<'_>,
+    ) -> Result<(), BridgeError> {
+        let request = OwnedWebhookPaymentRecord::from(request);
         let pool = self.pool();
-        with_transaction_impl(pool, f)
-    }
 
-    async fn upsert_subscription_tx(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        subscription_id: &str,
-        provider: &str,
-        status: &str,
-        current_period_end: Option<chrono::DateTime<chrono::Utc>>,
-        purchase_token: Option<&str>,
-        auto_renewing: Option<bool>,
-        payment_state: Option<i32>,
-        provider_customer_id: Option<&str>,
-        event_time_ms: i64,
-    ) -> Result<SubscriptionUpsertResult, BridgeError> {
-        db::subscriptions::upsert_subscription_tx(
-            tx,
-            app_id,
-            external_user_id,
-            subscription_id,
-            provider,
-            status,
-            current_period_end,
-            purchase_token,
-            auto_renewing,
-            payment_state,
-            provider_customer_id,
-            event_time_ms,
-        )
+        with_transaction_impl(pool, move |tx| {
+            Box::pin(async move {
+                db::payments::record_payment_tx(
+                    tx,
+                    request.app_id,
+                    &request.external_user_id,
+                    &request.provider,
+                    &request.provider_transaction_id,
+                    request.subscription_id.as_deref(),
+                    request.amount_cents,
+                    &request.status,
+                )
+                .await?;
+
+                Ok(TransactionOutcome::Commit(()))
+            })
+        })
         .await
     }
 
-    async fn record_payment_tx(
+    async fn commit_webhook_subscription(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        provider: &str,
-        provider_transaction_id: &str,
-        subscription_id: Option<&str>,
-        amount_cents: i32,
-        status: &str,
-    ) -> Result<(), BridgeError> {
-        db::payments::record_payment_tx(
-            tx,
-            app_id,
-            external_user_id,
-            provider,
-            provider_transaction_id,
-            subscription_id,
-            amount_cents,
-            status,
-        )
-        .await
-    }
+        request: WebhookSubscriptionCommitRequest<'_>,
+    ) -> Result<Option<WebhookSubscriptionSnapshot>, BridgeError> {
+        let app_id = request.app_id;
+        let external_user_id = request.external_user_id.to_string();
+        let subscription_id = request.subscription_id.to_string();
+        let provider = request.provider.to_string();
+        let status = request.status.to_string();
+        let current_period_end = request.current_period_end;
+        let purchase_token = request.purchase_token.map(str::to_string);
+        let auto_renewing = request.auto_renewing;
+        let payment_state = request.payment_state;
+        let provider_customer_id = request.provider_customer_id.map(str::to_string);
+        let event_time_ms = request.event_time_ms;
+        let payment = request.payment.map(OwnedWebhookPaymentRecord::from);
+        let adopt_stale_payment = request.adopt_stale_payment;
 
-    async fn adopt_stale_payment(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        app_id: Uuid,
-        external_user_id: &str,
-        subscription_id: &str,
-    ) -> Result<(), BridgeError> {
-        db::payments::adopt_stale_payment(tx, app_id, external_user_id, subscription_id).await
+        let pool = self.pool();
+        with_transaction_impl(pool, move |tx| {
+            Box::pin(async move {
+                let upsert_result = db::subscriptions::upsert_subscription_tx(
+                    tx,
+                    app_id,
+                    &external_user_id,
+                    &subscription_id,
+                    &provider,
+                    &status,
+                    current_period_end,
+                    purchase_token.as_deref(),
+                    auto_renewing,
+                    payment_state,
+                    provider_customer_id.as_deref(),
+                    event_time_ms,
+                )
+                .await?;
+
+                if !upsert_result.applied {
+                    return Ok(TransactionOutcome::Rollback(None));
+                }
+
+                if let Some(payment) = payment.as_ref() {
+                    db::payments::record_payment_tx(
+                        tx,
+                        payment.app_id,
+                        &payment.external_user_id,
+                        &payment.provider,
+                        &payment.provider_transaction_id,
+                        payment.subscription_id.as_deref(),
+                        payment.amount_cents,
+                        &payment.status,
+                    )
+                    .await?;
+                }
+
+                if adopt_stale_payment {
+                    let _ = db::payments::adopt_stale_payment(
+                        tx,
+                        app_id,
+                        &external_user_id,
+                        &subscription_id,
+                    )
+                    .await;
+                }
+
+                Ok(TransactionOutcome::Commit(Some(upsert_result.subscription.into())))
+            })
+        })
+        .await
     }
 }
 
@@ -1521,7 +1571,3 @@ impl SchedulerRepository for db::Database {
         db::users::cleanup_purged_fraud_prevention(self.pool()).await
     }
 }
-
-
-
-

@@ -1,11 +1,13 @@
 use crate::{
     db::{
-        self,
         subscriptions::SubscriptionWebhookTransition,
         webhooks::WebhookProvider,
     },
     error::BridgeError,
-    ports::{WebhookProcessingLookupRepository, WebhookProcessingMutationRepository},
+    ports::{
+        WebhookProcessingLookupRepository, WebhookProcessingMutationRepository,
+        WebhookSubscriptionSnapshot,
+    },
     webhooks::processor::WebhookFields,
 };
 use chrono::{DateTime, Utc};
@@ -13,7 +15,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Default)]
 pub struct GooglePlayLifecycleOutcome {
-    pub canonical_subscription: Option<db::subscriptions::Subscription>,
+    pub canonical_subscription: Option<WebhookSubscriptionSnapshot>,
     pub callback_event_type: Option<String>,
     pub callback_status_override: Option<String>,
     pub callback_revocation_reason_override: Option<String>,
@@ -36,7 +38,7 @@ fn subscription_id_for_event<'a>(
         .or(webhook.subscription_id.as_deref())
 }
 
-fn outcome_with_subscription(subscription: db::subscriptions::Subscription) -> GooglePlayLifecycleOutcome {
+fn outcome_with_subscription(subscription: WebhookSubscriptionSnapshot) -> GooglePlayLifecycleOutcome {
     GooglePlayLifecycleOutcome {
         canonical_subscription: Some(subscription),
         ..Default::default()
@@ -88,7 +90,7 @@ pub async fn handle_subscription_revoked<
     };
 
     Ok(Some(GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription),
+        canonical_subscription: Some(subscription.into()),
         callback_event_type: Some("subscription.revoked".to_string()),
         callback_status_override: Some("revoked".to_string()),
         callback_revocation_reason_override: Some(revocation_reason),
@@ -134,7 +136,7 @@ pub async fn handle_subscription_resumed<
     };
 
     Ok(Some(GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription),
+        canonical_subscription: Some(subscription.into()),
         callback_event_type: Some("subscription.resumed".to_string()),
         callback_status_override: Some("active".to_string()),
         callback_revocation_reason_override: None,
@@ -178,7 +180,7 @@ pub async fn handle_subscription_cancelled_with_context<
     };
 
     Ok(Some(GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription),
+        canonical_subscription: Some(subscription.into()),
         callback_event_type: Some("subscription.cancelled".to_string()),
         callback_status_override: Some("cancelled".to_string()),
         callback_revocation_reason_override: None,
@@ -216,7 +218,7 @@ pub async fn handle_subscription_cancellation_scheduled<
     };
 
     Ok(Some(GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription),
+        canonical_subscription: Some(subscription.into()),
         callback_event_type: Some("subscription.cancelled".to_string()),
         callback_status_override: Some("cancelled".to_string()),
         callback_revocation_reason_override: None,
@@ -258,7 +260,7 @@ pub async fn handle_price_step_up_consent_required<
         return Ok(None);
     };
 
-    Ok(Some(outcome_with_subscription(subscription)))
+    Ok(Some(outcome_with_subscription(subscription.into())))
 }
 
 pub async fn handle_subscription_pending_purchase_cancelled<
@@ -288,7 +290,7 @@ pub async fn handle_subscription_pending_purchase_cancelled<
     };
 
     Ok(Some(GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription),
+        canonical_subscription: Some(subscription.into()),
         callback_event_type: Some("subscription.cancelled".to_string()),
         callback_status_override: Some("cancelled".to_string()),
         callback_revocation_reason_override: None,

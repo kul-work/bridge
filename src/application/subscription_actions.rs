@@ -5,7 +5,6 @@ use crate::application::subscription_actions_types::{
     PriceStepUpAcceptResponse, PriceStepUpDeclineResponse, PriceStepUpRequest,
     ResumeSubscriptionResponse, SubscriptionActionQuery, SubscriptionActionResponse,
 };
-use crate::db;
 use crate::error::BridgeError;
 use crate::ports::{
     AppLookupRepository, ProviderConfigLookupRepository, SubscriptionLookupRepository,
@@ -83,10 +82,21 @@ where
         }
     };
 
+    let callback_sub = SubscriptionCallbackData {
+        subscription_id: updated_sub.subscription_id.clone(),
+        external_user_id: updated_sub.external_user_id.clone(),
+        provider: updated_sub.provider.clone(),
+        purchase_token: updated_sub.purchase_token.clone(),
+        auto_renewing: updated_sub.auto_renewing,
+        current_period_end: updated_sub.current_period_end,
+        status: updated_sub.status.clone(),
+        revocation_reason: updated_sub.revocation_reason.clone(),
+    };
+
     if let Err(e) = dispatch_subscription_callback(
         callback_repo,
         app_id,
-        &updated_sub,
+        &callback_sub,
         "subscription.cancelled",
         Some(mode),
         None,
@@ -151,10 +161,21 @@ where
 
     let updated_sub = subscription_write_repo.resume_subscription(sub.id).await?;
 
+    let callback_sub = SubscriptionCallbackData {
+        subscription_id: updated_sub.subscription_id.clone(),
+        external_user_id: updated_sub.external_user_id.clone(),
+        provider: updated_sub.provider.clone(),
+        purchase_token: updated_sub.purchase_token.clone(),
+        auto_renewing: updated_sub.auto_renewing,
+        current_period_end: updated_sub.current_period_end,
+        status: updated_sub.status.clone(),
+        revocation_reason: updated_sub.revocation_reason.clone(),
+    };
+
     if let Err(e) = dispatch_subscription_callback(
         callback_repo,
         app_id,
-        &updated_sub,
+        &callback_sub,
         "subscription.resumed",
         None,
         None,
@@ -297,10 +318,21 @@ where
         )
     })?;
 
+    let callback_sub = SubscriptionCallbackData {
+        subscription_id: updated_sub.subscription_id.clone(),
+        external_user_id: updated_sub.external_user_id.clone(),
+        provider: updated_sub.provider.clone(),
+        purchase_token: updated_sub.purchase_token.clone(),
+        auto_renewing: updated_sub.auto_renewing,
+        current_period_end: updated_sub.current_period_end,
+        status: updated_sub.status.clone(),
+        revocation_reason: updated_sub.revocation_reason.clone(),
+    };
+
     if let Err(e) = dispatch_subscription_callback(
         callback_repo,
         app_id,
-        &updated_sub,
+        &callback_sub,
         "subscription.price_step_up",
         None,
         Some(new_price_cents),
@@ -361,10 +393,21 @@ where
     })
 }
 
+struct SubscriptionCallbackData {
+    subscription_id: String,
+    external_user_id: String,
+    provider: String,
+    purchase_token: Option<String>,
+    auto_renewing: Option<bool>,
+    current_period_end: Option<chrono::DateTime<chrono::Utc>>,
+    status: String,
+    revocation_reason: Option<String>,
+}
+
 async fn dispatch_subscription_callback<R>(
     repo: &R,
     app_id: Uuid,
-    sub: &db::subscriptions::Subscription,
+    sub: &SubscriptionCallbackData,
     event_type: &str,
     cancellation_mode: Option<&str>,
     new_price_cents: Option<i32>,

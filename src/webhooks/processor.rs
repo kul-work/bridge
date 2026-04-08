@@ -1,11 +1,14 @@
 use crate::{
     application::app_context::AppSnapshot,
     db::{
-        subscriptions::{Subscription, SubscriptionWebhookTransition},
+        subscriptions::SubscriptionWebhookTransition,
         webhooks::WebhookProvider,
     },
     error::BridgeError,
-    ports::{TransactionOutcome, WebhookProcessingRepository},
+    ports::{
+        WebhookPaymentRecordRequest, WebhookProcessingRepository,
+        WebhookSubscriptionCommitRequest, WebhookSubscriptionSnapshot,
+    },
 };
 use uuid::Uuid;
 use tracing::{error, info, warn};
@@ -741,7 +744,7 @@ pub async fn process_webhook(
     let mut callback_status_override: Option<String> = None;
     let mut callback_revocation_reason_override: Option<String> = None;
     let mut callback_cancellation_mode_override: Option<String> = None;
-    let mut canonical_subscription: Option<Subscription> = None;
+    let mut canonical_subscription: Option<WebhookSubscriptionSnapshot> = None;
     let mut should_forward = true;
 
     // Step 4: Route by canonical event type and mutate DB
@@ -758,46 +761,30 @@ pub async fn process_webhook(
                     .unwrap_or(&sub_id_fallback);
 
                 let subscription = repo
-                    .with_transaction(|tx| {
-                        Box::pin(async {
-                            let upsert_result = repo.upsert_subscription_tx(
-                                tx,
+                    .commit_webhook_subscription(WebhookSubscriptionCommitRequest {
+                        app_id,
+                        external_user_id: user_id,
+                        subscription_id: sub_id_str,
+                        provider: &provider,
+                        status: "active",
+                        current_period_end: period_end,
+                        purchase_token: fields_purchase_token.as_deref(),
+                        auto_renewing: fields.auto_renewing,
+                        payment_state: None,
+                        provider_customer_id: fields_provider_customer_id.as_deref(),
+                        event_time_ms: timestamp_epoch_ms,
+                        payment: fields.provider_transaction_id.as_deref().map(|txn_id| {
+                            WebhookPaymentRecordRequest {
                                 app_id,
-                                user_id,
-                                sub_id_str,
-                                &provider,
-                                "active",
-                                period_end,
-                                fields_purchase_token.as_deref(),
-                                fields.auto_renewing,
-                                None,
-                                fields_provider_customer_id.as_deref(),
-                                timestamp_epoch_ms,
-                            ).await?;
-
-                            if !upsert_result.applied {
-                                return Ok(TransactionOutcome::Rollback(None));
+                                external_user_id: user_id,
+                                provider: &provider,
+                                provider_transaction_id: txn_id,
+                                subscription_id: fields_subscription_id.as_deref(),
+                                amount_cents: fields.amount_cents.unwrap_or(0),
+                                status: "success",
                             }
-
-                            if let Some(ref txn_id) = fields.provider_transaction_id {
-                                repo.record_payment_tx(
-                                    tx,
-                                    app_id,
-                                    user_id,
-                                    &provider,
-                                    txn_id,
-                                    fields_subscription_id.as_deref(),
-                                    fields.amount_cents.unwrap_or(0),
-                                    "success",
-                                ).await?;
-                            }
-
-                            if provider == "creem" {
-                                let _ = repo.adopt_stale_payment(tx, app_id, user_id, sub_id_str).await;
-                            }
-
-                            Ok(TransactionOutcome::Commit(Some(upsert_result.subscription)))
-                        })
+                        }),
+                        adopt_stale_payment: provider == "creem",
                     })
                     .await?;
 
@@ -852,29 +839,20 @@ pub async fn process_webhook(
                     .unwrap_or(&sub_id_fallback);
 
                 let subscription = repo
-                    .with_transaction(|tx| {
-                        Box::pin(async {
-                            let upsert_result = repo.upsert_subscription_tx(
-                                tx,
-                                app_id,
-                                user_id,
-                                sub_id_str,
-                                &provider,
-                                "trial",
-                                period_end,
-                                fields_purchase_token.as_deref(),
-                                fields.auto_renewing,
-                                None,
-                                fields_provider_customer_id.as_deref(),
-                                timestamp_epoch_ms,
-                            ).await?;
-
-                            if !upsert_result.applied {
-                                return Ok(TransactionOutcome::Rollback(None));
-                            }
-
-                            Ok(TransactionOutcome::Commit(Some(upsert_result.subscription)))
-                        })
+                    .commit_webhook_subscription(WebhookSubscriptionCommitRequest {
+                        app_id,
+                        external_user_id: user_id,
+                        subscription_id: sub_id_str,
+                        provider: &provider,
+                        status: "trial",
+                        current_period_end: period_end,
+                        purchase_token: fields_purchase_token.as_deref(),
+                        auto_renewing: fields.auto_renewing,
+                        payment_state: None,
+                        provider_customer_id: fields_provider_customer_id.as_deref(),
+                        event_time_ms: timestamp_epoch_ms,
+                        payment: None,
+                        adopt_stale_payment: false,
                     })
                     .await?;
 
@@ -909,7 +887,7 @@ pub async fn process_webhook(
                     },
                 ).await?;
                 if let Some(sub) = updated {
-                    canonical_subscription = Some(sub);
+                    canonical_subscription = Some(sub.into());
                     callback_event_type = "subscription.grace_period".to_string();
                     callback_status_override = Some("past_due".to_string());
                 } else {
@@ -953,7 +931,7 @@ pub async fn process_webhook(
                     SubscriptionWebhookTransition::OnHold,
                 ).await?;
                 if let Some(sub) = updated {
-                    canonical_subscription = Some(sub);
+                    canonical_subscription = Some(sub.into());
                     callback_event_type = "subscription.on_hold".to_string();
                     callback_status_override = Some("on_hold".to_string());
                 } else {
@@ -976,7 +954,7 @@ pub async fn process_webhook(
                             SubscriptionWebhookTransition::Paused,
                         ).await?;
                         if let Some(updated_sub) = updated {
-                            canonical_subscription = Some(updated_sub);
+                            canonical_subscription = Some(updated_sub.into());
                             callback_event_type = "subscription.paused".to_string();
                             callback_status_override = Some("paused".to_string());
                         } else {
@@ -1039,7 +1017,7 @@ pub async fn process_webhook(
                     SubscriptionWebhookTransition::Expired,
                 ).await?;
                 if let Some(updated_sub) = updated {
-                    canonical_subscription = Some(updated_sub);
+                    canonical_subscription = Some(updated_sub.into());
                     callback_event_type = "subscription.expired".to_string();
                     callback_status_override = Some("expired".to_string());
                 } else {
@@ -1074,25 +1052,16 @@ pub async fn process_webhook(
                 let txn_id = fields.provider_transaction_id.as_deref()
                     .or(fields.subscription_id.as_deref())
                     .unwrap_or(&webhook_provider_webhook_id);
-                repo
-                    .with_transaction(|tx| {
-                        Box::pin(async {
-                            repo.record_payment_tx(
-                                tx,
-                                app_id,
-                                user_id,
-                                &provider,
-                                txn_id,
-                                fields_subscription_id.as_deref(),
-                                fields.amount_cents.unwrap_or(0),
-                                "pending",
-                            )
-                            .await?;
-
-                            Ok(TransactionOutcome::Commit(()))
-                        })
-                    })
-                    .await?;
+                repo.record_webhook_payment(WebhookPaymentRecordRequest {
+                    app_id,
+                    external_user_id: user_id,
+                    provider: &provider,
+                    provider_transaction_id: txn_id,
+                    subscription_id: fields_subscription_id.as_deref(),
+                    amount_cents: fields.amount_cents.unwrap_or(0),
+                    status: "pending",
+                })
+                .await?;
             }
             callback_event_type = "payment.pending".to_string();
             callback_status_override = Some("pending".to_string());
@@ -1137,46 +1106,35 @@ pub async fn process_webhook(
                 let txn_id = fields.provider_transaction_id.as_deref()
                     .or(fields.subscription_id.as_deref())
                     .unwrap_or(&webhook_provider_webhook_id);
+                repo.record_webhook_payment(WebhookPaymentRecordRequest {
+                    app_id,
+                    external_user_id: user_id,
+                    provider: &provider,
+                    provider_transaction_id: txn_id,
+                    subscription_id: Some(sub_id),
+                    amount_cents: fields.amount_cents.unwrap_or(0),
+                    status: "failed",
+                })
+                .await?;
+
                 let updated = repo
-                    .with_transaction(|tx| {
-                        Box::pin(async {
-                            repo.record_payment_tx(
-                                tx,
-                                app_id,
-                                user_id,
-                                &provider,
-                                txn_id,
-                                Some(sub_id),
-                                fields.amount_cents.unwrap_or(0),
-                                "failed",
-                            )
-                            .await?;
-
-                            let updated = repo.apply_subscription_transition(
-                                app_id,
-                                sub_id,
-                                timestamp_epoch_ms,
-                                SubscriptionWebhookTransition::PaymentFailed,
-                            ).await?;
-
-                            let Some(updated_sub) = updated else {
-                                warn!(
-                                    "Skipping stale order.failed update for subscription {}",
-                                    sub_id
-                                );
-                                return Ok(TransactionOutcome::Rollback(None));
-                            };
-
-                            Ok(TransactionOutcome::Commit(Some(updated_sub)))
-                        })
-                    })
+                    .apply_subscription_transition(
+                        app_id,
+                        sub_id,
+                        timestamp_epoch_ms,
+                        SubscriptionWebhookTransition::PaymentFailed,
+                    )
                     .await?;
 
                 let Some(updated_sub) = updated else {
+                    warn!(
+                        "Skipping stale order.failed update for subscription {}",
+                        sub_id
+                    );
                     return Ok(None);
                 };
 
-                canonical_subscription = Some(updated_sub);
+                canonical_subscription = Some(updated_sub.into());
             }
             callback_event_type = "payment.failed".to_string();
             callback_status_override = Some("failed".to_string());
@@ -1242,7 +1200,7 @@ pub async fn process_webhook(
                             },
                         ).await?;
                         if let Some(updated_sub) = updated {
-                            canonical_subscription = Some(updated_sub);
+                            canonical_subscription = Some(updated_sub.into());
                         }
                     }
                 } else if let Some(ref sub_id) = fields.subscription_id {
@@ -1255,7 +1213,7 @@ pub async fn process_webhook(
                         },
                     ).await?;
                     if let Some(updated_sub) = updated {
-                        canonical_subscription = Some(updated_sub);
+                        canonical_subscription = Some(updated_sub.into());
                     }
                 }
             }
@@ -1338,25 +1296,16 @@ pub async fn process_webhook(
                 let txn_id = fields.provider_transaction_id.as_deref()
                     .or(webhook.subscription_id.as_deref())
                     .unwrap_or(&webhook_provider_webhook_id);
-                repo
-                    .with_transaction(|tx| {
-                        Box::pin(async {
-                            repo.record_payment_tx(
-                                tx,
-                                app_id,
-                                user_id,
-                                &provider,
-                                txn_id,
-                                fields_subscription_id.as_deref(),
-                                fields.amount_cents.unwrap_or(0),
-                                "dispute_created",
-                            )
-                            .await?;
-
-                            Ok(TransactionOutcome::Commit(()))
-                        })
-                    })
-                    .await?;
+                repo.record_webhook_payment(WebhookPaymentRecordRequest {
+                    app_id,
+                    external_user_id: user_id,
+                    provider: &provider,
+                    provider_transaction_id: txn_id,
+                    subscription_id: fields_subscription_id.as_deref(),
+                    amount_cents: fields.amount_cents.unwrap_or(0),
+                    status: "dispute_created",
+                })
+                .await?;
             }
             callback_event_type = "dispute.created".to_string();
         }
@@ -1365,42 +1314,27 @@ pub async fn process_webhook(
         "subscription.updated" => {
             if let Some(ref _user_id) = external_user_id {
                 let status = normalize_status(fields.status.as_deref());
-                let status_for_tx = status.clone();
                 let sub_id = fields.subscription_id.clone()
                     .or(webhook.subscription_id.clone())
                     .unwrap_or_default();
-                let sub_id_for_tx = sub_id.clone();
 
                 let subscription = repo
-                    .with_transaction(|tx| {
-                        Box::pin(async {
-                            let upsert_result = repo.upsert_subscription_tx(
-                                tx,
-                                app_id,
-                                _user_id,
-                                &sub_id_for_tx,
-                                &provider,
-                                &status_for_tx,
-                                fields_current_period_end
-                                    .as_deref()
-                                    .and_then(parse_rfc3339_utc),
-                                fields_purchase_token.as_deref(),
-                                fields.auto_renewing,
-                                None,
-                                fields_provider_customer_id.as_deref(),
-                                timestamp_epoch_ms,
-                            ).await?;
-
-                            if !upsert_result.applied {
-                                info!(
-                                    "Skipped stale subscription.updated event for subscription {}",
-                                    sub_id
-                                );
-                                return Ok(TransactionOutcome::Rollback(None));
-                            }
-
-                            Ok(TransactionOutcome::Commit(Some(upsert_result.subscription)))
-                        })
+                    .commit_webhook_subscription(WebhookSubscriptionCommitRequest {
+                        app_id,
+                        external_user_id: _user_id,
+                        subscription_id: &sub_id,
+                        provider: &provider,
+                        status: &status,
+                        current_period_end: fields_current_period_end
+                            .as_deref()
+                            .and_then(parse_rfc3339_utc),
+                        purchase_token: fields_purchase_token.as_deref(),
+                        auto_renewing: fields.auto_renewing,
+                        payment_state: None,
+                        provider_customer_id: fields_provider_customer_id.as_deref(),
+                        event_time_ms: timestamp_epoch_ms,
+                        payment: None,
+                        adopt_stale_payment: false,
                     })
                     .await?;
 
@@ -1485,23 +1419,16 @@ pub async fn process_webhook(
                     .or(fields.subscription_id.as_deref())
                     .unwrap_or(&webhook_provider_webhook_id);
                 let _ = repo
-                    .with_transaction(|tx| {
-                        Box::pin(async {
-                            let _ = repo.record_payment_tx(
-                                tx,
-                                app_id,
-                                user_id,
-                                &provider,
-                                txn_id,
-                                fields_subscription_id.as_deref(),
-                                fields.amount_cents.unwrap_or(0),
-                                "price_changed",
-                            ).await;
-
-                            Ok(TransactionOutcome::Commit(()))
-                        })
+                    .record_webhook_payment(WebhookPaymentRecordRequest {
+                        app_id,
+                        external_user_id: user_id,
+                        provider: &provider,
+                        provider_transaction_id: txn_id,
+                        subscription_id: fields_subscription_id.as_deref(),
+                        amount_cents: fields.amount_cents.unwrap_or(0),
+                        status: "price_changed",
                     })
-                    .await?;
+                    .await;
             }
         }
 

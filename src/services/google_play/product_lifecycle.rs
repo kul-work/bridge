@@ -2,7 +2,8 @@ use crate::{
     db::webhooks::WebhookProvider,
     error::BridgeError,
     ports::{
-        TransactionOutcome, WebhookProcessingLookupRepository, WebhookProcessingTransactionRepository,
+        WebhookPaymentRecordRequest, WebhookProcessingLookupRepository,
+        WebhookProcessingTransactionRepository,
     },
     services::google_play::subscription_lifecycle::GooglePlayLifecycleOutcome,
     webhooks::processor::WebhookFields,
@@ -29,22 +30,14 @@ pub async fn handle_otp_purchased<R: WebhookProcessingTransactionRepository + ?S
         .unwrap_or(&webhook.provider_webhook_id);
 
     repo
-        .with_transaction(|tx| {
-            Box::pin(async {
-                repo.record_payment_tx(
-                    tx,
-                    app_id,
-                    user_id,
-                    &webhook.provider,
-                    txn_id,
-                    fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()),
-                    fields.amount_cents.unwrap_or(0),
-                    "success",
-                )
-                .await?;
-
-                Ok(TransactionOutcome::Commit(()))
-            })
+        .record_webhook_payment(WebhookPaymentRecordRequest {
+            app_id,
+            external_user_id: user_id,
+            provider: &webhook.provider,
+            provider_transaction_id: txn_id,
+            subscription_id: fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()),
+            amount_cents: fields.amount_cents.unwrap_or(0),
+            status: "success",
         })
         .await?;
 
@@ -86,22 +79,14 @@ pub async fn handle_otp_cancelled<
     }
 
     repo
-        .with_transaction(|tx| {
-            Box::pin(async {
-                repo.record_payment_tx(
-                    tx,
-                    app_id,
-                    user_id,
-                    &webhook.provider,
-                    token,
-                    fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()),
-                    fields.amount_cents.unwrap_or(0),
-                    "cancelled",
-                )
-                .await?;
-
-                Ok(TransactionOutcome::Commit(()))
-            })
+        .record_webhook_payment(WebhookPaymentRecordRequest {
+            app_id,
+            external_user_id: user_id,
+            provider: &webhook.provider,
+            provider_transaction_id: token,
+            subscription_id: fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()),
+            amount_cents: fields.amount_cents.unwrap_or(0),
+            status: "cancelled",
         })
         .await?;
 
