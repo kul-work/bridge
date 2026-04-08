@@ -7,21 +7,15 @@ use crate::application::checkout_helpers::{
     normalize_provider_name, normalize_required_field, resolve_checkout_redirect_urls,
 };
 use crate::application::checkout_types::{CheckoutRequest, CheckoutResponse};
-use crate::ports::{
-    AppLookupRepository, CheckoutRepository, ProviderConfigLookupRepository,
-};
+use crate::ports::CheckoutHandlerRepository;
 
-pub async fn create_checkout<C, A>(
-    checkout_repo: &C,
-    app_repo: &A,
+pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
+    repo: &R,
     app_id: Uuid,
     payload: CheckoutRequest,
 ) -> Result<CheckoutResponse, BridgeError>
-where
-    C: CheckoutRepository + ?Sized,
-    A: AppLookupRepository + ProviderConfigLookupRepository + ?Sized,
 {
-    let app = app_repo.get_app(app_id).await?;
+    let app = repo.get_app(app_id).await?;
 
     let external_user_id = normalize_required_field(&payload.external_user_id, "external_user_id")?;
     let email = normalize_required_field(&payload.email, "email")?;
@@ -51,7 +45,7 @@ where
     )?;
 
     if let Some(key) = payload.idempotency_key.as_deref() {
-        if let Some(cached) = checkout_repo.get_cached_checkout(app_id, key.trim()).await? {
+        if let Some(cached) = repo.get_cached_checkout(app_id, key.trim()).await? {
             if cached.request_fingerprint != request_fingerprint {
                 return Err(BridgeError::ValidationError(
                     "idempotency_key reused with different checkout payload".to_string(),
@@ -64,7 +58,7 @@ where
         }
     }
 
-    let provider_config = app_repo.get_provider_config(app_id, &provider).await?;
+    let provider_config = repo.get_provider_config(app_id, &provider).await?;
 
     let checkout_id = Uuid::new_v4().to_string();
     let checkout_urls = resolve_checkout_redirect_urls(app.app_url.as_deref());
@@ -384,7 +378,7 @@ where
     if let Some(key) = payload.idempotency_key.as_deref() {
         let response_json = serde_json::to_value(&response)
             .map_err(|e| BridgeError::InternalServerError(format!("Failed to serialize checkout response: {}", e)))?;
-        checkout_repo.cache_checkout_response(app_id, key.trim(), &request_fingerprint, &response_json)
+        repo.cache_checkout_response(app_id, key.trim(), &request_fingerprint, &response_json)
         .await?;
     }
 

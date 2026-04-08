@@ -4,7 +4,7 @@ use axum::extract::FromRef;
 
 use crate::{
     db::Database,
-    ports::{SubscriptionActionsHandlerRepository, VerifyPurchaseHandlerRepository},
+    ports::{CheckoutHandlerRepository, SubscriptionActionsHandlerRepository, VerifyPurchaseHandlerRepository},
 };
 
 #[derive(Clone)]
@@ -34,6 +34,10 @@ impl AppState {
     }
 
     pub(crate) fn subscription_actions_repo(&self) -> &(dyn SubscriptionActionsHandlerRepository + '_) {
+        self.database.as_ref()
+    }
+
+    pub(crate) fn checkout_repo(&self) -> &(dyn CheckoutHandlerRepository + '_) {
         self.database.as_ref()
     }
 }

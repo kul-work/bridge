@@ -2,11 +2,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::error::BridgeError;
-use crate::ports::{
-    AppLookupRepository, GooglePlayAccountLookupRepository, PaymentAcknowledgementRepository,
-    ProviderConfigLookupRepository, SubscriptionLookupRepository, VerifyPurchaseRepository,
-    WebhookForwardRepository, WebhookWriteRepository,
-};
+use crate::ports::VerifyPurchaseHandlerRepository;
 use crate::application::verify_purchase_types::{
     compute_obfuscated_id_hash, PaymentAcknowledgement, ProductType, VerificationOutcome,
     VerifyPurchaseCallback, VerifyPurchaseCommitRequest, VerifyPurchaseRequest,
@@ -16,17 +12,7 @@ use crate::application::verify_purchase_provider::{
     acknowledge_google_play, forward_verify_purchase_callback, verify_purchase_with_provider,
 };
 
-pub async fn verify_purchase<
-    R: AppLookupRepository
-        + GooglePlayAccountLookupRepository
-        + PaymentAcknowledgementRepository
-        + ProviderConfigLookupRepository
-        + SubscriptionLookupRepository
-        + VerifyPurchaseRepository
-        + WebhookForwardRepository
-        + WebhookWriteRepository
-        + ?Sized,
->(
+pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     payload: VerifyPurchaseRequest,

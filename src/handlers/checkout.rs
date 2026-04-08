@@ -14,10 +14,9 @@ pub async fn create_checkout(
     Extension(auth): Extension<AppAuth>,
     Json(payload): Json<CheckoutRequest>,
 ) -> Result<(StatusCode, Json<CheckoutResponse>), BridgeError> {
-    let database = state.database();
+    let repo = state.checkout_repo();
     let response = application::checkout::create_checkout(
-        database.as_ref(),
-        database.as_ref(),
+        repo,
         auth.app_id,
         payload,
     )

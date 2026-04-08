@@ -23,9 +23,6 @@ pub async fn cancel_subscription(
     let repo = state.subscription_actions_repo();
     let response = application::subscription_actions::cancel_subscription(
         repo,
-        repo,
-        repo,
-        repo,
         application::subscription_actions::CancelSubscriptionInput {
             app_id: auth.app_id,
             subscription_id,
@@ -46,9 +43,6 @@ pub async fn resume_subscription(
 ) -> Result<(StatusCode, Json<ResumeSubscriptionResponse>), BridgeError> {
     let repo = state.subscription_actions_repo();
     let response = application::subscription_actions::resume_subscription(
-        repo,
-        repo,
-        repo,
         repo,
         auth.app_id,
         &subscription_id,
@@ -73,7 +67,6 @@ pub async fn acknowledge_subscription(
     let repo = state.subscription_actions_repo();
     let response = application::subscription_actions::acknowledge_subscription(
         repo,
-        repo,
         auth.app_id,
         &subscription_id,
         &request.external_user_id,
@@ -91,7 +84,6 @@ pub async fn create_billing_portal(
 ) -> Result<(StatusCode, Json<BillingPortalResponse>), BridgeError> {
     let repo = state.subscription_actions_repo();
     let response = application::subscription_actions::create_billing_portal(
-        repo,
         repo,
         auth.app_id,
         &subscription_id,
@@ -111,8 +103,6 @@ pub async fn accept_price_step_up(
     let repo = state.subscription_actions_repo();
     let response = application::subscription_actions::accept_price_step_up(
         repo,
-        repo,
-        repo,
         auth.app_id,
         &subscription_id,
         request,
@@ -130,7 +120,6 @@ pub async fn decline_price_step_up(
 ) -> Result<(StatusCode, Json<PriceStepUpDeclineResponse>), BridgeError> {
     let repo = state.subscription_actions_repo();
     let response = application::subscription_actions::decline_price_step_up(
-        repo,
         repo,
         auth.app_id,
         &subscription_id,

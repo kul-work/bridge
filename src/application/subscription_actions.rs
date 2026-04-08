@@ -6,11 +6,7 @@ use crate::application::subscription_actions_types::{
     ResumeSubscriptionResponse, SubscriptionActionQuery, SubscriptionActionResponse,
 };
 use crate::error::BridgeError;
-use crate::ports::{
-    AppLookupRepository, ProviderConfigLookupRepository, SubscriptionLookupRepository,
-    SubscriptionReadRepository, SubscriptionWriteRepository, WebhookForwardRepository,
-    WebhookWriteRepository,
-};
+use crate::ports::SubscriptionActionsHandlerRepository;
 use crate::services::provider_api;
 
 pub(crate) struct CancelSubscriptionInput {
@@ -20,18 +16,10 @@ pub(crate) struct CancelSubscriptionInput {
     pub request: Option<CancelSubscriptionRequest>,
 }
 
-pub async fn cancel_subscription<R, C, S, W>(
-    app_repo: &R,
-    callback_repo: &C,
-    subscription_repo: &S,
-    subscription_write_repo: &W,
+pub async fn cancel_subscription<R: SubscriptionActionsHandlerRepository + ?Sized>(
+    repo: &R,
     input: CancelSubscriptionInput,
 ) -> Result<CancelSubscriptionResponse, BridgeError>
-where
-    R: ProviderConfigLookupRepository + Send + Sync + ?Sized,
-    C: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + Send + Sync + ?Sized,
-    S: SubscriptionReadRepository + Send + Sync + ?Sized,
-    W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
     let CancelSubscriptionInput {
         app_id,
@@ -52,7 +40,7 @@ where
     let provider = query.provider.trim().to_ascii_lowercase();
     let mode = request.mode.as_deref().unwrap_or("scheduled");
 
-    let sub = subscription_repo
+    let sub = repo
         .get_subscription(
             app_id,
             query.external_user_id.trim(),
@@ -72,7 +60,7 @@ where
         ));
     }
 
-    let provider_config = app_repo.get_provider_config(app_id, &sub.provider).await?;
+    let provider_config = repo.get_provider_config(app_id, &sub.provider).await?;
 
     provider_api::cancel_subscription(
         &sub.provider,
@@ -84,8 +72,8 @@ where
     .await?;
 
     let updated_sub = match mode {
-        "scheduled" => subscription_write_repo.cancel_subscription_scheduled(sub.id).await?,
-        "immediate" => subscription_write_repo.cancel_subscription_immediate(sub.id).await?,
+        "scheduled" => repo.cancel_subscription_scheduled(sub.id).await?,
+        "immediate" => repo.cancel_subscription_immediate(sub.id).await?,
         _ => {
             return Err(BridgeError::ValidationError(
                 "mode must be either 'scheduled' or 'immediate'".to_string(),
@@ -105,7 +93,7 @@ where
     };
 
     if let Err(e) = dispatch_subscription_callback(
-        callback_repo,
+        repo,
         app_id,
         &callback_sub,
         "subscription.cancelled",
@@ -128,20 +116,12 @@ where
     })
 }
 
-pub async fn resume_subscription<R, C, S, W>(
-    app_repo: &R,
-    callback_repo: &C,
-    subscription_repo: &S,
-    subscription_write_repo: &W,
+pub async fn resume_subscription<R: SubscriptionActionsHandlerRepository + ?Sized>(
+    repo: &R,
     app_id: Uuid,
     subscription_id: &str,
     query: SubscriptionActionQuery,
 ) -> Result<ResumeSubscriptionResponse, BridgeError>
-where
-    R: ProviderConfigLookupRepository + Send + Sync + ?Sized,
-    C: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + Send + Sync + ?Sized,
-    S: SubscriptionReadRepository + Send + Sync + ?Sized,
-    W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
     if query.external_user_id.trim().is_empty() {
         return Err(BridgeError::ValidationError("external_user_id is required".to_string()));
@@ -152,7 +132,7 @@ where
     }
 
     let provider = query.provider.trim().to_ascii_lowercase();
-    let sub = subscription_repo
+    let sub = repo
         .get_subscription(
             app_id,
             query.external_user_id.trim(),
@@ -161,7 +141,7 @@ where
         )
         .await?;
 
-    let provider_config = app_repo.get_provider_config(app_id, &sub.provider).await?;
+    let provider_config = repo.get_provider_config(app_id, &sub.provider).await?;
 
     provider_api::resume_subscription(
         &sub.provider,
@@ -170,7 +150,7 @@ where
     )
     .await?;
 
-    let updated_sub = subscription_write_repo.resume_subscription(sub.id).await?;
+    let updated_sub = repo.resume_subscription(sub.id).await?;
 
     let callback_sub = SubscriptionCallbackData {
         subscription_id: updated_sub.subscription_id.clone(),
@@ -184,7 +164,7 @@ where
     };
 
     if let Err(e) = dispatch_subscription_callback(
-        callback_repo,
+        repo,
         app_id,
         &callback_sub,
         "subscription.resumed",
@@ -206,18 +186,14 @@ where
     })
 }
 
-pub async fn acknowledge_subscription<L, W>(
-    lookup_repo: &L,
-    subscription_write_repo: &W,
+pub async fn acknowledge_subscription<R: SubscriptionActionsHandlerRepository + ?Sized>(
+    repo: &R,
     app_id: Uuid,
     subscription_id: &str,
     external_user_id: &str,
 ) -> Result<SubscriptionActionResponse, BridgeError>
-where
-    L: SubscriptionLookupRepository + Send + Sync + ?Sized,
-    W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
-    let sub = lookup_repo
+    let sub = repo
         .get_subscription_by_sub_id(app_id, subscription_id)
         .await?
         .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
@@ -228,7 +204,7 @@ where
         ));
     }
 
-    subscription_write_repo
+    repo
         .mark_payment_acknowledged_for_subscription(
             app_id,
             &sub.external_user_id,
@@ -244,16 +220,12 @@ where
     })
 }
 
-pub async fn create_billing_portal<R, S>(
-    app_repo: &R,
-    subscription_repo: &S,
+pub async fn create_billing_portal<R: SubscriptionActionsHandlerRepository + ?Sized>(
+    repo: &R,
     app_id: Uuid,
     subscription_id: &str,
     query: SubscriptionActionQuery,
 ) -> Result<BillingPortalResponse, BridgeError>
-where
-    R: ProviderConfigLookupRepository + Send + Sync + ?Sized,
-    S: SubscriptionReadRepository + Send + Sync + ?Sized,
 {
     if query.external_user_id.trim().is_empty() {
         return Err(BridgeError::ValidationError("external_user_id is required".to_string()));
@@ -264,7 +236,7 @@ where
     }
 
     let provider = query.provider.trim().to_ascii_lowercase();
-    let sub = subscription_repo
+    let sub = repo
         .get_subscription(
             app_id,
             query.external_user_id.trim(),
@@ -279,7 +251,7 @@ where
         )
     })?;
 
-    let provider_config = app_repo.get_provider_config(app_id, &sub.provider).await?;
+    let provider_config = repo.get_provider_config(app_id, &sub.provider).await?;
 
     let url = provider_api::create_billing_portal(
         &sub.provider,
@@ -291,20 +263,14 @@ where
     Ok(BillingPortalResponse { url })
 }
 
-pub async fn accept_price_step_up<L, C, W>(
-    lookup_repo: &L,
-    callback_repo: &C,
-    subscription_write_repo: &W,
+pub async fn accept_price_step_up<R: SubscriptionActionsHandlerRepository + ?Sized>(
+    repo: &R,
     app_id: Uuid,
     subscription_id: &str,
     request: PriceStepUpRequest,
 ) -> Result<PriceStepUpAcceptResponse, BridgeError>
-where
-    L: SubscriptionLookupRepository + Send + Sync + ?Sized,
-    C: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + Send + Sync + ?Sized,
-    W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
-    let sub = lookup_repo
+    let sub = repo
         .get_subscription_by_sub_id(app_id, subscription_id)
         .await?
         .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
@@ -321,7 +287,7 @@ where
         ));
     }
 
-    let updated_sub = subscription_write_repo.accept_price_step_up(sub.id).await?;
+    let updated_sub = repo.accept_price_step_up(sub.id).await?;
 
     let new_price_cents = updated_sub.google_new_price_cents.ok_or_else(|| {
         BridgeError::ValidationError(
@@ -341,7 +307,7 @@ where
     };
 
     if let Err(e) = dispatch_subscription_callback(
-        callback_repo,
+        repo,
         app_id,
         &callback_sub,
         "subscription.price_step_up",
@@ -363,18 +329,14 @@ where
     })
 }
 
-pub async fn decline_price_step_up<L, W>(
-    lookup_repo: &L,
-    subscription_write_repo: &W,
+pub async fn decline_price_step_up<R: SubscriptionActionsHandlerRepository + ?Sized>(
+    repo: &R,
     app_id: Uuid,
     subscription_id: &str,
     request: PriceStepUpRequest,
 ) -> Result<PriceStepUpDeclineResponse, BridgeError>
-where
-    L: SubscriptionLookupRepository + Send + Sync + ?Sized,
-    W: SubscriptionWriteRepository + Send + Sync + ?Sized,
 {
-    let sub = lookup_repo
+    let sub = repo
         .get_subscription_by_sub_id(app_id, subscription_id)
         .await?
         .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
@@ -391,7 +353,7 @@ where
         ));
     }
 
-    let updated_sub = subscription_write_repo.decline_price_step_up(sub.id).await?;
+    let updated_sub = repo.decline_price_step_up(sub.id).await?;
 
     let cancellation_effective_at = updated_sub
         .current_period_end
@@ -415,7 +377,7 @@ struct SubscriptionCallbackData {
     revocation_reason: Option<String>,
 }
 
-async fn dispatch_subscription_callback<R>(
+async fn dispatch_subscription_callback<R: SubscriptionActionsHandlerRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     sub: &SubscriptionCallbackData,
@@ -423,8 +385,6 @@ async fn dispatch_subscription_callback<R>(
     cancellation_mode: Option<&str>,
     new_price_cents: Option<i32>,
 ) -> Result<(), BridgeError>
-where
-    R: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + Send + Sync + ?Sized,
 {
     let app = repo.get_app(app_id).await?;
     let provider_event_id = format!("manual-{}", Uuid::new_v4());

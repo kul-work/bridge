@@ -450,6 +450,17 @@ where
 {
 }
 
+pub(crate) trait CheckoutHandlerRepository:
+    AppLookupRepository + CheckoutRepository + ProviderConfigLookupRepository + Send + Sync
+{
+}
+
+impl<T> CheckoutHandlerRepository for T
+where
+    T: AppLookupRepository + CheckoutRepository + ProviderConfigLookupRepository + Send + Sync,
+{
+}
+
 #[derive(Debug, Clone)]
 pub struct WebhookPaymentRecordRequest<'a> {
     pub app_id: Uuid,
