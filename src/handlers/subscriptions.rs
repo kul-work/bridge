@@ -1,10 +1,10 @@
-use crate::db;
 use crate::config::API_PAGINATION_LIMIT;
 use crate::config::MAX_PAGINATION_LIMIT;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
+use crate::ports::BridgeRepository;
 use axum::{
-    extract::{State, Extension, Query, Path},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -85,8 +85,7 @@ pub async fn list_subscriptions(
 
     let cursor = decode_cursor(query.after.as_deref())?;
 
-    let subs = db::subscriptions::get_user_subscriptions_keyset(
-        &database.pool,
+    let subs = database.get_user_subscriptions_keyset(
         auth.app_id,
         &query.external_user_id,
         limit + 1, // Fetch one extra to check if there are more
@@ -172,8 +171,7 @@ pub async fn get_subscription(
         ));
     }
 
-    let sub = db::subscriptions::get_subscription(
-        &database.pool,
+    let sub = database.get_subscription(
         auth.app_id,
         &query.external_user_id,
         &subscription_id,

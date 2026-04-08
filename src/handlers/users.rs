@@ -2,13 +2,13 @@ use axum::{
     extract::{Path, State},
     Extension, Json,
 };
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
-use chrono::Utc;
 
 use crate::config::DATA_EXPORT_LIMIT;
-use crate::db::Database;
+use crate::db::{payments::Payment, subscriptions::Subscription, Database};
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::ports::BridgeRepository;
@@ -45,8 +45,9 @@ pub async fn data_export(
     Extension(auth): Extension<AppAuth>,
     Path(external_user_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
-    let subscriptions = collect_all_subscriptions(&database.pool, auth.app_id, &external_user_id).await?;
-    let payments = collect_all_payments(&database.pool, auth.app_id, &external_user_id).await?;
+    let repository = database.as_ref();
+    let subscriptions = collect_all_subscriptions(repository, auth.app_id, &external_user_id).await?;
+    let payments = collect_all_payments(repository, auth.app_id, &external_user_id).await?;
 
     let agent_credits = database
         .get_agent_credit(auth.app_id, &external_user_id)
@@ -103,16 +104,16 @@ pub async fn data_export(
 }
 
 async fn collect_all_subscriptions(
-    pool: &sqlx::PgPool,
+    repository: &impl BridgeRepository,
     app_id: uuid::Uuid,
     external_user_id: &str,
-) -> Result<Vec<crate::db::subscriptions::Subscription>, BridgeError> {
+) -> Result<Vec<Subscription>, BridgeError> {
     let mut subscriptions = Vec::new();
     let mut offset = 0;
 
     loop {
-        let batch = crate::db::subscriptions::get_user_subscriptions(
-            pool,
+        let batch = repository
+            .get_user_subscriptions(
             app_id,
             external_user_id,
             DATA_EXPORT_LIMIT,
@@ -134,16 +135,16 @@ async fn collect_all_subscriptions(
 }
 
 async fn collect_all_payments(
-    pool: &sqlx::PgPool,
+    repository: &impl BridgeRepository,
     app_id: uuid::Uuid,
     external_user_id: &str,
-) -> Result<Vec<crate::db::payments::Payment>, BridgeError> {
+) -> Result<Vec<Payment>, BridgeError> {
     let mut payments = Vec::new();
     let mut offset = 0;
 
     loop {
-        let batch = crate::db::payments::get_user_payments(
-            pool,
+        let batch = repository
+            .get_user_payments(
             app_id,
             external_user_id,
             DATA_EXPORT_LIMIT,

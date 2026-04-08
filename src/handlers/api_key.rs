@@ -1,5 +1,5 @@
-use crate::db;
 use crate::error::BridgeError;
+use crate::ports::BridgeRepository;
 use axum::{
     extract::{Request, State},
     http::Method,
@@ -38,7 +38,7 @@ pub async fn api_key_auth(
     }
 
     let api_key = parts[1];
-    let auth = db::api_keys::authenticate_api_key(&database.pool, api_key).await?;
+    let auth = database.authenticate_api_key(api_key).await?;
 
     request.extensions_mut().insert(AppAuth {
         app_id: auth.app_id,
