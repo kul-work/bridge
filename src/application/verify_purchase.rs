@@ -1,5 +1,3 @@
-use axum::http::StatusCode;
-use axum::Json;
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -25,7 +23,7 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
     payload: VerifyPurchaseRequest,
-) -> Result<(StatusCode, Json<VerifyPurchaseResponse>), BridgeError> {
+) -> Result<VerifyPurchaseResponse, BridgeError> {
     if payload.external_user_id.is_empty() {
         return Err(BridgeError::ValidationError(
             "external_user_id is required".to_string(),
@@ -71,9 +69,7 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
         VerificationOutcome::LinkingRequired {
             obfuscated_account_id,
         } => {
-            return Ok((
-                StatusCode::OK,
-                Json(VerifyPurchaseResponse {
+            return Ok(VerifyPurchaseResponse {
                     status: "linking_required".to_string(),
                     subscription_id: payload.subscription_id.clone(),
                     current_period_end: None,
@@ -85,8 +81,7 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
                             .to_string(),
                     ),
                     obfuscated_account_id: Some(obfuscated_account_id),
-                }),
-            ));
+                });
         }
         VerificationOutcome::Verified(verified) => verified,
     };
@@ -103,9 +98,7 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
             {
                 Some(original_external_user_id) => original_external_user_id,
                 None => {
-                    return Ok((
-                        StatusCode::OK,
-                        Json(VerifyPurchaseResponse {
+                    return Ok(VerifyPurchaseResponse {
                             status: "linking_required".to_string(),
                             subscription_id: payload.subscription_id.clone(),
                             current_period_end: None,
@@ -119,15 +112,12 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
                             obfuscated_account_id: Some(
                                 resubscribe_obfuscated_account_id.to_string(),
                             ),
-                        }),
-                    ));
+                        });
                 }
             };
         } else if let Some(owner_hash) = verified.obfuscated_account_id.as_deref() {
             if compute_obfuscated_id_hash(&payload.external_user_id) != owner_hash {
-                return Ok((
-                    StatusCode::OK,
-                    Json(VerifyPurchaseResponse {
+                return Ok(VerifyPurchaseResponse {
                         status: "linking_required".to_string(),
                         subscription_id: payload.subscription_id.clone(),
                         current_period_end: None,
@@ -139,8 +129,7 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
                                 .to_string(),
                         ),
                         obfuscated_account_id: Some(owner_hash.to_string()),
-                    }),
-                ));
+                    });
             }
         }
     }
@@ -173,9 +162,7 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
             if token_subscription.external_user_id != payload.external_user_id {
                 if payload.provider == "google_play" {
                     if let Some(obfuscated_account_id) = verified.obfuscated_account_id.clone() {
-                        return Ok((
-                            StatusCode::OK,
-                            Json(VerifyPurchaseResponse {
+                        return Ok(VerifyPurchaseResponse {
                                 status: "linking_required".to_string(),
                                 subscription_id: payload.subscription_id.clone(),
                                 current_period_end: None,
@@ -187,8 +174,7 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
                                         .to_string(),
                                 ),
                                 obfuscated_account_id: Some(obfuscated_account_id),
-                            }),
-                        ));
+                            });
                     }
                 }
 
@@ -378,9 +364,7 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
         VerifyPurchaseTxOutcome::LinkingRequired {
             obfuscated_account_id,
         } => {
-            return Ok((
-                StatusCode::OK,
-                Json(VerifyPurchaseResponse {
+            return Ok(VerifyPurchaseResponse {
                     status: "linking_required".to_string(),
                     subscription_id: payload.subscription_id.clone(),
                     current_period_end: None,
@@ -392,8 +376,7 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
                             .to_string(),
                     ),
                     obfuscated_account_id,
-                }),
-            ));
+                });
         }
     }
 
@@ -436,5 +419,5 @@ pub async fn verify_purchase<R: VerifyPurchaseRepository + ?Sized>(
         }
     }
 
-    Ok((StatusCode::OK, Json(response)))
+    Ok(response)
 }

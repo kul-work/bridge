@@ -75,8 +75,4 @@ impl AppState {
     pub fn database(&self) -> Arc<Database> {
         self.database.clone()
     }
-
-    pub fn database_ref(&self) -> &Database {
-        self.database.as_ref()
-    }
 }
