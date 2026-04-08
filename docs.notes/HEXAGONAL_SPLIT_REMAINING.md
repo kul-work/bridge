@@ -7,26 +7,33 @@ Scope: Bridge only. HiHa is reference-only and is not part of this document.
 Bridge already has the first useful hexagonal pieces:
 
 - `src/application/` for checkout and verify-purchase use cases
-- `src/ports.rs` with `BridgeRepository` and the `with_transaction()` unit-of-work helper
+- `src/ports.rs` with narrower repository traits and the `with_transaction()` unit-of-work helper
 - `src/db/subscriptions.rs` with `SubscriptionWebhookTransition`
 - `src/webhooks/processor.rs` mostly rewritten to use repository methods
 - `src/webhooks/forwarding.rs` now uses repository methods for app, delivery, suppression, and retry updates
 - `src/webhooks/scheduler.rs` now uses repository methods instead of raw SQL
 - `src/services/google_play/subscription_lifecycle.rs` is port-driven for subscription state transitions
+- The port layer is already split into smaller traits on `Database`; there is no longer a single `BridgeRepository` symbol
 
 That means the remaining work is cleanup needed to make the split strict and consistent, not a full rewrite.
 
 ## Remaining Findings
 
-### 1. A few HTTP handlers still bypass the repository port
+### 1. Several HTTP handlers and middleware still depend on concrete `Database`
 
-Most handlers now go through `BridgeRepository`, but these still call `crate::db::*` directly:
+Most handlers now go through narrow traits on `Database`, but these still depend on the concrete database type and call `crate::db::*` directly:
 
 Observed coupling:
 
 - `src/handlers/api_key.rs`
 - `src/handlers/subscriptions.rs`
 - `src/handlers/users.rs`
+- `src/handlers/agent.rs`
+- `src/handlers/subscriptions_actions.rs`
+- `src/handlers/payments.rs`
+- `src/handlers/checkout.rs`
+- `src/handlers/admin.rs`
+- `src/middleware/rate_limit.rs`
 
 Relevant paths:
 
@@ -38,24 +45,25 @@ Relevant paths:
 
 Why this matters:
 
-- these are the last routine read paths that still depend on DB module shape
+- these are still coupled to the database module shape instead of a narrow read or use-case port
 - the split is uneven if only webhook flows are port-driven
-- read-side logic should move behind the application boundary or a narrower read port
+- read-side logic should move behind the application boundary or a narrower read port where it is reused
 
-### 2. `BridgeRepository` is still broad and still exposes `pool()`
+### 2. `Database` still exposes its pool publicly
 
-The port works, but it is still a catch-all and still leaks the database handle.
+The port split is already in place, but the raw connection pool still leaks through the public struct field.
 
 Relevant paths:
 
-- [src/ports.rs](C:/share/tyde/bridge/src/ports.rs#L21)
-- [src/ports.rs](C:/share/tyde/bridge/src/ports.rs#L424)
+- [src/db/mod.rs](C:/share/tyde/bridge/src/db/mod.rs#L17)
+- [src/ports.rs](C:/share/tyde/bridge/src/ports.rs#L613)
+- [src/ports.rs](C:/share/tyde/bridge/src/ports.rs#L977)
 
 Why this matters:
 
-- `pool()` is still part of the public surface, even though most transaction handling now goes through `with_transaction()`
-- the port still mixes unrelated concerns: apps, checkout, subscriptions, payments, webhooks, and agent flows
-- the next cleanup is splitting by use case or bounded context
+- `pub pool: PgPool` still makes the concrete database handle available to callers
+- most transaction handling now goes through `with_transaction()`, so the remaining leak is the public field itself
+- hiding the field would make the dependency direction stricter and make accidental raw SQL use harder
 
 ## Resolved Since the Last Review
 
@@ -69,21 +77,25 @@ These are no longer leftovers for raw DB access:
 - `src/services/google_play/subscription_lifecycle.rs`
 
 They still contain orchestration and business logic, but they are no longer the direct DB holdouts the earlier note described.
-Their transaction flow now goes through `BridgeRepository::with_transaction()` instead of opening SQLx transactions at the application boundary.
+Their transaction flow now goes through the `with_transaction()` helper exposed by the repository implementations on `Database` instead of opening SQLx transactions at the application boundary.
+In the current code, that means the relevant logic has moved behind narrow repository traits on `Database`.
 
 ## Recommended Next Extraction Order
 
 1. `src/handlers/api_key.rs`
 2. `src/handlers/subscriptions.rs`
 3. `src/handlers/users.rs`
-4. Split `BridgeRepository` into smaller ports and remove `pool()`
+4. `src/handlers/agent.rs`
+5. `src/handlers/subscriptions_actions.rs`
+6. Split any remaining direct database usage out of the handler layer
+7. Hide `Database.pool` if the codebase can be updated cleanly
 
 ## Short Checklist
 
 - [x] Hide transaction plumbing behind a narrower port or dedicated unit of work API
-- [ ] Move remaining handler read paths behind application or read ports
-- [ ] Split `BridgeRepository` into smaller, use-case-specific ports
-- [ ] Remove `pool()` from the public port surface if possible
+- [ ] Move remaining handler and middleware database access behind application or read ports
+- [x] Split the old monolithic repository surface into smaller traits on `Database`
+- [ ] Hide `Database.pool` from the public surface if possible
 - [ ] Re-run `cargo check` and `cargo test` after each extraction
 
 ## Practical Target
@@ -100,4 +112,4 @@ Not:
 
 Bridge is already partially hexagonal.
 
-The remaining work is to move the last direct handler reads and transaction-heavy flows behind smaller ports so the application layer stops depending on concrete persistence details.
+The remaining work is to move the last direct handler and middleware reads behind smaller ports and, if possible, stop exposing the raw pool field so the application layer stops depending on concrete persistence details.
