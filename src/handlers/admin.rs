@@ -9,15 +9,12 @@ use tracing::info;
 
 use crate::{
     config::ADMIN_WEBHOOK_LIST_LIMIT,
-    db::Database,
     error::BridgeError,
-    ports::AdminRepository,
+    state::AppState,
 };
 
 /// Get admin dashboard page
-pub async fn admin_dashboard(
-    State(_db): State<Arc<Database>>,
-) -> Result<Html<String>, BridgeError> {
+pub async fn admin_dashboard() -> Result<Html<String>, BridgeError> {
     // For now, return a simple placeholder
     let html = include_str!("../../templates/admin.html");
     Ok(Html(html.to_string()))
@@ -25,13 +22,17 @@ pub async fn admin_dashboard(
 
 /// Get list of apps (JSON)
 pub async fn list_apps(
-    State(db): State<Arc<Database>>,
+    State(state): State<AppState>,
 ) -> Result<axum::Json<Vec<AppSummary>>, BridgeError> {
-    let apps = db.list_apps().await?;
+    let apps = state.admin_repo.list_apps().await?;
 
     let mut summaries = Vec::new();
     for app in apps {
-        let failed_webhooks = db.count_failed_webhooks(app.id).await.unwrap_or(0);
+        let failed_webhooks = state
+            .admin_repo
+            .count_failed_webhooks(app.id)
+            .await
+            .unwrap_or(0);
 
         summaries.push(AppSummary {
             id: app.id.to_string(),
@@ -47,13 +48,14 @@ pub async fn list_apps(
 
 /// Get webhooks for an app
 pub async fn get_app_webhooks(
-    State(db): State<Arc<Database>>,
+    State(state): State<AppState>,
     Path(app_id): Path<String>,
 ) -> Result<axum::Json<Vec<WebhookSummary>>, BridgeError> {
     let app_uuid = Uuid::parse_str(&app_id)
         .map_err(|_| BridgeError::ValidationError("Invalid app ID".to_string()))?;
 
-    let webhooks = db
+    let webhooks = state
+        .admin_repo
         .list_app_webhooks(app_uuid, ADMIN_WEBHOOK_LIST_LIMIT, 0)
         .await?;
 
@@ -80,7 +82,6 @@ pub async fn get_app_webhooks(
 
 /// Retry webhook delivery manually
 pub async fn retry_webhook(
-    State(_db): State<Arc<Database>>,
     Path(webhook_id): Path<String>,
 ) -> Result<StatusCode, BridgeError> {
     let webhook_uuid = Uuid::parse_str(&webhook_id)

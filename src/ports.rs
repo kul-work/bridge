@@ -354,6 +354,16 @@ pub trait AppProviderRepository: Send + Sync {
     ) -> Result<ProviderConfig, BridgeError>;
 }
 
+pub trait AppWebhookRepository:
+    WebhookForwardRepository + WebhookWriteRepository + Send + Sync
+{
+}
+
+impl<T> AppWebhookRepository for T where
+    T: WebhookForwardRepository + WebhookWriteRepository + Send + Sync + ?Sized
+{
+}
+
 #[async_trait]
 pub trait WebhookForwardRepository: AppProviderRepository + Send + Sync {
     async fn get_webhook_delivery(&self, id: Uuid) -> Result<WebhookDelivery, BridgeError>;

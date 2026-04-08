@@ -1,6 +1,7 @@
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::application;
+use crate::state::AppState;
 use axum::{
     extract::{State, Extension},
     http::StatusCode,
@@ -30,11 +31,11 @@ pub struct CheckoutResponse {
 }
 
 pub async fn create_checkout(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Json(payload): Json<CheckoutRequest>,
 ) -> Result<(StatusCode, Json<CheckoutResponse>), BridgeError> {
-    application::checkout::create_checkout(database.as_ref(), auth.app_id, payload).await
+    application::checkout::create_checkout(state.checkout_repo.as_ref(), auth.app_id, payload).await
 }
 
 pub(crate) fn compute_request_fingerprint(

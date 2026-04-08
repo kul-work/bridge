@@ -3,6 +3,7 @@ use crate::config::MAX_PAGINATION_LIMIT;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::ports::{PaymentReadRepository, SubscriptionWriteRepository};
+use crate::state::AppState;
 use axum::{
     extract::{State, Extension, Query},
     http::StatusCode,
@@ -55,7 +56,7 @@ struct PaymentsCursor {
 }
 
 pub async fn get_payments(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Query(query): Query<PaymentsQuery>,
 ) -> Result<(StatusCode, Json<PaymentsResponse>), BridgeError> {
@@ -68,11 +69,13 @@ pub async fn get_payments(
     let limit = query.limit.unwrap_or(API_PAGINATION_LIMIT).min(MAX_PAGINATION_LIMIT);
     let cursor = decode_cursor(query.after.as_deref())?;
 
-    let total = database
+    let total = state
+        .payment_read_repo
         .count_user_payments(auth.app_id, &query.external_user_id)
         .await?;
 
-    let rows = database
+    let rows = state
+        .payment_read_repo
         .list_user_payments_keyset(
             auth.app_id,
             &query.external_user_id,
@@ -159,7 +162,7 @@ pub struct RegisterPurchaseResponse {
 }
 
 pub async fn register_purchase(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Json(request): Json<RegisterPurchaseRequest>,
 ) -> Result<(StatusCode, Json<RegisterPurchaseResponse>), BridgeError> {
@@ -173,7 +176,8 @@ pub async fn register_purchase(
     }
 
     // §6: Create pending subscription placeholder (not a manual grant)
-    let _sub = database
+    let _sub = state
+        .subscription_write_repo
         .upsert_pending_subscription(
             auth.app_id,
             &request.external_user_id,

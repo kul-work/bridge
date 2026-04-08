@@ -3,6 +3,7 @@ use crate::config::MAX_PAGINATION_LIMIT;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::ports::SubscriptionReadRepository;
+use crate::state::AppState;
 use axum::{
     extract::{Extension, Path, Query, State},
     http::StatusCode,
@@ -71,7 +72,7 @@ pub struct ListSubscriptionsResponse {
 }
 
 pub async fn list_subscriptions(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Query(query): Query<ListSubscriptionsQuery>,
 ) -> Result<(StatusCode, Json<ListSubscriptionsResponse>), BridgeError> {
@@ -85,7 +86,7 @@ pub async fn list_subscriptions(
 
     let cursor = decode_cursor(query.after.as_deref())?;
 
-    let subs = database.get_user_subscriptions_keyset(
+    let subs = state.subscription_read_repo.get_user_subscriptions_keyset(
         auth.app_id,
         &query.external_user_id,
         limit + 1, // Fetch one extra to check if there are more
@@ -154,7 +155,7 @@ pub struct GetSubscriptionQuery {
 }
 
 pub async fn get_subscription(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Query(query): Query<GetSubscriptionQuery>,
@@ -171,7 +172,7 @@ pub async fn get_subscription(
         ));
     }
 
-    let sub = database.get_subscription(
+    let sub = state.subscription_read_repo.get_subscription(
         auth.app_id,
         &query.external_user_id,
         &subscription_id,

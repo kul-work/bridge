@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Request, State},
+    extract::Request,
     http::StatusCode,
     middleware::Next,
     response::Response,
@@ -20,8 +20,6 @@ use std::{
 };
 use tokio::sync::RwLock;
 use tracing::error;
-
-use crate::db::Database;
 
 const JWKS_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 static ADMIN_AUTH_VERIFIER: OnceLock<Result<AdminClerkVerifier, String>> = OnceLock::new();
@@ -313,7 +311,6 @@ fn internal_error_response(message: &str) -> (StatusCode, Json<serde_json::Value
 /// Clerk admin authentication middleware
 /// Validates that request is from Tyde's internal Clerk organization
 pub async fn admin_auth_middleware(
-    State(_db): State<Arc<Database>>,
     request: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {

@@ -2,10 +2,11 @@ use crate::db;
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::ports::{
-    AppProviderRepository, SubscriptionReadRepository, SubscriptionWriteRepository,
-    WebhookForwardRepository, WebhookWriteRepository,
+    AppProviderRepository, AppWebhookRepository, SubscriptionReadRepository,
+    SubscriptionWriteRepository,
 };
 use crate::services::provider_api;
+use crate::state::AppState;
 use axum::{
     extract::{State, Extension, Path, Query},
     http::StatusCode,
@@ -52,7 +53,7 @@ pub struct CancelSubscriptionResponse {
 const CANCELLED_RESPONSE_STATUS: &str = "cancelled";
 
 pub async fn cancel_subscription(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Query(query): Query<SubscriptionActionQuery>,
@@ -70,7 +71,8 @@ pub async fn cancel_subscription(
     let provider = query.provider.trim().to_ascii_lowercase();
     let mode = request.mode.as_deref().unwrap_or("scheduled");
 
-    let sub = database
+    let sub = state
+        .subscription_read_repo
         .get_subscription(
             auth.app_id,
             query.external_user_id.trim(),
@@ -90,7 +92,8 @@ pub async fn cancel_subscription(
         ));
     }
 
-    let provider_config = database
+    let provider_config = state
+        .app_provider_repo
         .get_provider_config(auth.app_id, &sub.provider)
         .await?;
 
@@ -103,8 +106,14 @@ pub async fn cancel_subscription(
     ).await?;
 
     let updated_sub = match mode {
-        "scheduled" => database.cancel_subscription_scheduled(sub.id).await?,
-        "immediate" => database.cancel_subscription_immediate(sub.id).await?,
+        "scheduled" => state
+            .subscription_write_repo
+            .cancel_subscription_scheduled(sub.id)
+            .await?,
+        "immediate" => state
+            .subscription_write_repo
+            .cancel_subscription_immediate(sub.id)
+            .await?,
         _ => {
             return Err(BridgeError::ValidationError(
                 "mode must be either 'scheduled' or 'immediate'".to_string(),
@@ -113,7 +122,7 @@ pub async fn cancel_subscription(
     };
 
     if let Err(e) = dispatch_subscription_callback(
-        database.as_ref(),
+        state.app_webhook_repo.as_ref(),
         auth.app_id,
         &updated_sub,
         "subscription.cancelled",
@@ -136,7 +145,7 @@ pub async fn cancel_subscription(
 }
 
 pub async fn resume_subscription(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Query(query): Query<SubscriptionActionQuery>,
@@ -150,7 +159,8 @@ pub async fn resume_subscription(
     }
 
     let provider = query.provider.trim().to_ascii_lowercase();
-    let sub = database
+    let sub = state
+        .subscription_read_repo
         .get_subscription(
             auth.app_id,
             query.external_user_id.trim(),
@@ -159,7 +169,8 @@ pub async fn resume_subscription(
         )
         .await?;
 
-    let provider_config = database
+    let provider_config = state
+        .app_provider_repo
         .get_provider_config(auth.app_id, &sub.provider)
         .await?;
 
@@ -169,10 +180,10 @@ pub async fn resume_subscription(
         &provider_config.config,
     ).await?;
 
-    let updated_sub = database.resume_subscription(sub.id).await?;
+    let updated_sub = state.subscription_write_repo.resume_subscription(sub.id).await?;
 
     if let Err(e) = dispatch_subscription_callback(
-        database.as_ref(),
+        state.app_webhook_repo.as_ref(),
         auth.app_id,
         &updated_sub,
         "subscription.resumed",
@@ -199,12 +210,13 @@ pub struct AcknowledgeRequest {
 }
 
 pub async fn acknowledge_subscription(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Json(request): Json<AcknowledgeRequest>,
 ) -> Result<(StatusCode, Json<SubscriptionActionResponse>), BridgeError> {
-    let sub = database
+    let sub = state
+        .app_webhook_repo
         .get_subscription_by_sub_id(auth.app_id, &subscription_id)
         .await?
     .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
@@ -213,7 +225,8 @@ pub async fn acknowledge_subscription(
         return Err(BridgeError::ValidationError("Subscription does not belong to this user".to_string()));
     }
 
-    database
+    state
+        .subscription_write_repo
         .mark_payment_acknowledged_for_subscription(
             auth.app_id,
             &sub.external_user_id,
@@ -238,7 +251,7 @@ pub struct BillingPortalResponse {
 }
 
 pub async fn create_billing_portal(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Query(query): Query<SubscriptionActionQuery>,
@@ -253,7 +266,8 @@ pub async fn create_billing_portal(
 
     let provider = query.provider.trim().to_ascii_lowercase();
 
-    let sub = database
+    let sub = state
+        .subscription_read_repo
         .get_subscription(
             auth.app_id,
             query.external_user_id.trim(),
@@ -268,7 +282,8 @@ pub async fn create_billing_portal(
         )
     })?;
 
-    let provider_config = database
+    let provider_config = state
+        .app_provider_repo
         .get_provider_config(auth.app_id, &sub.provider)
         .await?;
 
@@ -302,12 +317,13 @@ pub struct PriceStepUpDeclineResponse {
 }
 
 pub async fn accept_price_step_up(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Json(request): Json<PriceStepUpRequest>,
 ) -> Result<(StatusCode, Json<PriceStepUpAcceptResponse>), BridgeError> {
-    let sub = database
+    let sub = state
+        .app_webhook_repo
         .get_subscription_by_sub_id(auth.app_id, &subscription_id)
         .await?
     .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
@@ -322,7 +338,7 @@ pub async fn accept_price_step_up(
         ));
     }
 
-    let updated_sub = database.accept_price_step_up(sub.id).await?;
+    let updated_sub = state.subscription_write_repo.accept_price_step_up(sub.id).await?;
 
     let new_price_cents = updated_sub.google_new_price_cents.ok_or_else(|| {
         BridgeError::ValidationError(
@@ -331,7 +347,7 @@ pub async fn accept_price_step_up(
     })?;
 
     if let Err(e) = dispatch_subscription_callback(
-        database.as_ref(),
+        state.app_webhook_repo.as_ref(),
         auth.app_id,
         &updated_sub,
         "subscription.price_step_up",
@@ -353,12 +369,13 @@ pub async fn accept_price_step_up(
 }
 
 pub async fn decline_price_step_up(
-    State(database): State<Arc<crate::db::Database>>,
+    State(state): State<AppState>,
     Extension(auth): Extension<AppAuth>,
     Path(subscription_id): Path<String>,
     Json(request): Json<PriceStepUpRequest>,
 ) -> Result<(StatusCode, Json<PriceStepUpDeclineResponse>), BridgeError> {
-    let sub = database
+    let sub = state
+        .app_webhook_repo
         .get_subscription_by_sub_id(auth.app_id, &subscription_id)
         .await?
     .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
@@ -373,7 +390,7 @@ pub async fn decline_price_step_up(
         ));
     }
 
-    let updated_sub = database.decline_price_step_up(sub.id).await?;
+    let updated_sub = state.subscription_write_repo.decline_price_step_up(sub.id).await?;
 
     let cancellation_effective_at = updated_sub
         .current_period_end
@@ -390,7 +407,7 @@ pub async fn decline_price_step_up(
 }
 
 async fn dispatch_subscription_callback<
-    R: AppProviderRepository + WebhookWriteRepository + WebhookForwardRepository + ?Sized,
+    R: AppWebhookRepository + ?Sized,
 >(
     repo: &R,
     app_id: Uuid,

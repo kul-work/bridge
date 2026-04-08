@@ -7,6 +7,7 @@ mod ports;
 mod services;
 mod webhooks;
 mod middleware;
+mod state;
 
 use axum::{
     routing::get,
@@ -24,6 +25,7 @@ use tower_http::trace::TraceLayer;
 use config::Config;
 use db::Database;
 use handlers::health_check;
+use state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -79,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
     let database = Arc::new(
         Database::new(&config.database_url, config.admin_database_url.as_deref()).await?
     );
+    let app_state = AppState::new(database.clone());
     info!("Connected to PostgreSQL");
 
     // Start background webhook delivery job
@@ -115,11 +118,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/agent/charge", axum::routing::post(handlers::agent::charge))
         .route("/agent/topup", axum::routing::post(handlers::agent::topup))
         .layer(axum::middleware::from_fn_with_state(
-            database.clone(),
+            app_state.clone(),
             middleware::rate_limit::api_rate_limit_middleware,
         ))
         .layer(axum::middleware::from_fn_with_state(
-            database.clone(),
+            app_state.clone(),
             handlers::api_key::api_key_auth,
         ))
         .layer(axum::middleware::from_fn(
@@ -132,22 +135,19 @@ async fn main() -> anyhow::Result<()> {
         .route("/apps", axum::routing::get(handlers::admin::list_apps))
         .route("/apps/:app_id/webhooks", axum::routing::get(handlers::admin::get_app_webhooks))
         .route("/webhooks/:webhook_id/retry", axum::routing::post(handlers::admin::retry_webhook))
-        .layer(from_fn_with_state(
-            database.clone(),
-            middleware::admin_auth::admin_auth_middleware,
-        ))
-        .with_state(database.clone());
+        .layer(axum::middleware::from_fn(middleware::admin_auth::admin_auth_middleware))
+        .with_state(app_state.clone());
 
     // Build app
     let app = Router::new()
         .route("/health", get(health_check))
         .nest("/admin", admin_routes)
         .nest("/api/v1", protected_routes)
-        .nest("/webhooks", webhooks::webhook_routes(database.clone()))
+        .nest("/webhooks", webhooks::webhook_routes())
         .layer(ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
         )
-        .with_state(database);
+        .with_state(app_state);
 
     // Start server
     let addr = SocketAddr::from((

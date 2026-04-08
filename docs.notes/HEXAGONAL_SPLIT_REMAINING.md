@@ -19,35 +19,28 @@ That means the remaining work is cleanup needed to make the split strict and con
 
 ## Remaining Findings
 
-### 1. Several HTTP handlers and middleware still depend on concrete `Database`
+### 1. A few ingress paths still depend on concrete `Database`
 
-Most handlers now go through narrow traits on `Database`, but these still depend on the concrete database type and call `crate::db::*` directly:
+Most HTTP handlers and middleware now go through `AppState` and repository traits. The remaining concrete `Database` state usage is concentrated in these ingress paths:
 
 Observed coupling:
 
-- `src/handlers/api_key.rs`
-- `src/handlers/subscriptions.rs`
-- `src/handlers/users.rs`
-- `src/handlers/agent.rs`
-- `src/handlers/subscriptions_actions.rs`
-- `src/handlers/payments.rs`
-- `src/handlers/checkout.rs`
-- `src/handlers/admin.rs`
-- `src/middleware/rate_limit.rs`
+- `src/handlers/verify_purchase.rs`
+- `src/webhooks/ingress.rs`
 
 Relevant paths:
 
-- [src/handlers/api_key.rs](C:/share/tyde/bridge/src/handlers/api_key.rs#L41)
-- [src/handlers/subscriptions.rs](C:/share/tyde/bridge/src/handlers/subscriptions.rs#L88)
-- [src/handlers/subscriptions.rs](C:/share/tyde/bridge/src/handlers/subscriptions.rs#L175)
-- [src/handlers/users.rs](C:/share/tyde/bridge/src/handlers/users.rs#L114)
-- [src/handlers/users.rs](C:/share/tyde/bridge/src/handlers/users.rs#L145)
+- [src/handlers/verify_purchase.rs](C:/share/tyde/bridge/src/handlers/verify_purchase.rs#L123)
+- [src/webhooks/ingress.rs](C:/share/tyde/bridge/src/webhooks/ingress.rs#L20)
+- [src/webhooks/ingress.rs](C:/share/tyde/bridge/src/webhooks/ingress.rs#L173)
+- [src/webhooks/ingress.rs](C:/share/tyde/bridge/src/webhooks/ingress.rs#L276)
+- [src/webhooks/ingress.rs](C:/share/tyde/bridge/src/webhooks/ingress.rs#L378)
 
 Why this matters:
 
 - these are still coupled to the database module shape instead of a narrow read or use-case port
-- the split is uneven if only webhook flows are port-driven
-- read-side logic should move behind the application boundary or a narrower read port where it is reused
+- the split is uneven if only webhook processor and application flows are port-driven
+- ingress-only logic should move behind the application boundary or a narrower port where it is reused
 
 ### 2. `Database` still exposes its pool publicly
 
@@ -79,6 +72,7 @@ These are no longer leftovers for raw DB access:
 They still contain orchestration and business logic, but they are no longer the direct DB holdouts the earlier note described.
 Their transaction flow now goes through the `with_transaction()` helper exposed by the repository implementations on `Database` instead of opening SQLx transactions at the application boundary.
 In the current code, that means the relevant logic has moved behind narrow repository traits on `Database`.
+- The earlier handler and middleware holdouts now use `AppState` and repository traits instead of the raw database state.
 
 ## Recommended Next Extraction Order
 
@@ -87,8 +81,9 @@ In the current code, that means the relevant logic has moved behind narrow repos
 3. `src/handlers/users.rs`
 4. `src/handlers/agent.rs`
 5. `src/handlers/subscriptions_actions.rs`
-6. Split any remaining direct database usage out of the handler layer
-7. Hide `Database.pool` if the codebase can be updated cleanly
+6. `src/handlers/verify_purchase.rs`
+7. `src/webhooks/ingress.rs`
+8. Hide `Database.pool` if the codebase can be updated cleanly
 
 ## Short Checklist
 
