@@ -5,43 +5,44 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         PAYMENT PROVIDERS                                    │
-│  (Google Play, Creem, LemonSqueezy, Coinbase)                               │
+│  (Google Play, Coinbase, Creem, LemonSqueezy)                                │
 └─────────────────┬───────────────────────────────────────────────────────────┘
                   │ POST /webhooks/{token}/{provider}
-                  │ (with signature: HMAC or JWT)
+                  │ (with signature verification)
                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    BRIDGE WEBHOOK INGRESS                                    │
 │                                                                               │
-│  src/webhooks/ingress.rs                                                     │
-│  ├─ handle_google_play()      [Extract token, verify JWT signature]         │
-│  ├─ handle_creem()             [Extract token, verify HMAC signature]       │
-│  ├─ handle_lemonsqueezy()      [Extract token, verify signature]            │
-│  └─ handle_coinbase()          [Extract token, verify signature]            │
-│                                                                               │
-│  Returns: 200 OK (always, to prevent provider retries)                      │
+│  src/webhooks/ingress.rs                                                      │
+│  ├─ handle_google_play()      [Extract token, verify PubSub signature]       │
+│  ├─ handle_creem()             [Extract token, verify HMAC signature]        │
+│  ├─ handle_lemonsqueezy()      [Extract token, verify hmac-sha256]           │
+│  ├─ handle_coinbase()          [Extract token, verify x-cc-webhook-signature]│
+│  │                                                                           │
+│  └─ Returns: 204 No Content (if successful ingestion)                        │
 └─────────────────┬───────────────────────────────────────────────────────────┘
-                  │ Incoming webhook data
+                  │ (Async) tokio::spawn() 
                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                   DATABASE: WEBHOOK PROVIDER TABLE                           │
-│                  (Deduplication & Audit Trail)                              │
+│                   DATABASE: WEBHOOK_PROVIDER TABLE                           │
+│                  (Deduplication & Audit Trail)                               │
 │                                                                               │
-│  webhook_provider {                                                          │
-│    id UUID,                        ← unique webhook identifier              │
-│    app_id UUID,                    ← which app this is for                  │
-│    provider TEXT,                  ← 'google_play', 'creem', etc            │
-│    provider_webhook_id TEXT,       ← provider's event ID (dedup key)        │
-│    event_type TEXT,               ← provider-specific event type            │
-│    subscription_id, purchase_token,← context                                │
-│    payload JSONB,                  ← full raw webhook payload               │
-│    timestamp_epoch_ms BIGINT,      ← event timestamp (for ordering)         │
-│    suppressed BOOLEAN,             ← marks stale/old events                 │
-│    suppressed_reason TEXT,         ← why suppressed                         │
-│    created_at TIMESTAMPTZ          ← ingress time                           │
+│  pay.webhook_provider {                                                      │
+│    id UUID,                        ← internal unique identifier              │
+│    app_id UUID,                    ← linked application                      │
+│    provider TEXT,                  ← 'google_play', 'coinbase', etc          │
+│    provider_webhook_id TEXT,       ← provider's event ID (primary dedup)     │
+│    event_type TEXT,                ← provider-specific raw event type        │
+│    subscription_id, purchase_token,← resolved context identifiers            │
+│    payload JSONB,                  ← full raw webhook payload                │
+│    timestamp_epoch_ms BIGINT,      ← provider event time (for ordering)      │
+│    processed BOOLEAN,              ← mark as completion                      │
+│    suppressed BOOLEAN,             ← marks stale/superseded events           │
+│    created_at TIMESTAMPTZ          ← ingestion time                          │
 │  }                                                                            │
 │                                                                               │
-│  UNIQUE (app_id, provider, provider_webhook_id)  ← Dedup key               │
+│  UNIQUE (provider, provider_webhook_id)                                      │
+│  UNIQUE (provider, purchase_token, event_type)  ← Logic dedup                │
 └─────────────────┬───────────────────────────────────────────────────────────┘
                   │ If NEW webhook
                   ▼
@@ -50,179 +51,68 @@
 │                                                                               │
 │  src/webhooks/processor.rs                                                   │
 │  └─ process_webhook()                                                        │
-│     ├─ Check if already suppressed → SKIP                                   │
-│     ├─ Load subscription from DB                                             │
-│     ├─ Compare event.timestamp < subscription.last_event_time?              │
-│     │  └─ YES: suppress as STALE → SKIP                                     │
-│     │  └─ NO: continue to forwarding                                        │
-│     ├─ Normalize event type (provider-specific → canonical)                 │
-│     │  │  Google Play:    SUBSCRIPTION_PURCHASED → subscription.renewed    │
-│     │  │  Creem:          subscription.created → subscription.renewed       │
-│     │  │  LemonSqueezy:   subscription_created → subscription.renewed       │
-│     │  │  Coinbase:       charge:confirmed → payment.succeeded              │
-│     │  └─ etc.                                                               │
-│     └─ Create canonical webhook payload                                      │
-│        {                                                                      │
-│          event_id: "creem-evt_123456",                                      │
-│          event_type: "subscription.renewed",                                │
-│          timestamp: 1711270000000,                                           │
-│          app_id: "uuid",                                                     │
-│          subscription_id: "sub_123",                                        │
-│          provider: "creem",                                                  │
-│          provider_event_id: "evt_123456"                                    │
-│        }                                                                      │
+│     ├─ Resolution Cascade: Resolve external_user_id (Strategies 1-6)          │
+│     ├─ Load subscription state                                               │
+│     ├─ Stale Guard: Compare event.ts < subscription.last_event_time?         │
+│     │  └─ YES: suppress as "stale" → SKIP                                    │
+│     ├─ Normalization: Map provider raw status → Canonical types              │
+│     └─ Create Canonical Payload (serializable for apps)                      │
+│        {                                                                     │
+│          event_id: "google_play-msg_123",                                    │
+│          event_type: "subscription.activated",                               │
+│          timestamp: "2024-03-24T12:00:00Z",                                  │
+│          app_slug: "hiha",                                                   │
+│          subscription_id: "abc_123",                                         │
+│          external_user_id: "user_456",                                       │
+│          status: "active",                                                   │
+│          ... (see CanonicalWebhookPayload struct)                            │
+│        }                                                                     │
 └─────────────────┬───────────────────────────────────────────────────────────┘
                   │ Canonical payload
                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                 DATABASE: WEBHOOK DELIVERY TABLE                             │
-│               (Task Queue for App Callbacks)                                │
+│                 DATABASE: WEBHOOK_DELIVERY TABLE                             │
+│               (Reliable Forwarding Task Queue)                               │
 │                                                                               │
-│  webhook_delivery {                                                          │
-│    id UUID,                        ← delivery task ID                        │
-│    app_id UUID,                    ← which app to send to                   │
-│    webhook_provider_id UUID,       ← link to provider webhook               │
-│    forward_attempts INT,           ← 0-3 (auto-fail after 3)                │
-│    forwarded BOOLEAN,              ← true if successful                     │
-│    forwarded_at TIMESTAMPTZ,       ← when delivered                         │
-│    last_http_status INT,           ← HTTP response code                     │
-│    last_error TEXT,                ← error message if failed                │
-│    created_at TIMESTAMPTZ          ← task creation time                     │
+│  pay.webhook_delivery {                                                      │
+│    id UUID,                        ← delivery attempt task ID                │
+│    app_id UUID,                    ← target application                      │
+│    webhook_provider_id UUID,       ← link to source provider webhook         │
+│    forward_attempts INT,           ← loop counter (0-3 retries)              │
+│    forwarded BOOLEAN,              ← delivery success flag                   │
+│    dead_lettered BOOLEAN,          ← failed permanently                     │
+│    last_http_status INT,           ← remote app response code                │
+│    created_at TIMESTAMPTZ                                                    │
 │  }                                                                            │
-│                                                                               │
-│  INDEX: (app_id, forwarded) WHERE forwarded = false  ← pending tasks       │
 └─────────────────┬───────────────────────────────────────────────────────────┘
                   │ Delivery task
                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                   WEBHOOK FORWARDER                                          │
-│          (Background Job / Async Task Processor)                            │
 │                                                                               │
-│  src/webhooks/forwarding.rs                                                  │
+│  src/webhooks/forwarding.rs                                                   │
 │  └─ forward_webhook()                                                        │
-│     ├─ Load app.webhook_callback_url from DB                                │
-│     ├─ Load app.webhook_callback_secret from DB                             │
-│     ├─ Serialize canonical payload to JSON                                  │
-│     ├─ Generate HMAC-SHA256 signature                                       │
-│     │  └─ message = "{payload}.{timestamp}"                                │
-│     │  └─ signature = "sha256=" + hex(HMAC(secret, message))                │
-│     ├─ POST payload to app with headers:                                    │
-│     │  ├─ X-Pay-Signature: sha256=...                                       │
-│     │  ├─ X-Pay-Timestamp: 1711270000000                                    │
-│     │  ├─ X-Pay-Event-Id: creem-evt_123456                                 │
-│     │  └─ Content-Type: application/json                                    │
-│     ├─ Handle response:                                                      │
-│     │  ├─ 2xx: Mark as forwarded=true in DB                                │
-│     │  └─ 3xx/4xx/5xx: Retry (if attempts < 3)                             │
-│     └─ Retry logic:                                                          │
-│        ├─ Attempt 0: immediately                                            │
-│        ├─ Attempt 1: wait 5 minutes, retry                                  │
-│        ├─ Attempt 2: wait 10 minutes, retry                                 │
-│        └─ Attempt 3: dead-letter (give up)                                 │
+│     ├─ Pre-flight Guard: Check if superseded_before_forward                  │
+│     ├─ Load app.webhook_callback_url + secret                                │
+│     ├─ Generate Signature: HMAC-SHA256(secret, payload_json)                 │
+│     ├─ POST to App Callback with Headers:                                    │
+│     │  ├─ X-Pay-Signature: sha256={hex}                                      │
+│     │  ├─ X-Pay-Timestamp: {unix_ts}                                         │
+│     │  └─ X-Pay-Event-Id: {provider-event_id}                                │
+│     └─ Update delivery record (Success or Retry)                             │
 └─────────────────┬───────────────────────────────────────────────────────────┘
-                  │ Forward status
+                  │ HTTP Request
                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          CLIENT APP                                          │
-│                  (e.g., HiHa, other Bridge consumers)                       │
+│                  (Verified Gateway Callback)                                 │
 │                                                                               │
-│  Receives webhook at: app.webhook_callback_url                              │
-│  {                                                                            │
-│    "event_id": "creem-evt_123456",                                          │
-│    "event_type": "subscription.renewed",                                    │
-│    "timestamp": 1711270000000,                                               │
-│    "app_id": "hiha-app-uuid",                                               │
-│    "subscription_id": "sub_123",                                            │
-│    ...                                                                       │
-│  }                                                                            │
-│                                                                               │
-│  Headers:                                                                    │
-│  ├─ X-Pay-Signature: sha256=abc123...                                       │
-│  ├─ X-Pay-Timestamp: 1711270000000                                          │
-│  └─ X-Pay-Event-Id: creem-evt_123456                                        │
-│                                                                               │
-│  App verifies signature: HMAC(secret, payload.timestamp) == signature       │
-│  App updates user subscription status based on event_type                   │
+│  Endpoint: app.webhook_callback_url                                          │
+│  1. Receives signed JSON payload                                             │
+│  2. Verifies HMAC-SHA256 signature using shared secret                       │
+│  3. Performs business logic (activate premium, etc.)                         │
+│  4. Returns 200/204 to acknowledge receipt                                   │
 └─────────────────────────────────────────────────────────────────────────────┘
-                  
-                  │
-                  ├─ (Optional) Retry on 5xx
-                  │
-                  └─ Update subscription.last_event_time in app DB
-```
-
-## Admin Dashboard Flow
-
-```
-┌──────────────────────────────────────────────────────────┐
-│              ADMIN USER (Browser)                         │
-└──────────────┬───────────────────────────────────────────┘
-               │ GET /admin
-               ▼
-┌──────────────────────────────────────────────────────────┐
-│        Admin Dashboard Handler                           │
-│  src/handlers/admin.rs::admin_dashboard()               │
-│  Returns: templates/admin.html (static HTML + JS)       │
-└──────────────┬───────────────────────────────────────────┘
-               │ HTML + embedded JavaScript
-               ▼
-┌──────────────────────────────────────────────────────────┐
-│         Admin Dashboard UI                               │
-│      (Bootstrap 5 + Fetch API)                          │
-│                                                          │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │ APPS TABLE                                       │   │
-│  ├─────────────────────────────────────────────────┤   │
-│  │ App Name │ Slug │ URL │ Failed Webhooks │ Action│   │
-│  │ ─────────┼──────┼─────┼─────────────────┼───────│   │
-│  │ HiHa     │ hiha │ ... │ 2 ❌ (badge)    │ View  │   │
-│  └─────────────────────────────────────────────────┘   │
-│            │ Click "View Webhooks"                      │
-│            ▼                                             │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │ RECENT WEBHOOKS FOR APP                          │   │
-│  ├─────────────────────────────────────────────────┤   │
-│  │ Event │ Provider │ Type │ Status │ Att │ Action │   │
-│  │ ─────┼──────────┼──────┼────────┼─────┼────────│   │
-│  │ evt.. │ creem    │ subs │ ✅ Del │ 1   │        │   │
-│  │ evt.. │ creem    │ subs │ ⏳ Pend│ 2   │ Retry  │   │
-│  └─────────────────────────────────────────────────┘   │
-│            │ Click "Retry"                              │
-│            ▼                                             │
-│        POST /admin/webhooks/:id/retry                   │
-└──────────────┬───────────────────────────────────────────┘
-               │ Async fetch calls
-               ▼
-┌──────────────────────────────────────────────────────────┐
-│           Admin API Endpoints                            │
-│                                                          │
-│  GET /admin/apps                                        │
-│  └─ list_apps() → JSON array                           │
-│     [                                                    │
-│       {                                                  │
-│         "id": "uuid",                                   │
-│         "slug": "hiha",                                 │
-│         "display_name": "HiHa",                         │
-│         "failed_webhooks": 2                            │
-│       },                                                 │
-│       ...                                                │
-│     ]                                                    │
-│                                                          │
-│  GET /admin/apps/:app_id/webhooks                       │
-│  └─ get_app_webhooks() → JSON array                    │
-│     [                                                    │
-│       {                                                  │
-│         "id": "uuid",                                   │
-│         "provider_webhook_id": "evt_123",              │
-│         "event_type": "subscription.renewed",          │
-│         "provider": "creem",                            │
-│         "forwarded": true,                              │
-│         "forward_attempts": 1,                          │
-│         "created_at": "2026-03-23T21:00:00Z"           │
-│       },                                                 │
-│       ...                                                │
-│     ]                                                    │
-│                                                          │
 │  POST /admin/webhooks/:webhook_id/retry                │
 │  └─ retry_webhook() → 200 OK                           │
 └──────────────┬───────────────────────────────────────────┘

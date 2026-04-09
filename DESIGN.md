@@ -33,11 +33,10 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - API keys scoped per app
 
 ### Provider Abstraction
-- Unified interface across Google Play (primary), Apple (checkout only)
-- Creem, LemonSqueezy, Coinbase: Archived (not currently instantiated)
-- State normalization (each provider's "active" maps to Bridge's `active`)
-- Signature verification required on all provider webhooks
-- Dynamic provider loading per-app (not startup-based env vars)
+- Unified interface across Google Play (primary), Coinbase, Creem, and LemonSqueezy.
+- State normalization (each provider's "active" maps to Bridge's `active`).
+- Signature verification required on all provider webhooks.
+- Dynamic provider loading per-app (not startup-based env vars).
 
 ---
 
@@ -59,7 +58,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 **Endpoints** (all scoped to authenticated `app_id`):
 - `POST /api/v1/checkout` — create payment session
 - `POST /api/v1/verify-purchase` — verify mobile purchase token
-- `POST /api/v1/purchase/register` — pre-register purchase attempt
+- `POST /api/v1/purchase/register` — register external purchase attempt
 - `GET /api/v1/subscriptions` — list subscriptions
 - `GET /api/v1/subscriptions/:subscription_id` — fetch subscription state
 - `POST /api/v1/subscriptions/:subscription_id/cancel` — cancel subscription
@@ -73,10 +72,10 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - `POST /api/v1/agent/token` — create scoped charge token
 - `POST /api/v1/agent/charge` — atomically deduct credits
 - `POST /api/v1/agent/topup` — manually top up agent balance
-- `POST /api/v1/users/:external_user_id/anonymize` — GDPR account deletion
+- `POST /api/v1/users/:external_user_id/anonymize` — GDPR account deletion/anonymization
 - `GET /api/v1/users/:external_user_id/data-export` — GDPR data export
 
-**Admin Endpoints** (secured by Clerk organization auth):
+**Admin Endpoints** (secured by admin auth middleware):
 - `GET /admin/` — admin dashboard UI
 - `GET /admin/apps` — list apps with failed webhook counts
 - `GET /admin/apps/:app_id/webhooks` — list webhooks for an app
@@ -96,7 +95,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 **Processing flow**:
 1. Validate signature
 2. Insert/check `webhook_log` (primary key: `provider_webhook_id`)
-3. Resolve `external_user_id` via lookup cascade (see §53 of behavioral spec)
+3. Resolve `external_user_id` via lookup cascade
 4. Update subscription/payment state
 5. Queue callback delivery to app
 6. Return 204 to provider immediately
@@ -104,49 +103,45 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 
 **Callback forwarding**:
 - HMAC signature via `X-Pay-Signature` header using `apps.webhook_callback_secret`
-- 3-strike retry strategy (configurable)
-- Dead letter queue: webhooks that exhaust retries are marked `dead_lettered` with timestamp and reason
+- 3-strike retry strategy (exponential backoff)
+- Dead letter queue: webhooks that exhaust retries are marked `dead_lettered`
 - Stale event suppression: compare `webhook_log.timestamp_epoch_ms` against `subscriptions.last_event_time`
 
 ### 3.3 Provider Integration
 
 **Supported providers**:
-- Google Play (subscriptions + one-time purchases) — **Primary, fully implemented**
-- Apple IAP (checkout metadata only) — **Partial support for app_store checkout**
-- Creem — **Archived** (code exists but not instantiated)
-- LemonSqueezy — **Archived** (code exists but not instantiated)
-- Coinbase — **Archived** (code exists but not instantiated)
+- **Google Play**: Primary support for subscriptions and one-time purchases.
+- **Coinbase**: Support for crypto payments.
+- **Creem & LemonSqueezy**: Support for standard web payment checkouts.
 
 **Provider credentials**:
 - Stored in `provider_configs` table (JSONB `config` column)
 - Per-app configuration (app can enable/disable providers independently)
 
 **State normalization**:
-- Provider events mapped to canonical states: `pending`, `active`, `trial`, `past_due`, `grace_period`, `on_hold`, `paused`, `cancelled`, `expired`, `revoked`
-- Provider events mapped to callback events: `subscription.activated`, `subscription.expired`, etc.
+- Provider events mapped to canonical states: `active`, `trial`, `past_due`, `paused`, `cancelled`, `expired`, `revoked`
+- Provider events mapped to callback events: `subscription.activated`, `subscription.updated`, `subscription.expired`, etc.
 
 **Google Play specifics**:
-- Purchase acknowledgment required within 3 days (5 min for testers) to prevent auto-refund
-- Price step-up handling: users can accept/decline price increases
-- Subscription lifecycle notifications: revocation, cancellation, price changes, payment failures
+- Purchase acknowledgment required within 3 days to prevent auto-refund.
+- Price step-up handling for Korea-specific consent.
+- Account linking support via `obfuscated_account_id`.
 
 ### 3.4 Database Layer
 
-**Schema organization** (in Bridge's own PostgreSQL DB):
+**Schema organization**:
 
 | Table | Purpose |
 |---|---|
-| `apps` | App registry, callback URLs, rate limits, provider identifiers (google_package_name, apple_bundle_id) |
+| `apps` | App registry, callback URLs, rate limits |
 | `api_keys` | API key auth (hashed) |
-| `provider_configs` | Per-app provider credentials + settings |
-| `subscriptions` | Subscription lifecycle (source of truth), includes payment_failure_notification flag |
-| `payments` | Payment records (immutable once created) |
-| `webhook_provider` | Webhook audit + deduplication (provider ingress) |
-| `webhook_delivery` | Callback forwarding state, includes dead_lettered tracking |
-| `checkout_idempotency` | Checkout request deduplication |
-| `fraud_prevention` | Fraud detection tracking |
+| `provider_configs` | Per-app provider credentials |
+| `subscriptions` | Subscription lifecycle source of truth |
+| `payments` | Immutable payment records |
+| `webhook_log` | Webhook audit + deduplication (ingress) |
+| `webhook_delivery` | Callback forwarding state + dead letter queue |
 | `agent_credits` | Agent micropayment balances |
-| `agent_transactions` | Agent ledger audit log (includes topup transactions) |
+| `agent_transactions` | Agent ledger audit log |
 | `agent_payment_tokens` | Scoped one-time charge tokens |
 
 **Key design decisions**:
@@ -161,30 +156,26 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - **Agent topup idempotency**: Unique index on `(app_id, charge_id)` where request_type='topup' prevents duplicate charge-based topups.
 - **Concurrency**: Subscriptions use optimistic locking via `version` field. `last_event_time` guards against out-of-order events.
 
-### 3.5 Background Jobs
+### 3.5 Background Workers
 
-**Reconciliation** (every 24 hours, per app):
-- Polls Google Play for all active subscriptions
-- Detects drift (e.g., Google says expired, Bridge says active)
-- Updates subscription state and triggers callback to app
-- Logs audit trail in `webhook_provider`
+**Reconciliation Engine** (Daily):
+- Verifies subscription states against provider APIs (drift detection).
+- Self-heals inconsistent states and triggers recovery callbacks.
 
-**Price Step-Up Expiry** (every 5 minutes):
-- Auto-cancel subscriptions where Google price consent deadline passed
-- Forward cancellation callback to app
+**Cleanup Worker** (Daily):
+- Deletes webhook logs older than 90 days.
+- Housekeeping for temporary states and expired tokens.
 
-**Pause Scheduler** (every 25 minutes):
-- Transition subscriptions from `pause_scheduled` to `paused`
-- Forward pause callback to app
-- Clean up orphaned pending subscriptions (>30 min old)
+**Price Step-up Worker** (Every 5 minutes):
+- Manages Korea-specific price consent lifecycle.
+- Handles expiry of pending price increases.
 
-**Webhook Retry Worker** (continuous):
-- Processes failed webhook deliveries from `webhook_delivery` table
-- Retries with exponential backoff (3-strike strategy)
-- Marks exhausted retries as `dead_lettered` with timestamp and reason
+**Pause Scheduler** (Every 25 minutes):
+- Process delayed subscription pauses and automated resumes.
 
-**Webhook Cleanup Worker** (daily):
-- Delete webhook records older than 90 days (data retention policy)
+**Webhook Retry Worker** (Continuous):
+- Processes failed callback deliveries using exponential backoff.
+- Manages the dead letter queue for exhausted delivery attempts.
 
 ### 3.6 Email Service
 
@@ -428,19 +419,20 @@ Per-app provider config in `provider_configs`:
 
 ## 9. Future Enhancements (Deferred)
 
-### Admin Dashboard (Partially Implemented)
+### Admin Dashboard
 **Implemented**:
-- Dashboard UI with app listing
-- Failed webhook counts per app
-- Webhook viewing per app
-- Manual webhook retry endpoint (TODO: queue implementation)
+- Dashboard UI with app listing.
+- Failed webhook counts per app.
+- Webhook viewing per app.
+- Manual webhook retry (continuous queue).
+- background worker status monitoring.
 
 **Deferred**:
-- Subscription state inspection
-- API key rotation
-- Rate limit tuning
-- Provider credential management
-- Reconciliation job monitoring
+- Subscription state deep inspection.
+- API key rotation/management.
+- Rate limit tuning UI.
+- Provider credential management.
+- Detailed reconciliation audit logs.
 
 ### Analytics
 - Payment volume, success rates

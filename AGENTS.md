@@ -14,19 +14,25 @@
 
 **Backend Structure:**
 - `src/main.rs` - Server entrypoint (Axum setup)
-- `src/handlers/` - HTTP endpoint handlers (checkout, verification, subscriptions)
-- `src/services/` - Provider integration modules (creem, google_play, etc.)
-- `src/webhooks/` - Webhook ingress + processing
+- `src/handlers/` - HTTP endpoint handlers (checkout, verification, subscriptions, agent, admin)
+- `src/services/` - Provider integration (creem, google_play, coinbase) and core logic (payment, email)
+- `src/webhooks/` - Webhook ingress routing and status processing
 - `src/db/` - Database modules (queries separated by domain)
-- `src/config.rs` - Environment config reader
+- `src/middleware/` - Auth, Rate limiting, and tracing layers
+- `src/ports/` - External trait definitions (optional abstraction layer)
+- `src/application/` - Domain orchestrators and business rules
 - `migrations/` - PostgreSQL schema migrations
 
 **Key Features:**
-- **Administration**: Separate Admin UI secured by Tyde's internal Clerk organization.
+- **Administration**: Integrated Admin Dashboard at `/admin` for monitoring apps and webhooks.
 - **Provider Normalization**: Maps canonical states across payment provider updates.
-- **Idempotent Ingress Logging**: Prevents duplication hacks at webhook boundaries.
+- **Idempotent Ingress Logging**: Prevents duplication hacks at webhook boundaries using `webhook_log`.
 - **Webhook Sub-delivery Retries**: Guaranteed status flowback to apps using a 3-strike strategy.
-- **Sub-schedule Reconciliation**: Heavy background reconciliation jobs verifying polling drift statuses.
+- **Background Workers**:
+    - **Reconciliation**: Verifies polling drift statuses against provider APIs.
+    - **Cleanup**: Housekeeping for old logs and temporary state.
+    - **Price Step-up**: Manages Korea-specific price consent lifecycle.
+    - **Pause Scheduler**: Handles delayed subscription pauses and resumes.
 
 ## Code Style Guidelines
 
