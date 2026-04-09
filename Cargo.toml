@@ -1,11 +1,12 @@
 [package]
 name = "bridge"
-version = "0.2.0"
+version = "0.1.2"
 edition = "2021"
 description = "A multi-payments middle-gateway application"
 license-file = "LICENSE"
 repository = "https://github.com/tyde-code/bridge"
 homepage = "https://tyde-code.com"
+publish = false
 
 [[bin]]
 name = "bridge"
