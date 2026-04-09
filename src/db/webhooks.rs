@@ -1,3 +1,4 @@
+use crate::db::database::set_local_app_id;
 use crate::error::BridgeError;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, FromRow};
@@ -46,6 +47,33 @@ pub struct WebhookRecord {
     pub created_at: DateTime<Utc>,
 }
 
+async fn begin_app_tx<'a>(
+    pool: &'a PgPool,
+    app_id: Uuid,
+) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, BridgeError> {
+    let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    set_local_app_id(&mut tx, app_id).await?;
+    Ok(tx)
+}
+
+async fn get_webhook_provider_app_id(pool: &PgPool, webhook_id: Uuid) -> Result<Uuid, BridgeError> {
+    sqlx::query_scalar("SELECT app_id FROM pay.webhook_provider WHERE id = $1")
+        .bind(webhook_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?
+        .ok_or_else(|| BridgeError::ValidationError("Webhook not found".to_string()))
+}
+
+async fn get_webhook_delivery_app_id(pool: &PgPool, delivery_id: Uuid) -> Result<Uuid, BridgeError> {
+    sqlx::query_scalar("SELECT app_id FROM pay.webhook_delivery WHERE id = $1")
+        .bind(delivery_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?
+        .ok_or_else(|| BridgeError::ValidationError("Webhook delivery not found".to_string()))
+}
+
 /// Get webhook provider by ID
 pub async fn get_webhook_provider(pool: &PgPool, id: Uuid) -> Result<WebhookProvider, BridgeError> {
     sqlx::query_as::<_, WebhookProvider>(
@@ -67,14 +95,20 @@ pub async fn suppress_webhook(
     webhook_id: Uuid,
     reason: &str,
 ) -> Result<(), BridgeError> {
+    let app_id = get_webhook_provider_app_id(pool, webhook_id).await?;
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
     sqlx::query(
         "UPDATE pay.webhook_provider SET suppressed = true, suppressed_reason = $1 WHERE id = $2"
     )
     .bind(reason)
     .bind(webhook_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to suppress webhook: {}", e)))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
     Ok(())
 }
 
@@ -82,11 +116,16 @@ pub async fn mark_webhook_processed(
     pool: &PgPool,
     webhook_id: Uuid,
 ) -> Result<(), BridgeError> {
+    let app_id = get_webhook_provider_app_id(pool, webhook_id).await?;
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
     sqlx::query("UPDATE pay.webhook_provider SET processed = true WHERE id = $1")
         .bind(webhook_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(())
 }
@@ -129,6 +168,9 @@ pub async fn update_webhook_delivery_attempt(
     error: Option<String>,
     forwarded: bool,
 ) -> Result<(), BridgeError> {
+    let app_id = get_webhook_delivery_app_id(pool, delivery_id).await?;
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
     sqlx::query(
         "UPDATE pay.webhook_delivery 
          SET forward_attempts = forward_attempts + 1,
@@ -158,9 +200,12 @@ pub async fn update_webhook_delivery_attempt(
     .bind(error)
     .bind(forwarded)
     .bind(delivery_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to update webhook delivery: {}", e)))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
     Ok(())
 }
 
@@ -253,6 +298,8 @@ pub async fn create_webhook_provider(
     payload: serde_json::Value,
     timestamp_epoch_ms: Option<i64>,
 ) -> Result<(Uuid, bool), BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
     // Try to insert; on conflict (idempotency), return existing without error
     let result = sqlx::query_as::<_, (Uuid,)>(
         "INSERT INTO pay.webhook_provider 
@@ -269,7 +316,7 @@ pub async fn create_webhook_provider(
     .bind(&purchase_token)
     .bind(payload)
     .bind(timestamp_epoch_ms)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to create webhook provider: {}", e)))?;
 
@@ -292,11 +339,13 @@ pub async fn create_webhook_provider(
         .bind(provider_webhook_id)
         .bind(purchase_token.as_deref())
         .bind(event_type)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| BridgeError::DbError(format!("Failed to fetch existing webhook: {}", e)))?;
         (existing.0, false)
     };
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok((webhook_id, is_new))
 }
@@ -307,6 +356,8 @@ pub async fn create_webhook_delivery(
     app_id: Uuid,
     webhook_provider_id: Uuid,
 ) -> Result<Uuid, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
     let delivery_id: (Uuid,) = sqlx::query_as(
         "INSERT INTO pay.webhook_delivery (app_id, webhook_provider_id, forward_attempts, forwarded)
          VALUES ($1, $2, 0, false)
@@ -314,9 +365,11 @@ pub async fn create_webhook_delivery(
     )
     .bind(app_id)
     .bind(webhook_provider_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to create webhook delivery: {}", e)))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(delivery_id.0)
 }

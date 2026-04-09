@@ -1,4 +1,5 @@
 use crate::error::BridgeError;
+use crate::db::database::set_local_app_id;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use bcrypt::verify as bcrypt_verify;
 use serde::{Deserialize, Serialize};
@@ -60,13 +61,18 @@ pub async fn authenticate_api_key(
                 return Err(BridgeError::AppDisabled("Application is disabled".to_string()));
             }
 
+            let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+            set_local_app_id(&mut tx, candidate.app_id).await?;
+
             sqlx::query(
                 "UPDATE pay.api_keys SET last_used_at = NOW() WHERE id = $1",
             )
             .bind(candidate.id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+            tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
             return Ok(AuthenticatedApiKey {
                 api_key_id: candidate.id,

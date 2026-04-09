@@ -1,3 +1,4 @@
+use crate::db::database::set_local_app_id;
 use crate::error::BridgeError;
 use sqlx::{PgPool, FromRow};
 use serde::{Deserialize, Serialize};
@@ -36,19 +37,33 @@ pub struct AgentTransaction {
     pub created_at: DateTime<Utc>,
 }
 
+async fn begin_app_tx<'a>(
+    pool: &'a PgPool,
+    app_id: Uuid,
+) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, BridgeError> {
+    let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    set_local_app_id(&mut tx, app_id).await?;
+    Ok(tx)
+}
+
 pub async fn get_agent_credit(
     pool: &PgPool,
     app_id: Uuid,
     external_user_id: &str,
 ) -> Result<Option<AgentCredit>, BridgeError> {
-    sqlx::query_as::<_, AgentCredit>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let credit = sqlx::query_as::<_, AgentCredit>(
         "SELECT * FROM pay.agent_credits WHERE app_id = $1 AND external_user_id = $2 LIMIT 1"
     )
     .bind(app_id)
     .bind(external_user_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(credit)
 }
 
 pub async fn list_agent_transactions(
@@ -56,7 +71,8 @@ pub async fn list_agent_transactions(
     app_id: Uuid,
     external_user_id: &str,
 ) -> Result<Vec<AgentTransaction>, BridgeError> {
-    sqlx::query_as::<_, AgentTransaction>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let transactions = sqlx::query_as::<_, AgentTransaction>(
         "SELECT request_type, amount_cents, charge_id, status, created_at
          FROM pay.agent_transactions
          WHERE app_id = $1 AND external_user_id = $2
@@ -64,9 +80,13 @@ pub async fn list_agent_transactions(
     )
     .bind(app_id)
     .bind(external_user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(transactions)
 }
 
 pub async fn cleanup_expired_agent_tokens(pool: &PgPool) -> Result<(), BridgeError> {
@@ -85,7 +105,7 @@ pub async fn topup_agent(
     amount_cents: i32,
     charge_id: Option<&str>,
 ) -> Result<AgentCredit, BridgeError> {
-    let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let mut tx = begin_app_tx(pool, app_id).await?;
 
     let credit = sqlx::query_as::<_, AgentCredit>(
         r#"
@@ -130,7 +150,8 @@ pub async fn upsert_agent_credit(
     balance_delta: i32,
     spent_delta: i32,
 ) -> Result<AgentCredit, BridgeError> {
-    sqlx::query_as::<_, AgentCredit>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let credit = sqlx::query_as::<_, AgentCredit>(
         r#"
         INSERT INTO pay.agent_credits (app_id, external_user_id, balance_cents, lifetime_spent_cents, updated_at)
         VALUES ($1, $2, $3, $4, NOW())
@@ -146,9 +167,13 @@ pub async fn upsert_agent_credit(
     .bind(external_user_id)
     .bind(balance_delta)
     .bind(spent_delta)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(credit)
 }
 
 pub async fn insert_agent_token(
@@ -160,7 +185,8 @@ pub async fn insert_agent_token(
     nonce: &str,
 ) -> Result<AgentPaymentToken, BridgeError> {
     let expires_at = Utc::now() + Duration::minutes(10);
-    sqlx::query_as::<_, AgentPaymentToken>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let token = sqlx::query_as::<_, AgentPaymentToken>(
         r#"
         INSERT INTO pay.agent_payment_tokens (
             app_id, external_user_id, endpoint, amount_cents, nonce, expires_at
@@ -179,9 +205,13 @@ pub async fn insert_agent_token(
     .bind(amount_cents)
     .bind(nonce)
     .bind(expires_at)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(token)
 }
 
 pub async fn use_agent_token(
@@ -245,7 +275,7 @@ pub async fn charge_agent(
     token_id: Uuid,
     endpoint: &str,
 ) -> Result<(i32, i32), BridgeError> {
-    let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let mut tx = begin_app_tx(pool, app_id).await?;
 
     let token_opt = use_agent_token(&mut tx, app_id, external_user_id, token_id, endpoint).await?;
     let token = match token_opt {
@@ -305,7 +335,7 @@ pub async fn apply_topup_if_new(
     amount_cents: i32,
     charge_id: &str,
 ) -> Result<bool, BridgeError> {
-    let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let mut tx = begin_app_tx(pool, app_id).await?;
 
     let inserted_txn = sqlx::query_scalar::<_, Uuid>(
         r#"

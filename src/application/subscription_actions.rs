@@ -72,8 +72,8 @@ pub async fn cancel_subscription<R: SubscriptionActionsHandlerRepository + ?Size
     .await?;
 
     let updated_sub = match mode {
-        "scheduled" => repo.cancel_subscription_scheduled(sub.id).await?,
-        "immediate" => repo.cancel_subscription_immediate(sub.id).await?,
+        "scheduled" => repo.cancel_subscription_scheduled(app_id, sub.id).await?,
+        "immediate" => repo.cancel_subscription_immediate(app_id, sub.id).await?,
         _ => {
             return Err(BridgeError::ValidationError(
                 "mode must be either 'scheduled' or 'immediate'".to_string(),
@@ -150,7 +150,7 @@ pub async fn resume_subscription<R: SubscriptionActionsHandlerRepository + ?Size
     )
     .await?;
 
-    let updated_sub = repo.resume_subscription(sub.id).await?;
+    let updated_sub = repo.resume_subscription(app_id, sub.id).await?;
 
     let callback_sub = SubscriptionCallbackData {
         subscription_id: updated_sub.subscription_id.clone(),
@@ -287,7 +287,7 @@ pub async fn accept_price_step_up<R: SubscriptionActionsHandlerRepository + ?Siz
         ));
     }
 
-    let updated_sub = repo.accept_price_step_up(sub.id).await?;
+    let updated_sub = repo.accept_price_step_up(app_id, sub.id).await?;
 
     let new_price_cents = updated_sub.google_new_price_cents.ok_or_else(|| {
         BridgeError::ValidationError(
@@ -353,7 +353,7 @@ pub async fn decline_price_step_up<R: SubscriptionActionsHandlerRepository + ?Si
         ));
     }
 
-    let updated_sub = repo.decline_price_step_up(sub.id).await?;
+    let updated_sub = repo.decline_price_step_up(app_id, sub.id).await?;
 
     let cancellation_effective_at = updated_sub
         .current_period_end

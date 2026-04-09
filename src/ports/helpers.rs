@@ -1,7 +1,9 @@
 use std::{future::Future, pin::Pin};
+use uuid::Uuid;
 
 use crate::{
     application::verify_purchase_types::VerifyPurchaseSubscriptionSnapshot,
+    db::database::set_local_app_id,
     db::subscriptions::Subscription,
     error::BridgeError,
     ports::types::{SubscriptionLookupSnapshot, TransactionOutcome, WebhookPaymentRecordRequest, WebhookSubscriptionSnapshot, OwnedWebhookPaymentRecord},
@@ -61,6 +63,7 @@ pub(crate) fn map_verify_purchase_subscription(
 
 pub(crate) fn with_transaction_impl<'a, T, F>(
     pool: &'a sqlx::PgPool,
+    app_id: Uuid,
     f: F,
 ) -> Pin<Box<dyn Future<Output = Result<T, BridgeError>> + Send + 'a>>
 where
@@ -76,6 +79,8 @@ where
             .begin()
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+        set_local_app_id(&mut tx, app_id).await?;
 
         let outcome = f(&mut tx).await?;
 

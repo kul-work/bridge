@@ -1,3 +1,4 @@
+use crate::db::database::set_local_app_id;
 use crate::error::BridgeError;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, FromRow};
@@ -49,6 +50,15 @@ pub struct SubscriptionUpsertResult {
     pub applied: bool,
 }
 
+async fn begin_app_tx<'a>(
+    pool: &'a PgPool,
+    app_id: Uuid,
+) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, BridgeError> {
+    let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    set_local_app_id(&mut tx, app_id).await?;
+    Ok(tx)
+}
+
 pub use crate::ports::SubscriptionWebhookTransition;
 
 pub async fn apply_webhook_transition(
@@ -58,6 +68,7 @@ pub async fn apply_webhook_transition(
     event_time_ms: i64,
     transition: SubscriptionWebhookTransition,
 ) -> Result<Option<Subscription>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let result = match transition {
         SubscriptionWebhookTransition::Pending => {
             sqlx::query_as::<_, Subscription>(
@@ -73,7 +84,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -96,7 +107,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -120,7 +131,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -138,7 +149,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -158,7 +169,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -179,7 +190,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -206,7 +217,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -225,7 +236,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -255,7 +266,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -272,7 +283,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -293,7 +304,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -317,7 +328,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -337,7 +348,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -357,11 +368,13 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
     };
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(result)
 }
@@ -373,17 +386,21 @@ pub async fn get_subscription(
     subscription_id: &str,
     provider: &str,
 ) -> Result<Subscription, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
         "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND external_user_id = $2 AND subscription_id = $3 AND provider = $4"
     )
     .bind(app_id)
     .bind(external_user_id)
     .bind(subscription_id)
     .bind(provider)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?
-    .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    subscription.ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))
 }
 
 pub async fn get_user_subscriptions_keyset(
@@ -394,7 +411,8 @@ pub async fn get_user_subscriptions_keyset(
     cursor_created_at: Option<DateTime<Utc>>,
     cursor_id: Option<Uuid>,
 ) -> Result<Vec<Subscription>, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscriptions = sqlx::query_as::<_, Subscription>(
         "SELECT * FROM pay.subscriptions
          WHERE app_id = $1 AND external_user_id = $2 
            AND (
@@ -410,9 +428,13 @@ pub async fn get_user_subscriptions_keyset(
     .bind(cursor_created_at)
     .bind(cursor_id)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscriptions)
 }
 
 pub async fn get_user_subscriptions(
@@ -422,7 +444,8 @@ pub async fn get_user_subscriptions(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Subscription>, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscriptions = sqlx::query_as::<_, Subscription>(
         "SELECT * FROM pay.subscriptions
          WHERE app_id = $1 AND external_user_id = $2
          ORDER BY created_at DESC
@@ -432,9 +455,13 @@ pub async fn get_user_subscriptions(
     .bind(external_user_id)
     .bind(limit)
     .bind(offset)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscriptions)
 }
 
 pub async fn list_reconciliation_subscriptions(
@@ -628,7 +655,8 @@ pub async fn upsert_pending_subscription(
     subscription_id: &str,
     provider: &str,
 ) -> Result<Subscription, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
         "INSERT INTO pay.subscriptions
          (app_id, external_user_id, subscription_id, provider, status, version, last_event_time)
          VALUES ($1, $2, $3, $4, 'pending', 1, 0)
@@ -642,32 +670,45 @@ pub async fn upsert_pending_subscription(
     .bind(external_user_id)
     .bind(subscription_id)
     .bind(provider)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
 }
 
 pub async fn cancel_subscription_scheduled(
     pool: &PgPool,
+    app_id: Uuid,
     id: Uuid,
 ) -> Result<Subscription, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
         "UPDATE pay.subscriptions
          SET auto_renewing = false, cancellation_initiated_at = NOW(), updated_at = NOW()
-         WHERE id = $1
+         WHERE app_id = $1 AND id = $2
          RETURNING *",
     )
+    .bind(app_id)
     .bind(id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
 }
 
 pub async fn cancel_subscription_immediate(
     pool: &PgPool,
+    app_id: Uuid,
     id: Uuid,
 ) -> Result<Subscription, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
         "UPDATE pay.subscriptions
          SET status = 'cancelled',
              auto_renewing = false,
@@ -676,29 +717,41 @@ pub async fn cancel_subscription_immediate(
              revocation_reason = 'immediate_cancel',
              revoked_at = NOW(),
              updated_at = NOW()
-         WHERE id = $1
+         WHERE app_id = $1 AND id = $2
          RETURNING *",
     )
+    .bind(app_id)
     .bind(id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
 }
 
 pub async fn resume_subscription(
     pool: &PgPool,
+    app_id: Uuid,
     id: Uuid,
 ) -> Result<Subscription, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
         "UPDATE pay.subscriptions
          SET status = 'active', auto_renewing = true, cancellation_initiated_at = NULL, updated_at = NOW()
-         WHERE id = $1
+         WHERE app_id = $1 AND id = $2
          RETURNING *",
     )
+    .bind(app_id)
     .bind(id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
 }
 
 pub async fn mark_payment_acknowledged_for_subscription(
@@ -709,6 +762,8 @@ pub async fn mark_payment_acknowledged_for_subscription(
     subscription_id: &str,
     purchase_token: Option<&str>,
 ) -> Result<(), BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
     if let Some(purchase_token) = purchase_token {
         sqlx::query(
             "UPDATE pay.payments
@@ -719,7 +774,7 @@ pub async fn mark_payment_acknowledged_for_subscription(
         .bind(external_user_id)
         .bind(provider)
         .bind(purchase_token)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
     } else {
@@ -732,38 +787,49 @@ pub async fn mark_payment_acknowledged_for_subscription(
         .bind(external_user_id)
         .bind(provider)
         .bind(subscription_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
     }
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(())
 }
 
 pub async fn accept_price_step_up(
     pool: &PgPool,
+    app_id: Uuid,
     id: Uuid,
 ) -> Result<Subscription, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
         "UPDATE pay.subscriptions
          SET google_requires_price_step_up_consent = false,
              google_price_step_up_consent_status = 'accepted',
              google_price_step_up_consent_deadline = NULL,
              updated_at = NOW()
-         WHERE id = $1
+         WHERE app_id = $1 AND id = $2
          RETURNING *",
     )
+    .bind(app_id)
     .bind(id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
 }
 
 pub async fn decline_price_step_up(
     pool: &PgPool,
+    app_id: Uuid,
     id: Uuid,
 ) -> Result<Subscription, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
         "UPDATE pay.subscriptions
          SET google_requires_price_step_up_consent = false,
              google_price_step_up_consent_status = 'rejected',
@@ -773,13 +839,18 @@ pub async fn decline_price_step_up(
              auto_renewing = false,
              cancellation_initiated_at = NOW(),
              updated_at = NOW()
-         WHERE id = $1
+         WHERE app_id = $1 AND id = $2
          RETURNING *",
     )
+    .bind(app_id)
     .bind(id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
 }
 
 pub async fn lookup_user_by_subscription_id(
@@ -787,14 +858,17 @@ pub async fn lookup_user_by_subscription_id(
     app_id: Uuid,
     subscription_id: &str,
 ) -> Result<Option<String>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT external_user_id FROM pay.subscriptions WHERE app_id = $1 AND subscription_id = $2 LIMIT 1"
     )
     .bind(app_id)
     .bind(subscription_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(row.map(|r| r.0))
 }
@@ -804,14 +878,17 @@ pub async fn lookup_user_by_purchase_token(
     app_id: Uuid,
     purchase_token: &str,
 ) -> Result<Option<String>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT external_user_id FROM pay.subscriptions WHERE app_id = $1 AND purchase_token = $2 LIMIT 1"
     )
     .bind(app_id)
     .bind(purchase_token)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(row.map(|r| r.0))
 }
@@ -821,14 +898,19 @@ pub async fn get_subscription_by_sub_id(
     app_id: Uuid,
     subscription_id: &str,
 ) -> Result<Option<Subscription>, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
         "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND subscription_id = $2"
     )
     .bind(app_id)
     .bind(subscription_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
 }
 
 pub async fn get_subscription_by_purchase_token(
@@ -836,14 +918,19 @@ pub async fn get_subscription_by_purchase_token(
     app_id: Uuid,
     purchase_token: &str,
 ) -> Result<Option<Subscription>, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
         "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND purchase_token = $2"
     )
     .bind(app_id)
     .bind(purchase_token)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
 }
 
 pub async fn update_subscription_status(
@@ -853,6 +940,7 @@ pub async fn update_subscription_status(
     new_status: &str,
     event_time_ms: i64,
 ) -> Result<bool, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let result = sqlx::query(
         "UPDATE pay.subscriptions
          SET status = $1, version = version + 1, last_event_time = $2, updated_at = NOW()
@@ -862,9 +950,11 @@ pub async fn update_subscription_status(
     .bind(event_time_ms)
     .bind(app_id)
     .bind(subscription_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -874,14 +964,17 @@ pub async fn lookup_user_by_google_obfuscated_id(
     app_id: Uuid,
     obfuscated_id: &str,
 ) -> Result<Option<String>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT external_user_id FROM pay.subscriptions WHERE app_id = $1 AND google_obfuscated_account_id = $2 LIMIT 1"
     )
     .bind(app_id)
     .bind(obfuscated_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(row.map(|r| r.0))
 }
@@ -893,6 +986,7 @@ pub async fn link_replacement_subscriptions(
     current_subscription_id: &str,
     last_event_time: i64,
 ) -> Result<(), BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     sqlx::query(
         "UPDATE pay.subscriptions 
          SET status = 'replaced', 
@@ -909,9 +1003,11 @@ pub async fn link_replacement_subscriptions(
     .bind(external_user_id)
     .bind(current_subscription_id)
     .bind(last_event_time)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(())
 }

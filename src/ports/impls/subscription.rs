@@ -88,23 +88,26 @@ impl SubscriptionWriteRepository for db::Database {
 
     async fn cancel_subscription_scheduled(
         &self,
+        app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError> {
-        db::subscriptions::cancel_subscription_scheduled(self.pool(), id).await
+        db::subscriptions::cancel_subscription_scheduled(self.pool(), app_id, id).await
     }
 
     async fn cancel_subscription_immediate(
         &self,
+        app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError> {
-        db::subscriptions::cancel_subscription_immediate(self.pool(), id).await
+        db::subscriptions::cancel_subscription_immediate(self.pool(), app_id, id).await
     }
 
     async fn resume_subscription(
         &self,
+        app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError> {
-        db::subscriptions::resume_subscription(self.pool(), id).await
+        db::subscriptions::resume_subscription(self.pool(), app_id, id).await
     }
 
     async fn mark_payment_acknowledged_for_subscription(
@@ -128,16 +131,18 @@ impl SubscriptionWriteRepository for db::Database {
 
     async fn accept_price_step_up(
         &self,
+        app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError> {
-        db::subscriptions::accept_price_step_up(self.pool(), id).await
+        db::subscriptions::accept_price_step_up(self.pool(), app_id, id).await
     }
 
     async fn decline_price_step_up(
         &self,
+        app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError> {
-        db::subscriptions::decline_price_step_up(self.pool(), id).await
+        db::subscriptions::decline_price_step_up(self.pool(), app_id, id).await
     }
 }
 

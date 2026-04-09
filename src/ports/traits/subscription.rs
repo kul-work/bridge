@@ -46,16 +46,19 @@ pub trait SubscriptionWriteRepository: Send + Sync {
 
     async fn cancel_subscription_scheduled(
         &self,
+        app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError>;
 
     async fn cancel_subscription_immediate(
         &self,
+        app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError>;
 
     async fn resume_subscription(
         &self,
+        app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError>;
 
@@ -70,11 +73,13 @@ pub trait SubscriptionWriteRepository: Send + Sync {
 
     async fn accept_price_step_up(
         &self,
+        app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError>;
 
     async fn decline_price_step_up(
         &self,
+        app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError>;
 }

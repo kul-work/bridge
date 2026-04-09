@@ -145,7 +145,7 @@ impl VerifyPurchaseRepository for db::Database {
         let is_subscription = request.is_subscription;
 
         let pool = self.pool();
-        with_transaction_impl(pool, move |tx| {
+        with_transaction_impl(pool, app_id, move |tx| {
             Box::pin(async move {
                 db::payments::record_payment_tx(
                     tx,

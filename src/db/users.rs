@@ -1,3 +1,4 @@
+use crate::db::database::set_local_app_id;
 use crate::error::BridgeError;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -19,6 +20,7 @@ pub async fn anonymize_user(
     );
 
     let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    set_local_app_id(&mut tx, app_id).await?;
 
     // Fetch active subscriptions BEFORE cancelling them via provider APIs
     let active_subs: Vec<(String, String, Option<String>)> = sqlx::query_as(

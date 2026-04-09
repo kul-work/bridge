@@ -2,6 +2,7 @@ use crate::error::BridgeError;
 use sqlx::PgPool;
 use std::str::FromStr;
 use tracing::info;
+use uuid::Uuid;
 
 pub struct Database {
     pool: PgPool,
@@ -70,4 +71,17 @@ impl Database {
 
         Ok(Self { pool })
     }
+}
+
+pub(crate) async fn set_local_app_id(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+) -> Result<(), BridgeError> {
+    sqlx::query("SELECT set_config('bridge.current_app_id', $1, true)")
+        .bind(app_id.to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
 }

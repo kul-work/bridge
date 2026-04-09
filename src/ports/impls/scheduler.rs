@@ -170,7 +170,7 @@ impl WebhookProcessingTransactionRepository for db::Database {
         let request = OwnedWebhookPaymentRecord::from(request);
         let pool = self.pool();
 
-        crate::ports::helpers::with_transaction_impl(pool, move |tx| {
+        crate::ports::helpers::with_transaction_impl(pool, request.app_id, move |tx| {
             Box::pin(async move {
                 db::payments::record_payment_tx(
                     tx,
@@ -209,7 +209,7 @@ impl WebhookProcessingTransactionRepository for db::Database {
         let adopt_stale_payment = request.adopt_stale_payment;
 
         let pool = self.pool();
-        crate::ports::helpers::with_transaction_impl(pool, move |tx| {
+        crate::ports::helpers::with_transaction_impl(pool, app_id, move |tx| {
             Box::pin(async move {
                 let upsert_result = db::subscriptions::upsert_subscription_tx(
                     tx,

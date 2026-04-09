@@ -1,3 +1,4 @@
+use crate::db::database::set_local_app_id;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
@@ -31,6 +32,18 @@ pub struct PaymentHistoryEntry {
     pub currency: String,
     pub status: String,
     pub created_at: DateTime<Utc>,
+}
+
+async fn begin_app_tx<'a>(
+    pool: &'a sqlx::PgPool,
+    app_id: Uuid,
+) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, crate::error::BridgeError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+    set_local_app_id(&mut tx, app_id).await?;
+    Ok(tx)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -83,14 +96,19 @@ pub async fn get_payment_status(
     app_id: Uuid,
     provider_transaction_id: &str,
 ) -> Result<Option<String>, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT status FROM pay.payments WHERE app_id = $1 AND provider_transaction_id = $2"
     )
     .bind(app_id)
     .bind(provider_transaction_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
     Ok(row.map(|r| r.0))
 }
@@ -101,15 +119,20 @@ pub async fn update_payment_status(
     provider_transaction_id: &str,
     new_status: &str,
 ) -> Result<(), crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     sqlx::query(
         "UPDATE pay.payments SET status = $1, webhook_received_at = NOW() WHERE app_id = $2 AND provider_transaction_id = $3"
     )
     .bind(new_status)
     .bind(app_id)
     .bind(provider_transaction_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
     Ok(())
 }
@@ -120,16 +143,22 @@ pub async fn get_payment_acknowledged_at(
     provider: &str,
     provider_transaction_id: &str,
 ) -> Result<Option<DateTime<Utc>>, crate::error::BridgeError> {
-    sqlx::query_scalar(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let row = sqlx::query_scalar(
         "SELECT acknowledged_at FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3",
     )
     .bind(app_id)
     .bind(provider)
     .bind(provider_transaction_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))
-    .map(|row| row.flatten())
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(row.flatten())
 }
 
 pub async fn mark_payment_acknowledged(
@@ -138,6 +167,7 @@ pub async fn mark_payment_acknowledged(
     provider: &str,
     provider_transaction_id: &str,
 ) -> Result<(), crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     sqlx::query(
         "UPDATE pay.payments
          SET acknowledged_at = COALESCE(acknowledged_at, NOW())
@@ -146,9 +176,13 @@ pub async fn mark_payment_acknowledged(
     .bind(app_id)
     .bind(provider)
     .bind(provider_transaction_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
     Ok(())
 }
@@ -158,14 +192,19 @@ pub async fn lookup_user_by_purchase_token_payment(
     app_id: Uuid,
     purchase_token: &str,
 ) -> Result<Option<String>, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT external_user_id FROM pay.payments WHERE app_id = $1 AND provider_transaction_id = $2 LIMIT 1"
     )
     .bind(app_id)
     .bind(purchase_token)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
     Ok(row.map(|r| r.0))
 }
@@ -177,7 +216,8 @@ pub async fn get_user_payments(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Payment>, crate::error::BridgeError> {
-    sqlx::query_as::<_, Payment>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let payments = sqlx::query_as::<_, Payment>(
         "SELECT * FROM pay.payments 
          WHERE app_id = $1 AND external_user_id = $2 
          ORDER BY webhook_received_at DESC 
@@ -187,9 +227,15 @@ pub async fn get_user_payments(
     .bind(external_user_id)
     .bind(limit)
     .bind(offset)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(payments)
 }
 
 pub async fn count_user_payments(
@@ -197,14 +243,19 @@ pub async fn count_user_payments(
     app_id: Uuid,
     external_user_id: &str,
 ) -> Result<i64, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let total: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM pay.payments WHERE app_id = $1 AND external_user_id = $2",
     )
     .bind(app_id)
     .bind(external_user_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
     Ok(total.0)
 }
@@ -217,7 +268,8 @@ pub async fn list_user_payments_keyset(
     after_created_at: Option<DateTime<Utc>>,
     after_id: Option<Uuid>,
 ) -> Result<Vec<PaymentHistoryEntry>, crate::error::BridgeError> {
-    if let (Some(created_at), Some(id)) = (after_created_at, after_id) {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let rows = if let (Some(created_at), Some(id)) = (after_created_at, after_id) {
         sqlx::query_as::<_, PaymentHistoryEntry>(
             r#"
             SELECT
@@ -235,9 +287,9 @@ pub async fn list_user_payments_keyset(
         .bind(created_at)
         .bind(id)
         .bind(limit)
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?
     } else {
         sqlx::query_as::<_, PaymentHistoryEntry>(
             r#"
@@ -253,10 +305,16 @@ pub async fn list_user_payments_keyset(
         .bind(app_id)
         .bind(external_user_id)
         .bind(limit)
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))
-    }
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?
+    };
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(rows)
 }
 
 pub async fn adopt_stale_payment(
