@@ -36,9 +36,9 @@ echo ""
 # Step 1: Clean up Bridge DB
 echo -e "${YELLOW}[1/6] Cleaning up previous test data from Bridge${NC}"
 export PGPASSWORD="postgres"
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+psql -U "bridge_admin" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null || true
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+psql -U "bridge_admin" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null || true
 echo -e "${GREEN}✓ Previous test data removed${NC}"
 echo ""
@@ -55,7 +55,8 @@ REGISTER_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   -d "{
     \"external_user_id\": \"$USER_ID\",
     \"provider\": \"$PROVIDER\",
-    \"product_id\": \"$PRODUCT_ID\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-registration\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
     \"transaction_id\": \"test-reg-$(date +%s)\"
