@@ -20,10 +20,8 @@ Automatically analyzes unstaged git changes and generates a professional commit 
 1. Make your code changes
 2. Request a commit message: "Generate commit message for my changes"
 3. Agent:
-   - **Check if a beads task exists** for this work (run `bd list`)
-   - **If NO beads task exists**, create one: `bd create "Task title" --description="Why this exists"`
    - Runs `git diff` to analyze changes
-   - Generates conventional commit message with beads task ID
+   - Generates a conventional commit message
    - Returns formatted message only
 4. Copy the message and run:
    ```bash
@@ -45,14 +43,12 @@ Automatically analyzes unstaged git changes and generates a professional commit 
 The skill generates messages in this format:
 
 ```
-<TYPE> (<SCOPE>): <SUBJECT> [bd:<TASK_ID>]
+<TYPE> (<SCOPE>): <SUBJECT>
 
 <BODY>
 
 <FOOTER>
 ```
-
-**Note**: Include `[bd:<TASK_ID>]` at the end of the subject if a beads task exists for this work (e.g., `[bd:hiha-abc]`).
 
 ### Supported Types
 
@@ -72,7 +68,7 @@ The skill generates messages in this format:
 The agent returns **only** the commit message, ready to copy:
 
 ```
-FIX(validation): Reject invalid purchase tokens in STRICT mode [bd:hiha-abc]
+FIX(validation): Reject invalid purchase tokens in STRICT mode
 
 - Add token format validation to reject obviously fake tokens
 - Tokens containing "invalid", "not-a-valid" keywords are rejected
@@ -84,7 +80,7 @@ Fixes ERR-01 test where malformed tokens were incorrectly accepted.
 
 Then you run:
 ```bash
-git commit -m "FIX(validation): Reject invalid purchase tokens in STRICT mode [bd:hiha-abc]
+git commit -m "FIX(validation): Reject invalid purchase tokens in STRICT mode
 
 - Add token format validation to reject obviously fake tokens
 - Tokens containing \"invalid\", \"not-a-valid\" keywords are rejected
@@ -107,37 +103,27 @@ The agent analyzes:
 
 When invoked, the agent MUST:
 
-1. **Check for existing beads task**
-   - Run `bd list` to see all tasks
-   - If a task exists for this work, note its ID (e.g., `hiha-abc`)
-   - If NO task exists, **create one** before proceeding:
-     ```bash
-     bd create "Brief title" --description="Why this work exists and what needs to be done"
-     ```
-   - Use the created task ID in the commit message
-
-2. **Run git diff** in the current working directory
+1. **Run git diff** in the current working directory
    - Use `git diff` for unstaged changes (default)
    - Use `git diff --cached` if user requests staged changes
    - Use `git show <hash>` if user specifies a commit
 
-3. **Analyze the diff** to determine:
+2. **Analyze the diff** to determine:
    - Type (FEAT, FIX, REFACTOR, etc.)
    - Scope (affected module/component)
    - Files changed
    - Semantic meaning of changes
 
-4. **Generate message** following format:
+3. **Generate message** following format:
    ```
-   <TYPE> (<SCOPE>): <SHORT_DESCRIPTION> [bd:<TASK_ID>]
+   <TYPE> (<SCOPE>): <SHORT_DESCRIPTION>
    
    <BULLET_POINT_DETAILS>
    
    <OPTIONAL_FOOTER>
    ```
-   - Always include the beads task ID in `[bd:<TASK_ID>]` format at the end of the subject line
 
-5. **Return ONLY the message text** (nothing else)
+4. **Return ONLY the message text** (nothing else)
    - No explanations
    - No instructions
    - No analysis output
