@@ -33,8 +33,7 @@ PROVIDER="$PROVIDER"
 
 # Defaults
 EMAIL=""
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+DB_URL="$BRIDGE_DB_URL"
 REPLAY_OTP=false
 REPLAY_FIXTURE=""
 MOCK_GOOGLE_PURCHASE_RESPONSE=""
@@ -112,14 +111,14 @@ echo ""
 echo -e "${YELLOW}[2/7] Cleaning up previous test data${NC}"
 
 CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
 echo ""
 
 # Step 3: Call /api/v1/verify-purchase endpoint
 echo -e "${YELLOW}[3/7] Calling /api/v1/verify-purchase${NC}"
 
-echo "  POST $APP_URL/api/v1/verify-purchase"
+echo "  POST $BRIDGE_API_URL/api/v1/verify-purchase"
 echo "  Provider: $PROVIDER"
 echo "  Product ID: $PRODUCT_ID"
 echo "  Token: $DUMMY_TOKEN (purchaseState: 0 = PURCHASED)"
@@ -135,9 +134,9 @@ if [[ "$REPLAY_OTP" == "true" ]]; then
 fi
 
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/api/v1/verify-purchase" \
+  "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
-   \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
    \
   "${EXTRA_HEADERS[@]}" \
   -d "{
@@ -177,7 +176,7 @@ echo "Query:"
 echo "  $DB_QUERY"
 echo ""
 
-SUB_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ' || echo "error")
+SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ' || echo "error")
 
 if [[ "$SUB_COUNT" != "0" ]]; then
     echo -e "${RED}✗ Expected 0 subscription records for OTP, got $SUB_COUNT${NC}"
@@ -196,7 +195,7 @@ echo "Query:"
 echo "  $PAYMENT_QUERY"
 echo ""
 
-PAYMENT_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null || echo "")
+PAYMENT_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null || echo "")
 
 if [[ -z "$PAYMENT_RESULT" || "$PAYMENT_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${RED}✗ No payment record found in pay.payments table${NC}"
@@ -226,7 +225,7 @@ echo "Query:"
 echo "  $ACK_QUERY"
 echo ""
 
-ACK_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$ACK_QUERY" -t 2>/dev/null || echo "")
+ACK_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$ACK_QUERY" -t 2>/dev/null || echo "")
 
 if [[ -z "$ACK_RESULT" || "$ACK_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${RED}✗ Expected payment acknowledgment in pay.payments table for token: $DUMMY_TOKEN${NC}"
