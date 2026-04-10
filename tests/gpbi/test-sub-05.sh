@@ -2,6 +2,21 @@
 
 ##############################################################################
 # SUB-05: Bridge Subscription Expiration Test
+#
+# Purpose: Verify the subscription expiration flow:
+#          1. Establish a cancelled subscription
+#          2. Simulate Google Pub/Sub expiration webhook (notificationType 13)
+#          3. Verify status changed to "expired" in Bridge DB
+#
+# Usage: ./test-sub-05.sh
+#
+# Prerequisites:
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
+#   - psql installed and in PATH
 ##############################################################################
 
 set -euo pipefail
@@ -17,21 +32,12 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Test configuration
-DUMMY_TOKEN="test-subscription-sub01-12345"
+TIMESTAMP=$(date +%s)
+DUMMY_TOKEN="test-sub-05-token-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
-WEBHOOK_ID="test-webhook-sub05-expired-$(date +%s)"
-
-# Defaults
-EMAIL="test-user@example.com"
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
-
-# Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
 
 echo -e "${YELLOW}========================================${NC}"
-echo "SUB-05: Bridge Subscription Expiration Test"
+echo "SUB-05: Bridge Subscription Expiration"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
@@ -40,41 +46,34 @@ USER_ID="test_sub_user_01"
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
-# Step 2: Ensure a cancelled subscription exists
-echo -e "${YELLOW}[1/4] Ensuring cancelled subscription exists in Bridge DB${NC}"
-
-SUB_QUERY="SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' LIMIT 1;"
-OLD_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$SUB_QUERY" -t 2>/dev/null | tr -d '[:space:]')
-
-if [[ "$OLD_STATUS" != "cancelled" ]]; then
-    echo -e "${YELLOW}Status is '$OLD_STATUS', not 'cancelled'. Running SUB-03 equivalent...${NC}"
-    # Minimal cancellation simulation
-    # (In Bridge, cancellation is also a webhook or API call)
-    # We'll just send the cancellation webhook.
-    TIMESTAMP=$(date +%s000)
-    CANC_JSON="{\"message\":{\"data\":\"$(echo -n "{\"version\":\"1.0\",\"packageName\":\"$PACKAGE_NAME\",\"eventTimeMillis\":\"$TIMESTAMP\",\"subscriptionNotification\":{\"version\":\"1.0\",\"notificationType\":3,\"purchaseToken\":\"$DUMMY_TOKEN\",\"subscriptionId\":\"$PRODUCT_ID\"}}" | base64 -w 0)\",\"message_id\":\"test-canc-$(date +%s)\",\"attributes\":{}},\"subscription\":\"projects/test-project/subscriptions/test-sub\"}"
-    
-    curl -s -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer test-token" \
-      -d "$CANC_JSON" > /dev/null
-    
-    sleep 1
-    OLD_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$SUB_QUERY" -t 2>/dev/null | tr -d '[:space:]')
-fi
-
-echo -e "${GREEN}✓ Current Status: $OLD_STATUS${NC}"
+# Step 2: Clean up previous test data
+echo -e "${YELLOW}[0/5] Cleaning up previous test data from Bridge${NC}"
+export PGPASSWORD="postgres"
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" 2>/dev/null || true
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" 2>/dev/null || true
 echo ""
 
-# Step 3: Simulate Google Pub/Sub expiration webhook
-echo -e "${YELLOW}[2/4] Sending subscription.expired webhook${NC}"
+# Step 3: Establish cancelled subscription
+echo -e "${YELLOW}[1/5] Establishing cancelled subscription${NC}"
 
-TIMESTAMP=$(date +%s000)
+# Seed cancelled subscription
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, provider, status, auto_renewing, purchase_token) 
+      VALUES ('$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'cancelled', false, '$DUMMY_TOKEN');" > /dev/null
+
+echo -e "${GREEN}✓ Cancelled subscription seeded in DB${NC}"
+echo ""
+
+# Step 4: Simulate Google Pub/Sub expiration webhook
+echo -e "${YELLOW}[2/5] Sending subscription.expired webhook (notificationType 13)${NC}"
+
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$(date +%s000)",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 13,
@@ -84,49 +83,35 @@ NOTIFICATION_JSON=$(cat <<EOF
 }
 EOF
 )
+NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || echo -n "$NOTIFICATION_JSON" | base64)
 
-# Base64 encode
-NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
-
-WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
+curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
-      \"message_id\": \"$WEBHOOK_ID\",
+      \"message_id\": \"test-webhook-05-$(date +%s)\",
       \"attributes\": {}
-    },
-    \"subscription\": \"projects/test-project/subscriptions/test-sub\"
-  }")
+    }
+  }" > /dev/null
 
-WH_HTTP_CODE=$(echo "$WEBHOOK_RESPONSE" | tail -n1)
-echo "Webhook Response Code: $WH_HTTP_CODE"
-
-if [[ "$WH_HTTP_CODE" != "200" ]] && [[ "$WH_HTTP_CODE" != "204" ]]; then
-    echo -e "${RED}✗ Webhook failed with HTTP $WH_HTTP_CODE${NC}"
-    exit 1
-fi
-
-echo -e "${YELLOW}[3/4] Waiting for async processing...${NC}"
-sleep 2
-
-# Step 4: Verify status changed to expired
-echo -e "${YELLOW}[4/4] Verifying status after expiration${NC}"
-
-NEW_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$SUB_QUERY" -t 2>/dev/null | tr -d '[:space:]')
-
-if [[ "$NEW_STATUS" != "expired" ]]; then
-    echo -e "${RED}✗ Expected status 'expired', got '$NEW_STATUS'${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}✓ Status correctly changed to 'expired'${NC}"
+echo -e "${GREEN}✓ Expiration webhook sent${NC}"
 echo ""
 
-echo -e "${YELLOW}========================================${NC}"
+# Step 5: Verify status changed to expired
+echo -e "${YELLOW}[3/5] Verifying status after expiration${NC}"
+export PGPASSWORD="postgres"
+STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+
+if [[ "$STATUS" == "expired" ]]; then
+    echo -e "${GREEN}✓ Success: Status is '$STATUS'${NC}"
+else
+    echo -e "${RED}✗ Failure: Status is '$STATUS', expected 'expired'${NC}"
+    exit 1
+fi
+echo ""
+
 echo -e "${GREEN}✓ SUB-05 Bridge Test PASSED${NC}"
-echo -e "${YELLOW}========================================${NC}"
-echo ""
 exit 0

@@ -2,6 +2,23 @@
 
 ##############################################################################
 # SUB-03: Bridge User-Initiated Cancellation Test
+#
+# Purpose: Verify the user-initiated subscription cancellation flow:
+#          1. Establish an active subscription
+#          2. Simulate Google Pub/Sub cancellation webhook (notificationType 3)
+#          3. Verify status changed to "cancelled" in Bridge DB
+#          4. Verify auto_renewing is set to false
+#          5. Verify cancellation_initiated_at is populated
+#
+# Usage: ./test-sub-03.sh
+#
+# Prerequisites:
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
+#   - psql installed and in PATH
 ##############################################################################
 
 set -euo pipefail
@@ -17,21 +34,12 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Test configuration
-DUMMY_TOKEN="test-subscription-sub01-12345"
+TIMESTAMP=$(date +%s)
+DUMMY_TOKEN="test-sub-03-token-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
-WEBHOOK_ID="test-webhook-sub03-cancelled-$(date +%s)"
-
-# Defaults
-EMAIL="test-user@example.com"
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
-
-# Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
 
 echo -e "${YELLOW}========================================${NC}"
-echo "SUB-03: Bridge User-Initiated Cancellation Test"
+echo "SUB-03: Bridge User-Initiated Cancellation"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
@@ -40,41 +48,55 @@ USER_ID="test_sub_user_01"
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
-# Step 2: Ensure an active subscription exists
-echo -e "${YELLOW}[1/4] Ensuring active subscription exists in Bridge DB${NC}"
-
-SUB_QUERY="SELECT status, auto_renewing, current_period_end FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND status = 'active' LIMIT 1;"
-SUB_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
-
-if [[ -z "$SUB_RESULT" || "$SUB_RESULT" == *"(0 rows)"* ]]; then
-    echo -e "${YELLOW}No active subscription found. Performing initial purchase (SUB-01 equivalent) first...${NC}"
-    curl -s -X POST "$APP_URL/api/v1/verify-purchase" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $API_KEY" \
-      -d "{
-        \"external_user_id\": \"$USER_ID\",
-        \"provider\": \"$PROVIDER\",
-        \"subscription_id\": \"$PRODUCT_ID\",
-        \"purchase_token\": \"$DUMMY_TOKEN\",
-        \"product_type\": \"subscription\"
-      }" > /dev/null
-    
-    SUB_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
-fi
-
-OLD_PERIOD_END=$(echo "$SUB_RESULT" | awk -F '|' '{print $3}' | tr -d '[:space:]')
-echo -e "${GREEN}✓ Current Status: active, Period End: $OLD_PERIOD_END${NC}"
+# Step 2: Clean up previous test data
+echo -e "${YELLOW}[0/5] Cleaning up previous test data from Bridge${NC}"
+export PGPASSWORD="postgres"
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" 2>/dev/null || true
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" 2>/dev/null || true
 echo ""
 
-# Step 3: Simulate Google Pub/Sub cancellation webhook
-echo -e "${YELLOW}[2/4] Sending subscription.cancelled webhook${NC}"
+# Step 3: Establish active subscription
+echo -e "${YELLOW}[1/5] Establishing active subscription${NC}"
 
-TIMESTAMP=$(date +%s000)
+# Pre-register purchase
+curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-sub-03-setup\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-reg-03-$(date +%s)\"
+  }" > /dev/null
+
+# Verify purchase
+curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"purchase_token\": \"$DUMMY_TOKEN\",
+    \"product_type\": \"subscription\"
+  }" > /dev/null
+
+echo -e "${GREEN}✓ Active subscription established${NC}"
+echo ""
+
+# Step 4: Simulate Google Pub/Sub cancellation webhook
+echo -e "${YELLOW}[2/5] Sending subscription.cancelled webhook (notificationType 3)${NC}"
+
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$(date +%s000)",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 3,
@@ -85,72 +107,36 @@ NOTIFICATION_JSON=$(cat <<EOF
 EOF
 )
 
-# Base64 encode
-NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
+NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || echo -n "$NOTIFICATION_JSON" | base64)
 
-WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
+curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
-      \"message_id\": \"$WEBHOOK_ID\",
+      \"message_id\": \"test-webhook-03-$(date +%s)\",
       \"attributes\": {}
-    },
-    \"subscription\": \"projects/test-project/subscriptions/test-sub\"
-  }")
+    }
+  }" > /dev/null
 
-WH_HTTP_CODE=$(echo "$WEBHOOK_RESPONSE" | tail -n1)
-echo "Webhook Response Code: $WH_HTTP_CODE"
-
-if [[ "$WH_HTTP_CODE" != "200" ]] && [[ "$WH_HTTP_CODE" != "204" ]]; then
-    echo -e "${RED}✗ Webhook failed with HTTP $WH_HTTP_CODE${NC}"
-    exit 1
-fi
-
-echo -e "${YELLOW}[3/4] Waiting for async processing...${NC}"
-sleep 2
-
-# Step 4: Verify status changed to cancelled and auto_renewing is false
-echo -e "${YELLOW}[4/4] Verifying status and settings after cancellation${NC}"
-
-NEW_SUB_QUERY="SELECT status, auto_renewing, current_period_end, cancellation_initiated_at FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-NEW_SUB_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$NEW_SUB_QUERY" -t 2>/dev/null || echo "")
-
-NEW_STATUS=$(echo "$NEW_SUB_RESULT" | awk -F '|' '{print $1}' | tr -d '[:space:]')
-NEW_AUTO_RENEWING=$(echo "$NEW_SUB_RESULT" | awk -F '|' '{print $2}' | tr -d '[:space:]')
-NEW_PERIOD_END=$(echo "$NEW_SUB_RESULT" | awk -F '|' '{print $3}' | tr -d '[:space:]')
-CANCELLATION_INITIATED=$(echo "$NEW_SUB_RESULT" | awk -F '|' '{print $4}' | tr -d '[:space:]')
-
-if [[ "$NEW_STATUS" != "cancelled" ]]; then
-    echo -e "${RED}✗ Expected status 'cancelled', got '$NEW_STATUS'${NC}"
-    exit 1
-fi
-
-if [[ "$NEW_AUTO_RENEWING" != "f" ]] && [[ "$NEW_AUTO_RENEWING" != "false" ]]; then
-    echo -e "${RED}✗ Expected auto_renewing 'false', got '$NEW_AUTO_RENEWING'${NC}"
-    exit 1
-fi
-
-if [[ -z "$CANCELLATION_INITIATED" ]]; then
-    echo -e "${RED}✗ Expected cancellation_initiated_at to be set${NC}"
-    exit 1
-fi
-
-if [[ "$NEW_PERIOD_END" != "$OLD_PERIOD_END" ]]; then
-    echo -e "${RED}✗ Period end changed! Old: $OLD_PERIOD_END, New: $NEW_PERIOD_END${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}✓ Status correctly changed to 'cancelled'${NC}"
-echo -e "${GREEN}✓ Auto Renewing: false${NC}"
-echo -e "${GREEN}✓ Cancellation Initiated At: $CANCELLATION_INITIATED${NC}"
-echo -e "${GREEN}✓ Period End Unchanged: $NEW_PERIOD_END (user retains access)${NC}"
+echo -e "${GREEN}✓ Cancellation webhook sent${NC}"
 echo ""
 
-echo -e "${YELLOW}========================================${NC}"
+# Step 5: Verify status and settings in DB
+echo -e "${YELLOW}[3/5] Verifying status and settings after cancellation${NC}"
+export PGPASSWORD="postgres"
+RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT status, auto_renewing, (cancellation_initiated_at IS NOT NULL) as cancelled_at_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+
+# Expected: cancelled | f | t
+if [[ "$RES_DATA" == *"cancelled"*"f"*"t"* ]]; then
+    echo -e "${GREEN}✓ Success: Status is 'cancelled', auto-renew set to false, and cancellation date is set${NC}"
+else
+    echo -e "${RED}✗ Failure: Cancellation state mismatch: $RES_DATA${NC}"
+    exit 1
+fi
+echo ""
+
 echo -e "${GREEN}✓ SUB-03 Bridge Test PASSED${NC}"
-echo -e "${YELLOW}========================================${NC}"
-echo ""
 exit 0

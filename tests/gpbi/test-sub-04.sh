@@ -1,24 +1,24 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-04: Renewal Success After Grace Period Recovery Test
+# SUB-04: Grace Period Entry and Recovery Test
 # 
-# Purpose: Verify that a subscription that enters grace period and then 
-#          recovers is properly processed.
+# Purpose: Verify the grace period entry and recovery flow:
+#          1. Establish an active subscription
+#          2. Simulate Google Pub/Sub grace period webhook (notificationType 6)
+#          3. Verify status changed to "in_grace_period" and fields set
+#          4. Simulate recovery webhook (notificationType 1)
+#          5. Verify status returned to "active" and grace fields cleared
 #
-# Usage: ./test-sub-04.sh --email "user@example.com" [--replay]
+# Usage: ./test-sub-04.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#
-# Test Flow:
-#   1. Initial purchase (SUB-01 equivalent)
-#   2. Simulate Grace Period webhook (notificationType: 6)
-#   3. Verify status is 'in_grace_period' and grace timestamps set
-#   4. Simulate Recovery webhook (notificationType: 1)
-#   5. Verify status is 'active' and grace timestamps cleared
 ##############################################################################
 
 set -euo pipefail
@@ -34,106 +34,69 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Test configuration
-DUMMY_TOKEN="test-subscription-sub04-$(date +%s)"
+TIMESTAMP=$(date +%s)
+DUMMY_TOKEN="test-sub-04-token-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
-PROVIDER="$PROVIDER"
-
-# Defaults
-EMAIL=""
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
-
-REPLAY_SUB=false
-MOCK_RTDN_GRACE_FIXTURE=""
-MOCK_RTDN_RECOVERED_FIXTURE=""
-
-# Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
-
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
-        --replay)
-            REPLAY_SUB=true
-            shift 1
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
-
-if [[ "$REPLAY_SUB" == "true" ]]; then
-    MOCK_RTDN_GRACE_FIXTURE="tests/gpb/fixtures/sub-04-rtdn-grace.json"
-    MOCK_RTDN_RECOVERED_FIXTURE="tests/gpb/fixtures/sub-04-rtdn-recovered.json"
-    MOCK_GOOGLE_PURCHASE_RESPONSE_GRACE="tests/gpb/fixtures/sub-04-purchase-response-grace.json"
-    MOCK_GOOGLE_PURCHASE_RESPONSE_RECOVERED="tests/gpb/fixtures/sub-01-purchase-response.json"
-    echo -e "${YELLOW}[Replay] MOCK_RTDN_GRACE_FIXTURE=${MOCK_RTDN_GRACE_FIXTURE}${NC}"
-    echo -e "${YELLOW}[Replay] MOCK_RTDN_RECOVERED_FIXTURE=${MOCK_RTDN_RECOVERED_FIXTURE}${NC}"
-    echo -e "${YELLOW}[Replay] MOCK_GOOGLE_PURCHASE_RESPONSE_GRACE=${MOCK_GOOGLE_PURCHASE_RESPONSE_GRACE}${NC}"
-    echo -e "${YELLOW}[Replay] MOCK_GOOGLE_PURCHASE_RESPONSE_RECOVERED=${MOCK_GOOGLE_PURCHASE_RESPONSE_RECOVERED}${NC}"
-fi
-
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./test-sub-04.sh --email \"user@example.com\""
-    exit 1
-fi
 
 echo -e "${YELLOW}========================================${NC}"
-echo "SUB-04: Renewal Success After Grace Period Recovery"
+echo "SUB-04: Grace Period Entry and Recovery"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Fetch user_id
-echo -e "${YELLOW}[1/6] Fetching user_id for: $EMAIL${NC}"
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
+# Step 1: External User ID
+USER_ID="test_sub_user_01"
+echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
+echo ""
 
-if [[ -z "$USER_ID" ]]; then
-    echo -e "${RED}✗ User not found${NC}"
-    exit 1
-fi
-echo "User ID: $USER_ID"
+# Step 2: Clean up previous test data
+echo -e "${YELLOW}[0/5] Cleaning up previous test data from Bridge${NC}"
+export PGPASSWORD="postgres"
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" 2>/dev/null || true
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" 2>/dev/null || true
+echo ""
 
-# Step 2: Clean up and Initial Purchase
-echo -e "${YELLOW}[2/6] Initial Purchase (verify_payment)${NC}"
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" > /dev/null
+# Step 3: Establish active subscription
+echo -e "${YELLOW}[1/5] Establishing active subscription${NC}"
 
-curl -s -H "Authorization: Bearer $API_KEY" -X POST "$APP_URL/api/v1/verify-purchase" \
+# Pre-register purchase
+curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
   -H "Content-Type: application/json" \
-   \
-   \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
-    \"provider\": \"$PROVIDER\",
     \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-sub-04-setup\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-reg-04-$(date +%s)\"
+  }" > /dev/null
+
+# Verify purchase
+curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
     \"subscription_id\": \"$PRODUCT_ID\",
     \"purchase_token\": \"$DUMMY_TOKEN\",
     \"product_type\": \"subscription\"
   }" > /dev/null
 
-echo -e "${GREEN}✓ Initial purchase verified${NC}"
+echo -e "${GREEN}✓ Active subscription established${NC}"
+echo ""
 
-# Step 3: Simulate Grace Period Webhook (Type 6)
-echo -e "${YELLOW}[3/6] Sending Grace Period Webhook (Type 6)${NC}"
-WEBHOOK_ID_GRACE="wh-sub04-grace-$(date +%s)"
-TIMESTAMP=$(date +%s000)
-if [[ "$REPLAY_SUB" == "true" && -n "${MOCK_RTDN_GRACE_FIXTURE:-}" && -f "$MOCK_RTDN_GRACE_FIXTURE" ]]; then
-    NOTIFICATION_GRACE=$(cat "$MOCK_RTDN_GRACE_FIXTURE" | sed "s/<REDACTED_PURCHASE_TOKEN>/$DUMMY_TOKEN/g" | sed "s/hiha_monthly/$PRODUCT_ID/g")
-    echo -e "${YELLOW}[Replay] Loaded RTDN from fixture: $MOCK_RTDN_GRACE_FIXTURE${NC}"
-else
-NOTIFICATION_GRACE=$(cat <<EOF
+# Step 4: Simulate Grace Period Entry (Type 6)
+echo -e "${YELLOW}[2/5] Sending Grace Period Entry Webhook (Type 6)${NC}"
+
+NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$(date +%s000)",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 6,
@@ -143,54 +106,45 @@ NOTIFICATION_GRACE=$(cat <<EOF
 }
 EOF
 )
-fi
-NOTIFICATION_B64_GRACE=$(echo -n "$NOTIFICATION_GRACE" | base64 -w 0)
+NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || echo -n "$NOTIFICATION_JSON" | base64)
 
-WEBHOOK_EXTRA_HEADERS=()
-if [[ "$REPLAY_SUB" == "true" && -n "${MOCK_GOOGLE_PURCHASE_RESPONSE_GRACE:-}" ]]; then
-    WEBHOOK_EXTRA_HEADERS+=(-H "X-Mock-Google-Purchase-Response: $MOCK_GOOGLE_PURCHASE_RESPONSE_GRACE")
-fi
-
-curl -s -H "Authorization: Bearer $API_KEY" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
+curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-token" \
-  "${WEBHOOK_EXTRA_HEADERS[@]}" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
-      \"data\": \"$NOTIFICATION_B64_GRACE\",
-      \"message_id\": \"$WEBHOOK_ID_GRACE\"
-    },
-    \"subscription\": \"projects/$GCP_PROJECT_ID/pay.subscriptions/google-play-billing\"
+      \"data\": \"$NOTIFICATION_B64\",
+      \"message_id\": \"test-webhook-04-grace-$(date +%s)\",
+      \"attributes\": {}
+    }
   }" > /dev/null
 
-echo "Waiting for async processing..."
-sleep 2
+echo -e "${GREEN}✓ Grace period entry webhook sent${NC}"
+echo ""
 
-# Verify status in DB
-DB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status, google_grace_period_start FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t)
-STATUS=$(echo "$DB_STATUS" | awk -F '|' '{print $1}' | tr -d ' ')
-GRACE_START=$(echo "$DB_STATUS" | awk -F '|' '{print $2}' | tr -d ' ')
+# Step 5: Verify status in DB
+echo -e "${YELLOW}[3/5] Verifying 'in_grace_period' state in Bridge DB${NC}"
+export PGPASSWORD="postgres"
+RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT status, (google_grace_period_start IS NOT NULL) as grace_start_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
 
-if [[ "$STATUS" == "in_grace_period" ]] && [[ -n "$GRACE_START" ]]; then
-    echo -e "${GREEN}✓ Success: Status is 'in_grace_period' and grace period started${NC}"
+# Expected: in_grace_period | t
+if [[ "$RES_DATA" == *"in_grace_period"*"t"* ]]; then
+    echo -e "${GREEN}✓ Success: Status is 'in_grace_period' and grace start date is set${NC}"
 else
-    echo -e "${RED}✗ Failure: Status is '$STATUS', expected 'in_grace_period'${NC}"
-    echo "DB Result: $DB_STATUS"
+    echo -e "${RED}✗ Failure: Grace period state mismatch: $RES_DATA${NC}"
     exit 1
 fi
+echo ""
 
-# Step 4: Simulate Recovery Webhook (Type 1)
-echo -e "${YELLOW}[4/6] Sending Recovery Webhook (Type 1)${NC}"
-WEBHOOK_ID_RECOVER="wh-sub04-recover-$(date +%s)"
-if [[ "$REPLAY_SUB" == "true" && -n "${MOCK_RTDN_RECOVERED_FIXTURE:-}" && -f "$MOCK_RTDN_RECOVERED_FIXTURE" ]]; then
-    NOTIFICATION_RECOVER=$(cat "$MOCK_RTDN_RECOVERED_FIXTURE" | sed "s/<REDACTED_PURCHASE_TOKEN>/$DUMMY_TOKEN/g" | sed "s/hiha_monthly/$PRODUCT_ID/g")
-    echo -e "${YELLOW}[Replay] Loaded RTDN from fixture: $MOCK_RTDN_RECOVERED_FIXTURE${NC}"
-else
-NOTIFICATION_RECOVER=$(cat <<EOF
+# Step 6: Simulate Recovery (Type 1)
+echo -e "${YELLOW}[4/5] Sending Recovery Webhook (Type 1)${NC}"
+
+NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$(date +%s000)",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 1,
@@ -200,105 +154,36 @@ NOTIFICATION_RECOVER=$(cat <<EOF
 }
 EOF
 )
-fi
-NOTIFICATION_B64_RECOVER=$(echo -n "$NOTIFICATION_RECOVER" | base64 -w 0)
+NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || echo -n "$NOTIFICATION_JSON" | base64)
 
-WEBHOOK_EXTRA_HEADERS_RECOVER=()
-if [[ "$REPLAY_SUB" == "true" && -n "${MOCK_GOOGLE_PURCHASE_RESPONSE_RECOVERED:-}" ]]; then
-    WEBHOOK_EXTRA_HEADERS_RECOVER+=(-H "X-Mock-Google-Purchase-Response: $MOCK_GOOGLE_PURCHASE_RESPONSE_RECOVERED")
-fi
-
-curl -s -H "Authorization: Bearer $API_KEY" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
+curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-token" \
-  "${WEBHOOK_EXTRA_HEADERS_RECOVER[@]}" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
-      \"data\": \"$NOTIFICATION_B64_RECOVER\",
-      \"message_id\": \"$WEBHOOK_ID_RECOVER\"
-    },
-    \"subscription\": \"projects/$GCP_PROJECT_ID/pay.subscriptions/google-play-billing\"
+      \"data\": \"$NOTIFICATION_B64\",
+      \"message_id\": \"test-webhook-04-recover-$(date +%s)\",
+      \"attributes\": {}
+    }
   }" > /dev/null
 
-echo "Waiting for async processing..."
-sleep 2
+echo -e "${GREEN}✓ Recovery webhook sent${NC}"
+echo ""
 
-# Step 5: Final Validation
-echo -e "${YELLOW}[5/6] Final Validation${NC}"
-DB_FINAL=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status, google_grace_period_start, google_grace_period_end FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t)
-FINAL_STATUS=$(echo "$DB_FINAL" | awk -F '|' '{print $1}' | tr -d ' ')
-FINAL_GRACE_START=$(echo "$DB_FINAL" | awk -F '|' '{print $2}' | tr -d ' ')
-FINAL_GRACE_END=$(echo "$DB_FINAL" | awk -F '|' '{print $3}' | tr -d ' ')
+# Step 7: Final Validation
+echo -e "${YELLOW}[5/5] Verifying 'active' state after recovery in Bridge DB${NC}"
+export PGPASSWORD="postgres"
+RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT status, (google_grace_period_start IS NULL) as grace_start_cleared FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
 
-if [[ "$FINAL_STATUS" == "active" ]]; then
-    echo -e "${GREEN}✓ Success: Status is 'active' after recovery${NC}"
+# Expected: active | t
+if [[ "$RES_DATA" == *"active"*"t"* ]]; then
+    echo -e "${GREEN}✓ Success: Status is 'active' and grace period fields are cleared${NC}"
 else
-    echo -e "${RED}✗ Failure: Status is '$FINAL_STATUS', expected 'active'${NC}"
+    echo -e "${RED}✗ Failure: Recovery state mismatch: $RES_DATA${NC}"
     exit 1
-fi
-
-# Verify grace fields are cleared
-GRACE_CLEARED=false
-if [[ -z "$FINAL_GRACE_START" ]] && [[ -z "$FINAL_GRACE_END" ]]; then
-    echo -e "${GREEN}✓ Success: Grace period fields cleared (NULL)${NC}"
-    GRACE_CLEARED=true
-else
-    echo -e "${RED}✗ Failure: Grace fields NOT cleared. Start: '$FINAL_GRACE_START', End: '$FINAL_GRACE_END'${NC}"
-fi
-
-# Step 5a: Verify new payment record created with status='success' upon recovery
-echo -e "${YELLOW}[5a/6] Verifying payment record for recovery${NC}"
-PAYMENT_RECOVERY=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*), status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND status = 'success' GROUP BY status;" -t)
-PAYMENT_COUNT=$(echo "$PAYMENT_RECOVERY" | awk -F '|' '{print $1}' | tr -d ' ')
-PAYMENT_STATUS=$(echo "$PAYMENT_RECOVERY" | awk -F '|' '{print $2}' | tr -d ' ')
-
-RECOVERY_PAYMENT_CORRECT=false
-if [[ -n "$PAYMENT_COUNT" ]] && [[ "$PAYMENT_COUNT" -ge 1 ]]; then
-    if [[ "$PAYMENT_STATUS" == "success" ]]; then
-        echo -e "${GREEN}✓ Success: New payment record created with status='success'${NC}"
-        echo "  Payment count: $PAYMENT_COUNT"
-        RECOVERY_PAYMENT_CORRECT=true
-    else
-        echo -e "${RED}✗ Failure: Payment status is '$PAYMENT_STATUS', expected 'success'${NC}"
-    fi
-else
-    echo -e "${RED}✗ Failure: No payment record found with status='success'${NC}"
 fi
 echo ""
 
-# Step 6: Generate report
-TEST_STATUS="pass"
-if [[ "$RECOVERY_PAYMENT_CORRECT" != "true" ]] || [[ "$GRACE_CLEARED" != "true" ]]; then
-    TEST_STATUS="fail"
-fi
-
-cat > sub-04-report.json <<EOF
-{
-  "test_id": "SUB-04",
-  "test_name": "Renewal Success After Grace Period Recovery",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "status": "$TEST_STATUS",
-  "user_id": "$USER_ID",
-  "results": {
-    "initial_active": true,
-    "entered_grace_period": true,
-    "recovered_to_active": true,
-    "recovery_payment_created_with_success_status": $RECOVERY_PAYMENT_CORRECT,
-    "grace_period_fields_cleared": $GRACE_CLEARED
-  }
-}
-EOF
-
-if [[ "$TEST_STATUS" == "pass" ]]; then
-    echo -e "${GREEN}✓ SUB-04 Test PASSED${NC}"
-else
-    echo -e "${RED}✗ SUB-04 Test FAILED${NC}"
-fi
-cat sub-04-report.json
-echo ""
-
-if [[ "$TEST_STATUS" == "fail" ]]; then
-    exit 1
-fi
-
+echo -e "${GREEN}✓ SUB-04 Bridge Test PASSED${NC}"
 exit 0

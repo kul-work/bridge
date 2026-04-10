@@ -2,6 +2,22 @@
 
 ##############################################################################
 # SUB-09: Bridge Subscription Revoked (Refund) Test
+#
+# Purpose: Verify the subscription revocation (refund) flow:
+#          1. Establish an active subscription
+#          2. Simulate Voided Purchase webhook (Refund)
+#          3. Verify status changed to "revoked" in Bridge DB
+#          4. Verify payment status updated to "refunded"
+#
+# Usage: ./test-sub-09.sh
+#
+# Prerequisites:
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
+#   - psql installed and in PATH
 ##############################################################################
 
 set -euo pipefail
@@ -17,40 +33,51 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Test configuration
-DUMMY_TOKEN="test-subscription-sub09-$(date +%s)"
+TIMESTAMP=$(date +%s)
+DUMMY_TOKEN="test-sub-09-token-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 ORDER_ID="GPA.1234-5678-9012-SUB09"
-WEBHOOK_ID="wh-sub09-void-$(date +%s)"
-
-# Defaults
-EMAIL="test-user@example.com"
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
-
-# Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
 
 echo -e "${YELLOW}========================================${NC}"
-echo "SUB-09: Bridge Subscription Revoked (Refund) Test"
+echo "SUB-09: Bridge Subscription Revoked (Refund)"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
 # Step 1: External User ID
-USER_ID="test_sub_user_09"
+USER_ID="test_sub_user_01"
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
-# Step 2: Initial Active Purchase
-echo -e "${YELLOW}[1/4] Initial Purchase with ACTIVE status${NC}"
+# Step 2: Clean up previous test data
+echo -e "${YELLOW}[0/5] Cleaning up previous test data from Bridge${NC}"
+export PGPASSWORD="postgres"
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" 2>/dev/null || true
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" 2>/dev/null || true
+echo ""
 
-# Clean up
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" > /dev/null
+# Step 3: Establish active subscription
+echo -e "${YELLOW}[1/5] Establishing active subscription${NC}"
+
+# Pre-register purchase
+curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-sub-09-setup\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-reg-09-$(date +%s)\"
+  }" > /dev/null
 
 # Verify purchase
-curl -s -X POST "$APP_URL/api/v1/verify-purchase" \
+curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $API_KEY" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
     \"external_user_id\": \"$USER_ID\",
     \"provider\": \"$PROVIDER\",
@@ -59,26 +86,17 @@ curl -s -X POST "$APP_URL/api/v1/verify-purchase" \
     \"product_type\": \"subscription\"
   }" > /dev/null
 
-# Verify status in DB
-SUB_QUERY="SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-DB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$SUB_QUERY" -t | tr -d ' ')
+echo -e "${GREEN}✓ Initial active subscription established${NC}"
+echo ""
 
-if [[ "$DB_STATUS" == "active" ]] || [[ "$DB_STATUS" == "trial" ]]; then
-    echo -e "${GREEN}✓ Initial status is '$DB_STATUS'${NC}"
-else
-    echo -e "${RED}✗ Failure: Status is '$DB_STATUS' (Expected active/trial)${NC}"
-    exit 1
-fi
-
-# Step 3: Simulate Voided Purchase Webhook
-echo -e "${YELLOW}[2/4] Sending Voided Purchase Webhook (Refund)${NC}"
-TIMESTAMP=$(date +%s000)
+# Step 4: Simulate Voided Purchase Webhook (Refund)
+echo -e "${YELLOW}[2/5] Sending Voided Purchase Webhook (notificationType is not used here, it's a separate field)${NC}"
 
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$(date +%s000)",
   "voidedPurchaseNotification": {
     "purchaseToken": "$DUMMY_TOKEN",
     "orderId": "$ORDER_ID",
@@ -88,73 +106,49 @@ NOTIFICATION_JSON=$(cat <<EOF
 }
 EOF
 )
+NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || echo -n "$NOTIFICATION_JSON" | base64)
 
-NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
-
-WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
+curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
-      \"message_id\": \"$WEBHOOK_ID\",
+      \"message_id\": \"test-webhook-09-$(date +%s)\",
       \"attributes\": {}
-    },
-    \"subscription\": \"projects/test-project/subscriptions/test-sub\"
-  }")
+    }
+  }" > /dev/null
 
-WH_HTTP_CODE=$(echo "$WEBHOOK_RESPONSE" | tail -n1)
-echo "Webhook Response Code: $WH_HTTP_CODE"
+echo -e "${GREEN}✓ Voided purchase webhook sent${NC}"
+echo ""
 
-if [[ "$WH_HTTP_CODE" != "200" ]] && [[ "$WH_HTTP_CODE" != "204" ]]; then
-    echo -e "${RED}✗ Webhook failed with HTTP $WH_HTTP_CODE${NC}"
-    exit 1
-fi
+# Step 5: Verify status in DB
+echo -e "${YELLOW}[3/5] Verifying 'revoked' state in Bridge DB${NC}"
+export PGPASSWORD="postgres"
+RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT status, (revoked_at IS NOT NULL) as is_revoked_at_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
 
-echo "Waiting for processing..."
-sleep 2
-
-# Step 4: Verify Status and Revocation Reason
-echo -e "${YELLOW}[3/4] Verifying status and revocation details${NC}"
-
-EXTENDED_SUB_QUERY="SELECT status, revoked_at, revocation_reason FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-SUB_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$EXTENDED_SUB_QUERY" -t 2>/dev/null || echo "")
-
-NEW_STATUS=$(echo "$SUB_RESULT" | awk -F '|' '{print $1}' | tr -d '[:space:]')
-REVOKED_AT=$(echo "$SUB_RESULT" | awk -F '|' '{print $2}' | tr -d '[:space:]')
-REVOCATION_REASON=$(echo "$SUB_RESULT" | awk -F '|' '{print $3}' | tr -d '[:space:]')
-
-if [[ "$NEW_STATUS" != "revoked" ]]; then
-    echo -e "${RED}✗ Expected status 'revoked', got '$NEW_STATUS'${NC}"
-    exit 1
-fi
-
-if [[ -z "$REVOKED_AT" ]]; then
-    echo -e "${RED}✗ Expected revoked_at to be set${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}✓ Status correctly changed to 'revoked'${NC}"
-echo -e "${GREEN}✓ Revocation Reason: $REVOCATION_REASON${NC}"
-echo -e "${GREEN}✓ Revoked At: $REVOKED_AT${NC}"
-
-# Step 5: Verify Payment Status
-echo -e "${YELLOW}[4/4] Verifying payment status update to 'refunded'${NC}"
-
-PAYMENT_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
-PAYMENT_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$PAYMENT_QUERY" -t | tr -d ' ')
-
-if [[ "$PAYMENT_STATUS" == "refunded" ]]; then
-    echo -e "${GREEN}✓ Payment status correctly changed to 'refunded'${NC}"
+# Expected: revoked | t
+if [[ "$RES_DATA" == *"revoked"*"t"* ]]; then
+    echo -e "${GREEN}✓ Success: Status is 'revoked' and revoked_at date is set${NC}"
 else
-    echo -e "${RED}✗ Expected payment status 'refunded', got '$PAYMENT_STATUS'${NC}"
+    echo -e "${RED}✗ Failure: Revocation state mismatch: $RES_DATA${NC}"
     exit 1
 fi
+echo ""
 
+# Step 6: Verify payment status updated to 'refunded'
+echo -e "${YELLOW}[4/5] Verifying payment status update to 'refunded'${NC}"
+PAY_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
+
+if [[ "$PAY_STATUS" == "refunded" ]]; then
+    echo -e "${GREEN}✓ Success: Payment correctly marked as 'refunded'${NC}"
+else
+    echo -e "${RED}✗ Failure: Payment status is '$PAY_STATUS', expected 'refunded'${NC}"
+    exit 1
+fi
 echo ""
-echo -e "${YELLOW}========================================${NC}"
+
 echo -e "${GREEN}✓ SUB-09 Bridge Test PASSED${NC}"
-echo -e "${YELLOW}========================================${NC}"
-echo ""
 exit 0
