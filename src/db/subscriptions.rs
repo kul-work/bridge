@@ -179,6 +179,7 @@ pub async fn apply_webhook_transition(
                  SET status = 'active',
                      auto_renewing = true,
                      google_paused_at = NULL,
+                     google_pause_scheduled_at = NULL,
                      cancellation_initiated_at = NULL,
                      google_subscription_state = 0,
                      version = version + 1,

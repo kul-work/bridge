@@ -1405,7 +1405,7 @@ pub async fn process_webhook(
         "subscription.pause_scheduled" => {
             if let Some(sub_id) = fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()) {
                 let pause_scheduled_at = webhook.payload.pointer("/subscriptionNotification/pauseScheduleTimeMillis")
-                    .and_then(|v| v.as_i64())
+                    .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
                     .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
 
                 if let Some(schedule_at) = pause_scheduled_at {

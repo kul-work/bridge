@@ -92,6 +92,9 @@ echo ""
 # Step 4: Send Type 11 webhook (pause_scheduled)
 echo -e "${YELLOW}[2/5] Sending subscription.pause_scheduled webhook (notificationType 11)${NC}"
 
+# Future date for the scheduled pause (7 days from now, in millis)
+PAUSE_SCHEDULE_TS=$(($(date +%s) + 604800))000
+
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
@@ -101,7 +104,8 @@ NOTIFICATION_JSON=$(cat <<EOF
     "version": "1.0",
     "notificationType": 11,
     "purchaseToken": "$DUMMY_TOKEN",
-    "subscriptionId": "$PRODUCT_ID"
+    "subscriptionId": "$PRODUCT_ID",
+    "pauseScheduleTimeMillis": "$PAUSE_SCHEDULE_TS"
   }
 }
 EOF

@@ -70,8 +70,8 @@ psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB
 echo -e "${GREEN}✓ Paused subscription seeded in DB (Paused at: $PAST_PAUSED_AT)${NC}"
 echo ""
 
-# Step 4: Send Type 1 webhook (recovered)
-echo -e "${YELLOW}[2/5] Sending subscription.recovered webhook (notificationType 1)${NC}"
+# Step 4: Send Type 7 webhook (restarted - resume from pause)
+echo -e "${YELLOW}[2/5] Sending subscription.restarted webhook (notificationType 7)${NC}"
 
 NOTIFICATION_JSON=$(cat <<EOF
 {
@@ -80,7 +80,7 @@ NOTIFICATION_JSON=$(cat <<EOF
   "eventTimeMillis": "$(date +%s000)",
   "subscriptionNotification": {
     "version": "1.0",
-    "notificationType": 1,
+    "notificationType": 7,
     "purchaseToken": "$DUMMY_TOKEN",
     "subscriptionId": "$PRODUCT_ID"
   }
