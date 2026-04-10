@@ -98,7 +98,7 @@ NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$(date +%s000)",
+  "eventTimeMillis": "$BRIDGE_WEBHOOK_FUTURE_TS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 2,

@@ -93,9 +93,8 @@ echo ""
 echo -e "${YELLOW}[2/5] Simulating Device B login: fetching subscription status${NC}"
 
 STATUS_RESPONSE=$(curl -s -X GET \
-  "$BRIDGE_API_URL/api/v1/subscriptions" \
+  "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
-  -H "x-external-user-id: $USER_ID" \
   -H "X-Device-ID: device-b-18-$(date +%s)")
 
 # Verify response

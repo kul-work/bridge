@@ -63,8 +63,8 @@ echo -e "${YELLOW}[1/5] Establishing cancelled subscription with PAST expiry${NC
 
 # Seed the database directly for this scenario
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, provider, status, auto_renewing, purchase_token, current_period_end) 
-      VALUES ('$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'cancelled', false, '$DUMMY_TOKEN', NOW() - INTERVAL '2 days');" > /dev/null
+  -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, provider, status, auto_renewing, purchase_token, current_period_end) 
+      VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'cancelled', false, '$DUMMY_TOKEN', NOW() - INTERVAL '2 days');" > /dev/null
 
 echo -e "${GREEN}✓ Cancelled subscription seeded in DB (Expiry: 2 days ago)${NC}"
 echo ""

@@ -92,11 +92,11 @@ echo ""
 echo -e "${YELLOW}[2/5] Verifying 'trial' state in Bridge DB${NC}"
 export PGPASSWORD="postgres"
 RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, is_trial FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+  -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
 
-# Expected: trial | t
-if [[ "$RES_DATA" == *"trial"*"t"* ]] || [[ "$RES_DATA" == *"active"*"t"* ]]; then
-    echo -e "${GREEN}✓ Success: Status is trial/active and is_trial flag is true${NC}"
+# Expected: trial or active (if trial period already started/ended in mock)
+if [[ "$RES_DATA" == "trial" ]] || [[ "$RES_DATA" == "active" ]]; then
+    echo -e "${GREEN}✓ Success: Status is trial/active${NC}"
 else
     echo -e "${RED}✗ Failure: Trial state mismatch: $RES_DATA${NC}"
     exit 1

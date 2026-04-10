@@ -34,8 +34,8 @@ NC='\033[0m' # No Color
 
 # Test configuration
 TIMESTAMP=$(date +%s)
-OLD_TOKEN="test-sub-06-old-$TIMESTAMP"
-NEW_TOKEN="test-sub-06-new-$TIMESTAMP"
+OLD_TOKEN="test-sub-06-old-token-$TIMESTAMP"
+NEW_TOKEN="test-sub-06-new-token-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 
 echo -e "${YELLOW}========================================${NC}"
@@ -62,8 +62,8 @@ echo -e "${YELLOW}[1/5] Seeding expired subscription${NC}"
 
 # Seed expired subscription
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, provider, status, auto_renewing, purchase_token) 
-      VALUES ('$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'expired', false, '$OLD_TOKEN');" > /dev/null
+  -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, provider, status, auto_renewing, purchase_token) 
+      VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'expired', false, '$OLD_TOKEN');" > /dev/null
 
 echo -e "${GREEN}✓ Expired subscription seeded in DB${NC}"
 echo ""

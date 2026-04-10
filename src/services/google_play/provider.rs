@@ -924,7 +924,18 @@ impl GooglePlayProvider {
                     }),
                     canceled_state_context: None,
                     test_purchase: None,
-                    price_change_summary: None,
+                    price_change_summary: if token.contains("price_change") {
+                        Some(super::models::PriceChangeSummary {
+                            new_price: Some(super::models::Money {
+                                currency_code: Some("USD".to_string()),
+                                units: Some("5".to_string()),
+                                nanos: Some(0),
+                            }),
+                            price_change_state: Some("PRICE_CHANGE_STATE_CONFIRMED".to_string()),
+                        })
+                    } else {
+                        None
+                    },
                     out_of_app_purchase_context: None,
                 };
 

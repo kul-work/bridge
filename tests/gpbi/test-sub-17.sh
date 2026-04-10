@@ -93,9 +93,8 @@ echo ""
 echo -e "${YELLOW}[2/5] Simulating reinstall: fetching subscription status${NC}"
 
 STATUS_RESPONSE=$(curl -s -X GET \
-  "$BRIDGE_API_URL/api/v1/subscriptions" \
-  -H "Authorization: Bearer $BRIDGE_API_KEY" \
-  -H "x-external-user-id: $USER_ID")
+  "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY")
 
 # Verify response
 if echo "$STATUS_RESPONSE" | grep -qi '"active"'; then

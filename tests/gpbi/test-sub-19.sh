@@ -95,9 +95,8 @@ echo ""
 echo -e "${YELLOW}[2/5] Simulating User 2 login: fetching subscription status${NC}"
 
 STATUS_RESPONSE=$(curl -s -X GET \
-  "$BRIDGE_API_URL/api/v1/subscriptions" \
+  "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER2_ID" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
-  -H "x-external-user-id: $USER2_ID" \
   -H "X-Device-ID: shared-device-19")
 
 echo "Response for User 2: $STATUS_RESPONSE"

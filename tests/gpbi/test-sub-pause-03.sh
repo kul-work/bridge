@@ -64,8 +64,8 @@ echo -e "${YELLOW}[1/5] Seeding subscription in 'paused' state${NC}"
 PAST_PAUSED_AT=$(date -u -d '1 day ago' '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -u -v-1d '+%Y-%m-%d %H:%M:%S')
 
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, provider, status, auto_renewing, purchase_token, google_paused_at) 
-      VALUES ('$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'paused', true, '$DUMMY_TOKEN', '$PAST_PAUSED_AT');" > /dev/null
+  -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, provider, status, auto_renewing, purchase_token, google_paused_at) 
+      VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'paused', true, '$DUMMY_TOKEN', '$PAST_PAUSED_AT');" > /dev/null
 
 echo -e "${GREEN}✓ Paused subscription seeded in DB (Paused at: $PAST_PAUSED_AT)${NC}"
 echo ""

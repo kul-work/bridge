@@ -96,7 +96,7 @@ NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$(date +%s000)",
+  "eventTimeMillis": "$BRIDGE_WEBHOOK_FUTURE_TS",
   "voidedPurchaseNotification": {
     "purchaseToken": "$DUMMY_TOKEN",
     "orderId": "$ORDER_ID",

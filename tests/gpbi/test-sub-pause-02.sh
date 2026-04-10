@@ -64,8 +64,8 @@ echo -e "${YELLOW}[1/5] Seeding subscription with PAST scheduled pause date${NC}
 PAST_PAUSE_DATE=$(date -u -d '1 hour ago' '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -u -v-1H '+%Y-%m-%d %H:%M:%S')
 
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, provider, status, auto_renewing, purchase_token, google_pause_scheduled_at) 
-      VALUES ('$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'active', true, '$DUMMY_TOKEN', '$PAST_PAUSE_DATE');" > /dev/null
+  -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, provider, status, auto_renewing, purchase_token, google_pause_scheduled_at) 
+      VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'active', true, '$DUMMY_TOKEN', '$PAST_PAUSE_DATE');" > /dev/null
 
 echo -e "${GREEN}✓ Active subscription with scheduled pause seeded (Scheduled for: $PAST_PAUSE_DATE)${NC}"
 echo ""

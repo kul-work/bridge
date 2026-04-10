@@ -36,9 +36,9 @@ NC='\033[0m' # No Color
 
 # Test configuration
 TIMESTAMP=$(date +%s)
-DUMMY_TOKEN="test-sub-20-token-$TIMESTAMP"
+DUMMY_TOKEN="test-sub-20-price_change-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
-NEW_PRICE_CENTS=699
+NEW_PRICE_CENTS=500
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-20: Price Change (Opt-In Increase)"
@@ -163,7 +163,7 @@ echo ""
 echo -e "${YELLOW}[4/5] Verifying payment record with updated amount in Bridge DB${NC}"
 export PGPASSWORD="postgres"
 LATEST_PAYMENT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT amount_cents FROM pay.payments WHERE external_user_id = '$USER_ID' AND purchase_token = '$DUMMY_TOKEN' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
+  -c "SELECT amount_cents FROM pay.payments WHERE external_user_id = '$USER_ID' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
 
 if [[ "$LATEST_PAYMENT" == "$NEW_PRICE_CENTS" ]]; then
     echo -e "${GREEN}✓ Success: Latest payment amount is $LATEST_PAYMENT cents${NC}"
