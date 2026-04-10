@@ -17,6 +17,7 @@ pub trait WebhookReadRepository: Send + Sync {
 }
 
 #[async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait WebhookWriteRepository: Send + Sync {
     async fn create_webhook_provider(
         &self,

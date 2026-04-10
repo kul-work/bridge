@@ -650,16 +650,7 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
             .as_ref()
             .map(|sub| sub.status.clone())
             .or_else(|| fields.status.clone())
-            .or_else(|| match callback_event_type.as_str() {
-                "subscription.activated" | "subscription.resumed" => Some("active".to_string()),
-                "subscription.grace_period" => Some("past_due".to_string()),
-                "subscription.revoked" => Some("revoked".to_string()),
-                "subscription.on_hold" => Some("on_hold".to_string()),
-                "subscription.paused" => Some("paused".to_string()),
-                "subscription.expired" => Some("expired".to_string()),
-                "subscription.cancelled" => Some("cancelled".to_string()),
-                _ => None,
-            }),
+            .or_else(|| callback_status_for_event(&callback_event_type)),
     };
 
     let canonical_current_period_end = canonical_subscription
@@ -1418,7 +1409,10 @@ pub async fn process_webhook(
                         },
                     ).await?;
 
-                    if updated.is_none() {
+                    if let Some(updated_sub) = updated {
+                        canonical_subscription = Some(updated_sub.into());
+                        callback_status_override = Some("active".to_string());
+                    } else {
                         info!("Skipped stale pause_scheduled event for subscription {}", sub_id);
                     }
                 }
@@ -1523,7 +1517,8 @@ pub async fn process_webhook(
     // Step 5: Build canonical payload with real data
     let canonical_status = callback_status_override
         .or_else(|| canonical_subscription.as_ref().map(|sub| sub.status.clone()))
-        .or_else(|| fields_status.clone());
+        .or_else(|| fields_status.clone())
+        .or_else(|| callback_status_for_event(&callback_event_type));
     let canonical_current_period_end = canonical_subscription
         .as_ref()
         .and_then(|sub| sub.current_period_end.map(|value| value.to_rfc3339()))
@@ -1673,6 +1668,21 @@ fn normalize_status(raw_status: Option<&str>) -> String {
     }
 }
 
+fn callback_status_for_event(event_type: &str) -> Option<String> {
+    match event_type {
+        "subscription.activated" | "subscription.resumed" | "subscription.pause_scheduled" => {
+            Some("active".to_string())
+        }
+        "subscription.grace_period" => Some("past_due".to_string()),
+        "subscription.revoked" => Some("revoked".to_string()),
+        "subscription.on_hold" => Some("on_hold".to_string()),
+        "subscription.paused" => Some("paused".to_string()),
+        "subscription.expired" => Some("expired".to_string()),
+        "subscription.cancelled" => Some("cancelled".to_string()),
+        _ => None,
+    }
+}
+
 /// Map normalized status to canonical callback event type
 fn status_to_canonical_event(normalized_status: &str) -> Option<String> {
     match normalized_status {
@@ -1761,6 +1771,23 @@ mod tests {
         assert_eq!(status_to_canonical_event("trial"), Some("subscription.activated".to_string()));
         assert_eq!(status_to_canonical_event("expired"), Some("subscription.expired".to_string()));
         assert_eq!(status_to_canonical_event("unknown"), None);
+    }
+
+    #[test]
+    fn test_callback_status_for_pause_lifecycle_events() {
+        assert_eq!(
+            callback_status_for_event("subscription.pause_scheduled"),
+            Some("active".to_string())
+        );
+        assert_eq!(
+            callback_status_for_event("subscription.resumed"),
+            Some("active".to_string())
+        );
+        assert_eq!(
+            callback_status_for_event("subscription.paused"),
+            Some("paused".to_string())
+        );
+        assert_eq!(callback_status_for_event("subscription.updated"), None);
     }
 
     #[test]

@@ -167,6 +167,7 @@ pub async fn queue_and_forward_webhook<
 
 /// Create a webhook provider record, enqueue a delivery, and forward it.
 #[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_and_forward_webhook<
     R: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + ?Sized,
 >(
