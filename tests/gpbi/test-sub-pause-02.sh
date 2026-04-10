@@ -119,8 +119,5 @@ fi
 echo ""
 
 echo -e "${GREEN}✓ SUB-PAUSE-02 Bridge Test PASSED${NC}"
-exit 0; then
-    exit 1
-fi
-
 exit 0
+
