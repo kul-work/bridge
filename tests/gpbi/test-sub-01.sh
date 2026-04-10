@@ -1,7 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-01: Bridge Initial Subscription Purchase Test (Multi-DB)
+# SUB-01: Initial Subscription Purchase Test
+#
+# Purpose: Verify the full subscription purchase flow:
+#          1. Clean up previous test data from Bridge DB
+#          2. Pre-register purchase (POST /api/v1/purchase/register)
+#          3. Verify purchase (POST /api/v1/verify-purchase)
+#          4. Query Bridge DB to verify subscription stored
+#          5. Verify status is "active" or "trial"
+#          6. Verify payment record acknowledged
+#
+# Usage: ./test-sub-01.sh
+#
+# Prerequisites:
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * PRODUCT_ID_SUB, PROVIDER
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
+#   - psql installed and in PATH
 ##############################################################################
 
 set -euo pipefail
