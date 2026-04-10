@@ -68,7 +68,7 @@ The skill generates messages in this format:
 The agent returns **only** the commit message, ready to copy:
 
 ```
-FIX(validation): Reject invalid purchase tokens in STRICT mode
+FIX (validation): Reject invalid purchase tokens in STRICT mode
 
 - Add token format validation to reject obviously fake tokens
 - Tokens containing "invalid", "not-a-valid" keywords are rejected
@@ -80,7 +80,7 @@ Fixes ERR-01 test where malformed tokens were incorrectly accepted.
 
 Then you run:
 ```bash
-git commit -m "FIX(validation): Reject invalid purchase tokens in STRICT mode
+git commit -m "FIX (validation): Reject invalid purchase tokens in STRICT mode
 
 - Add token format validation to reject obviously fake tokens
 - Tokens containing \"invalid\", \"not-a-valid\" keywords are rejected
@@ -117,11 +117,15 @@ When invoked, the agent MUST:
 3. **Generate message** following format:
    ```
    <TYPE> (<SCOPE>): <SHORT_DESCRIPTION>
-   
-   <BULLET_POINT_DETAILS>
-   
+
+   - description 1
+   - description 2
+   - description 3
+
    <OPTIONAL_FOOTER>
    ```
+   
+   The body MUST use simple bullet point items (markdown-style with `- ` prefix), one per line.
 
 4. **Return ONLY the message text** (nothing else)
    - No explanations
