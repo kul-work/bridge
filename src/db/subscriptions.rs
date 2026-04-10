@@ -591,6 +591,54 @@ pub async fn upsert_subscription_tx(
     provider_customer_id: Option<&str>,
     event_time_ms: i64,
 ) -> Result<SubscriptionUpsertResult, BridgeError> {
+    // If purchase_token is provided, check if a subscription with that token already exists
+    // This handles Google Play renewals where the same purchase_token is used for the lifecycle
+    if let Some(token) = purchase_token {
+        let existing = sqlx::query_as::<_, Subscription>(
+            "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND purchase_token = $2"
+        )
+        .bind(app_id)
+        .bind(token)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+        if let Some(existing_sub) = existing {
+            // Update existing subscription found by purchase_token
+            // Only apply if the new event is newer or equal (stale event suppression)
+            if existing_sub.last_event_time <= event_time_ms {
+                let updated = sqlx::query_as::<_, Subscription>(
+                    "UPDATE pay.subscriptions
+                     SET status = $1, current_period_end = $2, auto_renewing = $3, payment_state = $4,
+                         provider_customer_id = $5, version = version + 1, last_event_time = $6, updated_at = NOW()
+                     WHERE id = $7
+                     RETURNING *"
+                )
+                .bind(status)
+                .bind(current_period_end)
+                .bind(auto_renewing)
+                .bind(payment_state)
+                .bind(provider_customer_id)
+                .bind(event_time_ms)
+                .bind(existing_sub.id)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+                return Ok(SubscriptionUpsertResult {
+                    subscription: updated,
+                    applied: true,
+                });
+            } else {
+                // Stale event - return existing without applying
+                return Ok(SubscriptionUpsertResult {
+                    subscription: existing_sub,
+                    applied: false,
+                });
+            }
+        }
+    }
+
     let subscription = sqlx::query_as::<_, Subscription>(
         "INSERT INTO pay.subscriptions AS subscriptions
          (app_id, external_user_id, subscription_id, provider, status, current_period_end, purchase_token, auto_renewing, payment_state, provider_customer_id, version, last_event_time)

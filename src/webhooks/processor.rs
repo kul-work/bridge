@@ -332,6 +332,12 @@ fn parse_rfc3339_utc(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|dt| dt.with_timezone(&chrono::Utc))
 }
 
+fn mock_google_play_renewal_period_end(
+    current_period_end: Option<chrono::DateTime<chrono::Utc>>,
+) -> chrono::DateTime<chrono::Utc> {
+    current_period_end.unwrap_or_else(chrono::Utc::now) + chrono::Duration::days(30)
+}
+
 fn google_subscription_state_to_status(subscription_state: Option<&str>) -> Option<String> {
     let state = subscription_state?;
     let normalized = match state {
@@ -414,6 +420,22 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
         return Ok(fields);
     }
 
+    // Skip API call in mock mode
+    if std::env::var("MOCK_EXTERNAL_APIS").as_deref() == Ok("true") {
+        tracing::info!("MOCK_EXTERNAL_APIS: Skipping Google Play API enrichment in webhook processing");
+
+        if webhook.event_type == "SUBSCRIPTION_RENEWED" && fields.current_period_end.is_none() {
+            if let Ok(Some(subscription)) = repo.get_subscription_by_purchase_token(app_id, purchase_token).await {
+                // Mirror the mock verify-purchase flow: renewals advance the existing mock period by 30 days.
+                fields.current_period_end = Some(
+                    mock_google_play_renewal_period_end(subscription.current_period_end).to_rfc3339(),
+                );
+            }
+        }
+
+        return Ok(fields);
+    }
+
     let client = match crate::services::google_play::client::GooglePlayClient::new(service_account_json) {
         Ok(client) => client,
         Err(_) => return Ok(fields),
@@ -469,6 +491,19 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     app_id: Uuid,
     webhook: &WebhookProviderSnapshot,
 ) -> Option<String> {
+    // Google Play subscription_id is a shared product id, so prefer the
+    // purchase token which uniquely identifies the user's subscription.
+    if webhook.provider == "google_play" {
+        if let Some(ref token) = webhook.purchase_token {
+            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token(app_id, token).await {
+                return Some(user);
+            }
+            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token_payment(app_id, token).await {
+                return Some(user);
+            }
+        }
+    }
+
     // 1. subscription_id lookup
     if let Some(ref sub_id) = webhook.subscription_id {
         if let Ok(Some(user)) = repo.lookup_user_by_subscription_id(app_id, sub_id).await {
@@ -477,12 +512,14 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     }
 
     // 2. purchase_token lookup (subscriptions first, then payments)
-    if let Some(ref token) = webhook.purchase_token {
-        if let Ok(Some(user)) = repo.lookup_user_by_purchase_token(app_id, token).await {
-            return Some(user);
-        }
-        if let Ok(Some(user)) = repo.lookup_user_by_purchase_token_payment(app_id, token).await {
-            return Some(user);
+    if webhook.provider != "google_play" {
+        if let Some(ref token) = webhook.purchase_token {
+            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token(app_id, token).await {
+                return Some(user);
+            }
+            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token_payment(app_id, token).await {
+                return Some(user);
+            }
         }
     }
 
@@ -1724,6 +1761,20 @@ mod tests {
         assert_eq!(status_to_canonical_event("trial"), Some("subscription.activated".to_string()));
         assert_eq!(status_to_canonical_event("expired"), Some("subscription.expired".to_string()));
         assert_eq!(status_to_canonical_event("unknown"), None);
+    }
+
+    #[test]
+    fn test_mock_google_play_renewal_period_end_extends_existing_period() {
+        let existing = chrono::DateTime::parse_from_rfc3339("2026-05-10T18:44:10Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        assert_eq!(
+            mock_google_play_renewal_period_end(Some(existing)),
+            chrono::DateTime::parse_from_rfc3339("2026-06-09T18:44:10Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        );
     }
 
     #[test]
