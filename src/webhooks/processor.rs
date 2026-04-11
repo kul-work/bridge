@@ -433,6 +433,19 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
             }
         }
 
+        // SUBSCRIPTION_RESTARTED: user re-enabled auto-renew after cancellation or un-paused.
+        // The real Google Play API would return auto_renewing=true and a future expiry.
+        if webhook.event_type == "SUBSCRIPTION_RESTARTED" {
+            fields.auto_renewing = Some(true);
+            if fields.current_period_end.is_none() {
+                if let Ok(Some(subscription)) = repo.get_subscription_by_purchase_token(app_id, purchase_token).await {
+                    fields.current_period_end = Some(
+                        mock_google_play_renewal_period_end(subscription.current_period_end).to_rfc3339(),
+                    );
+                }
+            }
+        }
+
         // Allow test harness to override the price via X-Test-Price-Cents header
         // (injected into payload as _test_price_cents by ingress)
         if let Some(test_price) = webhook.payload.get("_test_price_cents").and_then(|v| v.as_i64()) {

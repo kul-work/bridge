@@ -115,16 +115,23 @@ pub async fn handle_subscription_resumed<
         return Ok(None);
     };
 
-    if subscription.status != "paused" {
+    if subscription.status != "paused" && subscription.status != "cancelled" {
         return Ok(None);
     }
+
+    let period_end = fields
+        .current_period_end
+        .as_deref()
+        .and_then(parse_rfc3339_utc);
 
     let updated = repo
         .apply_subscription_transition(
             app_id,
             subscription_id,
             timestamp_epoch_ms,
-            SubscriptionWebhookTransition::Resumed,
+            SubscriptionWebhookTransition::Resumed {
+                current_period_end: period_end,
+            },
         )
         .await?;
 

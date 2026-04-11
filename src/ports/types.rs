@@ -25,7 +25,9 @@ pub enum SubscriptionWebhookTransition {
     },
     OnHold,
     Paused,
-    Resumed,
+    Resumed {
+        current_period_end: Option<chrono::DateTime<chrono::Utc>>,
+    },
     CancellationScheduled {
         google_cancellation_context: Option<String>,
         google_cancellation_feedback: Option<String>,

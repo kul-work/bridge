@@ -174,21 +174,25 @@ pub async fn apply_webhook_transition(
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
-        SubscriptionWebhookTransition::Resumed => {
+        SubscriptionWebhookTransition::Resumed {
+            current_period_end,
+        } => {
             sqlx::query_as::<_, Subscription>(
                 "UPDATE pay.subscriptions
                  SET status = 'active',
                      auto_renewing = true,
+                     current_period_end = COALESCE($1, current_period_end),
                      google_paused_at = NULL,
                      google_pause_scheduled_at = NULL,
                      cancellation_initiated_at = NULL,
                      google_subscription_state = 0,
                      version = version + 1,
-                     last_event_time = $1,
+                     last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2
                  RETURNING *",
             )
+            .bind(current_period_end)
             .bind(event_time_ms)
             .bind(app_id)
             .bind(subscription_id)
