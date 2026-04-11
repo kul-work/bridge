@@ -123,14 +123,14 @@ echo -e "${GREEN}✓ Grace period entry webhook sent${NC}"
 echo ""
 
 # Step 5: Verify status in DB
-echo -e "${YELLOW}[3/5] Verifying 'in_grace_period' state in Bridge DB${NC}"
+echo -e "${YELLOW}[3/5] Verifying 'past_due' (grace period) state in Bridge DB${NC}"
 export PGPASSWORD="postgres"
 RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
   -c "SELECT status, (google_grace_period_start IS NOT NULL) as grace_start_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
 
-# Expected: in_grace_period | t
-if [[ "$RES_DATA" == *"in_grace_period"*"t"* ]]; then
-    echo -e "${GREEN}✓ Success: Status is 'in_grace_period' and grace start date is set${NC}"
+# Expected: past_due | t
+if [[ "$RES_DATA" == *"past_due"*"t"* ]]; then
+    echo -e "${GREEN}✓ Success: Status is 'past_due' and grace start date is set${NC}"
 else
     echo -e "${RED}✗ Failure: Grace period state mismatch: $RES_DATA${NC}"
     exit 1

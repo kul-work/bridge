@@ -611,7 +611,10 @@ pub async fn upsert_subscription_tx(
                 let updated = sqlx::query_as::<_, Subscription>(
                     "UPDATE pay.subscriptions
                      SET status = $1, current_period_end = $2, auto_renewing = $3, payment_state = $4,
-                         provider_customer_id = $5, version = version + 1, last_event_time = $6, updated_at = NOW()
+                         provider_customer_id = $5,
+                         google_grace_period_start = CASE WHEN $1 = 'active' THEN NULL ELSE google_grace_period_start END,
+                         google_grace_period_end = CASE WHEN $1 = 'active' THEN NULL ELSE google_grace_period_end END,
+                         version = version + 1, last_event_time = $6, updated_at = NOW()
                      WHERE id = $7
                      RETURNING *"
                 )
@@ -652,6 +655,8 @@ pub async fn upsert_subscription_tx(
            auto_renewing = EXCLUDED.auto_renewing,
            payment_state = EXCLUDED.payment_state,
            provider_customer_id = EXCLUDED.provider_customer_id,
+           google_grace_period_start = CASE WHEN EXCLUDED.status = 'active' THEN NULL ELSE subscriptions.google_grace_period_start END,
+           google_grace_period_end = CASE WHEN EXCLUDED.status = 'active' THEN NULL ELSE subscriptions.google_grace_period_end END,
            version = subscriptions.version + 1,
            last_event_time = EXCLUDED.last_event_time,
            updated_at = NOW()
