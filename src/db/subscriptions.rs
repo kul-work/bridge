@@ -139,6 +139,7 @@ pub async fn apply_webhook_transition(
             sqlx::query_as::<_, Subscription>(
                 "UPDATE pay.subscriptions
                  SET status = 'on_hold',
+                     payment_failure_notification = true,
                      google_subscription_state = 3,
                      version = version + 1,
                      last_event_time = $1,
