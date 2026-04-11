@@ -164,6 +164,17 @@ pub async fn handle_google_play(
         .or_else(|| google_play_event["voidedPurchaseNotification"]["purchaseToken"].as_str())
         .map(|s| s.to_string());
 
+    // For voided purchase notifications, lookup subscription_id from purchase_token if not present
+    let subscription_id = if subscription_id.is_none() && purchase_token.is_some() && google_play_event["voidedPurchaseNotification"].is_object() {
+        if let Ok(Some(sub_id)) = crate::db::subscriptions::lookup_subscription_id_by_purchase_token(database.pool(), app.id, purchase_token.as_ref().unwrap()).await {
+            Some(sub_id)
+        } else {
+            subscription_id
+        }
+    } else {
+        subscription_id
+    };
+
     let timestamp_ms = google_play_event["eventTimeMillis"]
         .as_str()
         .and_then(|s| s.parse::<i64>().ok())

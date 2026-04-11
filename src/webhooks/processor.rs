@@ -1210,7 +1210,7 @@ pub async fn process_webhook(
         // §27 - Purchase Voided (Refund)
         "payment.refunded" => {
             if let Some(ref _user_id) = external_user_id {
-                if let Some(ref token) = fields.purchase_token {
+                if let Some(token) = fields.purchase_token.as_deref().or(webhook.purchase_token.as_deref()) {
                     let existing = repo.get_payment_status(app_id, token).await?;
                     if existing.as_deref() != Some("refunded") {
                         repo.update_payment_status(app_id, token, "refunded").await?;
