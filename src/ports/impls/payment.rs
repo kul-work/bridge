@@ -137,6 +137,9 @@ impl VerifyPurchaseRepository for db::Database {
         let google_obfuscated_account_id = request
             .google_obfuscated_account_id
             .map(|value| value.to_string());
+        let google_linked_purchase_token = request
+            .google_linked_purchase_token
+            .map(|value| value.to_string());
         let current_period_end = request.current_period_end;
         let auto_renewing = request.auto_renewing;
         let payment_state = request.payment_state;
@@ -182,10 +185,12 @@ impl VerifyPurchaseRepository for db::Database {
                         sqlx::query(
                             "UPDATE pay.subscriptions
                              SET google_obfuscated_account_id = COALESCE($1, google_obfuscated_account_id),
+                                 google_linked_purchase_token = COALESCE($2, google_linked_purchase_token),
                                  updated_at = NOW()
-                             WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND provider = $5",
+                             WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND provider = $6",
                         )
                         .bind(google_obfuscated_account_id.as_deref())
+                        .bind(google_linked_purchase_token.as_deref())
                         .bind(app_id)
                         .bind(&resolved_external_user_id)
                         .bind(&subscription_id)

@@ -162,6 +162,7 @@ async fn verify_creem(
         acknowledgement: PaymentAcknowledgement::NotApplicable,
         obfuscated_account_id: None,
         resubscribe_obfuscated_account_id: None,
+        linked_purchase_token: None,
     })
 }
 
@@ -220,6 +221,7 @@ async fn verify_lemonsqueezy(
         acknowledgement: PaymentAcknowledgement::NotApplicable,
         obfuscated_account_id: None,
         resubscribe_obfuscated_account_id: None,
+        linked_purchase_token: None,
     })
 }
 
@@ -295,6 +297,7 @@ async fn verify_coinbase(
         acknowledgement: PaymentAcknowledgement::NotApplicable,
         obfuscated_account_id: None,
         resubscribe_obfuscated_account_id: None,
+        linked_purchase_token: None,
     })
 }
 
@@ -529,6 +532,7 @@ fn map_google_subscription_verification(
         acknowledgement,
         obfuscated_account_id,
         resubscribe_obfuscated_account_id,
+        linked_purchase_token: purchase.linked_purchase_token.clone(),
     }))
 }
 
@@ -558,6 +562,7 @@ fn map_google_product_verification(
         acknowledgement,
         obfuscated_account_id: purchase.obfuscated_account_id,
         resubscribe_obfuscated_account_id: None,
+        linked_purchase_token: None,
     }
 }
 
@@ -583,6 +588,12 @@ fn mock_verify_google_play(
 
             if purchase_token.contains("oap") || purchase_token.contains("resubscribe") {
                 let obfuscated_account_id = compute_obfuscated_id_hash(external_user_id);
+                // Re-subscription: derive linked token from -new-token- naming convention
+                let linked_token = if purchase_token.contains("-new-token-") {
+                    purchase_token.replace("-new-token-", "-old-token-").into()
+                } else {
+                    None
+                };
 
                 return Ok(VerificationOutcome::Verified(VerifiedPurchase {
                     status: "active".to_string(),
@@ -593,6 +604,7 @@ fn mock_verify_google_play(
                     acknowledgement: PaymentAcknowledgement::Pending,
                     obfuscated_account_id: Some(obfuscated_account_id.clone()),
                     resubscribe_obfuscated_account_id: Some(obfuscated_account_id),
+                    linked_purchase_token: linked_token,
                 }));
             }
 
@@ -609,6 +621,13 @@ fn mock_verify_google_play(
             }
             .to_string();
 
+            // Re-subscription: derive linked token from -new-token- naming convention
+            let linked_token = if purchase_token.contains("-new-token-") {
+                purchase_token.replace("-new-token-", "-old-token-").into()
+            } else {
+                None
+            };
+
             Ok(VerificationOutcome::Verified(VerifiedPurchase {
                 status,
                 current_period_end: Some(Utc::now() + Duration::days(30)),
@@ -620,6 +639,7 @@ fn mock_verify_google_play(
                 acknowledgement: PaymentAcknowledgement::Pending,
                 obfuscated_account_id: Some(compute_obfuscated_id_hash(external_user_id)),
                 resubscribe_obfuscated_account_id: None,
+                linked_purchase_token: linked_token,
             }))
         }
         ProductType::OneTimeProduct => {
@@ -657,6 +677,7 @@ fn mock_verify_google_play(
                 acknowledgement: PaymentAcknowledgement::Pending,
                 obfuscated_account_id: None,
                 resubscribe_obfuscated_account_id: None,
+                linked_purchase_token: None,
             }))
         }
     }

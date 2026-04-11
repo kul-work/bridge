@@ -86,6 +86,7 @@ pub(crate) struct VerifiedPurchase {
     pub(crate) acknowledgement: PaymentAcknowledgement,
     pub(crate) obfuscated_account_id: Option<String>,
     pub(crate) resubscribe_obfuscated_account_id: Option<String>,
+    pub(crate) linked_purchase_token: Option<String>,
 }
 
 pub(crate) enum PaymentAcknowledgement {
@@ -125,6 +126,7 @@ pub(crate) struct VerifyPurchaseCommitRequest<'a> {
     pub payment_state: Option<i32>,
     pub provider_customer_id: Option<&'a str>,
     pub google_obfuscated_account_id: Option<&'a str>,
+    pub google_linked_purchase_token: Option<&'a str>,
     pub amount_cents: i32,
     pub event_time_ms: i64,
     pub is_subscription: bool,
