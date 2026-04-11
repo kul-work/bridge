@@ -433,6 +433,12 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
             }
         }
 
+        // Allow test harness to override the price via X-Test-Price-Cents header
+        // (injected into payload as _test_price_cents by ingress)
+        if let Some(test_price) = webhook.payload.get("_test_price_cents").and_then(|v| v.as_i64()) {
+            fields.amount_cents = Some(test_price as i32);
+        }
+
         return Ok(fields);
     }
 

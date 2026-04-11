@@ -140,10 +140,17 @@ pub async fn handle_google_play(
     let decoded_message = decode_base64_flexible(message_data)
         .map_err(|e| BridgeError::WebhookError(format!("Invalid message.data: {}", e)))?;
 
-    let google_play_event: serde_json::Value = serde_json::from_slice(&decoded_message).map_err(|e| {
+    let mut google_play_event: serde_json::Value = serde_json::from_slice(&decoded_message).map_err(|e| {
         error!("Failed to parse Google Play message.data payload: {}", e);
         BridgeError::WebhookError(format!("Invalid Google Play message.data payload: {}", e))
     })?;
+
+    // Inject test price override into payload for mock-mode enrichment
+    if let Some(price_str) = headers.get("X-Test-Price-Cents").and_then(|h| h.to_str().ok()) {
+        if let Ok(cents) = price_str.parse::<i64>() {
+            google_play_event["_test_price_cents"] = serde_json::Value::Number(cents.into());
+        }
+    }
 
     let event_id = payload["message"]["messageId"]
         .as_str()
