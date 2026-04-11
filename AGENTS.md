@@ -113,6 +113,8 @@ When updating `Release Notes.md`:
 
 ## Database - PostgreSQL Commands
 
+First try to access the database via an available MCP.
+
 On Windows, use `cmd /c` with `set PGPASSWORD=` to avoid password prompts and PowerShell quoting issues.
 
 For simple queries (no quotes in SQL):
