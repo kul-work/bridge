@@ -39,8 +39,8 @@ WAIT_FOR_APPROVAL=false
 REPLAY_OTP=false
 REPLAY_FIXTURE=""
 MOCK_GOOGLE_PURCHASE_RESPONSE=""
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="$BRIDGE_API_URL"
+DB_URL="$BRIDGE_DB_URL"
 
 # Extract DB password once
 export PGPASSWORD="${DB_URL##*:}"
@@ -116,7 +116,7 @@ echo ""
 echo -e "${YELLOW}[2/5] Cleaning up previous test data${NC}"
 
 CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
 echo ""
 
@@ -141,7 +141,7 @@ fi
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$APP_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
-   \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
    \
   "${EXTRA_HEADERS[@]}" \
   -d "{
@@ -185,7 +185,7 @@ echo "Query:"
 echo "  $DB_QUERY"
 echo ""
 
-DB_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$DB_QUERY" -t 2>/dev/null || echo "")
+DB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$DB_QUERY" -t 2>/dev/null || echo "")
 
 if [[ -z "$DB_RESULT" || "$DB_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${RED}✗ No payment record found in database${NC}"
@@ -216,7 +216,7 @@ echo "Query:"
 echo "  $PAYMENT_QUERY"
 echo ""
 
-PAYMENT_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null || echo "")
+PAYMENT_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null || echo "")
 
 if [[ -z "$PAYMENT_RESULT" || "$PAYMENT_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${YELLOW}⚠ No payment record found (may be normal for pending state)${NC}"
@@ -243,7 +243,7 @@ if [[ "$WAIT_FOR_APPROVAL" == "true" ]]; then
         VERIFY_RESPONSE_POLL=$(curl -s -w "\n%{http_code}" -X POST \
           "$APP_URL/api/v1/verify-purchase" \
           -H "Content-Type: application/json" \
-           \
+          -H "Authorization: Bearer $BRIDGE_API_KEY" \
            \
           -d "{
             \"provider\": \"$PROVIDER\",
@@ -256,7 +256,7 @@ if [[ "$WAIT_FOR_APPROVAL" == "true" ]]; then
         HTTP_CODE_POLL=$(echo "$VERIFY_RESPONSE_POLL" | tail -n1)
         
         # Check DB status
-         DB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+         DB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
          
          echo "[$ELAPSED/$MAX_WAIT s] Status: $DB_STATUS"
          
@@ -271,7 +271,7 @@ if [[ "$WAIT_FOR_APPROVAL" == "true" ]]; then
          echo -e "${YELLOW}⚠ Approval did not complete within 10 minutes${NC}"
          echo -e "${YELLOW}  This may be normal for slow card tests${NC}"
          # Get final status
-         FINAL_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+         FINAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
     fi
     echo ""
 else

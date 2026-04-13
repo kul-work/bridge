@@ -31,7 +31,7 @@ PRODUCT_ID="$PRODUCT_ID_OTP"
 
 # Defaults
 EMAIL=""
-DB_URL="$DATABASE_URL"
+DB_URL="$BRIDGE_DB_URL"
 
 # Extract DB password once
 export PGPASSWORD="${DB_URL##*:}"
@@ -83,7 +83,7 @@ echo ""
 echo -e "${YELLOW}[2/4] Cleaning up previous test data${NC}"
 
 CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
 echo ""
 
@@ -96,7 +96,7 @@ echo "Query:"
 echo "  $DB_QUERY"
 echo ""
 
-DB_COUNT_BEFORE=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
+DB_COUNT_BEFORE=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
 
 echo "Result: $DB_COUNT_BEFORE subscription records found"
 echo ""
@@ -130,7 +130,7 @@ echo "Query:"
 echo "  $PAYMENT_QUERY"
 echo ""
 
-PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
+PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
 
 echo "Result: $PAYMENT_COUNT payment records found"
 echo ""
@@ -150,7 +150,7 @@ echo "Query:"
 echo "  $DB_QUERY"
 echo ""
 
-DB_COUNT_AFTER=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
+DB_COUNT_AFTER=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
 
 echo "Result: $DB_COUNT_AFTER subscription records found"
 echo ""

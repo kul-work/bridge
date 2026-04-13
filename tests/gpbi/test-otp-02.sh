@@ -34,8 +34,8 @@ PROVIDER="$PROVIDER"
 
 # Defaults
 EMAIL=""
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="$BRIDGE_API_URL"
+DB_URL="$BRIDGE_DB_URL"
 
 # Extract DB password once
 export PGPASSWORD="${DB_URL##*:}"
@@ -87,7 +87,7 @@ echo ""
 echo -e "${YELLOW}[2/5] Cleaning up previous test data${NC}"
 
 CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
 echo ""
 
@@ -105,7 +105,7 @@ echo "Sending request..."
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$APP_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
-   \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
    \
   -d "{
     \"provider\": \"$PROVIDER\",
@@ -147,7 +147,7 @@ echo "Query:"
 echo "  $DB_QUERY"
 echo ""
 
-DB_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
+DB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
 
 echo "Result: $DB_COUNT subscription records found"
 echo ""
@@ -169,7 +169,7 @@ echo "Query:"
 echo "  $PAYMENT_QUERY"
 echo ""
 
-PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
+PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
 
 echo "Result: $PAYMENT_COUNT payment records found"
 echo ""
@@ -192,7 +192,7 @@ echo "  - Backend allows subsequent verify attempts for same product"
 echo ""
 
 # Quick check: Database should still have 0 subscription entries
-DB_COUNT_CHECK=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ' || echo "0")
+DB_COUNT_CHECK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ' || echo "0")
 
 if [[ "$DB_COUNT_CHECK" == "0" ]]; then
     echo -e "${GREEN}✓ Retry capability verified (no stale DB entries preventing retry)${NC}"

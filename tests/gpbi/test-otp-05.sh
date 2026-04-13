@@ -37,8 +37,8 @@ PROVIDER="$PROVIDER"
 # Defaults
 EMAIL=""
 PURCHASE_TOKEN=""
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="$BRIDGE_API_URL"
+DB_URL="$BRIDGE_DB_URL"
 
 # Extract DB password once
 export PGPASSWORD="${DB_URL##*:}"
@@ -102,7 +102,7 @@ echo "  Token: $PURCHASE_TOKEN"
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$APP_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
-   \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
    \
   -d "{
     \"provider\": \"$PROVIDER\",
@@ -121,7 +121,7 @@ echo -e "${GREEN}✓ Setup purchase successful (HTTP 200)${NC}"
 
 # Verify initial DB state
 DB_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id = '$PURCHASE_TOKEN';"
-INITIAL_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ')
+INITIAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ')
 
 if [[ "$INITIAL_STATUS" != "success" ]]; then
     echo -e "${RED}✗ Setup failed: Initial status is '$INITIAL_STATUS', expected 'success'${NC}"
@@ -195,7 +195,7 @@ echo "Query:"
 echo "  $PAYMENT_QUERY"
 echo ""
 
-PAYMENT_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null || echo "")
+PAYMENT_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null || echo "")
 
 if [[ -z "$PAYMENT_RESULT" || "$PAYMENT_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${RED}✗ No payment record found in pay.payments table${NC}"
@@ -226,7 +226,7 @@ echo -e "${YELLOW}[6/7] Checking status via /api/v1/pay.subscriptions endpoint${
 
 STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
   "$APP_URL/api/v1/pay.subscriptions" \
-   \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
   )
 
 STATUS_HTTP_CODE=$(echo "$STATUS_RESPONSE" | tail -n1)
@@ -249,7 +249,7 @@ echo ""
 # Step 7: Final verification
 echo -e "${YELLOW}[7/7] Final verification${NC}"
 
-FINAL_DB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+FINAL_DB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
 
 echo "Status transition:"
 echo "  Before refund: $INITIAL_STATUS"

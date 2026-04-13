@@ -37,8 +37,8 @@ PROVIDER="$PROVIDER"
 # Defaults
 EMAIL=""
 PURCHASE_TOKEN=""
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="$BRIDGE_API_URL"
+DB_URL="$BRIDGE_DB_URL"
 REPLAY_RTDN=false
 REPLAY_FIXTURE=""
 MOCK_GOOGLE_PURCHASE_RESPONSE=""
@@ -114,7 +114,7 @@ echo ""
 # Step 1.5: Clean up stale payment records (but preserve OTP-01's token)
 echo -e "${YELLOW}[1.5/5] Cleaning up stale payment records${NC}"
 PAYMENT_CLEANUP="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id != 'test-inapp-otp-01-12345';"
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$PAYMENT_CLEANUP" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_CLEANUP" 2>/dev/null
 echo -e "${GREEN}✓ Stale payment records removed (preserved OTP-01 token)${NC}"
 echo ""
 
@@ -127,7 +127,7 @@ echo "Query:"
 echo "  $DB_QUERY"
 echo ""
 
-DB_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$DB_QUERY" -t 2>/dev/null || echo "")
+DB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$DB_QUERY" -t 2>/dev/null || echo "")
 
 if [[ -z "$DB_RESULT" || "$DB_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${RED}✗ No payment record found in database${NC}"
@@ -261,7 +261,7 @@ echo ""
 echo -e "${YELLOW}[5/5] Final verification${NC}"
 
 # Query payment status to verify it's still success
-FINAL_DB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+FINAL_DB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
 
 echo "Final payment status: $FINAL_DB_STATUS"
 echo ""
@@ -277,7 +277,7 @@ echo ""
 
 # Verify payment record exists and count is exactly 1 (idempotency check)
 PAYMENT_COUNT_QUERY="SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$PAYMENT_COUNT_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
+PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_COUNT_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
 
 echo "Payment record count: $PAYMENT_COUNT"
 
@@ -291,7 +291,7 @@ elif [[ "$PAYMENT_COUNT" != "1" ]]; then
 else
     # Count is 1, verify status
     PAYMENT_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
-    PAYMENT_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null | tr -d ' ')
+    PAYMENT_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null | tr -d ' ')
     PAYMENT_STATUS=$(echo "$PAYMENT_RESULT" | tr -d ' ')
     echo -e "${GREEN}✓ Payment record count verified (exactly 1, idempotent)${NC}"
     echo -e "${GREEN}✓ Payment record status: $PAYMENT_STATUS${NC}"
