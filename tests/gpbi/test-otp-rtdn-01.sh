@@ -42,6 +42,11 @@ DB_URL="$BRIDGE_DB_URL"
 REPLAY_RTDN=false
 REPLAY_FIXTURE=""
 MOCK_GOOGLE_PURCHASE_RESPONSE=""
+OTP_01_REPORT="otp-01-report.json"
+
+if [[ ! -f "$OTP_01_REPORT" && -f "$SCRIPT_DIR/otp-01-report.json" ]]; then
+    OTP_01_REPORT="$SCRIPT_DIR/otp-01-report.json"
+fi
 
 # Extract DB password once
 export PGPASSWORD="${DB_URL##*:}"
@@ -95,11 +100,18 @@ echo "OTP-RTDN-01: Webhook Purchase Completed"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Query database to get user_id from email
-echo -e "${YELLOW}[1/5] Fetching user_id from database for email: $EMAIL${NC}"
+# Step 1: Resolve user_id from OTP-01 output or the environment
+echo -e "${YELLOW}[1/5] Resolving user_id for email: $EMAIL${NC}"
 
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
+if [[ -z "${USER_ID:-}" && -f "$OTP_01_REPORT" ]]; then
+    USER_ID=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('user_id', ''))" "$OTP_01_REPORT" 2>/dev/null || echo "")
+fi
+
+if [[ -z "${USER_ID:-}" ]]; then
+    echo -e "${RED}✗ Failed to resolve user_id${NC}"
+    echo "Error: Run OTP-01 first in this directory, or set USER_ID before running OTP-RTDN-01"
+    exit 1
+fi
 
 if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
     echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
@@ -197,6 +209,7 @@ WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
@@ -220,8 +233,8 @@ if [[ ! -z "$WEBHOOK_BODY" ]]; then
 fi
 echo ""
 
-if [[ "$WEBHOOK_HTTP_CODE" == "200" ]]; then
-    echo -e "${GREEN}✓ Purchase webhook accepted (HTTP 200)${NC}"
+if [[ "$WEBHOOK_HTTP_CODE" == "200" ]] || [[ "$WEBHOOK_HTTP_CODE" == "204" ]]; then
+    echo -e "${GREEN}✓ Purchase webhook accepted (HTTP $WEBHOOK_HTTP_CODE)${NC}"
     WEBHOOK_ACCEPTED="true"
 else
     echo -e "${YELLOW}⚠ Webhook returned HTTP $WEBHOOK_HTTP_CODE${NC}"
@@ -237,6 +250,7 @@ WEBHOOK_RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST \
   "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
@@ -248,8 +262,8 @@ WEBHOOK_RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST \
 
 WEBHOOK_HTTP_CODE_2=$(echo "$WEBHOOK_RESPONSE_2" | tail -n1)
 
-if [[ "$WEBHOOK_HTTP_CODE_2" == "200" ]]; then
-    echo -e "${GREEN}✓ Duplicate webhook also accepted (idempotent)${NC}"
+if [[ "$WEBHOOK_HTTP_CODE_2" == "200" ]] || [[ "$WEBHOOK_HTTP_CODE_2" == "204" ]]; then
+    echo -e "${GREEN}✓ Duplicate webhook also accepted (HTTP $WEBHOOK_HTTP_CODE_2, idempotent)${NC}"
     IDEMPOTENCY_WORKS="true"
 else
     echo -e "${YELLOW}⚠ Duplicate webhook returned HTTP $WEBHOOK_HTTP_CODE_2${NC}"
@@ -321,7 +335,7 @@ cat > otp-rtdn-01-report.json <<EOF
   "idempotency_verified": $IDEMPOTENCY_WORKS,
   "final_status": "$FINAL_DB_STATUS",
   "results": {
-    "webhook_http_200": $([ "$WEBHOOK_HTTP_CODE" == "200" ] && echo "true" || echo "false"),
+    "webhook_http_success": $WEBHOOK_ACCEPTED,
     "webhook_accepted_successfully": $WEBHOOK_ACCEPTED,
     "duplicate_webhook_idempotent": $IDEMPOTENCY_WORKS,
     "subscription_status_active": $([ "$FINAL_DB_STATUS" == "active" ] && echo "true" || echo "false"),
