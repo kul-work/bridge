@@ -14,7 +14,7 @@
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - DATABASE_URL configured and db accessible
 #   - psql installed and in PATH
-#   - GOOGLE_VERIFY_WEBHOOK_SIGNATURE=false (for testing)
+#   - Google webhook signature verification disabled via test header
 ##############################################################################
 
 set -euo pipefail
@@ -33,6 +33,8 @@ NC='\033[0m' # No Color
 # Test configuration
 PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
+WEBHOOK_WAIT_ATTEMPTS=10
+WEBHOOK_WAIT_SECONDS=1
 
 # Defaults
 EMAIL=""
@@ -152,6 +154,7 @@ WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
@@ -173,17 +176,18 @@ echo "Webhook Response Code: $WEBHOOK_HTTP_CODE"
 echo "Webhook Response: $WEBHOOK_BODY"
 echo ""
 
-if [[ "$WEBHOOK_HTTP_CODE" == "200" ]]; then
-    echo -e "${GREEN}✓ Refund webhook sent successfully${NC}"
+if [[ "$WEBHOOK_HTTP_CODE" == "200" ]] || [[ "$WEBHOOK_HTTP_CODE" == "204" ]]; then
+    echo -e "${GREEN}✓ Refund webhook accepted (HTTP $WEBHOOK_HTTP_CODE)${NC}"
 else
-    echo -e "${YELLOW}⚠ Webhook returned HTTP $WEBHOOK_HTTP_CODE (may still be processed)${NC}"
+    echo -e "${RED}✗ Webhook rejected with HTTP $WEBHOOK_HTTP_CODE${NC}"
+    exit 1
 fi
 echo ""
 
-# Step 4: Webhook processed (synchronous)
-echo -e "${YELLOW}[4/6] Webhook processed${NC}"
+# Step 4: Wait for async webhook processing
+echo -e "${YELLOW}[4/6] Waiting for webhook processing${NC}"
 echo ""
-echo "✓ Refund webhook was sent and processed immediately (step [3/6])"
+echo "Polling payment record until refund is applied..."
 echo ""
 
 # Step 5: Verify payment record in pay.payments table with refunded status
@@ -195,16 +199,33 @@ echo "Query:"
 echo "  $PAYMENT_QUERY"
 echo ""
 
-PAYMENT_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null || echo "")
+PAYMENT_RESULT=""
+PAYMENT_STATUS=""
+PAYMENT_AMOUNT=""
+PAYMENT_TXN_ID=""
+
+for attempt in $(seq 1 $WEBHOOK_WAIT_ATTEMPTS); do
+    PAYMENT_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null || echo "")
+
+    if [[ -n "$PAYMENT_RESULT" && "$PAYMENT_RESULT" != *"(0 rows)"* ]]; then
+        PAYMENT_AMOUNT=$(echo "$PAYMENT_RESULT" | awk -F '|' '{print $1}' | tr -d ' ')
+        PAYMENT_STATUS=$(echo "$PAYMENT_RESULT" | awk -F '|' '{print $2}' | tr -d ' ')
+        PAYMENT_TXN_ID=$(echo "$PAYMENT_RESULT" | awk -F '|' '{print $3}' | tr -d ' ')
+
+        if [[ "$PAYMENT_STATUS" == "refunded" ]]; then
+            break
+        fi
+    fi
+
+    if [[ $attempt -lt $WEBHOOK_WAIT_ATTEMPTS ]]; then
+        sleep $WEBHOOK_WAIT_SECONDS
+    fi
+done
 
 if [[ -z "$PAYMENT_RESULT" || "$PAYMENT_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${RED}✗ No payment record found in pay.payments table${NC}"
     exit 1
 fi
-
-PAYMENT_AMOUNT=$(echo "$PAYMENT_RESULT" | awk -F '|' '{print $1}' | tr -d ' ')
-PAYMENT_STATUS=$(echo "$PAYMENT_RESULT" | awk -F '|' '{print $2}' | tr -d ' ')
-PAYMENT_TXN_ID=$(echo "$PAYMENT_RESULT" | awk -F '|' '{print $3}' | tr -d ' ')
 
 echo -e "${GREEN}✓ Payment Record Found:${NC}"
 echo "  Amount: ${PAYMENT_AMOUNT} cents"
