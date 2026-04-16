@@ -6,7 +6,7 @@
 # Purpose: Verify that a ONE_TIME_PRODUCT_CANCELED webhook (refund) is 
 #          properly received, validated, and revokes entitlement.
 #
-# Usage: ./test-otp-rtdn-02.sh --email "user@example.com" \
+# Usage: ./test-otp-rtdn-02.sh \
 #                                [--token "purchase_token"] [--replay [fixture_file]]
 #
 # Prerequisites:
@@ -37,7 +37,6 @@ WEBHOOK_WAIT_ATTEMPTS=10
 WEBHOOK_WAIT_SECONDS=1
 
 # Defaults
-EMAIL=""
 PURCHASE_TOKEN=""
 APP_URL="$BRIDGE_API_URL"
 DB_URL="$BRIDGE_DB_URL"
@@ -57,10 +56,6 @@ export PGPASSWORD="${PGPASSWORD%%@*}"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         --token)
             PURCHASE_TOKEN="$2"
             shift 2
@@ -81,13 +76,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./test-otp-rtdn-02.sh --email \"user@example.com\" [--token \"purchase_token\"] [--replay [fixture_path]]"
-    exit 1
-fi
-
 if [[ "$REPLAY_RTDN" == "true" ]]; then
     if [[ -n "$REPLAY_FIXTURE" ]]; then
         MOCK_GOOGLE_PURCHASE_RESPONSE="$REPLAY_FIXTURE"
@@ -102,40 +90,34 @@ echo "OTP-RTDN-02: Webhook Refund Completed"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Resolve user_id from OTP-01 output or the environment
-echo -e "${YELLOW}[1/6] Resolving user_id for email: $EMAIL${NC}"
+# Step 1: External User ID
+USER_ID="test_otp_user_01"
+echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 
-if [[ -z "${USER_ID:-}" && -f "$OTP_01_REPORT" ]]; then
-    USER_ID=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('user_id', ''))" "$OTP_01_REPORT" 2>/dev/null || echo "")
+if [[ -z "$PURCHASE_TOKEN" && -f "$OTP_01_REPORT" ]]; then
+    PURCHASE_TOKEN=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('purchase_token', ''))" "$OTP_01_REPORT" 2>/dev/null || echo "")
 fi
-
-if [[ -z "${USER_ID:-}" ]]; then
-    echo -e "${RED}✗ Failed to resolve user_id${NC}"
-    echo "Error: Run OTP-01 first in this directory, or set USER_ID before running OTP-RTDN-02"
-    exit 1
-fi
-
-if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
-    echo "Error: $USER_ID"
-    exit 1
-fi
-
-USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
 echo ""
 
 # Step 1.5: Clean up stale payment records (but preserve OTP-01's token)
 echo -e "${YELLOW}[1.5/6] Cleaning up stale payment records${NC}"
-PAYMENT_CLEANUP="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id != 'test-inapp-otp-01-12345';"
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_CLEANUP" 2>/dev/null
-echo -e "${GREEN}✓ Stale payment records removed (preserved OTP-01 token)${NC}"
+if [[ -n "$PURCHASE_TOKEN" ]]; then
+    PAYMENT_CLEANUP="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id != '$PURCHASE_TOKEN';"
+    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_CLEANUP" 2>/dev/null
+    echo -e "${GREEN}✓ Stale payment records removed (preserved OTP-01 token)${NC}"
+else
+    echo -e "${YELLOW}⚠ Skipped stale payment cleanup (no OTP-01 token supplied or found)${NC}"
+fi
 echo ""
 
 # Step 2: Verify payment record exists
 echo -e "${YELLOW}[2/6] Verifying payment record exists${NC}"
 
-DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+if [[ -n "$PURCHASE_TOKEN" ]]; then
+    DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id = '$PURCHASE_TOKEN' ORDER BY created_at DESC LIMIT 1;"
+else
+    DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+fi
 
 echo "Query:"
 echo "  $DB_QUERY"
@@ -145,7 +127,7 @@ DB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d
 
 if [[ -z "$DB_RESULT" || "$DB_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${RED}✗ No payment record found in database${NC}"
-    echo "Error: Please run OTP-01 test first to create a payment record"
+    echo "Error: Please run OTP-01 test first to create a payment record, or pass --token"
     echo "Database result: $DB_RESULT"
     exit 1
 fi
@@ -358,7 +340,6 @@ cat > otp-rtdn-02-report.json <<EOF
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
-  "user_email": "$EMAIL",
   "product_id": "$PRODUCT_ID",
   "purchase_token": "$PURCHASE_TOKEN",
   "message_id": "$MESSAGE_ID",

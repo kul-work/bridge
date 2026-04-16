@@ -5,7 +5,7 @@
 # 
 # Removes all test subscription records and report files
 #
-# Usage: ./cleanup-all-otp.sh --email "user@example.com"
+# Usage: ./cleanup-all-otp.sh
 ##############################################################################
 
 set -euo pipefail
@@ -21,7 +21,6 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Defaults
-EMAIL=""
 DB_URL="$DATABASE_URL"
 PRODUCT_ID="$PRODUCT_ID_OTP"
 
@@ -32,23 +31,12 @@ export PGPASSWORD="${PGPASSWORD%%@*}"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         *)
             echo "Unknown option: $1"
             exit 1
             ;;
     esac
 done
-
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./cleanup-all-otp.sh --email \"user@example.com\""
-    exit 1
-fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "Cleaning up ALL OTP Tests (OTP-01 to OTP-05, OTP-RTDN-01/02)"
@@ -72,26 +60,19 @@ if [[ $REMOVED_COUNT -eq 0 ]]; then
 fi
 echo ""
 
-# Get user_id from database
+# Use the fixed OTP test user prefix shared across OTP-01..05 and RTDN cleanup.
 DB_USER="$DATABASE_USER"
 DB_HOST="$DATABASE_HOST"
 DB_PORT="$DATABASE_PORT"
 DB_NAME="$DATABASE_NAME"
 
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
-USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-
-if [[ -z "$USER_ID" ]]; then
-    echo -e "${YELLOW}✓ User not found in database (nothing to clean)${NC}"
-    exit 0
-fi
+USER_ID_PREFIX="test_otp_user_"
 
 # Remove subscription database records
 echo -e "${YELLOW}[2/4] Removing all subscription records from database${NC}"
 
-# Delete all subscription records for this user with the product
-DB_DELETE="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
+# Delete all subscription records for OTP test users with the product
+DB_DELETE="DELETE FROM pay.subscriptions WHERE external_user_id LIKE '${USER_ID_PREFIX}%' AND subscription_id = '$PRODUCT_ID';"
 
 echo "Query:"
 echo "  $DB_DELETE"
@@ -105,8 +86,8 @@ echo ""
 # Remove payment database records
 echo -e "${YELLOW}[3/4] Removing all payment records from database${NC}"
 
-# Delete all payment records for this user with the product
-DB_DELETE_PAYMENT="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
+# Delete all payment records for OTP test users with the product
+DB_DELETE_PAYMENT="DELETE FROM pay.payments WHERE external_user_id LIKE '${USER_ID_PREFIX}%' AND subscription_id = '$PRODUCT_ID';"
 
 echo "Query:"
 echo "  $DB_DELETE_PAYMENT"
@@ -129,20 +110,6 @@ echo ""
 
 RESULT=$(psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d "$DB_NAME" -c "$DB_DELETE_WEBHOOKS" 2>/dev/null || echo "")
 echo -e "${GREEN}✓ Webhook records removed${NC}"
-echo "$RESULT"
-echo ""
-
-# Reset user premium status
-echo -e "${YELLOW}[5/5] Resetting user premium status${NC}"
-
-DB_RESET_PREMIUM="UPDATE \"public\".\"users\" SET \"is_premium\"='false', \"premium_activated_at\"=NULL, \"premium_expires_at\"=NULL WHERE \"email\"='$EMAIL';"
-
-echo "Query:"
-echo "  $DB_RESET_PREMIUM"
-echo ""
-
-RESULT=$(psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d "$DB_NAME" -c "$DB_RESET_PREMIUM" 2>/dev/null || echo "")
-echo -e "${GREEN}✓ User premium status reset${NC}"
 echo "$RESULT"
 echo ""
 

@@ -5,10 +5,9 @@
 # 
 # Executes complete OTP test suite with proper setup and cleanup.
 #
-# Usage: ./run-all-otp-tests.sh --email "user@example.com" [--purge-reports]
+# Usage: ./run-all-otp-tests.sh [--purge-reports]
 #
 # Options:
-#   --email EMAIL         Test email address (required)
 #   --purge-reports       Delete reports after successful run (default: keep)
 ##############################################################################
 
@@ -26,17 +25,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
-EMAIL=""
 WITH_POLLING=false
 PURGE_REPORTS=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         --purge-reports)
             PURGE_REPORTS=true
             shift
@@ -48,19 +42,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./run-all-otp-tests.sh --email \"user@example.com\" [--with-polling]"
-    exit 1
-fi
-
 echo -e "${BLUE}╔════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║  OTP Test Suite Runner (OTP-01 to 05, RTDN)    ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════╝${NC}"
 echo ""
 echo "Configuration:"
-echo "  Email: $EMAIL"
+echo "  User model: fixed external_user_id per OTP script"
 echo "  Polling: $WITH_POLLING"
 echo ""
 
@@ -86,7 +73,7 @@ run_test() {
     
     TESTS_RUN=$((TESTS_RUN + 1))
     
-    if ./"$test_script" --email "$EMAIL" $extra_args; then
+    if ./"$test_script" $extra_args; then
         echo -e "${GREEN}✓ $test_name PASSED${NC}"
         PASSED=$((PASSED + 1))
         RESULTS+=("{\"test_id\": \"$test_id\", \"test_name\": \"$test_name\", \"status\": \"pass\"}")
@@ -178,7 +165,6 @@ cat > otp-suite-summary.json <<EOF
 {
   "test_suite": "OTP-01 to OTP-05 + RTDN-01/02",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "email": "$EMAIL",
   "total_tests": $TESTS_RUN,
   "passed": $PASSED,
   "failed": $FAILED,
@@ -201,7 +187,7 @@ else
     if [[ "$PURGE_REPORTS" == "true" ]]; then
         echo ""
         echo -e "${BLUE}Purging reports (--purge-reports)...${NC}"
-        if bash cleanup-all-otp.sh --email "$EMAIL"; then
+        if bash cleanup-all-otp.sh; then
             echo -e "${GREEN}Reports purged successfully${NC}"
         else
             echo -e "${RED}Purge script failed${NC}"

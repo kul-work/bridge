@@ -6,7 +6,7 @@
 # Purpose: Verify that a slow test card (approves after ~5 minutes) is
 #          properly handled with status transitions from Trial/Pending to Active.
 #
-# Usage: ./test-otp-04.sh --email "user@example.com" [--replay [fixture_file]] [--wait-for-approval]
+# Usage: ./test-otp-04.sh [--replay [fixture_file]] [--wait-for-approval]
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -34,7 +34,6 @@ PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
 
 # Defaults
-EMAIL=""
 WAIT_FOR_APPROVAL=false
 REPLAY_OTP=false
 REPLAY_FIXTURE=""
@@ -49,10 +48,6 @@ export PGPASSWORD="${PGPASSWORD%%@*}"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         --replay)
             REPLAY_OTP=true
             if [[ -n "${2:-}" && "${2:0:2}" != "--" ]]; then
@@ -73,13 +68,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./test-otp-04.sh --email \"user@example.com\" [--replay [fixture_file]] [--wait-for-approval]"
-    exit 1
-fi
-
 if [[ "$REPLAY_OTP" == "true" ]]; then
     if [[ -n "$REPLAY_FIXTURE" ]]; then
         MOCK_GOOGLE_PURCHASE_RESPONSE="$REPLAY_FIXTURE"
@@ -96,20 +84,9 @@ echo "OTP-04: Slow Card (Pending State) Test"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Query database to get user_id from email
-echo -e "${YELLOW}[1/5] Fetching user_id from database for email: $EMAIL${NC}"
-
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
-
-if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
-    echo "Error: $USER_ID"
-    exit 1
-fi
-
-USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+# Step 1: External User ID
+USER_ID="test_otp_user_04"
+echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
 # Step 2: Clean up any existing entries from previous tests
@@ -118,6 +95,10 @@ echo -e "${YELLOW}[2/5] Cleaning up previous test data${NC}"
 CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
+
+CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_PAYMENTS_QUERY" 2>/dev/null
+echo -e "${GREEN}✓ Previous payment records removed${NC}"
 echo ""
 
 # Step 3: Call /api/v1/verify-purchase endpoint with pending token
@@ -350,7 +331,6 @@ cat > otp-04-report.json <<EOF
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "pass",
   "user_id": "$USER_ID",
-  "user_email": "$EMAIL",
   "product_id": "$PRODUCT_ID",
   "purchase_token": "$PURCHASE_TOKEN",
   "initial_status": "$INITIAL_STATUS",

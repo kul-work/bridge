@@ -7,7 +7,7 @@
 #          is rejected by the payment verification endpoint and no database
 #          entry is created.
 #
-# Usage: ./test-otp-02.sh --email "user@example.com"
+# Usage: ./test-otp-02.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -33,7 +33,6 @@ PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
 
 # Defaults
-EMAIL=""
 APP_URL="$BRIDGE_API_URL"
 DB_URL="$BRIDGE_DB_URL"
 
@@ -44,10 +43,6 @@ export PGPASSWORD="${PGPASSWORD%%@*}"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -55,32 +50,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./test-otp-02.sh --email \"user@example.com\""
-    exit 1
-fi
-
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-02: Declined Payment Test"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Query database to get user_id from email
-echo -e "${YELLOW}[1/4] Fetching user_id from database for email: $EMAIL${NC}"
-
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
-
-if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
-    echo "Error: $USER_ID"
-    exit 1
-fi
-
-USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+# Step 1: External User ID
+USER_ID="test_otp_user_02"
+echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
 # Step 2: Clean up any existing entries from previous successful tests (reset for this decline test)
@@ -89,6 +66,10 @@ echo -e "${YELLOW}[2/5] Cleaning up previous test data${NC}"
 CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
+
+CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_PAYMENTS_QUERY" 2>/dev/null
+echo -e "${GREEN}✓ Previous payment records removed${NC}"
 echo ""
 
 # Step 3: Call /api/v1/verify-purchase endpoint with declined token
@@ -210,7 +191,6 @@ cat > otp-02-report.json <<EOF
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "pass",
   "user_id": "$USER_ID",
-  "user_email": "$EMAIL",
   "product_id": "$PRODUCT_ID",
   "declined_token": "$DECLINED_TOKEN",
   "http_code": $HTTP_CODE,

@@ -7,7 +7,7 @@
 #          (back button or X before completing payment), no database entries
 #          are created and the user can immediately retry.
 #
-# Usage: ./test-otp-03.sh --email "user@example.com"
+# Usage: ./test-otp-03.sh
 #
 # Prerequisites:
 #   - DATABASE_URL configured and db accessible
@@ -30,7 +30,6 @@ NC='\033[0m' # No Color
 PRODUCT_ID="$PRODUCT_ID_OTP"
 
 # Defaults
-EMAIL=""
 DB_URL="$BRIDGE_DB_URL"
 
 # Extract DB password once
@@ -40,10 +39,6 @@ export PGPASSWORD="${PGPASSWORD%%@*}"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -51,32 +46,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./test-otp-03.sh --email \"user@example.com\""
-    exit 1
-fi
-
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-03: User Cancellation Test"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Query database to get user_id from email
-echo -e "${YELLOW}[1/4] Fetching user_id from database for email: $EMAIL${NC}"
-
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
-
-if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
-    echo "Error: $USER_ID"
-    exit 1
-fi
-
-USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+# Step 1: External User ID
+USER_ID="test_otp_user_03"
+echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
 # Step 2: Clean up any existing entries from previous tests
@@ -85,6 +62,10 @@ echo -e "${YELLOW}[2/4] Cleaning up previous test data${NC}"
 CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
+
+CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_PAYMENTS_QUERY" 2>/dev/null
+echo -e "${GREEN}✓ Previous payment records removed${NC}"
 echo ""
 
 # Step 3: Verify clean state BEFORE user initiates purchase
@@ -172,7 +153,6 @@ cat > otp-03-report.json <<EOF
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "pass",
   "user_id": "$USER_ID",
-  "user_email": "$EMAIL",
   "product_id": "$PRODUCT_ID",
   "database_record_count_before": $DB_COUNT_BEFORE,
   "database_record_count_after": $DB_COUNT_AFTER,
