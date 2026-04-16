@@ -6,7 +6,7 @@
 # Purpose: Verify that a successful INAPP product purchase is properly
 #          verified and stored in the database with status "active".
 #
-# Usage: ./test-otp-01.sh --email "user@example.com" [--replay [fixture_file]]
+# Usage: ./test-otp-01.sh [--replay [fixture_file]]
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -27,12 +27,12 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Test configuration
-DUMMY_TOKEN="test-inapp-otp-01-12345"
+TIMESTAMP=$(date +%s)
+DUMMY_TOKEN="test-otp-01-token-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
 
 # Defaults
-EMAIL=""
 DB_URL="$BRIDGE_DB_URL"
 REPLAY_OTP=false
 REPLAY_FIXTURE=""
@@ -46,10 +46,6 @@ export PGPASSWORD="${PGPASSWORD%%@*}"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         --replay)
             REPLAY_OTP=true
             if [[ -n "${2:-}" && "${2:0:2}" != "--" ]]; then
@@ -65,13 +61,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./test-otp-01.sh --email \"user@example.com\" [--replay [fixture_path]]"
-    exit 1
-fi
 
 if [[ "$REPLAY_OTP" == "true" ]]; then
     if [[ -n "$REPLAY_FIXTURE" ]]; then
@@ -91,20 +80,9 @@ echo "OTP-01: Successful Purchase Test"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Query database to get user_id from email
-echo -e "${YELLOW}[1/7] Fetching user_id from database for email: $EMAIL${NC}"
-
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
-
-if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
-    echo "Error: $USER_ID"
-    exit 1
-fi
-
-USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+# Step 1: External User ID
+USER_ID="test_otp_user_01"
+echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
 # Step 2: Clean up any existing entries from previous tests
@@ -113,6 +91,10 @@ echo -e "${YELLOW}[2/7] Cleaning up previous test data${NC}"
 CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
+
+CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_PAYMENTS_QUERY" 2>/dev/null
+echo -e "${GREEN}✓ Previous payment records removed${NC}"
 echo ""
 
 # Step 3: Call /api/v1/verify-purchase endpoint
@@ -259,7 +241,6 @@ cat > otp-01-report.json <<EOF
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "pass",
   "user_id": "$USER_ID",
-  "user_email": "$EMAIL",
   "product_id": "$PRODUCT_ID",
   "purchase_token": "$DUMMY_TOKEN",
   "payment_status": "$PAYMENT_STATUS",
