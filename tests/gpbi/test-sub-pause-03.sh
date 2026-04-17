@@ -37,6 +37,7 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 DUMMY_TOKEN="test-sub-pause-03-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+REPORT_FILE="sub-pause-03-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-PAUSE-03: Manual Resume from Pause"
@@ -118,5 +119,24 @@ else
 fi
 echo ""
 
+# Generate JSON report
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "SUB-PAUSE-03",
+  "test_name": "Manual Resume from Pause",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "pass",
+  "user_id": "$USER_ID",
+  "product_id": "$PRODUCT_ID",
+  "results": {
+    "subscription_seeded": true,
+    "resume_webhook_sent": true,
+    "resume_effective": true
+  }
+}
+EOF
+
 echo -e "${GREEN}✓ SUB-PAUSE-03 Bridge Test PASSED${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 exit 0

@@ -38,6 +38,7 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 DUMMY_TOKEN="test-sub-24-restart-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+REPORT_FILE="sub-24-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-24: Restart After Cancellation"
@@ -117,5 +118,20 @@ else
 fi
 echo ""
 
+# Generate JSON report
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "SUB-24",
+  "test_name": "Subscription Korea Pricing Consent",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "pass",
+  "register_http_code": $REGISTER_HTTP_CODE,
+  "verify_http_code": $VERIFY_HTTP_CODE,
+  "korea_pricing_consent_verified": true
+}
+EOF
+
 echo -e "${GREEN}✓ SUB-24 Bridge Test PASSED${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 exit 0

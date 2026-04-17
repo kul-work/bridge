@@ -37,6 +37,7 @@ TIMESTAMP=$(date +%s)
 OLD_TOKEN="test-sub-16-old-token-$TIMESTAMP"
 NEW_TOKEN="test-sub-16-new-token-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+REPORT_FILE="sub-16-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-16: Resubscribe Before Expiration"
@@ -72,7 +73,7 @@ echo ""
 echo -e "${YELLOW}[2/5] Resubscribing with NEW token: $NEW_TOKEN${NC}"
 
 # Pre-register new purchase
-curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -83,10 +84,10 @@ curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
     \"transaction_id\": \"test-reg-resub-16-$(date +%s)\"
-  }" > /dev/null
+  }" )
 
 # Verify purchase with NEW token and mock header for linked token
-curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
+VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "X-Test-Linked-Token: $OLD_TOKEN" \
@@ -96,7 +97,7 @@ curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
     \"subscription_id\": \"$PRODUCT_ID\",
     \"purchase_token\": \"$NEW_TOKEN\",
     \"product_type\": \"subscription\"
-  }" > /dev/null
+  }" )
 
 echo -e "${GREEN}✓ Resubscription request sent${NC}"
 echo ""
@@ -116,5 +117,20 @@ else
 fi
 echo ""
 
+# Generate JSON report
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "SUB-16",
+  "test_name": "Resubscribe Before Expiration",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "pass",
+  "register_http_code": $REGISTER_HTTP_CODE,
+  "verify_http_code": $VERIFY_HTTP_CODE,
+  "resubscription_verified": true
+}
+EOF
+
 echo -e "${GREEN}✓ SUB-16 Bridge Test PASSED${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 exit 0

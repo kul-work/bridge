@@ -37,6 +37,7 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 DUMMY_TOKEN="test-sub-08-token-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+REPORT_FILE="sub-08-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-08: Account Hold (Payment Failure)"
@@ -61,7 +62,7 @@ echo ""
 echo -e "${YELLOW}[1/5] Establishing initial active subscription${NC}"
 
 # Pre-register purchase
-curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -72,10 +73,10 @@ curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
     \"transaction_id\": \"test-reg-08-$(date +%s)\"
-  }" > /dev/null
+  }")
 
 # Verify purchase
-curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
+VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -84,7 +85,7 @@ curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
     \"subscription_id\": \"$PRODUCT_ID\",
     \"purchase_token\": \"$DUMMY_TOKEN\",
     \"product_type\": \"subscription\"
-  }" > /dev/null
+  }")
 
 echo -e "${GREEN}✓ Initial purchase active${NC}"
 echo ""
@@ -137,5 +138,20 @@ else
 fi
 echo ""
 
+# Generate JSON report
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "SUB-08",
+  "test_name": "Account Hold (Payment Failure)",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "pass",
+  "register_http_code": $REGISTER_HTTP_CODE,
+  "verify_http_code": $VERIFY_HTTP_CODE,
+  "payment_failure_hold_verified": true
+}
+EOF
+
 echo -e "${GREEN}✓ SUB-08 Bridge Test PASSED${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 exit 0

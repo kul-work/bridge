@@ -38,6 +38,7 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 DUMMY_TOKEN="test-sub-20-price_change-$TIMESTAMP"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+REPORT_FILE="sub-20-report.json"
 NEW_PRICE_CENTS=500
 
 echo -e "${YELLOW}========================================${NC}"
@@ -63,7 +64,7 @@ echo ""
 echo -e "${YELLOW}[1/5] Establishing active subscription${NC}"
 
 # Pre-register purchase
-curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -74,10 +75,10 @@ curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
     \"product_type\": \"subscription\",
     \"amount_cents\": 499,
     \"transaction_id\": \"test-reg-20-$(date +%s)\"
-  }" > /dev/null
+  }" )
 
 # Verify purchase
-curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
+VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -86,7 +87,7 @@ curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
     \"subscription_id\": \"$PRODUCT_ID\",
     \"purchase_token\": \"$DUMMY_TOKEN\",
     \"product_type\": \"subscription\"
-  }" > /dev/null
+  }" )
 
 echo -e "${GREEN}✓ Active subscription established${NC}"
 echo ""
@@ -173,5 +174,20 @@ else
 fi
 echo ""
 
+# Generate JSON report
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "SUB-20",
+  "test_name": "Price Change (Opt-In Increase, User Accepts)",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "pass",
+  "register_http_code": $REGISTER_HTTP_CODE,
+  "verify_http_code": $VERIFY_HTTP_CODE,
+  "price_change_verified": true
+}
+EOF
+
 echo -e "${GREEN}✓ SUB-20 Bridge Test PASSED${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 exit 0
