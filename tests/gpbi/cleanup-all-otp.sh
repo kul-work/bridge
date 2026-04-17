@@ -20,13 +20,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Defaults
-DB_URL="$DATABASE_URL"
+# Defaults (already sourced from globals.cfg)
+DB_USER="$BRIDGE_DB_USER"
+DB_HOST="$BRIDGE_DB_HOST"
+DB_PORT="$BRIDGE_DB_PORT"
+DB_NAME="$BRIDGE_DB_NAME"
 PRODUCT_ID="$PRODUCT_ID_OTP"
-
-# Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -61,11 +60,6 @@ fi
 echo ""
 
 # Use the fixed OTP test user prefix shared across OTP-01..05 and RTDN cleanup.
-DB_USER="$DATABASE_USER"
-DB_HOST="$DATABASE_HOST"
-DB_PORT="$DATABASE_PORT"
-DB_NAME="$DATABASE_NAME"
-
 USER_ID_PREFIX="test_otp_user_"
 
 # Remove subscription database records

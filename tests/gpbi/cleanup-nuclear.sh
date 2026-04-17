@@ -11,12 +11,13 @@
 #        ./cleanup-nuclear.sh --dry-run
 #
 # What it cleans:
-#   - User premium status (sets is_premium=false, expires_at=NULL)
-#   - Subscriptions table (TRUNCATE)
-#   - Payments table (TRUNCATE)
-#   - Notifications table (TRUNCATE)
-#   - Webhooks table (TRUNCATE)
-#   - Rate limits table (TRUNCATE)
+#   - Payments (pay.payments)
+#   - Subscriptions (pay.subscriptions)
+#   - Webhook delivery logs (pay.webhook_delivery)
+#   - Webhook provider configs (pay.webhook_provider)
+#   - Notifications (hiha.notifications)
+#   - Webhook callbacks (hiha.webhook_callbacks)
+#   - User premium status via clerk_id (hiha.users)
 #
 # Safety: Only executes on localhost connections (127.0.0.1 or ::1)
 ##############################################################################
@@ -48,9 +49,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Extract DB password
-export PGPASSWORD="${DATABASE_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# DB credentials from globals.cfg (PGPASSWORD already set in globals.cfg)
+DATABASE_USER="$BRIDGE_DB_USER"
+DATABASE_HOST="$BRIDGE_DB_HOST"
+DATABASE_PORT="$BRIDGE_DB_PORT"
+DATABASE_NAME="$BRIDGE_DB_NAME"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "Nuclear Database Cleanup"
@@ -64,23 +67,40 @@ fi
 
 # SQL cleanup command
 CLEANUP_SQL=$(cat <<'EOF'
--- Clean DB (localhost only)
+-- Localhost safety check
 DO $$
 BEGIN
-  -- Only run if connected from localhost
-  IF inet_client_addr() = '127.0.0.1'::inet OR inet_client_addr() = '::1'::inet THEN
-    UPDATE "public"."users" SET "is_premium"='false', "premium_activated_at"=NULL, "premium_expires_at"=NULL WHERE "email"='test@test.ro';
-    UPDATE "public"."users" SET "is_premium"='false', "premium_activated_at"=NULL, "premium_expires_at"=NULL WHERE "email"='test2@test.ro';
-    TRUNCATE pay.subscriptions;
-    TRUNCATE pay.payments;
-    TRUNCATE notifications;
-    TRUNCATE webhooks;
-    TRUNCATE rate_limits;
-    RAISE NOTICE 'Cleanup completed on localhost';
-  ELSE
-    RAISE WARNING 'Cleanup skipped: not connected from localhost';
+  IF inet_client_addr() != '127.0.0.1'::inet AND inet_client_addr() != '::1'::inet THEN
+    RAISE EXCEPTION 'Nuclear cleanup only allowed from localhost';
   END IF;
 END $$;
+
+SET search_path TO pay;
+
+TRUNCATE payments CASCADE;
+TRUNCATE subscriptions CASCADE;
+TRUNCATE webhook_delivery CASCADE;
+TRUNCATE webhook_provider CASCADE;
+
+SET search_path TO hiha;
+
+TRUNCATE notifications CASCADE;
+TRUNCATE webhook_callbacks CASCADE;
+
+DO $$
+DECLARE
+  v_user_id text := 'user_36lLgcNtpsqKzB5hpan8wYIN5ew';
+BEGIN
+  -- Reset user to free tier
+  UPDATE users SET
+    is_premium = false,
+    premium_activated_at = NULL,
+    premium_expires_at = NULL
+  WHERE clerk_id = v_user_id;
+  
+  COMMIT;
+END
+$$;
 EOF
 )
 

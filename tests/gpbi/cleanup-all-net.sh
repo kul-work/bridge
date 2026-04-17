@@ -29,7 +29,7 @@ NC='\033[0m' # No Color
 
 # Defaults
 EMAIL=""
-DB_URL="$DATABASE_URL"
+DB_URL="$BRIDGE_DB_URL"
 
 # Extract DB password once
 export PGPASSWORD="${DB_URL##*:}"
@@ -88,15 +88,15 @@ if [[ ! -z "$EMAIL" ]]; then
         echo -e "${BLUE}User ID: $USER_ID${NC}"
         
         # Delete NET test pay.subscriptions (those with test tokens containing 'net')
-        psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND purchase_token LIKE '%net-%';" 2>/dev/null
+        psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND purchase_token LIKE '%net-%';" 2>/dev/null
         echo -e "${GREEN}✓ Removed NET test subscription records${NC}"
         
         # Delete NET test pay.payments
-        psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND provider_transaction_id LIKE '%net-%';" 2>/dev/null
+        psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND provider_transaction_id LIKE '%net-%';" 2>/dev/null
         echo -e "${GREEN}✓ Removed NET test payment records${NC}"
         
         # Clean up any orphan NET test records
-        psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token LIKE 'test-net-%';" 2>/dev/null
+        psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token LIKE 'test-net-%';" 2>/dev/null
         echo -e "${GREEN}✓ Removed orphan NET test records${NC}"
     else
         echo -e "${YELLOW}⚠ Could not find user with email: $EMAIL${NC}"

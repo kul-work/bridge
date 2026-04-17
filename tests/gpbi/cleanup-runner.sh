@@ -8,7 +8,7 @@
 #
 # Location: tests/gpbi/cleanup-runner.sh
 #
-# Usage: ./cleanup-runner.sh --email "user@example.com"
+# Usage: ./cleanup-runner.sh
 ##############################################################################
 
 set -uo pipefail
@@ -24,16 +24,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Defaults
-EMAIL=""
-
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -41,12 +34,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    exit 1
-fi
-
-echo -e "${BLUE}running gpbi master cleanup for: $EMAIL${NC}"
+echo -e "${BLUE}running gpbi master cleanup${NC}"
 
 cd "$SCRIPT_DIR"
 
@@ -54,7 +42,7 @@ cd "$SCRIPT_DIR"
 run_clean() {
     local script="$1"
     if [[ -f "$script" ]]; then
-        bash "$script" --email "$EMAIL" > /dev/null 2>&1
+        bash "$script" > /dev/null 2>&1
         echo -e "${GREEN}✓ Cleaned: $script${NC}"
     else
         echo -e "${YELLOW}⚠ Missing: $script (skipping)${NC}"

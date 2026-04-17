@@ -6,7 +6,7 @@
 # Purpose: Remove all subscription test reports and database records for a user.
 #          Used to reset test state for re-running the subscription test suite.
 #
-# Usage: ./cleanup-all-sub.sh --email "user@example.com"
+# Usage: ./cleanup-all-sub.sh [--dry-run]
 #
 # What it cleans:
 #   - All sub-XX-report.json files
@@ -31,23 +31,17 @@ NC='\033[0m' # No Color
 
 # Test configuration
 PRODUCT_ID="$PRODUCT_ID_SUB"
+DB_USER="$BRIDGE_DB_USER"
+DB_HOST="$BRIDGE_DB_HOST"
+DB_PORT="$BRIDGE_DB_PORT"
+DB_NAME="$BRIDGE_DB_NAME"
 
 # Defaults
-EMAIL=""
 DRY_RUN=false
-DB_URL="$DATABASE_URL"
-
-# Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         --dry-run)
             DRY_RUN=true
             shift
@@ -58,13 +52,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./cleanup-all-sub.sh --email \"user@example.com\" [--dry-run]"
-    exit 1
-fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "Subscription Test Suite Cleanup"
@@ -158,19 +145,19 @@ if [[ -n "$USER_ID" ]]; then
 
     # Delete pay.subscriptions
     if [[ "$DRY_RUN" == "true" ]]; then
-        COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+        COUNT=$(psql -U "$DB_USER" -h "$DB_HOST" -p $DB_PORT -d "$DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
         echo "  Would delete $COUNT subscription record(s)"
     else
-        psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+        psql -U "$DB_USER" -h "$DB_HOST" -p $DB_PORT -d "$DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
         echo -e "  ${GREEN}✓ Subscription records deleted${NC}"
     fi
 
     # Delete pay.payments
     if [[ "$DRY_RUN" == "true" ]]; then
-        COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+        COUNT=$(psql -U "$DB_USER" -h "$DB_HOST" -p $DB_PORT -d "$DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
         echo "  Would delete $COUNT payment record(s)"
     else
-        psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+        psql -U "$DB_USER" -h "$DB_HOST" -p $DB_PORT -d "$DB_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
         echo -e "  ${GREEN}✓ Payment records deleted${NC}"
     fi
 
@@ -178,7 +165,7 @@ if [[ -n "$USER_ID" ]]; then
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "  Would reset user is_premium to false"
     else
-        psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "UPDATE users SET is_premium = false, premium_expires_at = NULL WHERE external_user_id = '$USER_ID';" 2>/dev/null
+        psql -U "$DB_USER" -h "$DB_HOST" -p $DB_PORT -d "$DB_NAME" -c "UPDATE users SET is_premium = false, premium_expires_at = NULL WHERE external_user_id = '$USER_ID';" 2>/dev/null
         echo -e "  ${GREEN}✓ User premium status reset${NC}"
     fi
 else
@@ -190,10 +177,10 @@ echo ""
 echo -e "${YELLOW}[4/4] Cleaning processed webhook records${NC}"
 
 if [[ "$DRY_RUN" == "true" ]]; then
-    COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM webhooks WHERE provider_webhook_id LIKE 'test-webhook-sub%' OR provider_webhook_id LIKE 'test-webhook-ack%' OR provider_webhook_id LIKE 'wh-sub%';" -t 2>/dev/null | tr -d ' ')
+    COUNT=$(psql -U "$DB_USER" -h "$DB_HOST" -p $DB_PORT -d "$DB_NAME" -c "SELECT COUNT(*) FROM webhooks WHERE provider_webhook_id LIKE 'test-webhook-sub%' OR provider_webhook_id LIKE 'test-webhook-ack%' OR provider_webhook_id LIKE 'wh-sub%';" -t 2>/dev/null | tr -d ' ')
     echo "  Would delete $COUNT webhook record(s)"
 else
-    psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM webhooks WHERE provider_webhook_id LIKE 'test-webhook-sub%' OR provider_webhook_id LIKE 'test-webhook-ack%' OR provider_webhook_id LIKE 'wh-sub%';" 2>/dev/null
+    psql -U "$DB_USER" -h "$DB_HOST" -p $DB_PORT -d "$DB_NAME" -c "DELETE FROM webhooks WHERE provider_webhook_id LIKE 'test-webhook-sub%' OR provider_webhook_id LIKE 'test-webhook-ack%' OR provider_webhook_id LIKE 'wh-sub%';" 2>/dev/null
     echo -e "  ${GREEN}✓ Webhook records deleted${NC}"
 fi
 echo ""
