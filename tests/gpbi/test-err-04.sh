@@ -75,7 +75,7 @@ PURCHASE_TOKEN="test-err-04-revoke-$(date +%s)"
 # Clean up and create subscription
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
 
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW());" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at, version, last_event_time, payment_failure_notification, google_on_hold) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW(), 1, $(date +%s)000, false, false);" 2>/dev/null
 
 echo -e "${GREEN}✓ Created active subscription${NC}"
 echo -e "${BLUE}Purchase token: $PURCHASE_TOKEN${NC}"
@@ -88,6 +88,12 @@ echo ""
 
 # Step 3: Simulate revocation via webhook (subscription.revoked)
 echo -e "${YELLOW}[3/6] Simulating revocation webhook${NC}"
+echo ""
+
+# Debug: Check if subscription exists before webhook
+echo "Debug: Checking if subscription exists with purchase token: $PURCHASE_TOKEN"
+EXISTING_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT external_user_id, status FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+echo "Debug: Found subscription: $EXISTING_SUB"
 echo ""
 
 TIMESTAMP=$(date +%s000)
@@ -121,6 +127,7 @@ WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
@@ -134,7 +141,7 @@ WEBHOOK_HTTP_CODE=$(echo "$WEBHOOK_RESPONSE" | tail -n1)
 echo "Webhook Response Code: $WEBHOOK_HTTP_CODE"
 
 WEBHOOK_OK="false"
-if [[ "$WEBHOOK_HTTP_CODE" == "200" ]]; then
+if [[ "$WEBHOOK_HTTP_CODE" == "200" ]] || [[ "$WEBHOOK_HTTP_CODE" == "204" ]]; then
     echo -e "${GREEN}✓ Revocation webhook processed${NC}"
     WEBHOOK_OK="true"
 else

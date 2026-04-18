@@ -1055,20 +1055,55 @@ pub async fn process_webhook(
         // §21 - Expired/Inactive
         "subscription.expired" => {
             if let Some(ref _user_id) = external_user_id {
-                let sub_id = fields.subscription_id.clone().unwrap_or_default();
-                let updated = repo.apply_subscription_transition(
-                    app_id,
-                    &sub_id,
-                    timestamp_epoch_ms,
-                    SubscriptionWebhookTransition::Expired,
-                ).await?;
-                if let Some(updated_sub) = updated {
-                    canonical_subscription = Some(updated_sub.into());
-                    callback_event_type = "subscription.expired".to_string();
-                    callback_status_override = Some("expired".to_string());
+                // Try to find subscription by purchase token first (more specific)
+                if let Some(ref purchase_token) = fields.purchase_token {
+                    if let Some(sub) = repo.get_subscription_by_purchase_token(app_id, purchase_token).await? {
+                        let updated = repo.apply_subscription_transition(
+                            app_id,
+                            &sub.subscription_id,
+                            timestamp_epoch_ms,
+                            SubscriptionWebhookTransition::Expired,
+                        ).await?;
+                        if let Some(updated_sub) = updated {
+                            canonical_subscription = Some(updated_sub.into());
+                            callback_event_type = "subscription.expired".to_string();
+                            callback_status_override = Some("expired".to_string());
+                        }
+                    } else {
+                        // Fallback to subscription_id if purchase token not found
+                        let sub_id = fields.subscription_id.clone().unwrap_or_default();
+                        let updated = repo.apply_subscription_transition(
+                            app_id,
+                            &sub_id,
+                            timestamp_epoch_ms,
+                            SubscriptionWebhookTransition::Expired,
+                        ).await?;
+                        if let Some(updated_sub) = updated {
+                            canonical_subscription = Some(updated_sub.into());
+                            callback_event_type = "subscription.expired".to_string();
+                            callback_status_override = Some("expired".to_string());
+                        } else {
+                            info!("Skipped stale expired event for subscription {}", sub_id);
+                            return Ok(None);
+                        }
+                    }
                 } else {
-                    info!("Skipped stale expired event for subscription {}", sub_id);
-                    return Ok(None);
+                    // Fallback to subscription_id if no purchase token
+                    let sub_id = fields.subscription_id.clone().unwrap_or_default();
+                    let updated = repo.apply_subscription_transition(
+                        app_id,
+                        &sub_id,
+                        timestamp_epoch_ms,
+                        SubscriptionWebhookTransition::Expired,
+                    ).await?;
+                    if let Some(updated_sub) = updated {
+                        canonical_subscription = Some(updated_sub.into());
+                        callback_event_type = "subscription.expired".to_string();
+                        callback_status_override = Some("expired".to_string());
+                    } else {
+                        info!("Skipped stale expired event for subscription {}", sub_id);
+                        return Ok(None);
+                    }
                 }
             }
         }
