@@ -45,3 +45,5 @@ certs/play-billing*.json
 # Added by cargo
 
 /target
+# Added by code-review-graph
+.code-review-graph/
