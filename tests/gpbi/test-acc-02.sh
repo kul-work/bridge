@@ -95,22 +95,22 @@ test_subscription_state() {
     # Handle different states
     case $state in
         "pending")
-            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'pending', '$purchase_token', '$PROVIDER', true, NOW(), NOW());" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'pending', '$purchase_token', '$PROVIDER', true, NOW(), NOW());" 2>/dev/null
             # CRITICAL: Also set users table (pending = no access yet)
             psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "UPDATE users SET is_premium = false, premium_expires_at = NULL WHERE external_user_id = '$USER_ID';" 2>/dev/null
             ;;
         "on_hold")
-            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, google_subscription_state, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'on_hold', '$purchase_token', '$PROVIDER', false, '$past_expiry', 3, NOW(), NOW());" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, google_subscription_state, created_at, updated_at) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'on_hold', '$purchase_token', '$PROVIDER', false, '$past_expiry', 3, NOW(), NOW());" 2>/dev/null
             # CRITICAL: Also set users table (on_hold = access revoked)
             psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "UPDATE users SET is_premium = false, premium_expires_at = NULL WHERE external_user_id = '$USER_ID';" 2>/dev/null
             ;;
         "expired")
-            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'expired', '$purchase_token', '$PROVIDER', false, '$past_expiry', NOW(), NOW());" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, created_at, updated_at) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'expired', '$purchase_token', '$PROVIDER', false, '$past_expiry', NOW(), NOW());" 2>/dev/null
             # CRITICAL: Also set users table (expired = no access)
             psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "UPDATE users SET is_premium = false, premium_expires_at = NULL WHERE external_user_id = '$USER_ID';" 2>/dev/null
             ;;
         "revoked")
-            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, revoked_at, revocation_reason, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'revoked', '$purchase_token', '$PROVIDER', false, '$past_expiry', NOW(), 'REFUND', NOW(), NOW());" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, revoked_at, revocation_reason, created_at, updated_at) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'revoked', '$purchase_token', '$PROVIDER', false, '$past_expiry', NOW(), 'REFUND', NOW(), NOW());" 2>/dev/null
             # CRITICAL: Also set users table (revoked = immediate access loss)
             psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "UPDATE users SET is_premium = false, premium_expires_at = NULL WHERE external_user_id = '$USER_ID';" 2>/dev/null
             ;;

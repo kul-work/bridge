@@ -91,19 +91,19 @@ test_subscription_state() {
     # Handle different states
     case $state in
         "active")
-            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$purchase_token', '$PROVIDER', true, '$future_expiry', NOW(), NOW());" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, created_at, updated_at) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'active', '$purchase_token', '$PROVIDER', true, '$future_expiry', NOW(), NOW());" 2>/dev/null
             # CRITICAL: Also set users table (is_user_premium() checks users.is_premium + users.premium_expires_at)
             psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "UPDATE users SET is_premium = true, premium_expires_at = '$future_expiry' WHERE external_user_id = '$USER_ID';" 2>/dev/null
             ;;
         "past_due")
             # IN_GRACE_PERIOD maps to past_due in our system
-            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, google_grace_period_start, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'past_due', '$purchase_token', '$PROVIDER', true, '$future_expiry', NOW(), NOW(), NOW());" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, google_grace_period_start, created_at, updated_at) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'past_due', '$purchase_token', '$PROVIDER', true, '$future_expiry', NOW(), NOW(), NOW());" 2>/dev/null
             # CRITICAL: Also set users table (past_due = grace period, user retains access)
             psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "UPDATE users SET is_premium = true, premium_expires_at = '$future_expiry' WHERE external_user_id = '$USER_ID';" 2>/dev/null
             ;;
         "cancelled")
             # Cancelled but pre-expiry (still has access)
-            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, cancellation_initiated_at, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'cancelled', '$purchase_token', '$PROVIDER', false, '$future_expiry', NOW(), NOW(), NOW());" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, cancellation_initiated_at, created_at, updated_at) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'cancelled', '$purchase_token', '$PROVIDER', false, '$future_expiry', NOW(), NOW(), NOW());" 2>/dev/null
             # CRITICAL: Also set users table (cancelled pre-expiry = user retains access until expiry)
             psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "UPDATE users SET is_premium = true, premium_expires_at = '$future_expiry' WHERE external_user_id = '$USER_ID';" 2>/dev/null
             ;;

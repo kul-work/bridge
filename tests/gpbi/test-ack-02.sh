@@ -18,7 +18,6 @@
 # Test Flow:
 #   1. Clean up any existing subscription for test user
 #   2. Call /api/v1/verify-purchase with header to simulate ACK failure
-  -H "Authorization: Bearer $BRIDGE_API_KEY" \
 #   3. Verify entitlement is granted (is_premium=true) even if ACK pending
 #   4. Wait for retry queue to process
 #   5. Verify acknowledged_at is eventually set (ACK succeeded after retry)
@@ -101,13 +100,32 @@ psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB
 echo -e "${GREEN}✓ Previous subscription records removed${NC}"
 echo ""
 
-# Step 3: Call /api/v1/verify-purchase with simulated ACK failure
+# Step 3: Register the purchase first (required before verification)
+echo -e "${YELLOW}[3/6] Registering purchase for test${NC}"
+
+REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+  -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
-echo -e "${YELLOW}[3/6] Calling /api/v1/verify-purchase with simulated ACK failure${NC}"
-  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-ack-02\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-ack-02-$RUN_ID\"
+  }")
+
+echo "  Register response code: $REGISTER_HTTP_CODE"
+if [[ "$REGISTER_HTTP_CODE" != "200" ]]; then
+    echo -e "${RED}Warning: Purchase registration failed with HTTP $REGISTER_HTTP_CODE${NC}"
+fi
+echo ""
+
+# Step 4: Call /api/v1/verify-purchase with simulated ACK failure
+echo -e "${YELLOW}[4/6] Calling /api/v1/verify-purchase with simulated ACK failure${NC}"
 
 echo "  POST $BRIDGE_API_URL/api/v1/verify-purchase"
-  -H "Authorization: Bearer $BRIDGE_API_KEY" \
 echo "  Provider: $PROVIDER"
 echo "  Product ID: $PRODUCT_ID"
 echo "  Token: $DUMMY_TOKEN"
@@ -152,8 +170,8 @@ else
 fi
 echo ""
 
-# Step 4: Verify entitlement granted immediately (even if ACK pending)
-echo -e "${YELLOW}[4/6] Verifying entitlement granted despite ACK pending${NC}"
+# Step 5: Verify entitlement granted immediately (even if ACK pending)
+echo -e "${YELLOW}[5/6] Verifying entitlement granted despite ACK pending${NC}"
 
 # Check subscription status
 SUB_QUERY="SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
@@ -191,14 +209,14 @@ else
 fi
 echo ""
 
-# Step 5: Wait for retry queue to process
-echo -e "${YELLOW}[5/6] Waiting for retry queue to process ACK (${RETRY_WAIT_SECONDS}s)${NC}"
+# Step 6: Wait for retry queue to process
+echo -e "${YELLOW}[6/7] Waiting for retry queue to process ACK (${RETRY_WAIT_SECONDS}s)${NC}"
 sleep "$RETRY_WAIT_SECONDS"
 echo -e "${GREEN}✓ Wait complete${NC}"
 echo ""
 
-# Step 6: Verify acknowledged_at is now set (retry succeeded)
-echo -e "${YELLOW}[6/6] Verifying ACK succeeded after retry${NC}"
+# Step 7: Verify acknowledged_at is now set (retry succeeded)
+echo -e "${YELLOW}[7/7] Verifying ACK succeeded after retry${NC}"
 
 FINAL_SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
 
