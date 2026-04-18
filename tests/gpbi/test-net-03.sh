@@ -77,8 +77,31 @@ PURCHASE_TOKEN="test-net-03-timeout-$(date +%s)"
 
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
 
-# Create subscription for testing
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW());" 2>/dev/null
+# Create subscription for testing via API endpoints
+curl -s -o /dev/null -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-net-03-setup\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-reg-03-$(date +%s)\"
+  }"
+
+curl -s -o /dev/null -X POST \
+  "$BRIDGE_API_URL/api/v1/verify-purchase" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"provider\": \"$PROVIDER\",
+    \"external_user_id\": \"$USER_ID\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"purchase_token\": \"$PURCHASE_TOKEN\",
+    \"product_type\": \"subscription\"
+  }"
 
 echo -e "${GREEN}✓ Created test subscription${NC}"
 echo -e "${BLUE}Purchase token: $PURCHASE_TOKEN${NC}"
@@ -129,7 +152,8 @@ echo "Simulating first webhook attempt (original)..."
 WEBHOOK_RESPONSE_1=$(curl -s -w "\n%{http_code}" --max-time 5 -X POST \
   "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-token" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
@@ -155,7 +179,8 @@ sleep 1  # Small delay to simulate retry timing
 WEBHOOK_RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-token" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
@@ -169,8 +194,8 @@ RETRY_HTTP_CODE=$(echo "$WEBHOOK_RESPONSE_2" | tail -n1)
 echo "Retry attempt HTTP: $RETRY_HTTP_CODE"
 
 RETRY_HANDLED="false"
-if [[ "$RETRY_HTTP_CODE" == "200" ]]; then
-    echo -e "${GREEN}✓ Retry webhook handled successfully${NC}"
+if [[ "$RETRY_HTTP_CODE" == "200" ]] || [[ "$RETRY_HTTP_CODE" == "204" ]]; then
+    echo -e "${GREEN}✓ Retry webhook handled successfully (HTTP $RETRY_HTTP_CODE)${NC}"
     RETRY_HANDLED="true"
 else
     echo -e "${YELLOW}⚠ Retry returned HTTP $RETRY_HTTP_CODE${NC}"

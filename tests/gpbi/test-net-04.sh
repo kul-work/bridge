@@ -124,13 +124,25 @@ WEBHOOK_TEMP=$(mktemp)
 # Launch both requests in background (concurrent execution)
 echo "Launching concurrent requests..."
 
+# Pre-register purchase intent before launching race
+curl -s -o /dev/null -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-net-04-setup\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-reg-04-$(date +%s)\"
+  }"
+
 # verify_payment request (background)
 (curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "Content-Type: application/json" \
-   \
-   \
   -d "{
     \"provider\": \"$PROVIDER\",
     \"external_user_id\": \"$USER_ID\",
@@ -144,7 +156,8 @@ VERIFY_PID=$!
 (curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-token" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -H "X-Webhook-Verification-Mode: mock" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",

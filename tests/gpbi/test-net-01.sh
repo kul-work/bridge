@@ -120,7 +120,8 @@ NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-token" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -H "X-Webhook-Verification-Mode: mock" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
@@ -153,16 +154,28 @@ echo -e "${YELLOW}[4/6] Calling verify_payment AFTER webhook${NC}"
 echo ""
 
 echo "  POST $BRIDGE_API_URL/api/v1/verify-purchase"
-  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+echo "  Authorization: Bearer $BRIDGE_API_KEY"
 echo "  Token: $PURCHASE_TOKEN"
 echo ""
+
+# Pre-register purchase intent before verification
+curl -s -o /dev/null -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-net-01-setup\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-reg-01-$(date +%s)\"
+  }"
 
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "Content-Type: application/json" \
-   \
-   \
   -d "{
     \"provider\": \"$PROVIDER\",
     \"external_user_id\": \"$USER_ID\",
