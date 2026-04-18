@@ -8,11 +8,12 @@
 # Usage: ./test-api-01.sh
 #
 # Prerequisites:
-#   - Backend running
+#   - Bridge backend running
 #   - DATABASE_URL configured
+#   - BRIDGE_API_KEY set
 #
 # Test Flow:
-#   1. Make authenticated request to /api/v1/joke
+#   1. Make authenticated request to /api/v1/agent/balance
 #   2. Inspect headers for X-RateLimit-Limit and X-RateLimit-Remaining
 #   3. Verify headers are present and numeric
 ##############################################################################
@@ -53,21 +54,20 @@ echo ""
 echo -e "${YELLOW}[1/2] Preparing generated user_id for this run${NC}"
 
 if [[ -z "$USER_ID" ]]; then
-    echo -e "${RED}✗ User ID not set${NC}"
+    echo -e "${RED}# User ID not set${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+echo -e "${GREEN}# User ID: $USER_ID${NC}"
 echo ""
 
 # Step 2: Make Request & Inspect Headers
 echo -e "${YELLOW}[2/2] Making Authenticated Request${NC}"
 
-# Use curl -H "Authorization: Bearer $BRIDGE_API_KEY" -i to include headers in output (use test headers for test mode)
-RESPONSE=$(curl -H "Authorization: Bearer $BRIDGE_API_KEY" -s -i -X GET "$BRIDGE_API_URL/api/v1/joke" \
-   \
-   \
-  -H "x-client-version: 99.99.0")
+# Use curl -H "Authorization: Bearer $BRIDGE_API_KEY" -i to include headers in output
+RESPONSE=$(curl -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -H "x-client-version: 99.99.0" \
+  -s -i -X GET "$BRIDGE_API_URL/api/v1/agent/balance")
 
 # Extract headers
 LIMIT_HEADER=$(echo "$RESPONSE" | grep -i "X-RateLimit-Limit" | cut -d':' -f2 | tr -d ' \r')
