@@ -4,16 +4,15 @@
 # WHK-03: Out-of-Order Webhook Delivery
 # 
 # Purpose: Verify that backend handles out-of-order webhooks gracefully by
-  -H "X-Webhook-Verification-Mode: off" \
 #          querying Google API as source of truth on each webhook, not
 #          relying on event sequence.
 #
 # Usage: ./test-whk-03.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL (default: http://localhost:3000)
+#   - Backend running and listening on $BRIDGE_API_URL
 #   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - Bridge database accessible (credentials via globals.cfg)
 #   - psql installed and in PATH
 #   - Test uses header: X-Webhook-Verification-Mode: off
 #     (Skips signature verification - tests out-of-order handling, not signatures)
@@ -41,6 +40,7 @@ NC='\033[0m' # No Color
 # Test configuration
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
+APP_ID="$BRIDGE_APP_ID"
 RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_whk_03_user_$RUN_ID}"
 
@@ -79,10 +79,10 @@ echo -e "${YELLOW}[2/6] Setting up test subscription record${NC}"
 PURCHASE_TOKEN="test-whk-03-outoforder-$(date +%s)"
 
 # Clean up any existing test data
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" 2>/dev/null
 
 # Create subscription entry with active status
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW());" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$APP_ID', '$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW());" > /dev/null
 
 echo -e "${GREEN}✓ Created test subscription (status: active)${NC}"
 echo ""
@@ -90,7 +90,7 @@ echo ""
 # Step 3: Record initial state
 echo -e "${YELLOW}[3/6] Recording initial state${NC}"
 
-INITIAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+INITIAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
 
 echo -e "${BLUE}Initial subscription status: $INITIAL_STATUS${NC}"
 echo ""
@@ -130,7 +130,6 @@ NOTIFICATION_EXPIRE_B64=$(echo -n "$NOTIFICATION_EXPIRE" | base64 -w 0)
 # Use X-Webhook-Verification-Mode: off (test doesn't verify signatures, tests out-of-order handling)
 EXPIRE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
-  -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -147,7 +146,7 @@ EXPIRE_HTTP_CODE=$(echo "$EXPIRE_RESPONSE" | tail -n1)
 echo "Expiration webhook response: HTTP $EXPIRE_HTTP_CODE"
 
 # Check status after expiration webhook
-STATUS_AFTER_EXPIRE=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+STATUS_AFTER_EXPIRE=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
 echo "Status after expiration webhook: $STATUS_AFTER_EXPIRE"
 echo ""
 
@@ -189,7 +188,6 @@ NOTIFICATION_RENEW_B64=$(echo -n "$NOTIFICATION_RENEW" | base64 -w 0)
 # Use X-Webhook-Verification-Mode: off (test doesn't verify signatures, tests out-of-order handling)
 RENEW_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
-  -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -210,7 +208,7 @@ echo ""
 echo -e "${YELLOW}[6/6] Verifying final state (DB Validation)${NC}"
 echo ""
 
-FINAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+FINAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
 
 echo "Final subscription status: $FINAL_STATUS"
 echo ""
@@ -218,9 +216,8 @@ echo ""
 # The key point: despite out-of-order delivery, backend queries Google API
 # With mock, this should return active state after renewal webhook
 OUT_OF_ORDER_HANDLED="false"
-if [[ "$EXPIRE_HTTP_CODE" == "200" ]] && [[ "$RENEW_HTTP_CODE" == "200" ]]; then
-    echo -e "${GREEN}✓ Both webhooks processed (HTTP 200)${NC}"
-  -H "X-Webhook-Verification-Mode: off" \
+if [[ ( "$EXPIRE_HTTP_CODE" == "200" || "$EXPIRE_HTTP_CODE" == "204" ) && ( "$RENEW_HTTP_CODE" == "200" || "$RENEW_HTTP_CODE" == "204" ) ]]; then
+    echo -e "${GREEN}✓ Both webhooks processed (HTTP $EXPIRE_HTTP_CODE / $RENEW_HTTP_CODE)${NC}"
     OUT_OF_ORDER_HANDLED="true"
 else
     echo -e "${YELLOW}⚠ Webhook processing issues${NC}"

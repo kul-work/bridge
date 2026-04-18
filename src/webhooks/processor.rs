@@ -524,9 +524,11 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     }
 
     // 1. subscription_id lookup
-    if let Some(ref sub_id) = webhook.subscription_id {
-        if let Ok(Some(user)) = repo.lookup_user_by_subscription_id(app_id, sub_id).await {
-            return Some(user);
+    if webhook.provider != "google_play" {
+        if let Some(ref sub_id) = webhook.subscription_id {
+            if let Ok(Some(user)) = repo.lookup_user_by_subscription_id(app_id, sub_id).await {
+                return Some(user);
+            }
         }
     }
 

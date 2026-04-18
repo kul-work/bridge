@@ -3,55 +3,44 @@
 ##############################################################################
 # WHK-04: Webhook Without Prior verify_payment Call
 # 
-# Purpose: Verify that webhooks for pay.subscriptions that were NEVER registered
-  -H "X-Webhook-Verification-Mode: off" \
-#          via /api/v1/verify-purchase are handled gracefully (either rejected
-  -H "Authorization: Bearer $BRIDGE_API_KEY" \
-#          or safely discarded without DB corruption).
+# Purpose: Verify that webhooks for subscriptions that were never registered
+#          via /api/v1/payment/verify are handled gracefully, fail softly,
+#          or are simply ignored without creating orphan database logic.
 #
 # Usage: ./test-whk-04.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL (default: http://localhost:3000)
+#   - Backend running and listening on $BRIDGE_API_URL
 #   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - Bridge database accessible (credentials via globals.cfg)
 #   - psql installed and in PATH
 #   - Test uses header: X-Webhook-Verification-Mode: off
-#     (Skips signature verification - tests token lookup, not signatures)
 #
 # TESTPLAN Reference:
-#   Backend Behavior: Backend attempts to find user by email or token,
-#                     If not found: Logs error and either (a) rejects webhook
-#                     or (b) discards safely without DB change,
-#                     Status quo: No user entry created; webhook safe to ignore.
-#   DB Validation: No user entry created; webhook safe to ignore.
+#   Backend Behavior: Backend attempts to find user by token.
+#                     If not found: Logs error and either rejects webhook or discards safely.
+#                     Database state unchanged (no user entry created).
 ##############################################################################
 
 set -euo pipefail
 
-# Source global configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/globals.cfg"
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Test configuration
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
+APP_ID="$BRIDGE_APP_ID"
 RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_whk_04_user_$RUN_ID}"
-
-# Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 DB_URL="${BRIDGE_DB_URL}"
 
-# Extract DB password once
-# Extract DB password if needed
 if [[ "$DB_URL" == *":"* ]]; then
     export PGPASSWORD="${DB_URL##*:}"
     export PGPASSWORD="${PGPASSWORD%%@*}"
@@ -62,48 +51,40 @@ echo "WHK-04: Webhook Without Prior verify_payment Call"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Generate a synthetic external_user_id for this run
 echo -e "${YELLOW}[1/5] Preparing generated user_id for this run${NC}"
 
 if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
+    echo -e "${RED}[FAIL] Failed to prepare user_id${NC}"
     echo "Error: $USER_ID"
     exit 1
 fi
 
 USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+echo -e "${GREEN}[OK] User ID: $USER_ID${NC}"
 echo ""
 
-# Step 2: Clean up - ensure NO subscription record exists for this token
 echo -e "${YELLOW}[2/5] Ensuring no subscription record exists for test token${NC}"
 
-# Generate a unique token that was NEVER registered
 UNREGISTERED_TOKEN="unregistered-token-whk-04-$(date +%s)"
 
-# Clean up any existing subscription records for this user/product
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" 2>/dev/null
 
-echo -e "${GREEN}✓ Cleaned up existing pay.subscriptions${NC}"
+echo -e "${GREEN}[OK] Cleaned up existing pay.subscriptions rows${NC}"
 echo -e "${BLUE}Unregistered token to test: $UNREGISTERED_TOKEN${NC}"
 echo ""
 
-# Step 3: Record initial database state
 echo -e "${YELLOW}[3/5] Recording initial database state${NC}"
 
-INITIAL_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-INITIAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-
-# Also count total pay.subscriptions with this token (should be 0)
-TOKEN_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$UNREGISTERED_TOKEN';" -t 2>/dev/null | tr -d ' ')
+INITIAL_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
+INITIAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
+TOKEN_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND purchase_token = '$UNREGISTERED_TOKEN';" -t 2>/dev/null | tr -d ' ')
 
 echo -e "${BLUE}Initial user subscription count: $INITIAL_SUB_COUNT${NC}"
 echo -e "${BLUE}Initial user payment count: $INITIAL_PAYMENT_COUNT${NC}"
 echo -e "${BLUE}Subscriptions with test token: $TOKEN_SUB_COUNT${NC}"
 echo ""
 
-# Step 4: Send webhook for UNREGISTERED token
-echo -e "${YELLOW}[4/5] Sending webhook for UNREGISTERED token${NC}"
+echo -e "${YELLOW}[4/5] Sending webhook for unregistered token${NC}"
 echo ""
 
 TIMESTAMP=$(date +%s000)
@@ -112,12 +93,10 @@ MESSAGE_ID="whk-04-unregistered-$(date +%s)"
 echo "Webhook details:"
 echo "  Message ID: $MESSAGE_ID"
 echo "  Notification Type: 2 (SUBSCRIPTION_RENEWED)"
-echo "  Purchase Token: $UNREGISTERED_TOKEN (NEVER registered via verify_payment)"
-echo "  Expected: HTTP 200 (webhook accepted but no DB change)"
-echo "            OR HTTP 404/400 (token not found - also acceptable)"
+echo "  Purchase Token: $UNREGISTERED_TOKEN"
+echo "  Expected: HTTP 200/204 or a safe rejection (400/404)"
 echo ""
 
-# Create DeveloperNotification JSON
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
@@ -133,64 +112,50 @@ NOTIFICATION_JSON=$(cat <<EOF
 EOF
 )
 
-# Base64 encode the notification
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 
-# Send webhook for unregistered token
-# Use X-Webhook-Verification-Mode: off (test doesn't verify signatures, tests token lookup)
 WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
-  -H "X-Webhook-Verification-Mode: off" \
-  -d "{
-    \"message\": {
-      \"data\": \"$NOTIFICATION_B64\",
-      \"message_id\": \"$MESSAGE_ID\",
-      \"attributes\": {}
-    },
-    \"subscription\": \"projects/test-project/pay.subscriptions/test-sub\"
-  }")
+  -d "{\"message\": {\"data\": \"$NOTIFICATION_B64\", \"message_id\": \"$MESSAGE_ID\", \"attributes\": {}}, \"subscription\": \"projects/test-project/pay.subscriptions/test-sub\"}")
 
 WEBHOOK_HTTP_CODE=$(echo "$WEBHOOK_RESPONSE" | tail -n1)
 WEBHOOK_LINE_COUNT=$(echo "$WEBHOOK_RESPONSE" | wc -l)
-if [ "$WEBHOOK_LINE_COUNT" -gt 1 ]; then
+if [[ "$WEBHOOK_LINE_COUNT" -gt 1 ]]; then
     WEBHOOK_BODY=$(echo "$WEBHOOK_RESPONSE" | head -n $((WEBHOOK_LINE_COUNT - 1)))
 else
     WEBHOOK_BODY=""
 fi
 
-echo "Webhook Response Code: $WEBHOOK_HTTP_CODE"
-if [[ ! -z "$WEBHOOK_BODY" ]]; then
-    echo "Webhook Response: $WEBHOOK_BODY"
+echo "Webhook response code: $WEBHOOK_HTTP_CODE"
+if [[ -n "$WEBHOOK_BODY" ]]; then
+    echo "Webhook response body: $WEBHOOK_BODY"
 fi
 echo ""
 
-# Analyze webhook response
 WEBHOOK_HANDLED_GRACEFULLY="false"
-if [[ "$WEBHOOK_HTTP_CODE" == "200" ]]; then
-    echo -e "${GREEN}✓ Webhook returned HTTP 200 (accepted but should not create records)${NC}"
+if [[ "$WEBHOOK_HTTP_CODE" == "200" || "$WEBHOOK_HTTP_CODE" == "204" ]]; then
+    echo -e "${GREEN}[OK] Webhook accepted without prior verify-purchase${NC}"
     WEBHOOK_HANDLED_GRACEFULLY="true"
-elif [[ "$WEBHOOK_HTTP_CODE" == "404" ]]; then
-    echo -e "${GREEN}✓ Webhook returned HTTP 404 (token not found - valid rejection)${NC}"
-    WEBHOOK_HANDLED_GRACEFULLY="true"
-elif [[ "$WEBHOOK_HTTP_CODE" == "400" ]]; then
-    echo -e "${GREEN}✓ Webhook returned HTTP 400 (invalid/unregistered token - valid rejection)${NC}"
+elif [[ "$WEBHOOK_HTTP_CODE" == "400" || "$WEBHOOK_HTTP_CODE" == "404" ]]; then
+    echo -e "${GREEN}[OK] Webhook safely rejected for unknown token${NC}"
     WEBHOOK_HANDLED_GRACEFULLY="true"
 else
-    echo -e "${YELLOW}⚠ Webhook returned HTTP $WEBHOOK_HTTP_CODE${NC}"
-    WEBHOOK_HANDLED_GRACEFULLY="true"  # Any response is acceptable as long as DB not corrupted
+    echo -e "${YELLOW}[WARN] Webhook returned HTTP $WEBHOOK_HTTP_CODE${NC}"
+    WEBHOOK_HANDLED_GRACEFULLY="true"
 fi
 echo ""
 
-# Step 5: Verify database state unchanged (DB Validation)
-echo -e "${YELLOW}[5/5] Verifying database state unchanged (DB Validation)${NC}"
+echo -e "${YELLOW}[5/5] Verifying database state unchanged${NC}"
 echo ""
 
-FINAL_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-FINAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-FINAL_TOKEN_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$UNREGISTERED_TOKEN';" -t 2>/dev/null | tr -d ' ')
+sleep 2
+
+FINAL_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
+FINAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
+FINAL_TOKEN_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND purchase_token = '$UNREGISTERED_TOKEN';" -t 2>/dev/null | tr -d ' ')
 
 echo "Final user subscription count: $FINAL_SUB_COUNT (initial: $INITIAL_SUB_COUNT)"
 echo "Final user payment count: $FINAL_PAYMENT_COUNT (initial: $INITIAL_PAYMENT_COUNT)"
@@ -201,32 +166,28 @@ DB_UNCHANGED="false"
 NO_ORPHAN_RECORDS="false"
 
 if [[ "$FINAL_SUB_COUNT" == "$INITIAL_SUB_COUNT" ]] && [[ "$FINAL_PAYMENT_COUNT" == "$INITIAL_PAYMENT_COUNT" ]]; then
-    echo -e "${GREEN}✓ User's subscription/payment counts unchanged${NC}"
+    echo -e "${GREEN}[OK] Subscription and payment counts stayed unchanged${NC}"
     DB_UNCHANGED="true"
 else
-    echo -e "${RED}✗ User's subscription/payment counts changed unexpectedly!${NC}"
-    DB_UNCHANGED="false"
+    echo -e "${RED}[FAIL] Subscription or payment counts changed unexpectedly${NC}"
 fi
 
 if [[ "$FINAL_TOKEN_SUB_COUNT" == "0" ]]; then
-    echo -e "${GREEN}✓ No orphan subscription created for unregistered token${NC}"
+    echo -e "${GREEN}[OK] No orphan subscription was created${NC}"
     NO_ORPHAN_RECORDS="true"
 else
-    echo -e "${RED}✗ Orphan subscription created with unregistered token!${NC}"
-    NO_ORPHAN_RECORDS="false"
+    echo -e "${RED}[FAIL] Orphan subscription was created for the unknown token${NC}"
 fi
 echo ""
 
-# Determine overall test status
 if [[ "$WEBHOOK_HANDLED_GRACEFULLY" == "true" ]] && [[ "$DB_UNCHANGED" == "true" ]] && [[ "$NO_ORPHAN_RECORDS" == "true" ]]; then
     TEST_STATUS="pass"
-    TEST_RESULT_MSG="${GREEN}✓ WHK-04 Test PASSED${NC}"
+    TEST_RESULT_MSG="${GREEN}[OK] WHK-04 Test PASSED${NC}"
 else
     TEST_STATUS="fail"
-    TEST_RESULT_MSG="${RED}✗ WHK-04 Test FAILED${NC}"
+    TEST_RESULT_MSG="${RED}[FAIL] WHK-04 Test FAILED${NC}"
 fi
 
-# Generate JSON report
 cat > whk-04-report.json <<EOF
 {
   "test_id": "WHK-04",
@@ -247,9 +208,7 @@ cat > whk-04-report.json <<EOF
     "final_payment_count": $FINAL_PAYMENT_COUNT,
     "token_subscription_count": $FINAL_TOKEN_SUB_COUNT
   },
-  "notes": "Apps MUST call /api/v1/verify-purchase immediately after purchase, before webhooks arrive"
-  -H "X-Webhook-Verification-Mode: off" \
-  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  "notes": "Apps must call /api/v1/verify-purchase before webhooks arrive."
 }
 EOF
 
@@ -264,4 +223,5 @@ echo ""
 if [[ "$TEST_STATUS" == "fail" ]]; then
     exit 1
 fi
+
 exit 0

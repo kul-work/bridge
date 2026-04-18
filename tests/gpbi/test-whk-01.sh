@@ -2,6 +2,20 @@
 
 ##############################################################################
 # WHK-01: Bridge Invalid Pub/Sub Signature Rejection
+# 
+# Purpose: Verify that webhooks with tampered or invalid authorization headers
+#          are properly rejected (HTTP 400/403) and not processed.
+#
+# Usage: ./test-whk-01.sh
+#
+# Prerequisites:
+#   - Backend running and listening on $BRIDGE_API_URL
+#   - Backend configured with: MOCK_EXTERNAL_APIS=true
+#   - Test intentionally sends a bad authorization header. No DB or psql required.
+# TESTPLAN Reference:
+#   Backend Behavior: Code logs "Pub/Sub signature verification failed",
+#                     Error response: WebhookVerificationFailed,
+#                     Database state unchanged.
 ##############################################################################
 
 set -euo pipefail
@@ -11,6 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/globals.cfg"
 
 # Colors for output
+YELLOW='\033[1;33m'
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m' # No Color

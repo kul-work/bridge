@@ -9,10 +9,10 @@
 # Usage: ./test-whk-01b.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL (default: http://localhost:3000)
+#   - Backend running and listening on $BRIDGE_API_URL
 #   - Backend configured with: MOCK_EXTERNAL_APIS=true
 #   - GOOGLE_PUB_SUB_AUDIENCE set (e.g., https://api.yourdomain.com)
-#   - DATABASE_URL configured and db accessible
+#   - Bridge database accessible (credentials via globals.cfg)
 #   - psql installed and in PATH
 #   - Test uses header: X-Webhook-Verification-Mode: strict
 #     (Forces signature verification regardless of GOOGLE_VERIFY_WEBHOOK_SIGNATURE setting)
