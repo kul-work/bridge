@@ -120,7 +120,11 @@ cleanup_suite() {
     local script="cleanup-all-${suite}.sh"
     if [[ -f "$script" ]]; then
         echo -e "${YELLOW}Cleaning up $suite data before suite...${NC}"
-        bash "$script" --email "$EMAIL" 2>/dev/null || true
+        if [[ "$suite" == "acc" ]]; then
+            bash "$script" 2>/dev/null || true
+        else
+            bash "$script" --email "$EMAIL" 2>/dev/null || true
+        fi
     fi
 }
 
@@ -140,7 +144,15 @@ run_suite() {
     echo -e "${BLUE}▶ Starting Suite: $name${NC}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     
-    if bash "$script" --email "$EMAIL" $extra_args; then
+    local cmd="bash \"$script\""
+    if [[ "$script" != "run-all-acc-tests.sh" ]]; then
+        cmd="$cmd --email \"$EMAIL\""
+    fi
+    if [[ -n "$extra_args" ]]; then
+        cmd="$cmd $extra_args"
+    fi
+
+    if eval $cmd; then
         echo -e "${GREEN}✓ Suite PASSED: $name${NC}"
     else
         echo -e "${RED}✗ Suite FAILED: $name${NC}"
@@ -411,11 +423,7 @@ case $SCOPE in
         run_suite "run-all-ack-tests.sh" "Acknowledgment (ACK)"
         
         # Infrastructure (can run with existing data)
-        ACC_EXTRA=""
-        if [[ -n "$EMAIL2" ]]; then
-            ACC_EXTRA="--email2 \"$EMAIL2\""
-        fi
-        run_suite "run-all-acc-tests.sh" "Access Control (ACC)" "$ACC_EXTRA"
+        run_suite "run-all-acc-tests.sh" "Access Control (ACC)"
         run_suite "run-all-whk-tests.sh" "Webhooks Core (WHK)"
         run_suite "run-all-net-tests.sh" "Network & Resilience (NET)"
         
@@ -437,11 +445,7 @@ case $SCOPE in
         ;;
         
     infra)
-        ACC_EXTRA=""
-        if [[ -n "$EMAIL2" ]]; then
-            ACC_EXTRA="--email2 \"$EMAIL2\""
-        fi
-        run_suite "run-all-acc-tests.sh" "Access Control (ACC)" "$ACC_EXTRA"
+        run_suite "run-all-acc-tests.sh" "Access Control (ACC)"
         run_suite "run-all-whk-tests.sh" "Webhooks Core (WHK)"
         run_suite "run-all-net-tests.sh" "Network & Resilience (NET)"
         run_suite "run-all-err-tests.sh" "Error Handling (ERR)"
