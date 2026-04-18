@@ -1,0 +1,347 @@
+# Google Play Billing Integration Test Plan
+
+This document outlines comprehensive test scenarios for validating the Google Play Billing integration in the Backend of the application. It covers one-time purchases (In-App Products), subscriptions, webhook handling, and edge cases required for production release.
+
+## Prerequisites
+
+### Google Play Console Setup
+
+1. **License Testing**: Add tester email addresses to **Setup > License testing**.
+   - Enables testing without real charges
+   - Provides "Test" payment methods (e.g., "Test card, always approves", "Test card, always declines", "Slow test card")
+
+2. **Internal App Sharing or Testing Track**: Deploy the app via Internal App Sharing or Internal Testing track.
+   - Sideloaded APKs may not connect to Google Play Billing correctly depending on signature/debug configuration
+
+3. **Accelerated Test Durations**: For license testers, subscription durations are accelerated.
+   - Example: Monthly = 5 minutes in test mode
+
+### Environment Configuration
+
+- **Production requirement**: `GOOGLE_VERIFY_AUDIENCE=true` (enforces strict Pub/Sub JWT verification for audience claim)
+- **Current state**: Code logs warnings on verification failures but allows unauthenticated webhooks in dev/testing
+- **Production rollout**: All webhook signature verification will be enforced
+
+### Backend Prerequisite: Purchase Token Registration
+
+**Critical**: Before webhooks can update a user's subscription, the app must first call `/api/v1/payment/verify` to register the purchase token with the user account.
+
+- **Flow**: Client purchases → Gets purchase token → Calls `/api/v1/payment/verify` with token → Backend stores `(user_id, `purchase_token`, `subscription_id`)`
+- **Webhook dependency**: Subsequent webhooks use `purchase_token` to look up the user in the database
+- **Risk**: Without verification first, webhooks will fail to find the user and won't grant/revoke subscriptions
+
+---
+
+## Test Scenarios
+
+### A. One-Time Purchases (In-App Products)
+
+**Product ID**: `VITE_GOOGLE_PLAY_INAPP_ID` (configured in frontend)
+
+**Note**: One-time purchases do NOT expire and do NOT auto-renew. Status is permanent until refunded. Single items only (cart support deferred).
+
+#### A.1 Purchase & Verification Flow
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **OTP-01** | **Successful Purchase** | 1. Tap "One-Time Purchase".<br>2. Select "Test card, always approves".<br>3. Confirm purchase.<br>4. Wait for dialog to close. | - Dialog closes.<br>- Success toast displayed. | - `/api/v1/payment/verify` called with token and `productId`.<br>- Backend calls Google API `purchases.products.get() (v1)` with token.<br>- Verifies `obfuscatedExternalAccountId` matches authenticated user (security check).<br>- Checks `purchaseState: 0` (PURCHASED) and `purchaseCompletionTime` exists.<br>- Backend calls `acknowledge` endpoint to mark purchase as fulfilled.<br>- Entitlement granted (e.g., `is_premium=true`).<br><br>**DB Validation**: `payments` table has `status='success'`, `provider='google_play'`, `amount_cents>0`, `provider_transaction_id` NOT NULL. `subscriptions` table: No rows created. | Purchase becomes active immediately after verification and acknowledgement. Acknowledgement must complete within 3 days of purchase (5 min for license testers) or Google auto-refunds. |
+| **OTP-02** | **Declined Payment** | 1. Tap "One-Time Purchase".<br>2. Select "Test card, always declines". | - Google Play dialog shows error.<br>- Dialog remains open.<br>- No success toast. | - No backend call made (frontend error handling only).<br><br>**DB Validation**: `payments` table: No rows created. `subscriptions` table: No rows created. | User can retry with different payment method. No DB record created. |
+| **OTP-03** | **User Cancellation** | 1. Tap "One-Time Purchase".<br>2. Close Google Play purchase dialog (back button or "X"). | - Dialog closes.<br>- App returns to previous screen.<br>- No success toast. | - No backend call made.<br><br>**DB Validation**: `payments` table: No rows created. `subscriptions` table: No rows created. | No record created in DB. User may retry. |
+| **OTP-04** | **Slow Card (Pending State)** | 1. Tap "One-Time Purchase".<br>2. Select "Slow test card, approves after a few minutes".<br>3. Wait for approval (typically 5-10 min in test mode). | - Immediate: No confirmation (dialog may show "processing").<br>- After approval: Success toast OR system notification. | - `/api/v1/payment/verify` called when card completes.<br>- First call: Backend receives `purchaseState: 2` (PENDING), `purchaseCompletionTime` absent.<br>- Backend returns `202 Accepted` (not granted yet).<br>- Webhook `ONE_TIME_PRODUCT_PURCHASED` arrives when payment completes.<br>- Next verification or webhook processing: `purchaseState: 0` (PURCHASED), entitlement granted.<br><br>**DB Validation**: `payments` table initially has `status='pending'`; After completion: `status='success'`. `subscriptions` table: No rows created. | Tests handling of PENDING state. Payment delayed but eventual. Client should retry after delay or wait for webhook. Per HLD: PENDING=2, PURCHASED=0. |
+
+#### A.2 Refund & Webhook Handling
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **OTP-05** | **Manual Refund (Play Console)** | 1. Complete OTP-01 (successful purchase).<br>2. Go to Google Play Console > Orders.<br>3. Find test order and manually **Refund** it.<br>4. Optionally wait for webhook or manually check status. | - App shows "Premium" until refresh/restart.<br>- After refresh: Access should be revoked. | - Manual status check via `/api/v1/subscription-status` shows transition from `Active` → `Cancelled`.<br>- OR webhook `ONE_TIME_PRODUCT_CANCELED` arrives immediately from Google (see OTP-RTDN-02).<br><br>**DB Validation**: `payments` table has `status='refunded'`. `subscriptions` table: No rows created. | Full refund revokes entitlement. Webhook is real-time; polling detects after next check. |
+| **OTP-RTDN-01** | **Webhook: Purchase Completed** | 1. Trigger one-time purchase (any method: OTP-01, OTP-04, etc.).<br>2. Monitor backend logs for webhook reception.<br>3. Verify webhook message contains correct purchase details. | - (Internal test; webhook is backend-only) | - Webhook `ONE_TIME_PRODUCT_PURCHASED` received from Google Pub/Sub.<br>- Backend verifies JWT signature and audience claim (if `GOOGLE_VERIFY_AUDIENCE=true`).<br>- Extracts `purchaseToken` and `productId`.<br>- **Calls `purchases.products.get() (v1)` API** (NOT `get_subscription()`; that's for subscriptions).<br>- Confirms `purchaseState: 0` (PURCHASED) and `purchaseCompletionTime` exists.<br>- Idempotency check: Skips reprocessing if `event_id` already recorded.<br><br>**DB Validation**: `payments` table: No duplicate rows for same provider_transaction_id (idempotency enforced). `subscriptions` table: No rows created. | Webhook ensures timely notification. Idempotency prevents duplicate entitlements. One-time products use different API than subscriptions. |
+| **OTP-RTDN-02** | **Webhook: Refund Completed** | 1. Complete OTP-01 (successful purchase).<br>2. Refund order in Play Console > Orders.<br>3. Monitor backend logs for webhook reception (should arrive within seconds). | - (Internal test; webhook is backend-only).<br>- Or: Manual refresh of status shows access revoked. | - Webhook `ONE_TIME_PRODUCT_CANCELED` received from Google Pub/Sub.<br>- Backend verifies JWT signature and audience claim.<br>- Extracts `purchaseToken` and `productId`.<br>- **Calls `purchases.products.get() (v1)` API** (NOT `get_subscription()`).<br>- Confirms refund state in response.<br>- Idempotency check: Skips if already processed.<br>- Revokes entitlement: `is_premium=false` (or equivalent).<br><br>**DB Validation**: `payments` table has `status='refunded'`. `subscriptions` table: No rows created. | Real-time revocation. Confirms RTDN is properly configured and enabled in Play Console. One-time products use products API (v1). |
+
+#### A.3 Error Scenario Coverage for One-Time Products
+
+Ensure ERR-01, ERR-03, ERR-04 are tested with one-time product tokens in addition to subscription tokens.
+
+---
+
+### B. Subscriptions (Auto-Renewing)
+
+**Product ID**: `VITE_GOOGLE_PLAY_SUBSCRIPTION_ID`
+
+**Note**: For license testers, subscription durations are accelerated (e.g., Monthly = 5 minutes).
+
+#### B.1 Subscription Lifecycle
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SUB-01** | **Initial Subscription Purchase** | 1. Tap "Subscribe Now".<br>2. Select "Test card, always approves".<br>3. Confirm. | - "Premium" badge/status appears immediately.<br>- Success toast shown. | - `/api/v1/purchase/register` called with subscription_id (pre-registration).<br>- `/api/v1/payment/verify` called with token and `subscription_id`.<br>- Backend calls `purchases.subscriptionsv2.get() (v3)` → Returns `subscriptionState: SUBSCRIPTION_STATE_ACTIVE`, `auto_renewing: true`.<br><br>**DB Validation**: `payments` table has `status='success'`, `provider='google_play'`. `subscriptions` table has `status='active'`, `auto_renewing=true`, `acknowledged_at` NOT NULL. | User is immediately entitled to premium features. |
+| **SUB-02** | **Subscription Renewal (Automatic)** | 1. Subscription from SUB-01 still active.<br>2. Keep app open or backgrounded.<br>3. Wait for test renewal period (~5 min for monthly).<br>4. Monitor backend logs. | - "Premium" badge remains. | - Webhook: Google sends `subscription.paid` (notification_type: 2 = SUBSCRIPTION_RENEWED).<br>- Backend receives message with `purchase_token` and `subscription_id`.<br>- Backend calls `get_subscription()` to verify.<br>- Returns updated `expiryTime` (new renewal date).<br><br>**DB Validation**: `payments` table has new row with `status='success'`. `subscriptions` table has `current_period_end` extended, `acknowledged_at` unchanged. | If app is closed, next app launch should sync state from backend. Webhook `event_id` ensures idempotency. Each renewal creates a new payments entry. |
+| **SUB-03** | **User-Initiated Cancellation** | 1. In Google Play Store App.<br>2. Navigate to "Payments & subscriptions".<br>3. Find App's subscription → Tap "Cancel subscription" → Confirm. | - "Premium" badge remains until current period expiration.<br>- After period expires: "Premium" badge disappears, "Free" status shown. | - Webhook: Google sends `subscription.cancelled` (notification_type: 3).<br>- Backend receives message, calls `get_subscription()`.<br>- Returns `auto_renewing: false` and `cancel_reason: 0` (User canceled).<br><br>**DB Validation**: `payments` table: No change. `subscriptions` table has `status='cancelled'`, `auto_renewing=false`, `cancellation_initiated_at` NOT NULL, `google_cancellation_context='USER_CANCELED'`. | User loses premium access only after current period ends. No immediate revocation. |
+| **SUB-04** | **Renewal Success After Grace Period Recovery** | 1. Subscribe with "Test card, always approves" (SUB-01).<br>2. Wait 1-2 minutes for subscription to be active.<br>3. In Google Play Store app: Go to "Payments & subscriptions" → "Payment methods" → Change to "Test card, always declines".<br>4. Wait for renewal attempt (~5 min) - payment will fail.<br>5. Verify grace period webhook (Type 6) received.<br>6. Change payment method back to "Test card, always approves" in Play Store.<br>7. Wait for Google to retry payment (~few minutes).<br>8. Monitor webhook for recovery (Type 1). | - During grace: "Premium" shows (still has access).<br>- After recovery: "Premium" remains (renewed). | - Webhook 1: `subscription.in_grace_period` (notification_type: 6 = SUBSCRIPTION_IN_GRACE_PERIOD).<br>- Backend receives, stores status `in_grace_period` (user RETAINS access during grace).<br>- Webhook 2: `subscription.recovered` (notification_type: 1 = SUBSCRIPTION_RECOVERED).<br>- Backend receives, calls `get_subscription()`.<br>- Returns `subscriptionState: SUBSCRIPTION_STATE_ACTIVE`, `auto_renewing: true`, updated expiry.<br><br>**DB Validation**: `payments` table has new row with `status='success'` (recovery). `subscriptions` table: During grace has `google_grace_period_start` set; After recovery has `status='active'`, grace fields cleared. | **Grace Period (RTDN 6)**: User KEEPS access, billing retried silently. Recovery = user fixed payment. Different from Account Hold (SUB-08). Must start with valid subscription before triggering grace period. |
+| **SUB-05** | **Expiration (End of Period)** | 1. Cancel subscription (SUB-03).<br>2. Wait for current period to expire (~5 min).<br>3. Monitor webhook. | - After expiry: "Premium" badge disappears.<br>"Free" status displayed. | - Webhook: `subscription.expired` (notification_type: 12).<br>- Backend receives, calls `get_subscription()`.<br>- Returns `expiryTime` in past.<br><br>**DB Validation**: `payments` table: No change. `subscriptions` table has `status='expired'`, `current_period_end` in past. | This webhook confirms expiration; app should not rely solely on client-side date checks. |
+| **SUB-06** | **Re-subscription (After Expiry)** | 1. As expired user, tap "Subscribe Now" again.<br>2. Select "Test card, always approves".<br>3. Confirm. | - "Premium" badge returns. | - `/api/v1/purchase/register` called with `subscription_id` (pre-registration).<br>- `/api/v1/payment/verify` called with **new** token and `subscription_id`.<br>- Backend calls `get_subscription()` which returns `externalAccountIdentifiers` or `linkedPurchaseToken`.<br>- Backend USES these identifiers to **link new purchase to correct user account** (security critical).<br>- Backend stores new token (invalidates old token if needed).<br>- Webhook: `subscription.purchased` or `subscription.created` (notification_type: 4) may also be sent.<br><br>**DB Validation**: `payments` table has new row. `subscriptions` table has new row with `google_linked_purchase_token` linking to old token. | New purchase is a separate transaction with new token. `linkedPurchaseToken` or `externalAccountIdentifiers` ensures correct user linking via expired account ID. Each re-subscription creates new payment record. |
+| **SUB-07** | **Slow Card (Pending Renewal)** | 1. Subscribe with regular "always approves" card (SUB-01).<br>2. Wait for renewal period to approach (~5 min).<br>3. Manually update payment method to "Slow test card" in Play Store (before renewal).<br>4. Wait for renewal attempt and completion (~10 min total). | - Immediate: Renewal attempt made, payment shows "processing".<br>- After ~5-10 min: Success notification, "Premium" remains. | - `/api/v1/purchase/register` called with `subscription_id` (pre-registration).<br>- Webhook: `subscription.purchased` or `subscription.paid` with `purchaseState` value.<br>- Initially: `subscriptionState: SUBSCRIPTION_STATE_PENDING`.<br>- When payment processing completes: `subscriptionState: SUBSCRIPTION_STATE_ACTIVE`.<br><br>**DB Validation**: `payments` table has `status` transitions `'pending'` → `'success'`. `subscriptions` table has `status='active'` maintained. | Slow cards delay billing but do not interrupt access during grace period. Per HLD: PENDING check via V2 enum. Verify payment record transitions from pending to success. |
+
+#### B.2 Silent Grace Period (24-Hour Billing Retry Window)
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SUB-GRACE-SILENT** | **Silent Grace Period Coverage** | This test documents behavior that **cannot be manually tested in reasonable timeframe**. <br><br>1. Subscribe successfully (SUB-01).<br>2. Update payment method to declining card.<br>3. Wait for renewal trigger (5 min in test).<br>4. For next 24 hours: Payment shows ACTIVE in app but Google silently retries billing in background.<br>5. After 24 hours: Either recovery succeeds OR account hold triggered. | - **First 24 hours**: "Premium" remains, no notifications, no RTDN from Google.<br>- Status appears ACTIVE despite payment failure.<br>- After 24 hours: Either premium continues OR billing error shown. | - **0-24 hours**: Backend status = `Active`, but payment is actually in recovery. No webhook arrives.<br>- App polling `/api/v1/subscription-status` returns ACTIVE (Google API says ACTIVE).<br>- **After 24 hours**: One of these arrives:<br>&nbsp;&nbsp;1. `subscription.recovered` (RTDN 1) if billing succeeded<br>&nbsp;&nbsp;2. `subscription.on_hold` (RTDN 13) if billing failed<br>&nbsp;&nbsp;3. Other recovery outcome (RTDN 12, etc.)<br>- Backend updates status based on received RTDN.<br><br>**DB Validation**: N/A (untestable manually). | **This scenario is UNTESTABLE in manual testing** due to 24-hour minimum wait. Options:<br>- **Recommended**: Document in test suite and SKIP for manual testing.<br>- **Alternative**: Use test mocking or time-travel in automated suite if backend allows.<br>- **Coverage**: This is a critical behavior covered by integration testing only, not manual QA. |
+
+#### B.3 Account Hold After Grace Period Failure
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SUB-08** | **Account Hold (Payment Fails to Recover)** | 1. Subscribe with valid card (SUB-01).<br>2. Wait for renewal (~5 min).<br>3. Manually update payment method to "Test card, always declines".<br>4. Renewal attempts, fails → enters grace period.<br>5. Do NOT fix payment during grace period (minimum 24 hours enforced by Google).<br>6. After ~24 hours: Monitor webhook for account hold notification. | - During 24-hr grace: "Premium" badge remains (access OK, silent billing retries).<br>- After grace expiry: "Premium" badge disappears.<br>- Error message shown: "Billing issue. Fix payment to continue." | - **Silent Grace Period (24hrs)**: No RTDN sent, status appears ACTIVE (payment recovery in progress silently).<br>- After 24 hours: Webhook `subscription.on_hold` (notification_type: 5 = SUBSCRIPTION_IN_GRACE_PERIOD) arrives.<br>- Backend receives, calls `get_subscription()`.<br>- Returns `subscriptionState: SUBSCRIPTION_STATE_ON_HOLD`.<br>- User access **revoked immediately** (not end-of-period).<br>- `expiryTime` set to past timestamp.<br>- **In-App Notification**: `payment_failure_notification=true` set in DB.<br><br>**DB Validation**: `payments` table: No change. `subscriptions` table has `status='on_hold'`, `google_subscription_state=3`, `payment_failure_notification=true`. | **Account Hold (RTDN 13)**: Stricter than grace period. User loses access immediately after 24-hour silent window. Manual testing requires 24+ hour wait OR use mocks/skip in automated suite. Different recovery path than grace (SUB-04). |
+
+#### B.4 Subscription Revoked (Refund, Not Cancellation)
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SUB-09** | **Subscription Revoked (Refund ≠ Cancel)** | 1. Complete SUB-01 (active subscription).<br>2. Go to Google Play Console > Orders.<br>3. Find test order, click **"Refund"** (NOT "Cancel subscription").<br>4. Confirm refund in Play Console.<br>5. Monitor backend logs. | - "Premium" badge disappears **immediately**.<br>- Access revoked instantly (no period remaining).<br>- Error/notification shown if applicable. | - Webhook: `subscription.revoked` (notification_type: 13).<br>- Backend receives, calls `get_subscription()`.<br>- Returns `subscriptionState: SUBSCRIPTION_STATE_EXPIRED`.<br>- User access revoked **immediately** (ignore `expiryTime`).<br>- **Revocation Details**: subscription-status returns `revoked_at` and `revocation_reason`.<br>- **User Action**: `requires_user_action=true`.<br><br>**DB Validation**: `payments` table has `status='refunded'`. `subscriptions` table has `status='revoked'`, `revoked_at` NOT NULL, `revocation_reason='REFUND'`. | **Critical distinction**: Revoke = refund/chargeback/developer action. Cancel = user choice to stop auto-renew (but keeps access until period end). |
+
+#### B.5 Free Trials and Introductory Periods
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SUB-14** | **Free Trial - First-Time User (Never Purchased This Subscription)** | 1. Log in with Google account that has **never purchased** this specific subscription.<br>2. Tap "Subscribe Now".<br>3. Verify Play Store dialog shows free trial offer with duration and post-trial price.<br>4. Confirm subscription (no charge during trial).<br>5. Verify access granted to premium features during trial.<br>6. Monitor backend logs. | - Dialog displays: "Free trial for X days".<br>- Price shown: $0 (or trial price), then regular price.<br>- Success toast after confirmation.<br>- "Premium" badge appears immediately.<br>- Trial countdown visible (optional). | - `/api/v1/purchase/register` called with `subscription_id` (pre-registration).<br>- `/api/v1/payment/verify` called with token.<br>- Backend calls `get_subscription()` → Returns `linkedPurchaseToken`, `offerDetails` with trial period.<br>- Status: `Active` with trial flag: `is_trial=true`.<br>- Access granted until `expiryTime` (end of trial period).<br><br>**DB Validation**: `payments` table has `status='success'`, `amount_cents=0` or trial price. `subscriptions` table has `status='active'`, `is_trial=true`. | **Eligibility**: User has never purchased this specific subscription. Google enforces eligibility at API level; ineligible users see regular price instead. |
+| **SUB-15** | **Free Trial - User with No Prior Subscriptions** | 1. Log in with Google account that has **never purchased any subscription** for this app (different eligibility path).<br>2. Tap "Subscribe Now".<br>3. Verify free trial offer displayed.<br>4. Confirm and monitor backend. | - Same as SUB-14: Free trial shown, access granted. | - `/api/v1/purchase/register` called with `subscription_id` (pre-registration).<br>- Backend receives same subscription with trial period.<br>- Status: `Active` with `is_trial=true`.<br>- Access granted until end of trial.<br>- After trial expiration: Webhook `subscription.paid` indicates conversion to paid subscription (if not canceled).<br><br>**DB Validation**: `payments` table has `status='success'`, `amount_cents=0` or trial price. `subscriptions` table has `status='active'`, `is_trial=true`. | **Eligibility**: User has never purchased ANY subscription for the app (different eligibility path). Both paths should be tested to ensure all eligible users receive trials. After trial expires, verify SUB-02 (renewal) or SUB-03 (cancellation). |
+
+#### B.6 Early Resignup and Renewal
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SUB-16** | **Resubscribe Before Expiration (Continuous Access)** | 1. Perform initial subscription purchase (SUB-01).<br>2. Cancel subscription from Play Store (SUB-03): User keeps access until period end.<br>3. **Before** expiration (while canceled but still active): Tap "Subscribe Now" again.<br>4. Confirm new subscription with test card.<br>5. Verify continuous premium access (no gap). | - After step 4: Status changes from "Subscription cancels at <date>" to "Premium (Active)".<br>- No interruption or period of free access loss.<br>- Renewal date extends to new subscription period. | - `/api/v1/purchase/register` called with `subscription_id` (pre-registration).<br>- `/api/v1/payment/verify` called with **new purchase token** (different from original).<br>- Backend calls `get_subscription()` with new token.<br>- Returns new `expiryTime` and `linkedPurchaseToken`.<br>- Backend stores new token; may invalidate old canceled token.<br>- Status: `Active` with new expiration.<br>- Webhook: `subscription.purchased` (type 4) may arrive for new purchase.<br>- **Critical**: Use `linkedPurchaseToken` or `externalAccountIdentifiers` to ensure correct user linkage.<br><br>**DB Validation**: `payments` table has new row. `subscriptions` table has new row with `google_linked_purchase_token` linking to cancelled token. | **Google Behavior**: New purchase is a separate subscription; prorating may apply. Verify no "gap" in access when transitioning from canceled→active to new active subscription. Ref: https://developer.android.com/google/play/billing/subscriptions#before-in-app |
+| **SUB-24** | **Restart After Cancellation - Expiry Extension (Webhook-Driven)** | **Setup (Database only):**<br>1. Insert cancelled subscription: status='cancelled', auto_renewing=false, `current_period_end` = **NOW() - 2 days** (PAST).<br><br>**Test Action (Webhook Injection):**<br>2. Send RTDN Type 7 (`SUBSCRIPTION_RESTARTED`) webhook to `/webhooks/google_play` with the subscription's purchase_token.<br><br>**Validation:**<br>3. Query database and verify `current_period_end` updated from PAST → FUTURE. | - (Internal test; no frontend visible)<br>- Database state transitions from cancelled/expired to active/future. | - Webhook: `subscription.restarted` (notification_type: 7 = SUBSCRIPTION_RESTARTED).<br>- CRITICAL: Webhook payload does NOT include `current_period_end` (always null in RTDN).<br>- Backend receives webhook, calls `get_subscription()` API to **enrich with fresh `expiryTimeMillis`**.<br>- Status: `active` (updated from `cancelled`).<br>- Auto Renewing: `true` (updated from `false`).<br>- **Expiry (Critical)**: `current_period_end` updated to FUTURE date (enriched from API, not stale DB value).<br>- Cancellation fields cleared: `cancellation_initiated_at`, `google_cancellation_context`, etc.<br><br>**DB Validation**: `subscriptions` table has `status='active'`, `auto_renewing=true`, `current_period_end` in FUTURE (e.g., 2026-03-21, not 2026-02-17), `cancellation_initiated_at=null`. | **Bug fix validation**: Restart handler MUST call `get_subscription()` to enrich with fresh `expiryTime`. Unlike SUB-16 (user-initiated purchase flow), SUB-24 is a **webhook injection test** validating RTDN Type 7 restart handling. RTDN Type 7 notifications lack expiry timestamp; API enrichment is mandatory. Without enrichment, database would show `status='active'` but `current_period_end` stuck in PAST, causing frontend to reject access despite active subscription. **Test via**: Backend test harness or direct webhook POST with mock Google Play API. |
+
+#### B.7 Restore Purchases
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SUB-17** | **Restore After Uninstall/Reinstall** | 1. Perform initial subscription purchase (SUB-01) on Device A with Google Account A.<br>2. Uninstall the app completely.<br>3. Reinstall the app from Play Store.<br>4. Log in with same Google Account A.<br>5. Verify subscription access is restored automatically. | - App opens and recognizes active subscription.<br>- "Premium" badge displays immediately.<br>- No manual "Restore" button click required (automatic). | - App calls `/api/v1/subscription-status` on launch.<br>- Backend queries `get_subscription()` from Google using cached token or re-verifies.<br>- Google API returns subscription still `Active` (Google tracks via Google account, not local app state).<br>- Backend confirms status; premium access granted.<br>- No new webhook needed; query-based restoration. | **Precondition**: App has NO account system (or uses transient local auth). Google Play Billing SDK automatically restores via Google account. Token should be persisted (`SharedPreferences` or equivalent). |
+| **SUB-18** | **Restore on Multiple Devices (Same Google Account)** | 1. Install app on Device A, subscribe with Google Account A (SUB-01).<br>2. Install same app on Device B with same Google Account A (same Play Store account).<br>3. On Device B: App should auto-detect subscription from Device A.<br>4. Verify premium access on Device B. | - Device B recognizes subscription without explicit purchase.<br>- "Premium" badge shown immediately on login.<br>- No purchase dialog triggered. | - Device B: App calls `/api/v1/subscription-status` on launch.<br>- Backend queries Google API; subscription tied to Google Account A, visible to all devices using same account.<br>- Backend returns `Active` status.<br>- Premium access granted on Device B.<br>- No duplicate payments or tokens created. | **Google's behavior**: Subscriptions are tied to Google account, not device. All devices using same Google account see the same subscription. |
+| **SUB-19** | **Restore with Account System (Multi-Account)** | 1. User has app account "User1" linked to Google Account A.<br>2. User logs in to app on Device A with "User1" credentials.<br>3. Subscribe with Google Account A (SUB-01).<br>4. User logs out; logs back in as different app account "User2" on same Device A.<br>5. Attempt to access premium features as "User2".<br>6. Verify behavior per app's configured restore strategy. | - **Strategy 1**: "User1" only sees premium access; "User2" denied.<br>- **Strategy 2**: App offers to transfer Google subscription to "User2".<br>- **Strategy 3**: Both "User1" and "User2" see premium (shared across app accounts using same Google account). | - Backend stores `(`user_id`, `purchase_token`)` mapping.<br>- On restore check: Backend queries by app `user_id` and Google account identifier.<br>- **Strategy 1**: Only grant to original `user_id`.<br>- **Strategy 2**: Offer UI to transfer; upon confirmation, update `user_id` for token in DB.<br>- **Strategy 3**: Query subscription by Google account ID; grant to any app account.<br>- Test per configured strategy. | **Complex scenario**: Requires decision on restore behavior (see RevenueCat docs). Choose ONE strategy and test consistently. HiHa should document which strategy is implemented. |
+| **SUB-19B** | **LinkingRequired Response (Different Account Verification)** | 1. User1 subscribes with Google Account A (SUB-01) → Token stored with `obfuscatedAccountId = hash(User1)`.<br>2. User2 logs in (different app account, same device).<br>3. User2 calls `/api/v1/payment/verify` with User1's purchase token.<br>4. Monitor backend response. | - API returns `LinkingRequired` response (not 400/403 error).<br>- Response includes `obfuscated_account_id` field identifying original owner.<br>- Client can prompt: "This subscription belongs to another account." | - Backend calls `get_subscription()` → Returns `external_account_identifiers.obfuscatedAccountId`.<br>- Backend computes `hash(User2)` and compares to API value.<br>- **Hash mismatch detected**: Returns `VerificationResult::LinkingRequired { obfuscated_account_id }`.<br>- **NOT an error**: This is a valid API response indicating account conflict.<br>- Client can offer: (a) Switch to correct account, (b) Transfer subscription, (c) Cancel.<br><br>**DB Validation**: No new subscription created for User2. Original User1 subscription unchanged. | **Security-critical**: Prevents unauthorized access while providing UX for legitimate account recovery. Tests the `external_account_identifiers` validation path in `provider.rs` (lines 714-744). Mock token: `"linking-required-user1-hash"`. |
+| **SUB-22** | **Out-of-App Resubscribe Linking (SUB-RESUB-01)** | 1. User1 subscribes initially (SUB-01) with token OLD_TOKEN.<br>2. Subscription expires (SUB-05).<br>3. User1 resubscribes via Google Play Store out-of-app purchase with NEW_TOKEN (NOT in-app).<br>4. Backend receives `out_of_app_purchase_context` with expired subscription's `obfuscatedAccountId`.<br>5. Monitor backend linking logic and final subscription state. | - Initial subscription active and accessible.<br>- After expiry: Premium badge disappears.<br>- After resubscribe: Premium badge returns immediately.<br>- No "account linking" prompt shown (same user).<br>- User experience is seamless. | - Step 1: `/api/v1/payment/verify` called with OLD_TOKEN → `google_obfuscated_account_id` stored in DB from `external_account_identifiers`.<br>- Step 2: Webhook `subscription.expired` (type 12) updates status to 'expired'.<br>- Step 3: `/api/v1/purchase/register` pre-registers NEW_TOKEN.<br>- Step 3b: `/api/v1/payment/verify` called with NEW_TOKEN → Google API returns `out_of_app_purchase_context.expired_external_account_identifiers.obfuscated_account_id` matching OLD_TOKEN's value.<br>- Step 4: Backend compares expired_id with current user's hash → **MATCH detected** (same user).<br>- Proceeds normally (NO LinkingRequired triggered).<br>- Step 5: New subscription linked to User1 via `google_linked_purchase_token` pointing to expired OLD_TOKEN.<br><br>**DB Validation**: `subscriptions` table has `status='active'`, `purchase_token=NEW_TOKEN`, `google_linked_purchase_token=OLD_TOKEN`, `google_obfuscated_account_id` set from new purchase. Old subscription has `status='expired'`. | **Real-world scenario (HLD §12)**: User buys subscription after expiry via direct Play Store (not in-app), with out-of-app context (e.g., convenience store payment method). Google returns expired subscription's account ID to enable linking without friction. **Testing**: Real testing requires out-of-app purchase on device after expiry. CI testing uses webhook injection with mock (NEW_TOKEN containing "oap" triggers mock out-of-app context). Curl alone cannot trigger Google Play behavior. |
+
+#### B.8 Price Changes (Opt-In & Step-Up Consent - Korea)
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SUB-20** | **Price Change (Opt-In Increase, User Accepts)** | 1. Active subscription (SUB-01).<br>2. Developer initiates price increase in Play Console (opt-in required).<br>3. Google notifies user in-app or via notification.<br>4. User accepts price increase before renewal.<br>5. Monitor webhook. | - In-app notification: "Price will increase to \$X.XX".<br>- User prompted to accept/decline.<br>- After acceptance: "Premium" continues normally. | - Webhook: `subscription.price_change_updated` (notification_type: 14) when price change initiated.<br>- Backend logs pending price change.<br>- Backend notifies user (optional: In-App Messaging).<br>- When renewal arrives with new price: `subscription.paid` with new price.<br>- Status: `active` with updated price recorded.<br><br>**DB Validation**: `payments` table has new row with updated `amount_cents`. `subscriptions` table: No specific changes. | Opt-in increases require explicit user consent. Non-acceptance before renewal = auto-cancellation. |
+| **SUB-21** | **Price Step-Up Consent (Korea Only)** | 1. App user from South Korea region.<br>2. Subscription has free trial or intro period → regular price transition.<br>3. Price increases at end of intro period (e.g., trial $0 → regular $9.99).<br>4. Before higher price takes effect, user must consent (Korean regulation).<br>5. Monitor webhook. | - In-app consent prompt shown (customizable).<br>- User can accept or reject.<br>- If rejected: Subscription auto-cancels before higher price applies. | - Webhook: `subscription.price_step_up_consent_updated` (notification_type: 22) when consent period begins or user responds.<br>- Backend tracks consent status.<br>- If user provides consent: Proceed normally to higher price at renewal.<br>- If user rejects (timeout): `subscription.cancelled` sent automatically.<br>- Backend updates DB: `price_step_up_consent_status` field.<br><br>**DB Validation**: N/A (Korea-specific). | **South Korea only** (regulatory requirement). Step-up = transition from one offer phase to another (different from developer-initiated price changes). Can be omitted if not targeting KR market. |
+
+#### B.9 Subscription Pause Scenarios
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SUB-PAUSE-01** | **Schedule Pause (Type 11 Webhook)** | 1. Active subscription (SUB-01).<br>2. User schedules a pause in Google Play Store settings.<br>3. Monitor backend for Type 11 webhook. | - "Premium" badge remains (access OK).<br>- No disruption until pause date. | - Webhook: `subscription.pause_scheduled` (Type 11).<br>- Backend enriches webhook with actual pause date from Google API.<br>- `google_pause_scheduled_at` set in DB.<br>- `is_premium` remains `true`. | Pause is scheduled for the end of the current billing cycle. Access remains active until then. |
+| **SUB-PAUSE-02** | **Pause Takes Effect (Auto-Transition)** | 1. Use subscription from SUB-PAUSE-01.<br>2. Reach the scheduled pause date.<br>3. Monitor backend for Type 10 webhook or background job transition. | - "Premium" badge disappears.<br>- Access revoked instantly when pause becomes effective. | - Webhook: `subscription.paused` (Type 10).<br>- Backend transitions status from `active` to `paused`.<br>- `google_paused_at` set in DB.<br>- `is_premium` set to `false` (revocation). | User loses access while paused. No billing occurs during this period. |
+| **SUB-PAUSE-03** | **Manual Resume from Pause** | 1. User manually resumes the paused subscription in Google Play Store.<br>2. Monitor backend for Type 1 webhook. | - "Premium" badge returns immediately.<br>- Success confirmation shown. | - Webhook: `subscription.recovered` (Type 1).<br>- Backend transitions status from `paused` to `active`.<br>- `google_paused_at` and `google_pause_scheduled_at` are CLEARED in DB.<br>- `is_premium` restored to `true`. | Resumed subscriptions regain full access. Prorated charges may apply depending on Google's policy. |
+
+#### B.10 Others Scenarios
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SUB-23** | **Pending Purchase Canceled** | **Webhook Injection Test (Not manually reproducible)**<br><br>1. Backend test creates pending subscription in DB: `status='pending'`, `is_premium=false`.<br>2. Send `subscription.pending_purchase_canceled` webhook (notificationType: 20).<br>3. Monitor webhook processing and DB state transition.<br><br>**Note**: Manual testing unavailable because subscriptions lack "Slow test card" option (only approves/declines exist). Test via webhook injection instead. | - (Internal webhook test; no frontend visible)<br>- DB state transitions from `pending` → `cancelled`. | - Subscription initially in `status='pending'`.<br>- `is_premium=false` (no access granted).<br>- Webhook: `subscription.pending_purchase_canceled` (notification_type: 20).<br>- Backend updates subscription to `status='cancelled'`.<br>- Backend logs: "Pending purchase canceled".<br>- No revocation needed (access was never granted).<br><br>**DB Validation**: `subscriptions` table has `status='cancelled'`, `is_premium=false`. `payments` table may have `status='cancelled'` if payment record exists. | Handles cleanup of pending purchases that never complete. Different from SUB-03 (active subscription cancellation). **Manual testing not possible** (no slow card for subscriptions); use webhook injection via test harness. See `tests/gpbi/test-sub-23.sh`. |
+
+#### B.11 Acknowledgment (ACK) – New Purchases & Retries
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **ACK-01** | **Subscription ACK on Initial Purchase** | 1. Complete SUB-01 (initial subscription purchase).<br>2. Monitor backend logs for ACK call.<br>3. Verify logs confirm `purchases.subscriptions.acknowledge()` was called. | - "Premium" badge appears immediately. | - After `/api/v1/payment/verify` succeeds, backend immediately calls `purchases.subscriptions.acknowledge(packageName, `subscription_id`, `purchase_token`)`.<br>- Google API returns 200 OK; ACK recorded in backend logs.<br>- **ACK NOT called on renewals** (only on initial purchases and resubscribes).<br><br>**DB Validation**: `payments` table has `acknowledged_at` NOT NULL. | Per HLD §304–310: All new subscriptions must be acknowledged within 3 days (or Google refunds automatically). OTP-01 already tests OTP ack; this ensures subscriptions are also ack-ed. |
+| **ACK-02** | **Subscription ACK Failure & Retry Queue** | 1. Simulate initial subscription purchase (SUB-01) but inject a **Google API 500 error** on the ACK call (via mock/integration test).<br>2. First ACK attempt fails; backend queues for retry.<br>3. Wait for retry (immediate or after delay) and verify success. | - "Premium" badge appears (entitlement granted even if ack is pending). | - First ACK call fails: Google returns 500 or 503.<br>- Backend logs error: "ACK failed; queued for retry".<br>- Backend does NOT fail the verify_payment call; entitlement is granted.<br>- Retry queue processes (within seconds/minutes, not days).<br>- Second attempt succeeds; log shows "ACK succeeded after retry".<br>- **No duplicate entitlements**: Even with retry, user gets access only once.<br><br>**DB Validation**: `payments` table has `acknowledged_at` NOT NULL (after retry). | Tests that failed ACKs are retried (exponential backoff) and don't block entitlement. Critical for reliability; failure to retry = automatic refund by Google. |
+| **ACK-03** | **No ACK on Subscription Renewal** | 1. Complete SUB-02 (subscription renewal via webhook).<br>2. Monitor backend logs for ACK call.<br>3. Verify logs show NO `acknowledge()` call. | - "Premium" badge remains (renewal processed). | - Webhook `subscription.paid` (SUBSCRIPTION_RENEWED) arrives.<br>- Backend processes it normally (updates `current_period_end`, creates payment).<br>- **ACK is NOT called** for renewals (per HLD §25–35).<br>- Log shows: "Renewal processed; ACK skipped (renewals not acknowledged)".<br><br>**DB Validation**: `payments` table has new row. `payments` table has `acknowledged_at` unchanged (for original purchase). | Ensures only *new* purchases/resubscribes are ACK-ed, not renewals. ACK-ing renewals would trigger unexpected refunds. |
+
+---
+
+### Deferred Features (Reserved Test Codes)
+
+The following tests are **deferred** for Phase 2. See [GOOGLE_PLAY_BILLING_DEFERRALS.md](./GOOGLE_PLAY_BILLING_DEFERRALS.md) for implementation details.
+
+| ID | Feature | Deferred Reason | Reference |
+| :--- | :--- | :--- | :--- |
+| **SUB-ADV-01** | **[DEFERRED] Multiple Subscription Tiers (Upgrade/Downgrade)** | Product setup required in Play Console | Deferrals §B.1 |
+| **SUB-10** | **[DEFERRED] Prepaid Plan Purchase** | Non-renewing product configuration needed | Deferrals §B.2 |
+| **SUB-11** | **[DEFERRED] Prepaid Plan Top-up (Accumulate Time)** | Non-renewing product configuration needed | Deferrals §B.2 |
+| **SUB-12** | **[DEFERRED] Prepaid Plan Acknowledgment Window** | Non-renewing product configuration needed | Deferrals §B.2 |
+| **SUB-13** | **[DEFERRED] Installment Subscription (Commitment Period)** | Installment plan setup required | Deferrals §B.3 |
+| **SUB-PROMO-01** | **[DEFERRED] Promo Code Redemption (Before Install)** | Feature not applicable | Deferrals §B.5 |
+| **SUB-PROMO-02** | **[DEFERRED] Promo Code Redemption (In-App)** | Feature not applicable | Deferrals §B.5 |
+| **SUB-PROMO-03** | **[DEFERRED] Promo Code Redemption (Multi-Window)** | Feature not applicable | Deferrals §B.5 |
+
+---
+
+### C. Webhook & Verification Integrity
+
+| ID | Scenario | Steps | Expected Result | Backend Behavior | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **WHK-01** | **Invalid Pub/Sub Signature Rejection** | 1. Send POST to `/webhooks/google_play` with valid JSON but **tampered/invalid authorization header**. | - HTTP 400 or 403 returned.<br>- Webhook NOT processed. | - Code logs: "Pub/Sub signature verification failed".<br>- Error response: `WebhookVerificationFailed`.<br>- Database state unchanged. | **Production requirement**: `GOOGLE_VERIFY_AUDIENCE=true` must be set to enforce this strictly. Current dev mode logs warning but may allow. |
+| **WHK-01B** | **Audience Claim Mismatch Rejection** | 1. Set `GOOGLE_VERIFY_AUDIENCE=true` and `GOOGLE_PUB_SUB_AUDIENCE=https://api.yourdomain.com`.<br>2. Send valid webhook JWT BUT with `aud` claim = `https://different-domain.com`.<br>3. Monitor backend logs. | - HTTP 400 or 403 returned.<br>- Webhook NOT processed. | - Code logs: "JWT audience mismatch: got '<https://different-domain.com>', expected '<https://api.yourdomain.com>'".<br>- Error response: `WebhookVerificationFailed`.<br>- Database state unchanged. | **Audience validation prevents webhook spoofing**: Ensures JWT was issued for your specific Pub/Sub endpoint, not intercepted for another service. |
+| **WHK-01C** | **Audience Validation With Correct Audience** | 1. Set `GOOGLE_VERIFY_AUDIENCE=true` and `GOOGLE_PUB_SUB_AUDIENCE=https://api.yourdomain.com`.<br>2. Trigger legitimate webhook from Google (subscription renewal, etc.) with correct `aud` claim.<br>3. Monitor backend logs. | - HTTP 200 returned.<br>- Webhook processed normally. | - Code logs: "JWT audience validated: <https://api.yourdomain.com>".<br>- Webhook proceeds through normal validation and DB update.<br>- Subscription status updated correctly. | **Correct configuration**: Audience matches, JWT is verified as legitimate from Google Pub/Sub. |
+| **WHK-01D** | **Audience Validation Disabled (Dev Mode)** | 1. Set `GOOGLE_VERIFY_AUDIENCE=false` (default for dev).<br>2. Send webhook with ANY `aud` claim (correct, incorrect, or missing).<br>3. Monitor backend logs. | - HTTP 200 returned.<br>- Webhook processed normally. | - Code skips audience validation (no check performed).<br>- Webhook proceeds through normal validation and DB update. | **Dev/Testing only**: Allows flexibility with ngrok/local tunnels where audience claim differs. NOT safe for production. |
+| **WHK-02** | **Duplicate Webhook Delivery (Idempotency)** | 1. Trigger a legitimate webhook (e.g., renewal via `subscription.paid`).<br>2. Manually re-send the **exact same webhook** (same `message_id`) to the server. | - First webhook processed normally. Second webhook returns success but does **NOT duplicate** DB entries. | - Backend checks webhook `event_id` (derived from `x-goog-pubsub-message-id` or PubSub `message_id`).<br>- Uses `event_id` as idempotency key; skips processing if already recorded.<br>- No duplicate subscription status update in DB.<br>- Logs show second attempt as "already processed". | Idempotency prevents accidental double-billing or double-grant due to network retries. |
+| **WHK-03** | **Out-of-Order Webhook Delivery** | 1. Trigger renewal webhook.<br>2. Introduce artificial delay/network latency so webhooks arrive out of order (e.g., expiration webhook arrives before renewal webhook). | - Frontend eventually shows correct state (from polling `/api/v1/subscription-status` or next webhook). | - Backend handles gracefully: Each webhook calls `get_subscription()` to fetch authoritative state from Google API.<br>- Stores latest state from API, not relying on webhook order.<br>- Eventual consistency achieved within seconds. | Webhook ordering is NOT guaranteed by Google; backend must query API for truth. |
+| **WHK-04** | **Webhook Without Prior `verify_payment` Call** | 1. Receive a webhook for a subscription (renewal, cancellation, etc.).<br>2. Subscription token **was NEVER registered** via `/api/v1/payment/verify` call before. | - Webhook processed successfully or gracefully fails. | - Backend attempts to find user by email or token.<br>- If not found: Logs error and either (a) rejects webhook or (b) discards safely without DB change.<br>- Status quo: No user entry created; webhook safe to ignore. | **Critical precondition**: Apps MUST call `/api/v1/payment/verify` immediately after purchase, before webhooks arrive. Without this, webhooks cannot link token to user. |
+| **WHK-05** | **Refund Idempotency Verification** | 1. Send first refund webhook (e.g., `purchase.voided`).<br>2. Send second refund webhook for SAME token but different `message_id`. | - First webhook revokes access (status='revoked').<br>- Second webhook returns 200 OK but performs NO redundant revocation (DB unchanged). | - Backend processes first webhook: updates status, logs revocation.<br>- Backend processes second webhook: detects 'refunded' status via idempotency check (token-based).<br>- Skips re-revocation logic. | Ensures redundant refund notifications (common) don't trigger duplicate emails or side effects. |
+| **WHK-06** | **Token-based Webhook Deduplication** | 1. Send webhook A (token T, event E, msg_id 1).<br>2. Send webhook B (token T, event E, msg_id 2 - different ID). | - First webhook processed normally.<br>- Second webhook identified as duplicate logical event; skipped or treated as idempotent. | - Backend checks `(purchase_token, event_type)` combination.<br>- If already processed successfully, skips logic even if `message_id` is new.<br>- Prevents double-processing if Google sends same logical event with new ID (retry). | Robustness against "at-least-once" delivery where message ID might rotate but event payload is identical. |
+
+---
+
+### D. Network & Race Conditions
+
+| ID | Scenario | Steps | Expected Behavior | Backend State | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **NET-01** | **Webhook Arrives Before `verify_payment`** | 1. User completes purchase on device.<br>2. Google sends webhook **immediately** (before app can call `/api/v1/payment/verify`).<br>3. App then calls `/api/v1/payment/verify` (after webhook arrival). | - Webhook is processed but may not find user (or is queued).<br>- `verify_payment` call succeeds and registers token.<br>- Final state: Premium access granted (eventual consistency). | - If webhook arrives first: Lookup fails, no action (safe).<br>- `verify_payment` call: Token registered in DB.<br>- Status: `Active` stored with full subscription details.<br>- Next webhook will succeed (user now linked). | **Mitigation**: App should call `/api/v1/payment/verify` **immediately** after purchase, before webhook has time to arrive (~1-5 second window). |
+| **NET-02** | **`verify_payment` Call Fails / Network Timeout** | 1. User completes purchase on device.<br>2. App calls `/api/v1/payment/verify` but request times out or server returns 5xx. | - App should display error toast and allow retry.<br>- User can manually retry verification in app. | - No DB entry created on first attempt.<br>- Webhook arrives; cannot find user (yet).<br>- When retry succeeds: Token registered, subsequent webhooks process correctly. | **Client-side resilience needed**: App must retry `/api/v1/payment/verify` on failure; backend supports retries via idempotency (purchase_token + subscription_id). |
+| **NET-03** | **Webhook Processing Times Out** | 1. Legitimate webhook sent to `/webhooks/google_play`.<br>2. Backend processing stalls or times out (e.g., Google API call hangs). | - Webhook request should timeout and be retried by Google (with backoff). | - Incomplete webhook processing: State may be partially updated or rolled back.<br>- Google retries with same `message_id`; backend idempotency key prevents double-processing on retry. | Ensure webhook handler has timeouts on Google API calls; implement circuit breaker if Google API is flaky. |
+| **NET-04** | **Webhook Arrives While `verify_payment` In-Flight** | 1. User completes purchase.<br>2. App calls `/api/v1/payment/verify` (request in-flight).<br>3. Google simultaneously sends webhook.<br>4. Both requests compete in backend. | - One request succeeds, the other may conflict or be idempotent.<br>- Final state: Subscription is `Active`, no duplication or data loss. | - Both requests call `get_subscription()` concurrently.<br>- DB update uses subscription_id + user_id as unique key; last-write-wins or conflict resolution ensures consistency.<br>- Idempotency key (`event_id` for webhook, purchase_token for verify_payment) prevents double-state-change. | **Backend must handle concurrency**: Use database transaction isolation or idempotency keys to ensure safety. |
+
+---
+
+### E. Access Control & Entitlement Logic
+
+| ID | Scenario | Steps | Expected Behavior | Backend Logic | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **ACC-01** | **Premium Access Granted for Allowed States** | 1. Test subscription in each "allowed" state: `ACTIVE`, `IN_GRACE_PERIOD`, `CANCELED` (pre-expiry).<br>2. Call `/api/v1/subscription-status` to check entitlement.<br>3. Attempt to access premium feature (e.g., "Generate Story"). | - Access granted.<br>- Premium feature works without error. | - Backend implements centralized access check function (pseudo-code):<br>&nbsp;&nbsp;`if subscription.state IN [ACTIVE, IN_GRACE_PERIOD, CANCELED] and current_time < expiry_time then GRANT_ACCESS`<br>- For each state, verify the condition evaluates to true.<br>- Examples:<br>&nbsp;&nbsp;- `ACTIVE`: Always grant (SUB-01, SUB-02, SUB-06).<br>&nbsp;&nbsp;- `IN_GRACE_PERIOD`: Grant (SUB-04 – user keeps access during payment recovery).<br>&nbsp;&nbsp;- `CANCELED`: Grant until `expiryTime` (SUB-03 – user keeps access until period end). | Centralizing access logic prevents scattered/inconsistent checks throughout code. This is a code review item but must be tested to ensure behavior matches. |
+| **ACC-02** | **Premium Access Revoked for Blocked States** | 1. Test subscription in each "blocked" state: `PENDING`, `ON_HOLD`, `EXPIRED`, `REVOKED`.<br>2. Call `/api/v1/subscription-status` to check entitlement.<br>3. Attempt to access premium feature (e.g., "Generate Story"). | - Access denied.<br>- Error shown: "Subscription inactive" or "Payment issue".<br>- Premium feature returns 403/402 or equivalent. | - Backend implements:<br>&nbsp;&nbsp;`if subscription.state IN [PENDING, ON_HOLD, EXPIRED, REVOKED] then REVOKE_ACCESS`<br>- Examples:<br>&nbsp;&nbsp;- `PENDING` (OTP-04, SUB-07): Do not grant until `PURCHASED` confirmed.<br>&nbsp;&nbsp;- `ON_HOLD` (SUB-08): Immediate revocation regardless of `expiryTime`.<br>&nbsp;&nbsp;- `EXPIRED` (SUB-05): Access cut off.<br>&nbsp;&nbsp;- `REVOKED` (SUB-09): Immediate revocation (refund/chargeback). | Edge case: `CANCELED` pre-expiry allows access; `CANCELED` post-expiry (now `EXPIRED`) blocks. Time comparison is critical. |
+| **ACC-03** | **Token Uniqueness & Fraud Prevention** | 1. User A successfully verifies a purchase token via `/api/v1/payment/verify`.<br>2. Different user B attempts to verify the **same purchase token**.<br>3. Observe backend response. | - User B's verification fails.<br>- Error returned: "Token already associated with another account" or similar. | - Backend maintains a unique constraint: `(`purchase_token`, `subscription_id`) → `user_id``.<br>- On second verify attempt:<br>&nbsp;&nbsp;- Query DB: find existing `(`token`, `sub_id`)` → different `user_id`.<br>&nbsp;&nbsp;- Reject verify call; return 400/403 error.<br>&nbsp;&nbsp;- Log fraud warning: "Token reuse attempt by different user".<br>&nbsp;&nbsp;- Do NOT create a new subscription record for user B. | Prevents token sharing across accounts. Related to HLD §294–297. Also tests `/api/v1/payment/verify` input validation. |
+
+---
+
+### F. Error & Edge Cases
+
+| ID | Scenario | Steps | Expected Behavior | Backend Response | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **ERR-01** | **Invalid Purchase Token Format** | 1. Call `/api/v1/payment/verify` with malformed or fake token. | - API returns error (400 or 422). | - Backend rejects token format validation OR calls Google API which returns 404/401.<br>- No DB entry created.<br>- Error logged: "Invalid or revoked purchase token". | Test with obviously fake tokens (e.g., "invalid-token-xyz") and also with real token format but wrong subscription. |
+| **ERR-02** | **Subscription ID Mismatch** | 1. Call `/api/v1/payment/verify` with correct token but **wrong subscription_id**. | - API returns error. | - Backend verifies token against subscription_id with Google API.<br>- Google rejects mismatch (token not valid for that subscription).<br>- Error: "Token does not match subscription_id".<br>- No DB entry created. | Token is tied to specific subscription_id at purchase time; mismatch is invalid. |
+| **ERR-03** | **Expired Purchase Token** | 1. Make a purchase, get token.<br>2. Wait 60+ days (or simulate expiry).<br>3. Call `/api/v1/payment/verify` with expired token. | - API returns error. | - Google API rejects token (valid only 60 days post-expiry).<br>- Backend returns error: "Purchase token expired".<br>- No DB entry created. | Purchase tokens have a 60-day expiration window from purchase/expiration. |
+| **ERR-04** | **Revoked/Refunded Purchase Token** | 1. Make a purchase, verify it successfully.<br>2. Go to Play Console > Orders, **Revoke** the order.<br>3. App re-checks status (call `/api/v1/subscription-status` or similar). | - Status should show revoked/expired.<br>- Access should be revoked. | - Backend `get_subscription()` call to Google returns state indicating revocation.<br>- Either webhook `purchase.voided` sent, OR next status check shows status change.<br>- DB updated: status → `Cancelled` or `Expired`. | Revocation is immediate in Play Console; webhook or polling will sync to app. |
+| **ERR-05** | **Google API Temporarily Unavailable** | 1. Call `/api/v1/payment/verify` during Google API outage (simulate 500/503). | - API returns 502/503 or timeout error to client. | - Backend calls Google API, receives 5xx error.<br>- Returns error to client (don't create partial DB state).<br>- Client should retry after delay (exponential backoff). | Implement circuit breaker and retries on backend for Google API calls. |
+| **ERR-06** | **Webhook Payload Malformed** | 1. Send POST to `/webhooks/google_play` with invalid JSON or missing required fields. | - HTTP 400 returned. | - Backend rejects parsing early.<br>- Logs error: "Failed to parse webhook payload".<br>- No DB state change. | Test with missing `subscriptionNotification`, malformed base64 (if PubSub), etc. |
+| **ERR-07** | **Unknown Notification Type** | 1. Send webhook with valid structure but unknown `notificationType` (e.g., type 99). | - HTTP 200 (acknowledged) but no action taken. | - Backend parses successfully but doesn't match any known notification type.<br>- Logs warning: "Unknown notification type".<br>- Returns gracefully; no DB change (safe to ignore unknown types for future extensibility). | Google may add new notification types; backend should forward-compatible. |
+
+---
+
+### G. Operational Logging & Monitoring
+
+| ID | Scenario | Steps | Expected Behavior | Backend Logging | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **LOG-01** | **Structured Billing Event Logging** | 1. Execute full subscription lifecycle: SUB-01 (purchase) → SUB-02 (renewal) → SUB-03 (cancel) → SUB-05 (expiry).<br>2. Monitor backend structured logs (JSON format, not free-form text).<br>3. Verify each milestone is logged with consistent fields. | - No user-visible log leakage.<br>- Logs appear in backend log aggregation system (e.g., ELK, Datadog, etc.). | **Required fields per event:**<br>- `purchase_verified`: user_id, subscription_id, token_hash (NOT raw), status, timestamp<br>- `purchase_acknowledged`: subscription_id, ack_status, timestamp<br>- `webhook_received`: notification_type, event_id, timestamp<br>- `webhook_processed`: notification_type, event_id, new_status, timestamp<br>- `access_granted`/`access_revoked`: user_id, reason, timestamp<br><br>**NO sensitive data**: raw tokens, emails, user_data | Structured logs critical for debugging. Each event independently queryable. |
+| **LOG-02** | **Webhook Verification Failure Logging** | 1. Send invalid webhook (bad signature, malformed payload, unknown type).<br>2. Monitor backend logs for rejection.<br>3. Verify logs don't expose internal details but allow ops to investigate. | - HTTP 400/403 returned.<br>- No user impact (webhook silently rejected). | **Log event fields:**<br>- `event`: webhook_verification_failed<br>- `reason`: signature_mismatch \| malformed_payload \| unknown_type<br>- `message_id`: for idempotency tracing (NOT full payload)<br>- `timestamp`: ISO8601<br><br>**Level:** WARN (not ERROR, avoids alert spam) | Helps ops distinguish signature failures (real threats) from benign issues. |
+| **LOG-03** | **ACK Failure & Retry Logging** | 1. Simulate ACK failure (inject Google API 500 on ack call).<br>2. Trigger subscription purchase that fails ACK (via integration test).<br>3. Observe logs for first attempt and subsequent retries. | - Initial purchase succeeds (access granted).<br>- ACK retry queue processes in background. | **First attempt:**<br>- `event`: ack_attempt<br>- `subscription_id`, `attempt`: 1<br>- `status`: failed, `error`: google_api_500<br><br>**Retry scheduled:**<br>- `event`: ack_retry_scheduled<br>- `next_retry_seconds`: 60<br><br>**Successful retry:** Same as first with `attempt`: 2, `status`: success | Enables ops to monitor ACK health. Spike in failures indicates Google API issues. |
+
+---
+
+### H. API & Notification Features
+
+| ID | Scenario | Steps | Expected Behavior | Backend Response | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **API-01** | **Rate Limit Headers** | 1. Make any authenticated API call (e.g., `GET /api/v1/joke`).<br>2. Inspect response headers. | - Headers present:<br>  - `X-RateLimit-Limit`<br>  - `X-RateLimit-Remaining` | - Headers accurately reflect user's quota.<br>- Validated against `rate_limits` table in DB. | Global visibility for client-side quota management. |
+| **NOTIF-01** | **Payment Failure & Acknowledgment** | 1. Trigger Account Hold (SUB-08).<br>2. Call `GET /api/v1/subscription-status`.<br>3. Verify `payment_failure_notification=true`.<br>4. Call `POST /api/v1/notifications/payment-failure/acknowledge`.<br>5. Call `GET /api/v1/subscription-status` again. | - Step 2: Response shows failure flag and message.<br>- Step 4: Success (200 OK).<br>- Step 5: `payment_failure_notification=false`. | - DB updates `subscriptions.payment_failure_notification` to `false`.<br>- In-app alert cleared. | Ensures persistent alerts can be dismissed by user. |
+| **NOTIF-02** | **Notification History** | 1. Trigger an event that sends email (e.g., Payment Failure).<br>2. Call `GET /api/v1/notifications/history`. | - Returns JSON array of notification records. | - Validates `notifications` table population.<br>- Shows status (`sent`/`failed`), type, and timestamp. | Audit trail for support/debugging. |
+
+---
+
+## Verification Tools & Logs
+
+### Backend Logging
+
+Monitor backend logs during test execution:
+
+```
+[BILLING] verify_purchase: token verified - status: Active
+[BILLING] Subscription verified and activated: your_google_play_product_id_subscription  via google_play
+GooglePlayClient: get_subscription - package: com.yourcompany.app, subscription_id: your_google_play_product_id_subscription 
+WebhookEvent: subscription.paid received
+Webhook: event_id: <message_id> - already processed (idempotency)
+Webhook signature verification passed (or failed)
+```
+
+### Google Play Console
+
+1. **Orders Tab**: View test orders and their status.
+   - Verify payment state (Charged, Pending, Refunded, etc.)
+   - Test refund/revoke manually
+
+2. **Real-Time Developer Notifications (RTDN)**: Monitor subscription events.
+   - Check RTDN is enabled in Play Console > Setup > Notifications
+
+3. **License Testers**: Confirm testers added in Setup > License testing.
+
+### API Endpoints for Status Checks
+
+- **`GET /api/v1/subscription-status`** (authenticated): Returns current premium status and expiration.
+- **`POST /api/v1/payment/verify`** (authenticated): Register and verify a purchase token.
+- **`GET /api/v1/subscriptions/:subscription_id`** (authenticated, if exists): Fetch subscription details.
+
+---
+
+## Acceptance Criteria for Production
+
+All test scenarios must pass before production deployment:
+
+### Core Subscription Lifecycle (Required)
+
+- ✅ All one-time purchase scenarios (OTP-01 through OTP-05) pass with real cards and test cards
+- ✅ All subscription lifecycle scenarios (SUB-01 through SUB-07) pass
+- ✅ Account Hold after grace period failure (SUB-08) passes
+- ✅ Subscription Revoked via refund (SUB-09) passes
+- ✅ Pending Purchase Canceled (SUB-23) passes
+- ✅ Acknowledgment scenarios (ACK-01, ACK-02, ACK-03) pass: new purchases are ACK-ed, renewals are not, failed ACKs are retried
+- ✅ Subscription Pause scenarios (SUB-PAUSE-01, SUB-PAUSE-02, SUB-PAUSE-03) pass: scheduling, effective revocation, and resume logic verified
+
+### Webhook & Verification Integrity (Required)
+
+- ✅ All webhook integrity tests (WHK-01 through WHK-04, including WHK-01B, WHK-01C, WHK-01D) pass
+- ✅ All network/race condition tests (NET-01 through NET-04) pass
+- ✅ All error cases (ERR-01 through ERR-07) handled gracefully
+- ✅ Idempotency verified: Duplicate webhooks do NOT cause duplicate DB entries
+
+### Security & Production Configuration (Required)
+
+- ✅ Production config: `GOOGLE_VERIFY_AUDIENCE=true` set and tested with correct `GOOGLE_PUB_SUB_AUDIENCE`
+- ✅ Pub/Sub signature verification enforced: All invalid signatures rejected
+- ✅ Audience validation enforced: JWT audience claim matches `GOOGLE_PUB_SUB_AUDIENCE` (prevents webhook spoofing)
+- ✅ No sensitive data (tokens, emails, user IDs) logged in production logs
+- ✅ Load test: Backend handles concurrent purchases and webhooks without race conditions
+- ✅ Access control enforced: Premium access granted/revoked per subscription state (ACC-01, ACC-02)
+- ✅ Token uniqueness enforced: Same token cannot be verified by different users (ACC-03)
+
+### Operational Logging & Monitoring (Required)
+
+- ✅ Structured billing event logging (LOG-01): All key events logged in JSON format with consistent fields
+- ✅ Webhook verification failure logging (LOG-02): Invalid webhooks logged with traceable details
+- ✅ ACK failure & retry logging (LOG-03): ACK attempts, failures, and retries tracked in logs
+
+### Price Changes (Optional, if app targets Korea)
+
+- ✅ Price Change acceptance flow (SUB-17) tested and works
+- ✅ Price Step-Up Consent for Korean users (SUB-18) tested if targeting Korea; otherwise mark as "not applicable"
+
+---
+
+## Known Limitations & Future Work
+
+### Deferred Features (Out of Scope for This Release)
+
+The following features are documented in the HLD but **not implemented** for this release. See [GOOGLE_PLAY_BILLING_DEFERRALS.md](./GOOGLE_PLAY_BILLING_DEFERRALS.md) for details:
+
+- ❌ **Multiple Subscription Tiers** (upgrade/downgrade) – Requires product setup and UI changes
+- ❌ **Prepaid Plans & Top-ups** – Requires non-renewing product configuration; strict ack windows (3 days / half-duration)
+- ❌ **Installment Subscriptions** – Requires installment plan setup and commitment tracking
+- ❌ **Promo Codes** – App does not use promotional codes for subscriptions
+
+These may be added in future releases after evaluating market demand and product strategy.
+
+### Production Release Notes
+
+1. **Email handling**: Google Play API does NOT provide user email in webhook notifications or verification responses. Email must be provided by client in `verify_purchase` request or derived from authenticated Clerk token.
+
+2. **Purchase token validity**: Tokens expire 60 days after subscription expiration. After this window, historical lookups fail; use webhooks or near-real-time polling for ongoing status.
+
+3. **Webhook ordering**: Google does NOT guarantee webhook delivery order. Backend must query Google API (`get_subscription`) as source of truth on each webhook, not rely on event sequence.
+
+4. **One-time product pricing**: INAPP product pricing is not returned by API call; price must be fetched separately or stored in app config.
+
+5. **Pub/Sub audience validation**: Implemented in production. Set `GOOGLE_VERIFY_AUDIENCE=true` and `GOOGLE_PUB_SUB_AUDIENCE` to your webhook URL (e.g., `https://api.yourdomain.com/webhooks/google`). Mismatched audiences will be rejected with proper error logging.
+
