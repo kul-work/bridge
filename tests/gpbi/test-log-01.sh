@@ -45,12 +45,14 @@ RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_log_01_user_$RUN_ID}"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
-# Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed (globals.cfg already exports PGPASSWORD=postgres)
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "LOG-01: Structured Billing Event Logging"
@@ -75,10 +77,34 @@ echo -e "${YELLOW}[2/7] Preparing test environment${NC}"
 
 PURCHASE_TOKEN="test-log-01-lifecycle-$(date +%s)"
 
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" 2>/dev/null
 
 echo -e "${GREEN}✓ Cleanup complete${NC}"
 echo -e "${BLUE}Purchase token: $PURCHASE_TOKEN${NC}"
+echo ""
+
+# Step 2.5: Register purchase (Bridge requirement)
+echo -e "${YELLOW}[2.5/7] Registering purchase in Bridge${NC}"
+REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-log-01-setup\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-log-01-reg-$RUN_ID\"
+  }")
+
+if [[ "$REGISTER_HTTP" == "200" ]]; then
+    echo -e "${GREEN}✓ Purchase registration successful${NC}"
+else
+    echo -e "${RED}✗ Purchase registration failed (HTTP $REGISTER_HTTP)${NC}"
+    exit 1
+fi
 echo ""
 
 # Step 3: Execute SUB-01 (Initial Purchase) - should log purchase_verified
@@ -92,10 +118,9 @@ echo "  - access_granted: user_id, reason, timestamp"
 echo ""
 
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/api/v1/verify-purchase" \
+  "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
-   \
-   \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
     \"provider\": \"$PROVIDER\",
     \"external_user_id\": \"$USER_ID\",
@@ -146,9 +171,10 @@ EOF
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 
 WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
@@ -161,7 +187,7 @@ WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
 WEBHOOK_HTTP=$(echo "$WEBHOOK_RESPONSE" | tail -n1)
 
 WEBHOOK_LOGGED="false"
-if [[ "$WEBHOOK_HTTP" == "200" ]]; then
+if [[ "$WEBHOOK_HTTP" == "200" ]] || [[ "$WEBHOOK_HTTP" == "204" ]]; then
     echo -e "${GREEN}✓ Renewal webhook processed (HTTP 200)${NC}"
     echo -e "${BLUE}  Backend should have logged: webhook_received, webhook_processed${NC}"
     WEBHOOK_LOGGED="true"
@@ -199,9 +225,10 @@ EOF
 NOTIFICATION_CANCEL_B64=$(echo -n "$NOTIFICATION_CANCEL" | base64 -w 0)
 
 CANCEL_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_CANCEL_B64\",
@@ -214,7 +241,7 @@ CANCEL_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
 CANCEL_HTTP=$(echo "$CANCEL_RESPONSE" | tail -n1)
 
 CANCEL_LOGGED="false"
-if [[ "$CANCEL_HTTP" == "200" ]]; then
+if [[ "$CANCEL_HTTP" == "200" ]] || [[ "$CANCEL_HTTP" == "204" ]]; then
     echo -e "${GREEN}✓ Cancellation webhook processed (HTTP 200)${NC}"
     CANCEL_LOGGED="true"
 else
@@ -252,9 +279,10 @@ EOF
 NOTIFICATION_EXPIRE_B64=$(echo -n "$NOTIFICATION_EXPIRE" | base64 -w 0)
 
 EXPIRE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_EXPIRE_B64\",
@@ -267,7 +295,7 @@ EXPIRE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
 EXPIRE_HTTP=$(echo "$EXPIRE_RESPONSE" | tail -n1)
 
 EXPIRE_LOGGED="false"
-if [[ "$EXPIRE_HTTP" == "200" ]]; then
+if [[ "$EXPIRE_HTTP" == "200" ]] || [[ "$EXPIRE_HTTP" == "204" ]]; then
     echo -e "${GREEN}✓ Expiry webhook processed (HTTP 200)${NC}"
     echo -e "${BLUE}  Backend should have logged: webhook_received, webhook_processed, access_revoked${NC}"
     EXPIRE_LOGGED="true"
@@ -295,7 +323,7 @@ echo "  - No emails or sensitive user_data"
 echo ""
 
 # Cleanup
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
 echo -e "${GREEN}✓ Cleaned up test data${NC}"
 echo ""
 

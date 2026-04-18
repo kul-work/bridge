@@ -42,12 +42,15 @@ RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_net_03_user_$RUN_ID}"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
 # Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "NET-03: Webhook Processing Times Out"
@@ -72,10 +75,10 @@ echo -e "${YELLOW}[2/6] Setting up test subscription${NC}"
 
 PURCHASE_TOKEN="test-net-03-timeout-$(date +%s)"
 
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
 
 # Create subscription for testing
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW());" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW());" 2>/dev/null
 
 echo -e "${GREEN}✓ Created test subscription${NC}"
 echo -e "${BLUE}Purchase token: $PURCHASE_TOKEN${NC}"
@@ -84,8 +87,8 @@ echo ""
 # Step 3: Record initial state
 echo -e "${YELLOW}[3/6] Recording initial state${NC}"
 
-INITIAL_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
-INITIAL_PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+INITIAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+INITIAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 
 echo -e "${BLUE}Initial status: $INITIAL_STATUS${NC}"
 echo -e "${BLUE}Initial payment count: $INITIAL_PAYMENT_COUNT${NC}"
@@ -124,7 +127,7 @@ NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 # Simulate "first attempt" (Google would timeout, but we'll just send it)
 echo "Simulating first webhook attempt (original)..."
 WEBHOOK_RESPONSE_1=$(curl -s -w "\n%{http_code}" --max-time 5 -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -d "{
@@ -150,7 +153,7 @@ echo "Simulating retry webhook (same message_id - Google retry after timeout)...
 sleep 1  # Small delay to simulate retry timing
 
 WEBHOOK_RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -d "{
@@ -178,9 +181,9 @@ echo ""
 echo -e "${YELLOW}[5/6] Verifying idempotency (DB Validation)${NC}"
 echo ""
 
-FINAL_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
-FINAL_PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-SUB_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+FINAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+FINAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
 
 echo "Final subscription status: $FINAL_STATUS"
 echo "Final payment count: $FINAL_PAYMENT_COUNT"
@@ -208,7 +211,7 @@ echo ""
 # Step 6: Cleanup
 echo -e "${YELLOW}[6/6] Cleanup${NC}"
 
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
 echo -e "${GREEN}✓ Cleaned up test data${NC}"
 echo ""
 

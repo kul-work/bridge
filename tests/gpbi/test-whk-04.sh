@@ -4,13 +4,15 @@
 # WHK-04: Webhook Without Prior verify_payment Call
 # 
 # Purpose: Verify that webhooks for pay.subscriptions that were NEVER registered
+  -H "X-Webhook-Verification-Mode: off" \
 #          via /api/v1/verify-purchase are handled gracefully (either rejected
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
 #          or safely discarded without DB corruption).
 #
 # Usage: ./test-whk-04.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $APP_URL (default: http://localhost:3000)
+#   - Backend running and listening on $BRIDGE_API_URL (default: http://localhost:3000)
 #   - Backend configured with: MOCK_EXTERNAL_APIS=true
 #   - DATABASE_URL configured and db accessible
 #   - psql installed and in PATH
@@ -45,12 +47,15 @@ RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_whk_04_user_$RUN_ID}"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
 # Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-04: Webhook Without Prior verify_payment Call"
@@ -77,7 +82,7 @@ echo -e "${YELLOW}[2/5] Ensuring no subscription record exists for test token${N
 UNREGISTERED_TOKEN="unregistered-token-whk-04-$(date +%s)"
 
 # Clean up any existing subscription records for this user/product
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
 
 echo -e "${GREEN}✓ Cleaned up existing pay.subscriptions${NC}"
 echo -e "${BLUE}Unregistered token to test: $UNREGISTERED_TOKEN${NC}"
@@ -86,11 +91,11 @@ echo ""
 # Step 3: Record initial database state
 echo -e "${YELLOW}[3/5] Recording initial database state${NC}"
 
-INITIAL_SUB_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-INITIAL_PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+INITIAL_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+INITIAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 
 # Also count total pay.subscriptions with this token (should be 0)
-TOKEN_SUB_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$UNREGISTERED_TOKEN';" -t 2>/dev/null | tr -d ' ')
+TOKEN_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$UNREGISTERED_TOKEN';" -t 2>/dev/null | tr -d ' ')
 
 echo -e "${BLUE}Initial user subscription count: $INITIAL_SUB_COUNT${NC}"
 echo -e "${BLUE}Initial user payment count: $INITIAL_PAYMENT_COUNT${NC}"
@@ -134,7 +139,8 @@ NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 # Send webhook for unregistered token
 # Use X-Webhook-Verification-Mode: off (test doesn't verify signatures, tests token lookup)
 WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -182,9 +188,9 @@ echo ""
 echo -e "${YELLOW}[5/5] Verifying database state unchanged (DB Validation)${NC}"
 echo ""
 
-FINAL_SUB_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-FINAL_PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-FINAL_TOKEN_SUB_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$UNREGISTERED_TOKEN';" -t 2>/dev/null | tr -d ' ')
+FINAL_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+FINAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+FINAL_TOKEN_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$UNREGISTERED_TOKEN';" -t 2>/dev/null | tr -d ' ')
 
 echo "Final user subscription count: $FINAL_SUB_COUNT (initial: $INITIAL_SUB_COUNT)"
 echo "Final user payment count: $FINAL_PAYMENT_COUNT (initial: $INITIAL_PAYMENT_COUNT)"
@@ -242,6 +248,8 @@ cat > whk-04-report.json <<EOF
     "token_subscription_count": $FINAL_TOKEN_SUB_COUNT
   },
   "notes": "Apps MUST call /api/v1/verify-purchase immediately after purchase, before webhooks arrive"
+  -H "X-Webhook-Verification-Mode: off" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
 }
 EOF
 

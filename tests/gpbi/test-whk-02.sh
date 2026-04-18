@@ -4,13 +4,14 @@
 # WHK-02: Duplicate Webhook Delivery (Idempotency)
 # 
 # Purpose: Verify that duplicate webhooks (same message_id) are handled
+  -H "X-Webhook-Verification-Mode: off" \
 #          idempotently - second webhook returns success but does NOT
 #          create duplicate database entries.
 #
 # Usage: ./test-whk-02.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $APP_URL (default: http://localhost:3000)
+#   - Backend running and listening on $BRIDGE_API_URL (default: http://localhost:3000)
 #   - Backend configured with: MOCK_EXTERNAL_APIS=true
 #   - DATABASE_URL configured and db accessible
 #   - psql installed and in PATH
@@ -46,12 +47,15 @@ RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_whk_02_user_$RUN_ID}"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
 # Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-02: Duplicate Webhook Delivery (Idempotency)"
@@ -77,11 +81,11 @@ echo -e "${YELLOW}[2/7] Setting up test subscription record${NC}"
 PURCHASE_TOKEN="test-whk-02-idempotency-$(date +%s)"
 
 # Clean up any existing test data
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id LIKE 'test-whk-02%';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id LIKE 'test-whk-02%';" 2>/dev/null
 
 # Create subscription entry for testing
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW());" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW());" 2>/dev/null
 
 echo -e "${GREEN}✓ Created test subscription record with token: $PURCHASE_TOKEN${NC}"
 echo ""
@@ -89,8 +93,8 @@ echo ""
 # Step 3: Record initial database state
 echo -e "${YELLOW}[3/7] Recording initial database state${NC}"
 
-INITIAL_PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-INITIAL_SUB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+INITIAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+INITIAL_SUB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 
 echo -e "${BLUE}Initial payment count: $INITIAL_PAYMENT_COUNT${NC}"
 echo -e "${BLUE}Initial subscription status: $INITIAL_SUB_STATUS${NC}"
@@ -131,7 +135,8 @@ NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 # Send FIRST webhook
 # Use X-Webhook-Verification-Mode: off (test doesn't verify signatures, tests idempotency)
 WEBHOOK_RESPONSE_1=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -159,8 +164,8 @@ echo ""
 # Step 5: Record state after first webhook
 echo -e "${YELLOW}[5/7] Recording state after first webhook${NC}"
 
-AFTER_FIRST_PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-AFTER_FIRST_SUB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+AFTER_FIRST_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+AFTER_FIRST_SUB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 
 echo -e "${BLUE}Payment count after first: $AFTER_FIRST_PAYMENT_COUNT${NC}"
 echo -e "${BLUE}Subscription status after first: $AFTER_FIRST_SUB_STATUS${NC}"
@@ -177,7 +182,8 @@ echo ""
 # Send DUPLICATE webhook (exact same payload)
 # Use X-Webhook-Verification-Mode: off (test doesn't verify signatures, tests idempotency)
 WEBHOOK_RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -206,15 +212,15 @@ echo ""
 echo -e "${YELLOW}[7/7] Verifying idempotency (DB Validation)${NC}"
 echo ""
 
-FINAL_PAYMENT_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-FINAL_SUB_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+FINAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+FINAL_SUB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 
 echo "Final payment count: $FINAL_PAYMENT_COUNT (after first: $AFTER_FIRST_PAYMENT_COUNT)"
 echo "Final subscription status: $FINAL_SUB_STATUS"
 echo ""
 
 # Check that provider_transaction_id is SAME (true idempotency)
-FIRST_PAYMENT_ID=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+FIRST_PAYMENT_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
 
 IDEMPOTENCY_VERIFIED="false"
 if [[ "$FINAL_PAYMENT_COUNT" == "$AFTER_FIRST_PAYMENT_COUNT" ]]; then
@@ -233,7 +239,7 @@ else
 fi
 
 # Check subscription count as well
-SUB_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 
 if [[ "$SUB_COUNT" == "1" ]]; then
     echo -e "${GREEN}✓ Single subscription record (no duplicates)${NC}"

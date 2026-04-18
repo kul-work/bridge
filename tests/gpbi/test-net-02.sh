@@ -41,12 +41,15 @@ RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_net_02_user_$RUN_ID}"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
 # Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "NET-02: verify_payment Call Fails / Network Timeout"
@@ -71,8 +74,8 @@ echo -e "${YELLOW}[2/7] Cleaning up previous test data${NC}"
 
 PURCHASE_TOKEN="test-net-02-retry-$(date +%s)"
 
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
 
 echo -e "${GREEN}✓ Cleanup complete${NC}"
 echo -e "${BLUE}Purchase token: $PURCHASE_TOKEN${NC}"
@@ -87,7 +90,7 @@ echo "      In real scenario, this would be a network timeout or 5xx error"
 echo ""
 
 # Record initial state - no subscription should exist
-INITIAL_SUB_COUNT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+INITIAL_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
 
 echo "Initial subscription count for token: $INITIAL_SUB_COUNT"
 echo -e "${BLUE}Simulating: First attempt failed (no DB entry created)${NC}"
@@ -125,7 +128,7 @@ EOF
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 
 WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -d "{
@@ -155,13 +158,15 @@ echo ""
 echo -e "${YELLOW}[5/7] RETRY verify_payment call (success)${NC}"
 echo ""
 
-echo "  POST $APP_URL/api/v1/verify-purchase"
+echo "  POST $BRIDGE_API_URL/api/v1/verify-purchase"
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
 echo "  Token: $PURCHASE_TOKEN"
 echo "  Note: This is the retry after initial failure"
 echo ""
 
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/api/v1/verify-purchase" \
+  "$BRIDGE_API_URL/api/v1/verify-purchase" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "Content-Type: application/json" \
    \
    \
@@ -189,7 +194,7 @@ echo ""
 echo -e "${YELLOW}[6/7] Verifying token registered and webhooks work (DB Validation)${NC}"
 echo ""
 
-FINAL_SUB=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status, external_user_id FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null || echo "")
+FINAL_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status, external_user_id FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null || echo "")
 
 TOKEN_REGISTERED="false"
 if [[ ! -z "$FINAL_SUB" ]] && [[ "$FINAL_SUB" != *"(0 rows)"* ]]; then
@@ -207,7 +212,7 @@ echo "Sending follow-up webhook to verify it now processes correctly..."
 MESSAGE_ID_2="net-02-followup-$(date +%s)"
 
 WEBHOOK_RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -d "{
@@ -234,7 +239,7 @@ echo ""
 # Step 7: Cleanup
 echo -e "${YELLOW}[7/7] Cleanup${NC}"
 
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
 echo -e "${GREEN}✓ Cleaned up test data${NC}"
 echo ""
 

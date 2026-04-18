@@ -20,10 +20,13 @@ NC='\033[0m'
 RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_notif_02_user_$RUN_ID}"
 EMAIL="test_$RUN_ID@example.com"
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
+# Extract DB password if needed
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "NOTIF-02: Notification History"
@@ -38,11 +41,11 @@ echo ""
 
 # 2. Insert Dummy Notification (Direct DB Injection for reliability)
 echo -e "${YELLOW}[2/3] Injecting Test Notification${NC}"
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO notifications (external_user_id, recipient_email, notification_type, status, subscription_id, provider) VALUES ('$USER_ID', '$EMAIL', 'test_event', 'sent', 'sub_123', 'google_play');" > /dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO notifications (external_user_id, recipient_email, notification_type, status, subscription_id, provider) VALUES ('$USER_ID', '$EMAIL', 'test_event', 'sent', 'sub_123', 'google_play');" > /dev/null
 
 # 3. Retrieve History
 echo -e "${YELLOW}[3/3] Retrieving Notification History${NC}"
-RESP=$(curl -s -H "Authorization: Bearer $API_KEY" -X GET "$APP_URL/api/v1/notifications/history"   -H "x-client-version: 99.99.0")
+RESP=$(curl -s -H "Authorization: Bearer $API_KEY" -X GET "$BRIDGE_API_URL/api/v1/notifications/history"   -H "x-client-version: 99.99.0")
 
 # Check if array is not empty and contains our test event
 COUNT=$(echo "$RESP" | jq 'length')

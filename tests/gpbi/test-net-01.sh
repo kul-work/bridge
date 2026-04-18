@@ -43,12 +43,15 @@ RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_net_01_user_$RUN_ID}"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
 # Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "NET-01: Webhook Arrives Before verify_payment"
@@ -73,8 +76,8 @@ echo -e "${YELLOW}[2/6] Cleaning up previous test data${NC}"
 
 PURCHASE_TOKEN="test-net-01-webhook-first-$(date +%s)"
 
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
 
 echo -e "${GREEN}✓ Cleanup complete${NC}"
 echo -e "${BLUE}Purchase token: $PURCHASE_TOKEN${NC}"
@@ -115,7 +118,7 @@ NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 
 # Send webhook FIRST
 WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -d "{
@@ -141,7 +144,7 @@ fi
 echo ""
 
 # Check if any subscription was created (should be none or partial)
-SUB_AFTER_WEBHOOK=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+SUB_AFTER_WEBHOOK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
 echo -e "${BLUE}Subscriptions with token after webhook: $SUB_AFTER_WEBHOOK${NC}"
 echo ""
 
@@ -149,12 +152,14 @@ echo ""
 echo -e "${YELLOW}[4/6] Calling verify_payment AFTER webhook${NC}"
 echo ""
 
-echo "  POST $APP_URL/api/v1/verify-purchase"
+echo "  POST $BRIDGE_API_URL/api/v1/verify-purchase"
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
 echo "  Token: $PURCHASE_TOKEN"
 echo ""
 
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/api/v1/verify-purchase" \
+  "$BRIDGE_API_URL/api/v1/verify-purchase" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "Content-Type: application/json" \
    \
    \
@@ -182,7 +187,7 @@ echo ""
 echo -e "${YELLOW}[5/6] Verifying final state (DB Validation)${NC}"
 echo ""
 
-FINAL_SUB=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status, external_user_id FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null || echo "")
+FINAL_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status, external_user_id FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null || echo "")
 
 if [[ ! -z "$FINAL_SUB" ]] && [[ "$FINAL_SUB" != *"(0 rows)"* ]]; then
     FINAL_STATUS=$(echo "$FINAL_SUB" | awk -F '|' '{print $1}' | tr -d ' ')
@@ -209,7 +214,7 @@ echo ""
 # Step 6: Cleanup
 echo -e "${YELLOW}[6/6] Cleanup${NC}"
 
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
 echo -e "${GREEN}✓ Cleaned up test data${NC}"
 echo ""
 

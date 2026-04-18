@@ -4,13 +4,14 @@
 # WHK-06: Token-based Webhook Deduplication
 #
 # Purpose: Verify that webhooks with DIFFERENT message_id but SAME
+  -H "X-Webhook-Verification-Mode: off" \
 #          purchase_token + event_type are handled idempotently; no
 #          duplicate payment records created.
 #
 # Usage: ./test-whk-06.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $APP_URL (default: http://localhost:3000)
+#   - Backend running and listening on $BRIDGE_API_URL (default: http://localhost:3000)
 #   - Backend configured with: MOCK_EXTERNAL_APIS=true
 #   - DATABASE_URL configured and db accessible
 #   - psql installed and in PATH
@@ -44,7 +45,7 @@ PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_whk_06_user_$RUN_ID}"
-APP_URL="$APP_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 
 export PGPASSWORD="${DATABASE_URL##*:}"
 export PGPASSWORD="${PGPASSWORD%%@*}"
@@ -73,11 +74,11 @@ echo -e "${YELLOW}[2/3] Setting up test subscription${NC}"
 PURCHASE_TOKEN="test-token-dedup-$(date +%s)"
 
 # Clean up any existing test data
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.payments WHERE provider_transaction_id LIKE 'test-token-dedup%';" 2>&1 | head -1
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>&1 | head -1
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE provider_transaction_id LIKE 'test-token-dedup%';" 2>&1 | head -1
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>&1 | head -1
 
 # Create subscription
-INSERT_SUB=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true);" 2>&1)
+INSERT_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true);" 2>&1)
 if [[ "$INSERT_SUB" == *"ERROR"* ]] || [[ "$INSERT_SUB" == *"error"* ]]; then
     echo -e "${RED}✗ Failed to insert subscription: $INSERT_SUB${NC}"
     exit 1
@@ -89,6 +90,7 @@ echo ""
 
 # Step 3: Send FIRST webhook with message_id_1
 echo -e "${YELLOW}[3/3] Sending webhooks to test token-based deduplication${NC}"
+  -H "X-Webhook-Verification-Mode: off" \
 echo ""
 
 MESSAGE_ID_1="msg-1-$(date +%s)"
@@ -110,7 +112,8 @@ EOF
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 
 echo -e "${YELLOW}Sending first webhook (Message ID: $MESSAGE_ID_1)${NC}"
-RESPONSE_1=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+RESPONSE_1=$(curl -s -w "\n%{http_code}" -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -125,13 +128,14 @@ if [[ "$HTTP_CODE_1" != "200" ]]; then
 fi
 
 # Step 4: Record state
-COUNT_1=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE provider_transaction_id = '$PURCHASE_TOKEN';" -t | tr -d ' ')
+COUNT_1=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE provider_transaction_id = '$PURCHASE_TOKEN';" -t | tr -d ' ')
 
 # Step 5: Send SECOND webhook with DIFFERENT Message ID but SAME Token + Type
 MESSAGE_ID_2="msg-2-$(date +%s)"
 echo -e "\nSecond webhook: message_id = $MESSAGE_ID_2 (different from first, same token/type)"
 
-RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -150,7 +154,7 @@ echo ""
 echo -e "${YELLOW}Verifying token-based deduplication (DB Validation)${NC}"
 echo ""
 
-COUNT_2=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE provider_transaction_id = '$PURCHASE_TOKEN';" -t | tr -d ' ')
+COUNT_2=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE provider_transaction_id = '$PURCHASE_TOKEN';" -t | tr -d ' ')
 
 echo "After first webhook: $COUNT_1 payment record(s)"
 echo "After second webhook: $COUNT_2 payment record(s)"

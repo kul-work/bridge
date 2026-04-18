@@ -50,12 +50,14 @@ RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_log_03_user_$RUN_ID}"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
-# Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed (globals.cfg already exports PGPASSWORD=postgres)
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "LOG-03: ACK Failure & Retry Logging"
@@ -80,10 +82,34 @@ echo -e "${YELLOW}[2/6] Preparing test environment${NC}"
 
 PURCHASE_TOKEN="test-log-03-ack-$(date +%s)"
 
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" 2>/dev/null
 
 echo -e "${GREEN}✓ Cleanup complete${NC}"
 echo -e "${BLUE}Purchase token: $PURCHASE_TOKEN${NC}"
+echo ""
+
+# Step 2.5: Register purchase (Bridge requirement)
+echo -e "${YELLOW}[2.5/6] Registering purchase in Bridge${NC}"
+REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-log-03-setup\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-log-03-reg-$RUN_ID\"
+  }")
+
+if [[ "$REGISTER_HTTP" == "200" ]]; then
+    echo -e "${GREEN}✓ Purchase registration successful${NC}"
+else
+    echo -e "${RED}✗ Purchase registration failed (HTTP $REGISTER_HTTP)${NC}"
+    exit 1
+fi
 echo ""
 
 # Step 3: Execute purchase that triggers ACK
@@ -104,10 +130,9 @@ echo "  - ack_attempt: attempt=2, status=success"
 echo ""
 
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/api/v1/verify-purchase" \
+  "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
-   \
-   \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
     \"provider\": \"$PROVIDER\",
     \"external_user_id\": \"$USER_ID\",
@@ -131,13 +156,13 @@ echo ""
 # Step 4: Verify subscription exists and check acknowledged_at
 echo -e "${YELLOW}[4/6] Verifying subscription and ACK status (DB Validation)${NC}"
 
-SUB_DATA=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null || echo "")
+SUB_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null || echo "")
 
 if [[ ! -z "$SUB_DATA" ]] && [[ "$SUB_DATA" != *"(0 rows)"* ]]; then
     SUB_STATUS=$(echo "$SUB_DATA" | awk -F '|' '{print $1}' | tr -d ' ')
     
     # Fetch acknowledged_at from PAYMENTS table
-    ACK_AT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+    ACK_AT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
 
     echo "Subscription status: $SUB_STATUS"
     echo "Acknowledged at: $ACK_AT"
@@ -195,7 +220,7 @@ echo ""
 echo -e "${YELLOW}[6/6] Cleanup and Summary${NC}"
 echo ""
 
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
 echo -e "${GREEN}✓ Cleaned up test data${NC}"
 echo ""
 

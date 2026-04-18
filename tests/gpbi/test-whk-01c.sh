@@ -9,7 +9,7 @@
 # Usage: ./test-whk-01c.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $APP_URL (default: http://localhost:3000)
+#   - Backend running and listening on $BRIDGE_API_URL (default: http://localhost:3000)
 #   - Backend configured with: MOCK_EXTERNAL_APIS=true
 #   - SUB-01 test completed (subscription record exists)
 #   - DATABASE_URL configured and db accessible
@@ -44,12 +44,15 @@ RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_whk_01c_user_$RUN_ID}"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
 # Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-01C: Audience Validation With Correct Audience"
@@ -72,13 +75,13 @@ echo ""
 # Step 2: Ensure subscription record exists (run SUB-01 first if needed)
 echo -e "${YELLOW}[2/6] Verifying subscription record exists${NC}"
 
-SUB_EXISTS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status, purchase_token FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' LIMIT 1;" -t 2>/dev/null || echo "")
+SUB_EXISTS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status, purchase_token FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' LIMIT 1;" -t 2>/dev/null || echo "")
 
 if [[ -z "$SUB_EXISTS" ]] || [[ "$SUB_EXISTS" == *"(0 rows)"* ]]; then
     echo -e "${YELLOW}⚠ No subscription found, running SUB-01 setup first...${NC}"
     # Create subscription entry for testing
     DUMMY_TOKEN="test-subscription-whk-01c-$(date +%s)"
-    psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$DUMMY_TOKEN', '$PROVIDER', true, NOW(), NOW()) ON CONFLICT (external_user_id, subscription_id) DO UPDATE SET status = 'active', purchase_token = '$DUMMY_TOKEN', updated_at = NOW();" 2>/dev/null
+    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$DUMMY_TOKEN', '$PROVIDER', true, NOW(), NOW()) ON CONFLICT (external_user_id, subscription_id) DO UPDATE SET status = 'active', purchase_token = '$DUMMY_TOKEN', updated_at = NOW();" 2>/dev/null
     echo -e "${GREEN}✓ Created test subscription record${NC}"
     PURCHASE_TOKEN="$DUMMY_TOKEN"
 else
@@ -90,7 +93,7 @@ echo ""
 # Step 3: Record initial database state
 echo -e "${YELLOW}[3/6] Recording initial database state${NC}"
 
-INITIAL_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+INITIAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 
 echo -e "${BLUE}Initial subscription status: $INITIAL_STATUS${NC}"
 echo ""
@@ -132,7 +135,7 @@ NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 # Use X-Webhook-Verification-Mode: off to skip signature (can't forge valid JWT for testing)
 # Use X-Webhook-Audience-Mode: strict to enforce audience claim validation
 WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -176,8 +179,8 @@ echo ""
 # Step 6: Verify database was updated correctly (DB Validation)
 echo -e "${YELLOW}[6/6] Verifying database update (DB Validation)${NC}"
 
-FINAL_STATUS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
-FINAL_PERIOD_END=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT current_period_end FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+FINAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
+FINAL_PERIOD_END=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT current_period_end FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 
 echo "Final subscription status: $FINAL_STATUS"
 echo "Final period end: $FINAL_PERIOD_END"

@@ -231,11 +231,11 @@ fi
 echo -e "${GREEN}✓ Payment status correctly set to 'refunded'${NC}"
 echo ""
 
-# Step 6: Verify status change via /api/v1/pay.subscriptions
-echo -e "${YELLOW}[6/7] Checking status via /api/v1/pay.subscriptions endpoint${NC}"
+# Step 6: Verify status change via /api/v1/subscriptions
+echo -e "${YELLOW}[6/7] Checking status via /api/v1/subscriptions endpoint${NC}"
 
 STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
-  "$APP_URL/api/v1/pay.subscriptions" \
+  "$APP_URL/api/v1/subscriptions" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   )
 

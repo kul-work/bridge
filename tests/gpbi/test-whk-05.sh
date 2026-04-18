@@ -10,7 +10,7 @@
 # Usage: ./test-whk-05.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $APP_URL (default: http://localhost:3000)
+#   - Backend running and listening on $BRIDGE_API_URL (default: http://localhost:3000)
 #   - Backend configured with: MOCK_EXTERNAL_APIS=true
 #   - DATABASE_URL configured and db accessible
 #   - psql installed and in PATH
@@ -44,7 +44,7 @@ PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_whk_05_user_$RUN_ID}"
-APP_URL="$APP_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 
 export PGPASSWORD="${DATABASE_URL##*:}"
 export PGPASSWORD="${PGPASSWORD%%@*}"
@@ -73,18 +73,18 @@ echo -e "${YELLOW}[2/4] Setting up test payment and subscription records${NC}"
 PURCHASE_TOKEN="test-refund-idem-$(date +%s)"
 
 # Clean up any existing test data
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.payments WHERE provider_transaction_id LIKE 'test-refund-idem%';" 2>&1 | head -1
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>&1 | head -1
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE provider_transaction_id LIKE 'test-refund-idem%';" 2>&1 | head -1
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>&1 | head -1
 
 # Create payment record with 'success' status
-INSERT_PAYMENT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO pay.payments (external_user_id, provider, provider_transaction_id, subscription_id, status, amount_cents) VALUES ('$USER_ID', '$PROVIDER', '$PURCHASE_TOKEN', '$PRODUCT_ID', 'success', 1000);" 2>&1)
+INSERT_PAYMENT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.payments (external_user_id, provider, provider_transaction_id, subscription_id, status, amount_cents) VALUES ('$USER_ID', '$PROVIDER', '$PURCHASE_TOKEN', '$PRODUCT_ID', 'success', 1000);" 2>&1)
 if [[ "$INSERT_PAYMENT" == *"ERROR"* ]] || [[ "$INSERT_PAYMENT" == *"error"* ]]; then
     echo -e "${RED}✗ Failed to insert payment: $INSERT_PAYMENT${NC}"
     exit 1
 fi
 
 # Create subscription record with 'active' status
-INSERT_SUB=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true);" 2>&1)
+INSERT_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true);" 2>&1)
 if [[ "$INSERT_SUB" == *"ERROR"* ]] || [[ "$INSERT_SUB" == *"error"* ]]; then
     echo -e "${RED}✗ Failed to insert subscription: $INSERT_SUB${NC}"
     exit 1
@@ -115,7 +115,8 @@ NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 
 MESSAGE_ID_1="msg-refund-1-$(date +%s)"
 echo -e "\n${YELLOW}Sending FIRST refund webhook (Message ID: $MESSAGE_ID_1)${NC}"
-RESPONSE_1=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+RESPONSE_1=$(curl -s -w "\n%{http_code}" -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -136,7 +137,7 @@ fi
 sleep 2
 
 # Verify subscription is revoked
-STATUS_1=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t | tr -d ' ')
+STATUS_1=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t | tr -d ' ')
 
 echo -e "After first refund: subscription status = $STATUS_1"
 
@@ -146,7 +147,8 @@ echo -e "\n${YELLOW}[4/4] Sending SECOND refund webhook (different message_id, s
 MESSAGE_ID_2="msg-refund-2-$(date +%s)"
 echo "Message ID: $MESSAGE_ID_2 (different from first)"
 echo ""
-RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
+  -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -164,7 +166,7 @@ fi
 sleep 2
 
 # Verify status remains same (revoked)
-STATUS_2=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t | tr -d ' ')
+STATUS_2=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t | tr -d ' ')
 
 echo ""
 echo -e "${YELLOW}========================================${NC}"
@@ -204,6 +206,7 @@ cat > whk-05-report.json <<EOF
     "idempotency_enforced": $([[ "$STATUS_1" == "revoked" ]] && [[ "$STATUS_2" == "revoked" ]] && echo "true" || echo "false")
   },
   "notes": "Refund webhooks should be idempotent; second refund of same token should not re-revoke"
+  -H "X-Webhook-Verification-Mode: off" \
 }
 EOF
 

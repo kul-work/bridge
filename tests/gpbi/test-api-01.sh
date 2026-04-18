@@ -34,12 +34,15 @@ RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_api_01_user_$RUN_ID}"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
 # Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "API-01: Rate Limit Headers"
@@ -60,8 +63,8 @@ echo ""
 # Step 2: Make Request & Inspect Headers
 echo -e "${YELLOW}[2/2] Making Authenticated Request${NC}"
 
-# Use curl -i to include headers in output (use test headers for test mode)
-RESPONSE=$(curl -s -i -X GET "$APP_URL/api/v1/joke" \
+# Use curl -H "Authorization: Bearer $BRIDGE_API_KEY" -i to include headers in output (use test headers for test mode)
+RESPONSE=$(curl -H "Authorization: Bearer $BRIDGE_API_KEY" -s -i -X GET "$BRIDGE_API_URL/api/v1/joke" \
    \
    \
   -H "x-client-version: 99.99.0")

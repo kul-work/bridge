@@ -39,12 +39,14 @@ RUN_ID="$(date +%s)-$RANDOM"
 USER_ID="${USER_ID:-test_acc_01_user_$RUN_ID}"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
-# Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed (globals.cfg already exports PGPASSWORD=postgres)
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "ACC-01: Premium Access Granted for Allowed States"
@@ -84,37 +86,36 @@ test_subscription_state() {
     local purchase_token="test-acc-01-${state}-$(date +%s)"
     
     # Delete existing and insert with target state
-    psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
+    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
     
     # Handle different states
     case $state in
         "active")
-            psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$purchase_token', '$PROVIDER', true, '$future_expiry', NOW(), NOW());" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'active', '$purchase_token', '$PROVIDER', true, '$future_expiry', NOW(), NOW());" 2>/dev/null
             # CRITICAL: Also set users table (is_user_premium() checks users.is_premium + users.premium_expires_at)
-            psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "UPDATE users SET is_premium = true, premium_expires_at = '$future_expiry' WHERE external_user_id = '$USER_ID';" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "UPDATE users SET is_premium = true, premium_expires_at = '$future_expiry' WHERE external_user_id = '$USER_ID';" 2>/dev/null
             ;;
         "past_due")
             # IN_GRACE_PERIOD maps to past_due in our system
-            psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, google_grace_period_start, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'past_due', '$purchase_token', '$PROVIDER', true, '$future_expiry', NOW(), NOW(), NOW());" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, google_grace_period_start, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'past_due', '$purchase_token', '$PROVIDER', true, '$future_expiry', NOW(), NOW(), NOW());" 2>/dev/null
             # CRITICAL: Also set users table (past_due = grace period, user retains access)
-            psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "UPDATE users SET is_premium = true, premium_expires_at = '$future_expiry' WHERE external_user_id = '$USER_ID';" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "UPDATE users SET is_premium = true, premium_expires_at = '$future_expiry' WHERE external_user_id = '$USER_ID';" 2>/dev/null
             ;;
         "cancelled")
             # Cancelled but pre-expiry (still has access)
-            psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, cancellation_initiated_at, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'cancelled', '$purchase_token', '$PROVIDER', false, '$future_expiry', NOW(), NOW(), NOW());" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, cancellation_initiated_at, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', 'cancelled', '$purchase_token', '$PROVIDER', false, '$future_expiry', NOW(), NOW(), NOW());" 2>/dev/null
             # CRITICAL: Also set users table (cancelled pre-expiry = user retains access until expiry)
-            psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "UPDATE users SET is_premium = true, premium_expires_at = '$future_expiry' WHERE external_user_id = '$USER_ID';" 2>/dev/null
+            psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "UPDATE users SET is_premium = true, premium_expires_at = '$future_expiry' WHERE external_user_id = '$USER_ID';" 2>/dev/null
             ;;
     esac
     
     echo "  Subscription set to: $state, expiry: $future_expiry"
     
-    # Call /api/v1/pay.subscriptions to check entitlement
+    # Call /api/v1/subscriptions to check entitlement
     local STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
-      "$APP_URL/api/v1/pay.subscriptions" \
+      "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
       -H "Content-Type: application/json" \
-       \
-       \
+      -H "Authorization: Bearer $BRIDGE_API_KEY" \
       -H "x-client-version: 99.99.0")
     
     local STATUS_HTTP_CODE=$(echo "$STATUS_RESPONSE" | tail -n1)
@@ -128,20 +129,22 @@ test_subscription_state() {
     
     # Try to access premium feature (Generate Story)
     local PREMIUM_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
-      "$APP_URL/api/v1/story" \
+      "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
       -H "Content-Type: application/json" \
-       \
-       \
+      -H "Authorization: Bearer $BRIDGE_API_KEY" \
       -H "x-client-version: 99.99.0")
     
     local PREMIUM_HTTP_CODE=$(echo "$PREMIUM_RESPONSE" | tail -n1)
     
     echo "  Premium feature (story) HTTP: $PREMIUM_HTTP_CODE"
     
-    # Check if access was granted (200 or 201 = success)
+    # In Bridge, list_subscriptions returns a list of subscriptions.
+    # We check if there's any subscription with status that should grant access.
     local access_result="denied"
-    if [[ "$PREMIUM_HTTP_CODE" == "200" ]] || [[ "$PREMIUM_HTTP_CODE" == "201" ]]; then
-        access_result="granted"
+    if [[ "$STATUS_HTTP_CODE" == "200" ]]; then
+        if echo "$STATUS_BODY" | grep -qi "\"status\":\"active\"" || echo "$STATUS_BODY" | grep -qi "\"status\":\"past_due\"" || echo "$STATUS_BODY" | grep -qi "\"status\":\"cancelled\""; then
+             access_result="granted"
+        fi
     fi
     
     if [[ "$access_result" == "$expected_access" ]]; then
@@ -179,7 +182,7 @@ echo -e "${YELLOW}[5/5] Test Summary${NC}"
 echo ""
 
 # Cleanup test subscription
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND purchase_token LIKE 'test-acc-01%';" 2>/dev/null
+    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND purchase_token LIKE 'test-acc-01%';" 2>/dev/null
 echo -e "${BLUE}Cleaned up test subscription records${NC}"
 echo ""
 

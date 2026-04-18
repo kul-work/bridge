@@ -18,6 +18,7 @@
 # Test Flow:
 #   1. Clean up any existing subscription for test user
 #   2. Call /api/v1/verify-purchase with header to simulate ACK failure
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
 #   3. Verify entitlement is granted (is_premium=true) even if ACK pending
 #   4. Wait for retry queue to process
 #   5. Verify acknowledged_at is eventually set (ACK succeeded after retry)
@@ -50,13 +51,16 @@ USER_ID="${USER_ID:-test_ack_02_user_$RUN_ID}"
 DUMMY_TOKEN="test-subscription-ack02-fail-$RUN_ID"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 RETRY_WAIT_SECONDS="${RETRY_WAIT_SECONDS:-5}"  # How long to wait for retry
 
 # Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -93,14 +97,17 @@ echo ""
 echo -e "${YELLOW}[2/6] Cleaning up existing pay.subscriptions for test${NC}"
 
 CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription records removed${NC}"
 echo ""
 
 # Step 3: Call /api/v1/verify-purchase with simulated ACK failure
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
 echo -e "${YELLOW}[3/6] Calling /api/v1/verify-purchase with simulated ACK failure${NC}"
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
 
-echo "  POST $APP_URL/api/v1/verify-purchase"
+echo "  POST $BRIDGE_API_URL/api/v1/verify-purchase"
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
 echo "  Provider: $PROVIDER"
 echo "  Product ID: $PRODUCT_ID"
 echo "  Token: $DUMMY_TOKEN"
@@ -108,7 +115,8 @@ echo "  X-Test-Simulate-Ack-Failure: true (first ACK will fail)"
 echo ""
 
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/api/v1/verify-purchase" \
+  "$BRIDGE_API_URL/api/v1/verify-purchase" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "Content-Type: application/json" \
    \
    \
@@ -149,7 +157,7 @@ echo -e "${YELLOW}[4/6] Verifying entitlement granted despite ACK pending${NC}"
 
 # Check subscription status
 SUB_QUERY="SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-SUB_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
+SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
 
 if [[ -z "$SUB_RESULT" || "$SUB_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${RED}✗ No subscription record found${NC}"
@@ -160,7 +168,7 @@ INITIAL_STATUS=$(echo "$SUB_RESULT" | awk -F '|' '{print $1}' | head -n1 | tr -d
 
 # Fetch acknowledged_at from pay.payments table (canonical source)
 ACK_QUERY="SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$DUMMY_TOKEN';"
-INITIAL_ACK=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$ACK_QUERY" -t 2>/dev/null | head -n1 | tr -d ' ')
+INITIAL_ACK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$ACK_QUERY" -t 2>/dev/null | head -n1 | tr -d ' ')
 
 echo "  Status: $INITIAL_STATUS"
 echo "  Acknowledged At (initial): $INITIAL_ACK"
@@ -192,13 +200,13 @@ echo ""
 # Step 6: Verify acknowledged_at is now set (retry succeeded)
 echo -e "${YELLOW}[6/6] Verifying ACK succeeded after retry${NC}"
 
-FINAL_SUB_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
+FINAL_SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
 
 FINAL_STATUS=$(echo "$FINAL_SUB_RESULT" | awk -F '|' '{print $1}' | head -n1 | tr -d ' ')
 
 # Fetch acknowledged_at from pay.payments table (canonical source)
 ACK_QUERY="SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$DUMMY_TOKEN';"
-FINAL_ACK=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$ACK_QUERY" -t 2>/dev/null | head -n1 | tr -d ' ')
+FINAL_ACK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$ACK_QUERY" -t 2>/dev/null | head -n1 | tr -d ' ')
 
 echo "  Status: $FINAL_STATUS"
 echo "  Acknowledged At (final): $FINAL_ACK"

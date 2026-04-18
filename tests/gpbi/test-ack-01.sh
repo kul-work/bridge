@@ -49,12 +49,15 @@ USER_ID="${USER_ID:-test_ack_01_user_$RUN_ID}"
 DUMMY_TOKEN="test-subscription-ack01-$RUN_ID"
 
 # Defaults
-APP_URL="$APP_URL"
-DB_URL="$DATABASE_URL"
+APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
+DB_URL="${BRIDGE_DB_URL}"
 
 # Extract DB password once
-export PGPASSWORD="${DB_URL##*:}"
-export PGPASSWORD="${PGPASSWORD%%@*}"
+# Extract DB password if needed
+if [[ "$DB_URL" == *":"* ]]; then
+    export PGPASSWORD="${DB_URL##*:}"
+    export PGPASSWORD="${PGPASSWORD%%@*}"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "ACK-01: Subscription ACK on Initial Purchase Test"
@@ -77,14 +80,36 @@ echo ""
 echo -e "${YELLOW}[2/5] Cleaning up existing pay.subscriptions for test${NC}"
 
 CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription records removed${NC}"
 echo ""
 
-# Step 3: Call /api/v1/verify-purchase for initial subscription
-echo -e "${YELLOW}[3/5] Calling /api/v1/verify-purchase for initial purchase${NC}"
+# Step 3: Register and Call /api/v1/verify-purchase for initial subscription
+echo -e "${YELLOW}[3/5] Registering and Calling /api/v1/verify-purchase for initial purchase${NC}"
 
-echo "  POST $APP_URL/api/v1/verify-purchase"
+# Step 3.1: Register purchase
+echo "  POST $BRIDGE_API_URL/api/v1/purchase/register"
+REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-ack-01-setup\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-ack-01-reg-$RUN_ID\"
+  }")
+
+if [[ "$REGISTER_HTTP" == "200" ]]; then
+    echo -e "${GREEN}✓ Purchase registration successful${NC}"
+else
+    echo -e "${RED}✗ Purchase registration failed (HTTP $REGISTER_HTTP)${NC}"
+    exit 1
+fi
+
+echo "  POST $BRIDGE_API_URL/api/v1/verify-purchase"
 echo "  Provider: $PROVIDER"
 echo "  Product ID: $PRODUCT_ID"
 echo "  Token: $DUMMY_TOKEN (new subscription)"
@@ -92,7 +117,8 @@ echo "  Expected: Backend calls purchases.pay.subscriptions.acknowledge()"
 echo ""
 
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-  "$APP_URL/api/v1/verify-purchase" \
+  "$BRIDGE_API_URL/api/v1/verify-purchase" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "Content-Type: application/json" \
    \
    \
@@ -133,7 +159,7 @@ echo "Query:"
 echo "  $DB_QUERY"
 echo ""
 
-DB_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$DB_QUERY" -t 2>/dev/null || echo "")
+DB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "$DB_QUERY" -t 2>/dev/null || echo "")
 
 if [[ -z "$DB_RESULT" || "$DB_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${RED}✗ No subscription record found in database${NC}"
@@ -146,7 +172,7 @@ PURCHASE_TOKEN=$(echo "$DB_RESULT" | awk -F '|' '{print $4}' | head -n1 | tr -d 
 
 # Fetch acknowledged_at from pay.payments table (canonical source)
 ACK_QUERY="SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$PURCHASE_TOKEN';"
-ACKNOWLEDGED_AT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "$ACK_QUERY" -t 2>/dev/null | head -n1 | tr -d ' ')
+ACKNOWLEDGED_AT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "$ACK_QUERY" -t 2>/dev/null | head -n1 | tr -d ' ')
 
 echo "Subscription Record:"
 echo "  Status: $STATUS"

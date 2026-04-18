@@ -17,7 +17,7 @@
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - DATABASE_URL configured and db accessible
 #   - psql installed and in PATH
-#   - GET /api/v1/story endpoint must exist (premium feature test)
+#   - GET /api/v1/subscriptions endpoint must exist (premium feature test)
 #
 # Test Notes:
 #   - ACC-01, ACC-02, ACC-03 use generated external_user_id values and do not
