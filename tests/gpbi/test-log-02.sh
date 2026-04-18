@@ -7,7 +7,7 @@
 #          fields (event, reason, message_id, timestamp) at WARN level,
 #          without exposing internal details.
 #
-# Usage: ./test-log-02.sh --email "user@example.com"
+# Usage: ./test-log-02.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -37,8 +37,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Test configuration
+RUN_ID="$(date +%s)-$RANDOM"
+USER_ID="${USER_ID:-test_log_02_user_$RUN_ID}"
+
 # Defaults
-EMAIL=""
 APP_URL="$APP_URL"
 DB_URL="$DATABASE_URL"
 
@@ -46,37 +49,13 @@ DB_URL="$DATABASE_URL"
 export PGPASSWORD="${DB_URL##*:}"
 export PGPASSWORD="${PGPASSWORD%%@*}"
 
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
-
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./test-log-02.sh --email \"user@example.com\""
-    exit 1
-fi
-
 echo -e "${YELLOW}========================================${NC}"
 echo "LOG-02: Webhook Verification Failure Logging"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Query database to get user_id from email
-echo -e "${YELLOW}[1/5] Fetching user_id from database for email: $EMAIL${NC}"
-
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
+# Step 1: Generate a synthetic external_user_id for this run
+echo -e "${YELLOW}[1/5] Preparing generated user_id for this run${NC}"
 
 if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
     echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
@@ -234,7 +213,6 @@ cat > log-02-report.json <<EOF
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
-  "user_email": "$EMAIL",
   "results": {
     "signature_mismatch_tested": $SIG_LOGGED,
     "signature_http_code": $SIG_HTTP,

@@ -6,7 +6,7 @@
 # Purpose: Remove all WHK test reports, suite summaries, and related
 #          database entries created during testing.
 #
-# Usage: ./cleanup-all-whk.sh --email "user@example.com"
+# Usage: ./cleanup-all-whk.sh
 #
 # What gets cleaned:
 #   - WHK test reports (whk-01-report.json, whk-01b-report.json, etc.)
@@ -29,7 +29,6 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Defaults
-EMAIL=""
 DB_URL="$BRIDGE_DB_URL"
 
 # Extract DB password once
@@ -39,10 +38,6 @@ export PGPASSWORD="${PGPASSWORD%%@*}"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -79,35 +74,20 @@ for report in "${WHK_REPORTS[@]}"; do
 done
 echo ""
 
-# Step 2: Clean up test database records (if email provided)
-if [[ ! -z "$EMAIL" ]]; then
-    echo -e "${YELLOW}[2/3] Cleaning up database records for: $EMAIL${NC}"
-    
-    # Get user_id from email
-    USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
-    
-    if [[ ! -z "$USER_ID" ]] && [[ "$USER_ID" != *"error"* ]] && [[ "$USER_ID" != *"ERROR"* ]]; then
-        USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-        echo -e "${BLUE}User ID: $USER_ID${NC}"
-        
-        # Delete WHK test pay.subscriptions (those with test tokens containing 'whk')
-        psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND purchase_token LIKE '%whk%';" 2>/dev/null
-        echo -e "${GREEN}✓ Removed WHK test subscription records${NC}"
-        
-        # Delete WHK test pay.payments (those with tokens containing 'whk')
-        psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND provider_transaction_id LIKE '%whk%';" 2>/dev/null
-        echo -e "${GREEN}✓ Removed WHK test payment records${NC}"
-        
-        # Also clean up unregistered token test records
-        psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token LIKE 'unregistered-token-whk%';" 2>/dev/null
-        echo -e "${GREEN}✓ Removed orphan WHK test records${NC}"
-    else
-        echo -e "${YELLOW}⚠ Could not find user with email: $EMAIL${NC}"
-    fi
-else
-    echo -e "${YELLOW}[2/3] Skipping database cleanup (no --email provided)${NC}"
-fi
+# Step 2: Clean up test database records
+echo -e "${YELLOW}[2/3] Cleaning up database records${NC}"
+
+# Delete WHK test pay.subscriptions (those with test tokens containing 'whk' or test user prefix)
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token LIKE '%whk%' OR external_user_id LIKE 'test_whk_%';" 2>/dev/null
+echo -e "${GREEN}✓ Removed WHK test subscription records${NC}"
+
+# Delete WHK test pay.payments (those with tokens containing 'whk' or test user prefix)
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE provider_transaction_id LIKE '%whk%' OR external_user_id LIKE 'test_whk_%';" 2>/dev/null
+echo -e "${GREEN}✓ Removed WHK test payment records${NC}"
+
+# Also clean up unregistered token test records
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token LIKE 'unregistered-token-whk%';" 2>/dev/null
+echo -e "${GREEN}✓ Removed orphan WHK test records${NC}"
 echo ""
 
 # Step 3: Summary

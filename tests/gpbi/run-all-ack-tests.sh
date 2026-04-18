@@ -6,11 +6,7 @@
 # Purpose: Run all acknowledgment-related tests sequentially.
 #          Tests verify ACK behavior on initial purchase, retry, and renewals.
 #
-# Usage: ./run-ack-tests.sh --email "user@example.com"
-#
-# Prerequisites:
-#   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+# Usage: ./run-ack-tests.sh
 ##############################################################################
 
 set -uo pipefail
@@ -27,28 +23,6 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Defaults
-EMAIL=""
-
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
-
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./run-ack-tests.sh --email \"user@example.com\""
-    exit 1
-fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -57,9 +31,8 @@ echo -e "${BLUE}╔════════════════════�
 echo -e "${BLUE}║       ACKNOWLEDGMENT TEST SUITE - ACK Behavior Tests       ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "Email: $EMAIL"
 echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo ""
+echo "" 
 
 # Define tests to run (in order)
 # SUB-01 is prerequisite - creates the subscription that ACK tests depend on
@@ -100,7 +73,7 @@ for test_entry in "${PREREQUISITE_TESTS[@]}"; do
     fi
     
     set +e
-    bash "$script" --email "$EMAIL"
+    bash "$script"
     EXIT_CODE=$?
     set -e
     
@@ -134,7 +107,7 @@ for test_entry in "${TESTS[@]}"; do
     fi
     
     set +e
-    bash "$script" --email "$EMAIL"
+    bash "$script"
     EXIT_CODE=$?
     set -e
     
@@ -194,7 +167,6 @@ cat > ack-suite-summary.json <<EOF
 {
   "suite": "Acknowledgment Tests (3 Tests)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "email": "$EMAIL",
   "total": $TOTAL,
   "passed": $PASSED,
   "failed": $FAILED,

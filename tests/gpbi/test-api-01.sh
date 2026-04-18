@@ -5,7 +5,7 @@
 #
 # Purpose: Verify that authenticated API responses include X-RateLimit headers.
 #
-# Usage: ./test-api-01.sh --email "user@example.com"
+# Usage: ./test-api-01.sh
 #
 # Prerequisites:
 #   - Backend running
@@ -29,8 +29,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Test configuration
+RUN_ID="$(date +%s)-$RANDOM"
+USER_ID="${USER_ID:-test_api_01_user_$RUN_ID}"
+
 # Defaults
-EMAIL=""
 APP_URL="$APP_URL"
 DB_URL="$DATABASE_URL"
 
@@ -38,42 +41,24 @@ DB_URL="$DATABASE_URL"
 export PGPASSWORD="${DB_URL##*:}"
 export PGPASSWORD="${PGPASSWORD%%@*}"
 
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --email) 
-            EMAIL="$2"
-            shift 2
-            ;; 
-        *) 
-            echo "Unknown option: $1"
-            exit 1
-            ;; 
-    esac
-done
-
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    exit 1
-fi
-
 echo -e "${YELLOW}========================================${NC}"
 echo "API-01: Rate Limit Headers"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Fetch user_id (needed for test headers)
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
+# Step 1: Generate a synthetic external_user_id for this run
+echo -e "${YELLOW}[1/2] Preparing generated user_id for this run${NC}"
 
 if [[ -z "$USER_ID" ]]; then
-    echo -e "${RED}✗ User not found${NC}"
+    echo -e "${RED}✗ User ID not set${NC}"
     exit 1
 fi
 
+echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+echo ""
+
 # Step 2: Make Request & Inspect Headers
-echo -e "${YELLOW}[1/2] Making Authenticated Request${NC}"
+echo -e "${YELLOW}[2/2] Making Authenticated Request${NC}"
 
 # Use curl -i to include headers in output (use test headers for test mode)
 RESPONSE=$(curl -s -i -X GET "$APP_URL/api/v1/joke" \

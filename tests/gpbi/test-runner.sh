@@ -8,7 +8,7 @@
 #
 # Location: tests/gpbi/test-runner.sh
 #
-# Usage: ./test-runner.sh --email "user@example.com" [--email2 "other@example.com"] [--scope SCOPE] [--clear]
+# Usage: ./test-runner.sh [--scope SCOPE] [--clear]
 #
 # Scopes:
 #   full      - Run ALL tests (Default)
@@ -30,8 +30,6 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Defaults
-EMAIL=""
-EMAIL2=""
 SCOPE="full"
 CLEAR_FIRST=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,14 +37,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
-        --email2)
-            EMAIL2="$2"
-            shift 2
-            ;;
         --scope)
             SCOPE="$2"
             shift 2
@@ -62,27 +52,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Strip quotes from email addresses (in case they're passed with literal quotes)
-EMAIL="${EMAIL%\"}"
-EMAIL="${EMAIL#\"}"
-EMAIL2="${EMAIL2%\"}"
-EMAIL2="${EMAIL2#\"}"
-
-# Validation
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./test-runner.sh --email \"user@example.com\" [--email2 \"other@example.com\"] [--scope full|commerce|infra|smoke|replay] [--clear]"
-    exit 1
-fi
-
 echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║             Google Play Billing - Master Test Runner       ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo "Scope: $SCOPE"
-echo "Email: $EMAIL"
-if [[ -n "$EMAIL2" ]]; then
-    echo "Email2: $EMAIL2"
-fi
 echo "Time:  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo ""
 
@@ -98,7 +71,7 @@ fi
 if [[ "$CLEAR_FIRST" == "true" ]]; then
     echo -e "${YELLOW}Clearing test data before run...${NC}"
     if [[ -f "cleanup-runner.sh" ]]; then
-        bash cleanup-runner.sh --email "$EMAIL"
+        bash cleanup-runner.sh
     else
         echo -e "${RED}Warning: cleanup-runner.sh not found, skipping clear.${NC}"
     fi
@@ -120,11 +93,7 @@ cleanup_suite() {
     local script="cleanup-all-${suite}.sh"
     if [[ -f "$script" ]]; then
         echo -e "${YELLOW}Cleaning up $suite data before suite...${NC}"
-        if [[ "$suite" == "acc" ]]; then
-            bash "$script" 2>/dev/null || true
-        else
-            bash "$script" --email "$EMAIL" 2>/dev/null || true
-        fi
+        bash "$script" 2>/dev/null || true
     fi
 }
 
@@ -145,9 +114,6 @@ run_suite() {
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     
     local cmd="bash \"$script\""
-    if [[ "$script" != "run-all-acc-tests.sh" ]]; then
-        cmd="$cmd --email \"$EMAIL\""
-    fi
     if [[ -n "$extra_args" ]]; then
         cmd="$cmd $extra_args"
     fi
@@ -197,22 +163,10 @@ run_suite() {
     echo ""
 }
 
-run_smoke_tests() {
-    echo -e "${YELLOW}Running Smoke Tests (Critical Path Only)...${NC}"
-    
-    # Ensure secondary email for SUB-19B
-    local SMOKE_EMAIL2="${EMAIL2:-}"
-    if [[ -z "$SMOKE_EMAIL2" ]]; then
-        # If no email2 provided, generate a temporary one for the smoke test
-        local generated_email2="smoke-secondary-${RANDOM}@example.com"
-        SMOKE_EMAIL2="$generated_email2"
-        echo -e "${BLUE}Info: No --email2 provided. Generated temporary secondary email: $SMOKE_EMAIL2${NC}"
-    fi
-
     # Run OTP-01 only
     echo "Step 1: OTP-01 (One-Time Purchase)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST OTP-01"
-    if bash test-otp-01.sh --email "$EMAIL"; then
+    if bash test-otp-01.sh; then
         echo -e "${GREEN}✓ OTP-01 Passed${NC}"
     else 
         echo -e "${RED}✗ OTP-01 Failed${NC}"
@@ -223,7 +177,7 @@ run_smoke_tests() {
     # Run SUB-01 only
     echo "Step 2: SUB-01 (Subscription Purchase)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST SUB-01"
-    if bash test-sub-01.sh --email "$EMAIL"; then
+    if bash test-sub-01.sh; then
         echo -e "${GREEN}✓ SUB-01 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-01 Failed${NC}"
@@ -234,7 +188,7 @@ run_smoke_tests() {
     # Run SUB-02 (Renewal) - Depends on SUB-01
     echo "Step 3: SUB-02 (Subscription Renewal)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST SUB-02"
-    if bash test-sub-02.sh --email "$EMAIL"; then
+    if bash test-sub-02.sh; then
         echo -e "${GREEN}✓ SUB-02 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-02 Failed${NC}"
@@ -245,7 +199,7 @@ run_smoke_tests() {
     # Run SUB-03 (Cancellation) - Depends on SUB-01
     echo "Step 4: SUB-03 (Subscription Cancellation)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST SUB-03"
-    if bash test-sub-03.sh --email "$EMAIL"; then
+    if bash test-sub-03.sh; then
         echo -e "${GREEN}✓ SUB-03 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-03 Failed${NC}"
@@ -256,7 +210,7 @@ run_smoke_tests() {
     # Run SUB-06 (Re-subscription after Expiry)
     echo "Step 5: SUB-06 (Re-subscription after Expiry)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST SUB-06"
-    if bash test-sub-06.sh --email "$EMAIL"; then
+    if bash test-sub-06.sh; then
         echo -e "${GREEN}✓ SUB-06 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-06 Failed${NC}"
@@ -267,7 +221,7 @@ run_smoke_tests() {
     # Run SUB-09 (Subscription Revoked/Refunded)
     echo "Step 6: SUB-09 (Subscription Revoked/Refunded)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST SUB-09"
-    if bash test-sub-09.sh --email "$EMAIL"; then
+    if bash test-sub-09.sh; then
         echo -e "${GREEN}✓ SUB-09 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-09 Failed${NC}"
@@ -275,10 +229,10 @@ run_smoke_tests() {
         FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-09"
     fi
 
-    # Run SUB-19B (Linking Required) - Requires EMAIL2
+    # Run SUB-19B (Linking Required)
     echo "Step 7: SUB-19B (Linking Required)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST SUB-19B"
-    if bash test-sub-19b.sh --email "$EMAIL" --email2 "$SMOKE_EMAIL2"; then
+    if bash test-sub-19b.sh; then
         echo -e "${GREEN}✓ SUB-19B Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-19B Failed${NC}"
@@ -289,7 +243,7 @@ run_smoke_tests() {
     # Run SUB-PAUSE-01 (Schedule Pause) - Prerequisite for SUB-PAUSE-02
     echo "Step 8a: SUB-PAUSE-01 (Schedule Pause)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST SUB-PAUSE-01"
-    if bash test-sub-pause-01.sh --email "$EMAIL"; then
+    if bash test-sub-pause-01.sh; then
         echo -e "${GREEN}✓ SUB-PAUSE-01 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-PAUSE-01 Failed${NC}"
@@ -300,7 +254,7 @@ run_smoke_tests() {
     # Run SUB-PAUSE-02 (Pause Takes Effect)
     echo "Step 8b: SUB-PAUSE-02 (Pause Takes Effect)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST SUB-PAUSE-02"
-    if bash test-sub-pause-02.sh --email "$EMAIL"; then
+    if bash test-sub-pause-02.sh; then
         echo -e "${GREEN}✓ SUB-PAUSE-02 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-PAUSE-02 Failed${NC}"
@@ -311,7 +265,7 @@ run_smoke_tests() {
     # Run WHK-01 (Webhook Verification)
     echo "Step 9: WHK-01 (Webhook Verification)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST WHK-01"
-    if bash test-whk-01.sh --email "$EMAIL"; then
+    if bash test-whk-01.sh; then
         echo -e "${GREEN}✓ WHK-01 Passed${NC}"
     else 
         echo -e "${RED}✗ WHK-01 Failed${NC}"
@@ -322,7 +276,7 @@ run_smoke_tests() {
     # Run WHK-02 (Webhook Idempotency)
     echo "Step 10: WHK-02 (Webhook Idempotency)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST WHK-02"
-    if bash test-whk-02.sh --email "$EMAIL"; then
+    if bash test-whk-02.sh; then
         echo -e "${GREEN}✓ WHK-02 Passed${NC}"
     else 
         echo -e "${RED}✗ WHK-02 Failed${NC}"
@@ -333,7 +287,7 @@ run_smoke_tests() {
     # Run ACK-01 (Acknowledgment)
     echo "Step 11: ACK-01 (Initial Purchase Acknowledgment)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST ACK-01"
-    if bash test-ack-01.sh --email "$EMAIL"; then
+    if bash test-ack-01.sh; then
         echo -e "${GREEN}✓ ACK-01 Passed${NC}"
     else 
         echo -e "${RED}✗ ACK-01 Failed${NC}"
@@ -344,14 +298,13 @@ run_smoke_tests() {
     # Run ERR-01 (Basic Validation Check)
     echo "Step 12: ERR-01 (Invalid Token Check)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST ERR-01"
-    if bash test-err-01.sh --email "$EMAIL"; then
+    if bash test-err-01.sh; then
         echo -e "${GREEN}✓ ERR-01 Passed${NC}"
     else 
         echo -e "${RED}✗ ERR-01 Failed${NC}"
         FAILED_SUITES=$((FAILED_SUITES + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES ERR-01"
     fi
-}
 
 run_replay_test() {
     local script="$1"
@@ -366,7 +319,7 @@ run_replay_test() {
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST $test_id"
     SUITES_RUN=$((SUITES_RUN + 1))
     
-    if bash "$script" --email "$EMAIL" --replay $extra_args; then
+    if bash "$script" --replay $extra_args; then
         echo -e "${GREEN}✓ $test_id Passed${NC}"
     else
         echo -e "${RED}✗ $test_id Failed${NC}"
@@ -413,12 +366,7 @@ case $SCOPE in
     full)
         # Commerce First (clean state required)
         run_suite "run-all-otp-tests.sh" "One-Time Products (OTP)"
-        
-        SUB_EXTRA=""
-        if [[ -n "$EMAIL2" ]]; then
-            SUB_EXTRA="--email2 \"$EMAIL2\""
-        fi
-        run_suite "run-all-sub-tests.sh" "Subscriptions (SUB)" "$SUB_EXTRA"
+        run_suite "run-all-sub-tests.sh" "Subscriptions (SUB)"
         run_suite "run-all-sub-paused-tests.sh" "Subscription Pause (PAUSE)"
         run_suite "run-all-ack-tests.sh" "Acknowledgment (ACK)"
         
@@ -431,19 +379,13 @@ case $SCOPE in
         run_suite "run-all-err-tests.sh" "Error Handling (ERR)"
         run_suite "run-all-log-tests.sh" "Logging (LOG)"
         run_suite "run-all-api-tests.sh" "API & Notifications (API)"
-        ;;
-        
+        ;;        
     commerce)
         run_suite "run-all-otp-tests.sh" "One-Time Products (OTP)"
-        SUB_EXTRA=""
-        if [[ -n "$EMAIL2" ]]; then
-            SUB_EXTRA="--email2 \"$EMAIL2\""
-        fi
-        run_suite "run-all-sub-tests.sh" "Subscriptions (SUB)" "$SUB_EXTRA"
+        run_suite "run-all-sub-tests.sh" "Subscriptions (SUB)"
         run_suite "run-all-sub-paused-tests.sh" "Subscription Pause (PAUSE)"
         run_suite "run-all-ack-tests.sh" "Acknowledgment (ACK)"
-        ;;
-        
+        ;;        
     infra)
         run_suite "run-all-acc-tests.sh" "Access Control (ACC)"
         run_suite "run-all-whk-tests.sh" "Webhooks Core (WHK)"

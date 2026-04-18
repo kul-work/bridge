@@ -6,7 +6,7 @@
 # Purpose: Run all free trial subscription tests sequentially.
 #          These tests require fresh Google accounts that have never purchased.
 #
-# Usage: ./run-trials-tests.sh --email "user@example.com" [--cleanup-first]
+# Usage: ./run-trials-tests.sh [--cleanup-first]
 #
 # Prerequisites:
 #   - Test user must have NEVER purchased this subscription (fresh account)
@@ -27,16 +27,11 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Defaults
-EMAIL=""
 CLEANUP_FIRST=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         --cleanup-first)
             CLEANUP_FIRST=true
             shift
@@ -48,13 +43,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./run-trials-tests.sh --email \"user@example.com\" [--cleanup-first]"
-    exit 1
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -62,9 +50,8 @@ echo -e "${BLUE}╔════════════════════�
 echo -e "${BLUE}║         TRIALS TEST SUITE - Free Trial Subscriptions       ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "Email: $EMAIL"
 echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo ""
+echo "" 
 echo -e "${YELLOW}Note: These tests require accounts that have NEVER purchased pay.subscriptions${NC}"
 echo ""
 
@@ -99,7 +86,7 @@ for test_entry in "${TESTS[@]}"; do
     fi
     
     set +e
-    bash "$script" --email "$EMAIL"
+    bash "$script"
     EXIT_CODE=$?
     set -e
     
@@ -132,7 +119,6 @@ cat > trials-suite-summary.json <<EOF
 {
   "suite": "Trials Tests (SUB-14, SUB-15)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "email": "$EMAIL",
   "total": $TOTAL,
   "passed": $PASSED,
   "failed": $FAILED,

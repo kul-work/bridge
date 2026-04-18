@@ -6,7 +6,7 @@
 # Purpose: Verify that webhooks with JWT audience claim mismatch are rejected
 #          when GOOGLE_VERIFY_AUDIENCE=true is set.
 #
-# Usage: ./test-whk-01b.sh --email "user@example.com"
+# Usage: ./test-whk-01b.sh
 #
 # Prerequisites:
 #   - Backend running and listening on $APP_URL (default: http://localhost:3000)
@@ -40,9 +40,10 @@ NC='\033[0m' # No Color
 # Test configuration
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
+RUN_ID="$(date +%s)-$RANDOM"
+USER_ID="${USER_ID:-test_whk_01b_user_$RUN_ID}"
 
 # Defaults
-EMAIL=""
 APP_URL="$APP_URL"
 DB_URL="$DATABASE_URL"
 
@@ -50,37 +51,13 @@ DB_URL="$DATABASE_URL"
 export PGPASSWORD="${DB_URL##*:}"
 export PGPASSWORD="${PGPASSWORD%%@*}"
 
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
-
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./test-whk-01b.sh --email \"user@example.com\""
-    exit 1
-fi
-
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-01B: Audience Claim Mismatch Rejection"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Query database to get user_id from email
-echo -e "${YELLOW}[1/5] Fetching user_id from database for email: $EMAIL${NC}"
-
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
+# Step 1: Generate a synthetic external_user_id for this run
+echo -e "${YELLOW}[1/5] Preparing generated user_id for this run${NC}"
 
 if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
     echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
@@ -239,7 +216,6 @@ cat > whk-01b-report.json <<EOF
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
-  "user_email": "$EMAIL",
   "message_id": "$MESSAGE_ID",
   "wrong_audience": "$WRONG_AUDIENCE",
   "webhook_http_code": $WEBHOOK_HTTP_CODE,

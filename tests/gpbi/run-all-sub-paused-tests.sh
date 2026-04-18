@@ -6,7 +6,7 @@
 # Purpose: Run SUB-01 and the three pause-related tests (PAUSE-01 through PAUSE-03)
 #          sequentially and generate a summary report.
 #
-# Usage: ./run-all-sub-paused-tests.sh --email "user@example.com"
+# Usage: ./run-all-sub-paused-tests.sh [--cleanup-first]
 #
 ##############################################################################
 
@@ -24,16 +24,11 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Defaults
-EMAIL=""
 CLEANUP_FIRST=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         --cleanup-first)
             CLEANUP_FIRST=true
             shift
@@ -45,27 +40,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./run-all-sub-paused-tests.sh --email \"user@example.com\" [--cleanup-first]"
-    exit 1
-fi
-
 cd "$SCRIPT_DIR"
 
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║      SUBSCRIPTION PAUSE SUITE - Google Play Billing        ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "Email: $EMAIL"
 echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo ""
+echo "" 
 
 # Optional cleanup
 if [[ "$CLEANUP_FIRST" == "true" ]]; then
     echo -e "${YELLOW}Running cleanup first...${NC}"
-    bash cleanup-all-sub.sh --email "$EMAIL" || true
+    bash cleanup-all-sub.sh || true
     echo ""
 fi
 
@@ -103,7 +90,7 @@ for test_entry in "${TESTS[@]}"; do
     
     # Run the test
     set +e
-    bash "$script" --email "$EMAIL"
+    bash "$script"
     EXIT_CODE=$?
     set -e
     
@@ -163,7 +150,6 @@ cat > sub-paused-suite-summary.json <<EOF
 {
   "suite": "Subscription Pause Tests (4 Tests)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "email": "$EMAIL",
   "total": $TOTAL,
   "passed": $PASSED,
   "failed": $FAILED,

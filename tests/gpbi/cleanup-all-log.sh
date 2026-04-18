@@ -6,7 +6,7 @@
 # Purpose: Remove all LOG test reports, suite summaries, and related
 #          database entries created during testing.
 #
-# Usage: ./cleanup-all-log.sh --email "user@example.com"
+# Usage: ./cleanup-all-log.sh
 #
 # What gets cleaned:
 #   - LOG test reports (log-01-report.json, log-02-report.json, log-03-report.json)
@@ -28,7 +28,6 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Defaults
-EMAIL=""
 DB_URL="$BRIDGE_DB_URL"
 
 # Extract DB password once
@@ -38,10 +37,6 @@ export PGPASSWORD="${PGPASSWORD%%@*}"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -74,35 +69,20 @@ for report in "${LOG_REPORTS[@]}"; do
 done
 echo ""
 
-# Step 2: Clean up test database records (if email provided)
-if [[ ! -z "$EMAIL" ]]; then
-    echo -e "${YELLOW}[2/3] Cleaning up database records for: $EMAIL${NC}"
-    
-    # Get user_id from email
-    USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
-    
-    if [[ ! -z "$USER_ID" ]] && [[ "$USER_ID" != *"error"* ]] && [[ "$USER_ID" != *"ERROR"* ]]; then
-        USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-        echo -e "${BLUE}User ID: $USER_ID${NC}"
-        
-        # Delete LOG test pay.subscriptions
-        psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND purchase_token LIKE '%log-%';" 2>/dev/null
-        echo -e "${GREEN}✓ Removed LOG test subscription records${NC}"
-        
-        # Delete LOG test pay.payments
-        psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND provider_transaction_id LIKE '%log-%';" 2>/dev/null
-        echo -e "${GREEN}✓ Removed LOG test payment records${NC}"
-        
-        # Clean up orphan LOG test records
-        psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token LIKE 'test-log-%';" 2>/dev/null
-        echo -e "${GREEN}✓ Removed orphan LOG test records${NC}"
-    else
-        echo -e "${YELLOW}⚠ Could not find user with email: $EMAIL${NC}"
-    fi
-else
-    echo -e "${YELLOW}[2/3] Skipping database cleanup (no --email provided)${NC}"
-fi
+# Step 2: Clean up test database records
+echo -e "${YELLOW}[2/3] Cleaning up database records${NC}"
+
+# Delete LOG test subscription records
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token LIKE '%log-%' OR external_user_id LIKE 'test_log_%' OR external_user_id LIKE 'test_LOG_%';" 2>/dev/null
+echo -e "${GREEN}✓ Removed LOG test subscription records${NC}"
+
+# Delete LOG test payment records
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE provider_transaction_id LIKE '%log-%' OR external_user_id LIKE 'test_log_%' OR external_user_id LIKE 'test_LOG_%';" 2>/dev/null
+echo -e "${GREEN}✓ Removed LOG test payment records${NC}"
+
+# Clean up orphan LOG test records
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token LIKE 'test-log-%';" 2>/dev/null
+echo -e "${GREEN}✓ Removed orphan LOG test records${NC}"
 echo ""
 
 # Step 3: Summary

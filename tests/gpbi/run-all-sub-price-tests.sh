@@ -6,7 +6,7 @@
 # Purpose: Run price change subscription tests sequentially.
 #          SUB-21 is Korea-only and can be skipped with --skip-kr flag.
 #
-# Usage: ./run-price-tests.sh --email "user@example.com" [--skip-kr]
+# Usage: ./run-price-tests.sh [--skip-kr]
 #
 # Prerequisites:
 #   - Active subscription exists
@@ -28,16 +28,11 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Defaults
-EMAIL=""
 SKIP_KR=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         --skip-kr)
             SKIP_KR=true
             shift
@@ -49,13 +44,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./run-price-tests.sh --email \"user@example.com\" [--skip-kr]"
-    exit 1
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -63,10 +51,9 @@ echo -e "${BLUE}╔════════════════════�
 echo -e "${BLUE}║       PRICE CHANGE TEST SUITE - Opt-In & Step-Up           ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "Email: $EMAIL"
 echo "Skip Korea tests: $SKIP_KR"
 echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo ""
+echo "" 
 
 # Define tests to run
 TESTS=(
@@ -101,9 +88,9 @@ for test_entry in "${TESTS[@]}"; do
     # SUB-21 can be skipped for non-Korea markets
     set +e
     if [[ "$test_id" == "SUB-21" ]] && [[ "$SKIP_KR" == "true" ]]; then
-        bash "$script" --email "$EMAIL" --skip-if-not-kr
+        bash "$script" --skip-if-not-kr
     else
-        bash "$script" --email "$EMAIL"
+        bash "$script"
     fi
     EXIT_CODE=$?
     set -e
@@ -137,7 +124,6 @@ cat > price-suite-summary.json <<EOF
 {
   "suite": "Price Change Tests (SUB-20, SUB-21)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "email": "$EMAIL",
   "skip_korea": $SKIP_KR,
   "total": $TOTAL,
   "passed": $PASSED,

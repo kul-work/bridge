@@ -6,7 +6,7 @@
 # Purpose: Execute all webhook integrity test cases sequentially and generate
 #          a comprehensive summary report.
 #
-# Usage: ./run-all-whk-tests.sh --email "user@example.com"
+# Usage: ./run-all-whk-tests.sh
 #
 # Tests Executed:
 #   SUB-01:  [SETUP] Initial Subscription via verify_payment
@@ -40,35 +40,10 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Defaults
-EMAIL=""
-
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
-
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./run-all-whk-tests.sh --email \"user@example.com\""
-    exit 1
-fi
-
 echo -e "${CYAN}╔════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║          WHK (Webhook Integrity) Test Suite                    ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${BLUE}Email: $EMAIL${NC}"
 echo -e "${BLUE}Time:  $(date -u +%Y-%m-%dT%H:%M:%SZ)${NC}"
 echo ""
 
@@ -91,7 +66,7 @@ run_test() {
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     
-    if bash "$SCRIPT_DIR/$test_script" --email "$EMAIL"; then
+    if bash "$SCRIPT_DIR/$test_script"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
         RESULTS+=("{\"test_id\": \"$test_id\", \"test_name\": \"$test_name\", \"status\": \"pass\"}")
         echo ""
@@ -128,7 +103,7 @@ run_test "WHK-01B" "test-whk-01b.sh" "Audience Claim Mismatch Rejection"
 
 # === SETUP: Create subscription (not counted in WHK totals) ===
 echo -e "${CYAN}[SETUP] Running SUB-01 to create subscription for remaining tests (not counted in WHK)...${NC}"
-if bash "$SCRIPT_DIR/test-sub-01.sh" --email "$EMAIL"; then
+if bash "$SCRIPT_DIR/test-sub-01.sh"; then
     echo -e "${GREEN}✓ SUB-01 PASSED (setup)${NC}"
 else
     echo -e "${RED}✗ SUB-01 FAILED (setup)${NC}"
@@ -221,7 +196,6 @@ cat > whk-suite-summary.json <<EOF
   "suite_name": "Webhook Integrity Tests",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "duration_seconds": $DURATION,
-  "email": "$EMAIL",
   "status": "$SUITE_STATUS",
   "summary": {
     "total": $TOTAL_TESTS,

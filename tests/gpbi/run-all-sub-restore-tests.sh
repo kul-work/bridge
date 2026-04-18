@@ -6,11 +6,7 @@
 # Purpose: Run all subscription restoration tests sequentially.
 #          These tests cover re-subscription and restore scenarios.
 #
-# Usage: ./run-restore-tests.sh --email "user@example.com" [--email2 "user2@example.com"]
-#
-# Prerequisites:
-#   - Active or cancelled subscription exists (run core lifecycle tests first)
-#   - Backend running with MOCK_EXTERNAL_APIS=true
+# Usage: ./run-restore-tests.sh
 ##############################################################################
 
 set -uo pipefail
@@ -27,39 +23,6 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Defaults
-EMAIL=""
-EMAIL2=""
-
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
-        --email2)
-            EMAIL2="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
-
-# Strip quotes from email addresses (in case they're passed with literal quotes)
-EMAIL="${EMAIL%\"}"
-EMAIL="${EMAIL#\"}"
-EMAIL2="${EMAIL2%\"}"
-EMAIL2="${EMAIL2#\"}"
-
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./run-restore-tests.sh --email \"user@example.com\" [--email2 \"user2@example.com\"]"
-    exit 1
-fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -68,12 +31,8 @@ echo -e "${BLUE}╔════════════════════�
 echo -e "${BLUE}║       RESTORE TEST SUITE - Re-subscription & Recovery      ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "Email: $EMAIL"
-if [[ -n "$EMAIL2" ]]; then
-    echo "Email2: $EMAIL2 (for multi-account tests)"
-fi
 echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo ""
+echo "" 
 
 # Define tests to run
 TESTS=(
@@ -108,13 +67,7 @@ for test_entry in "${TESTS[@]}"; do
         continue
     fi
     
-    # SUB-19 needs two emails for multi-account test
-    set +e
-    if [[ "$test_id" == "SUB-19" ]] && [[ -n "$EMAIL2" ]]; then
-        bash "$script" --email "$EMAIL" --email2 "$EMAIL2"
-    else
-        bash "$script" --email "$EMAIL"
-    fi
+    bash "$script"
     EXIT_CODE=$?
     set -e
     
@@ -147,8 +100,6 @@ cat > restore-suite-summary.json <<EOF
 {
   "suite": "Restore Tests (SUB-16 to SUB-19)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "email": "$EMAIL",
-  "email2": "$EMAIL2",
   "total": $TOTAL,
   "passed": $PASSED,
   "failed": $FAILED,

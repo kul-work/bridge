@@ -6,10 +6,9 @@
 # Purpose: Run all subscription tests (SUB-01 through SUB-09) sequentially
 #          and generate a summary report.
 #
-# Usage: ./run-all-sub-tests.sh --email "user@example.com" [--cleanup-first]
+# Usage: ./run-all-sub-tests.sh [--cleanup-first]
 #
 # Options:
-#   --email          Required. Email of test user in database.
 #   --cleanup-first  Optional. Run cleanup before tests.
 #
 # Output:
@@ -31,16 +30,11 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Defaults
-EMAIL=""
 CLEANUP_FIRST=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         --cleanup-first)
             CLEANUP_FIRST=true
             shift
@@ -52,28 +46,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required inputs
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    echo "Usage: ./run-all-sub-tests.sh --email \"user@example.com\" [--cleanup-first]"
-    exit 1
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║      SUBSCRIPTION TEST SUITE - Google Play Billing         ║${NC}"
-echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
+echo -e "${BLUE}╚════════════════════════════════════════════════════════════╗${NC}"
 echo ""
-echo "Email: $EMAIL"
 echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo ""
 
 # Optional cleanup
 if [[ "$CLEANUP_FIRST" == "true" ]]; then
     echo -e "${YELLOW}Running cleanup first...${NC}"
-    bash cleanup-all-sub.sh --email "$EMAIL" || true
+    bash cleanup-all-sub.sh || true
     echo ""
 fi
 
@@ -123,7 +109,7 @@ for test_entry in "${TESTS[@]}"; do
     
     # Run the test
     set +e
-    bash "$script" --email "$EMAIL"
+    bash "$script"
     EXIT_CODE=$?
     set -e
     
@@ -179,7 +165,6 @@ cat > core-suite-summary.json <<EOF
 {
   "suite": "Core Lifecycle Tests (SUB-01 to SUB-09)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "email": "$EMAIL",
   "total": $TOTAL,
   "passed": $PASSED,
   "failed": $FAILED,
@@ -213,7 +198,7 @@ else
     echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "${BLUE}Running cleanup script...${NC}"
-    bash cleanup-all-sub.sh --email "$EMAIL" || true
+    bash cleanup-all-sub.sh || true
     echo -e "${GREEN}Cleanup completed successfully${NC}"
     exit 0
 fi

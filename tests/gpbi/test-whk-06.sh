@@ -7,7 +7,7 @@
 #          purchase_token + event_type are handled idempotently; no
 #          duplicate payment records created.
 #
-# Usage: ./test-whk-06.sh --email "user@example.com"
+# Usage: ./test-whk-06.sh
 #
 # Prerequisites:
 #   - Backend running and listening on $APP_URL (default: http://localhost:3000)
@@ -42,21 +42,9 @@ NC='\033[0m'
 # Test configuration
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-EMAIL=""
+RUN_ID="$(date +%s)-$RANDOM"
+USER_ID="${USER_ID:-test_whk_06_user_$RUN_ID}"
 APP_URL="$APP_URL"
-
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --email) EMAIL="$2"; shift 2 ;;
-        *) echo "Unknown option: $1"; exit 1 ;;
-    esac
-done
-
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    exit 1
-fi
 
 export PGPASSWORD="${DATABASE_URL##*:}"
 export PGPASSWORD="${PGPASSWORD%%@*}"
@@ -66,10 +54,8 @@ echo "WHK-06: Token-based Webhook Deduplication"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Get user_id
-echo -e "${YELLOW}[1/3] Fetching user_id from database for email: $EMAIL${NC}"
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
+# Step 1: Generate a synthetic external_user_id for this run
+echo -e "${YELLOW}[1/3] Preparing generated user_id for this run${NC}"
 
 if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
     echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
@@ -194,7 +180,6 @@ cat > whk-06-report.json <<EOF
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
-  "user_email": "$EMAIL",
   "purchase_token": "$PURCHASE_TOKEN",
   "results": {
     "first_webhook_message_id": "$MESSAGE_ID_1",

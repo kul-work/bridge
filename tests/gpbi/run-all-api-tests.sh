@@ -8,7 +8,7 @@
 #   NOTIF-01: Payment Failure & Acknowledgment
 #   NOTIF-02: Notification History
 #
-# Usage: ./run-all-api-tests.sh --email "user@example.com"
+# Usage: ./run-all-api-tests.sh
 ##############################################################################
 
 set -e
@@ -24,26 +24,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-EMAIL=""
-
-# Parse args
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
-
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    exit 1
-fi
+# Defaults
 
 echo -e "${BLUE}=================================================${NC}"
 echo -e "${BLUE}       Running API & Notification Test Suite     ${NC}"
@@ -59,7 +40,7 @@ run_test() {
     local description=$3
     
     echo -e "${YELLOW}Running $test_id: $description...${NC}"
-    if ./$script_name --email "$EMAIL"; then
+    if ./$script_name; then
         echo -e "${GREEN}✓ $test_id PASSED${NC}"
         TEST_RESULTS[$test_id]="pass"
         echo ""
@@ -93,7 +74,6 @@ cat > api-suite-summary.json <<EOF
 {
   "suite": "API & Notifications (3 Tests)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "email": "$EMAIL",
   "total": 3,
   "passed": $PASSED_COUNT,
   "failed": ${#FAILED_TESTS[@]},

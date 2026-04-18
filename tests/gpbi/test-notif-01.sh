@@ -5,7 +5,7 @@
 #
 # Purpose: Verify payment failure sets notification flag, and user can acknowledge it.
 #
-# Usage: ./test-notif-01.sh --email "user@example.com"
+# Usage: ./test-notif-01.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -32,34 +32,27 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Config
-DUMMY_TOKEN="test-token-notif01-$(date +%s)"
+RUN_ID="$(date +%s)-$RANDOM"
+DUMMY_TOKEN="test-token-notif01-$RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-EMAIL=""
 APP_URL="$APP_URL"
 DB_URL="$DATABASE_URL"
+USER_ID="${USER_ID:-test_notif_01_user_$RUN_ID}"
 
 export PGPASSWORD="${DB_URL##*:}"
 export PGPASSWORD="${PGPASSWORD%%@*}"
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --email) EMAIL="$2"; shift 2 ;;
-        *) echo "Unknown option: $1"; exit 1 ;;
-    esac
-done
-
-if [[ -z "$EMAIL" ]]; then echo -e "${RED}Error: --email required${NC}"; exit 1; fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "NOTIF-01: Payment Failure & Acknowledgment"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# 1. User ID
-USER_ID="${USER_ID:-test_user_$(date +%s)}"
-# Manual check: Bridge does not track emails. Set USER_ID externally or use default.
+# 1. Prepare generated user_id for this run
+echo -e "${YELLOW}[1/5] Preparing generated user_id for this run${NC}"
 if [[ -z "$USER_ID" ]]; then echo -e "${RED}✗ User not found${NC}"; exit 1; fi
+echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+echo ""
 
 # 2. Initial Active Purchase
 echo -e "${YELLOW}[1/5] Initial Purchase (Active)${NC}"
