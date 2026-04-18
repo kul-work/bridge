@@ -35,6 +35,7 @@ pub struct SubscriptionDetail {
     pub status: String,
     pub current_period_end: Option<String>,
     pub auto_renewing: Option<bool>,
+    pub payment_failure_notification: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -106,6 +107,7 @@ pub async fn list_subscriptions(
             status: s.status.clone(),
             current_period_end: s.current_period_end.map(|d| d.to_rfc3339()),
             auto_renewing: s.auto_renewing,
+            payment_failure_notification: s.payment_failure_notification,
         })
         .collect();
 

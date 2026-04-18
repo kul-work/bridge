@@ -89,7 +89,7 @@ curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
 # 3. Simulate Account Hold (Payment Failure)
 echo -e "${YELLOW}[2/5] Triggering Account Hold (Payment Failure)${NC}"
 WEBHOOK_ID="wh-notif01-hold-$(date +%s)"
-TIMESTAMP=$(date +%s000)
+TIMESTAMP=$(date +%s%3N)
 NOTIFICATION_JSON="{\"version\":\"1.0\",\"packageName\":\"$PACKAGE_NAME\",\"eventTimeMillis\":\"$TIMESTAMP\",\"subscriptionNotification\":{\"version\":\"1.0\",\"notificationType\":5,\"purchaseToken\":\"$DUMMY_TOKEN\",\"subscriptionId\":\"$PRODUCT_ID\"}}"
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 
@@ -106,7 +106,7 @@ echo -e "${YELLOW}[3/5] Verifying Notification Flag = TRUE${NC}"
 STATUS_RESP=$(curl -s -X GET "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "x-client-version: 99.99.0")
-FLAG=$(echo "$STATUS_RESP" | jq -r '.payment_failure_notification')
+FLAG=$(echo "$STATUS_RESP" | jq -r '.subscriptions[0].payment_failure_notification')
 
 if [[ "$FLAG" == "true" ]]; then
     echo -e "${GREEN}✓ Notification active${NC}"
@@ -117,18 +117,17 @@ fi
 
 # 5. Acknowledge
 echo -e "${YELLOW}[4/5] Acknowledging Notification${NC}"
-ACK_RESP=$(curl -s -X POST "$BRIDGE_API_URL/api/v1/notifications/payment-failure/acknowledge" \
+ACK_RESP=$(curl -s -X POST "$BRIDGE_API_URL/api/v1/subscriptions/$PRODUCT_ID/acknowledge" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "x-client-version: 99.99.0" \
-  -d "{\"external_user_id\": \"$USER_ID\",
-    \"subscription_id\": \"$PRODUCT_ID\"}")
+  -d "{\"external_user_id\": \"$USER_ID\"}")
 
-STATUS=$(echo "$ACK_RESP" | jq -r '.status')
-if [[ "$STATUS" == "acknowledged" ]]; then
-    echo -e "${GREEN}✓ Acknowledged successfully${NC}"
+SUCCESS=$(echo "$ACK_RESP" | jq -r '.success')
+if [[ "$SUCCESS" == "true" ]]; then
+    echo -e "${GREEN} Acknowledged successfully${NC}"
 else
-    echo -e "${RED}✗ Acknowledge failed: $ACK_RESP${NC}"
+    echo -e "${RED} Acknowledge failed: $ACK_RESP${NC}"
     exit 1
 fi
 
@@ -137,12 +136,12 @@ echo -e "${YELLOW}[5/5] Verifying Notification Flag = FALSE${NC}"
 STATUS_RESP_FINAL=$(curl -s -X GET "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "x-client-version: 99.99.0")
-FLAG_FINAL=$(echo "$STATUS_RESP_FINAL" | jq -r '.payment_failure_notification')
+FLAG_FINAL=$(echo "$STATUS_RESP_FINAL" | jq -r '.subscriptions[0].payment_failure_notification')
 
 if [[ "$FLAG_FINAL" == "false" || "$FLAG_FINAL" == "null" ]]; then
-    echo -e "${GREEN}✓ Notification cleared${NC}"
+    echo -e "${GREEN} Notification cleared${NC}"
 else
-    echo -e "${RED}✗ Notification NOT cleared (Expected false/null, got $FLAG_FINAL)${NC}"
+    echo -e "${RED} Notification NOT cleared (Expected false/null, got $FLAG_FINAL)${NC}"
     exit 1
 fi
 

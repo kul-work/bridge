@@ -144,6 +144,22 @@ impl SubscriptionWriteRepository for db::Database {
     ) -> Result<Subscription, BridgeError> {
         db::subscriptions::decline_price_step_up(self.pool(), app_id, id).await
     }
+
+    async fn clear_payment_failure_notification(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        provider: &str,
+        subscription_id: &str,
+    ) -> Result<(), BridgeError> {
+        db::subscriptions::clear_payment_failure_notification(
+            self.pool(),
+            app_id,
+            external_user_id,
+            provider,
+            subscription_id,
+        ).await
+    }
 }
 
 #[async_trait]

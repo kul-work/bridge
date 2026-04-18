@@ -82,6 +82,14 @@ pub trait SubscriptionWriteRepository: Send + Sync {
         app_id: Uuid,
         id: Uuid,
     ) -> Result<Subscription, BridgeError>;
+
+    async fn clear_payment_failure_notification(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        provider: &str,
+        subscription_id: &str,
+    ) -> Result<(), BridgeError>;
 }
 
 #[async_trait]

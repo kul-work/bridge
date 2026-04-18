@@ -856,6 +856,33 @@ pub async fn mark_payment_acknowledged_for_subscription(
     Ok(())
 }
 
+pub async fn clear_payment_failure_notification(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+    provider: &str,
+    subscription_id: &str,
+) -> Result<(), BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    sqlx::query(
+        "UPDATE pay.subscriptions
+         SET payment_failure_notification = false
+         WHERE app_id = $1 AND external_user_id = $2 AND provider = $3 AND subscription_id = $4",
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .bind(provider)
+    .bind(subscription_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
 pub async fn accept_price_step_up(
     pool: &PgPool,
     app_id: Uuid,

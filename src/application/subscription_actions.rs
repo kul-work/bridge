@@ -214,6 +214,15 @@ pub async fn acknowledge_subscription<R: SubscriptionActionsHandlerRepository + 
         )
         .await?;
 
+    // Clear payment failure notification flag when acknowledging
+    repo.clear_payment_failure_notification(
+        app_id,
+        &sub.external_user_id,
+        &sub.provider,
+        &sub.subscription_id,
+    )
+        .await?;
+
     Ok(SubscriptionActionResponse {
         success: true,
         message: "Subscription acknowledged".to_string(),
