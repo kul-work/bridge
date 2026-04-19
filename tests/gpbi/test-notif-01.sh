@@ -112,6 +112,17 @@ if [[ "$FLAG" == "true" ]]; then
     echo -e "${GREEN}✓ Notification active${NC}"
 else
     echo -e "${RED}✗ Notification NOT active (Expected true, got $FLAG)${NC}"
+    cat > notif-01-report.json <<EOF
+{
+  "test_id": "NOTIF-01",
+  "test_name": "Payment Failure & Acknowledgment",
+  "status": "fail",
+  "user_id": "$USER_ID",
+  "failure_step": "notification_flag_true",
+  "expected": "true",
+  "actual": "$FLAG"
+}
+EOF
     exit 1
 fi
 
@@ -128,6 +139,16 @@ if [[ "$SUCCESS" == "true" ]]; then
     echo -e "${GREEN} Acknowledged successfully${NC}"
 else
     echo -e "${RED} Acknowledge failed: $ACK_RESP${NC}"
+    cat > notif-01-report.json <<EOF
+{
+  "test_id": "NOTIF-01",
+  "test_name": "Payment Failure & Acknowledgment",
+  "status": "fail",
+  "user_id": "$USER_ID",
+  "failure_step": "acknowledge",
+  "response": "$ACK_RESP"
+}
+EOF
     exit 1
 fi
 
@@ -142,6 +163,17 @@ if [[ "$FLAG_FINAL" == "false" || "$FLAG_FINAL" == "null" ]]; then
     echo -e "${GREEN} Notification cleared${NC}"
 else
     echo -e "${RED} Notification NOT cleared (Expected false/null, got $FLAG_FINAL)${NC}"
+    cat > notif-01-report.json <<EOF
+{
+  "test_id": "NOTIF-01",
+  "test_name": "Payment Failure & Acknowledgment",
+  "status": "fail",
+  "user_id": "$USER_ID",
+  "failure_step": "notification_flag_false",
+  "expected": "false/null",
+  "actual": "$FLAG_FINAL"
+}
+EOF
     exit 1
 fi
 

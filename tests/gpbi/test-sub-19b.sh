@@ -148,6 +148,20 @@ if [[ "$SUB_COUNT" == "0" ]]; then
     echo -e "${GREEN}✓ Success: User 2 has 0 subscriptions${NC}"
 else
     echo -e "${RED}✗ Failure: User 2 has $SUB_COUNT subscriptions, expected 0${NC}"
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "SUB-19B",
+  "test_name": "LinkingRequired Response (Different Account Verification)",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "status": "fail",
+  "user1_id": "$USER1_ID",
+  "user2_id": "$USER2_ID",
+  "product_id": "$PRODUCT_ID",
+  "failure_step": "user2_no_subscription",
+  "expected": "0",
+  "actual": "$SUB_COUNT"
+}
+EOF
     exit 1
 fi
 echo ""
