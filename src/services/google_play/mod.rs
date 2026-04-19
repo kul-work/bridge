@@ -1,7 +1,5 @@
 /// Google Play billing service implementation
-#[allow(dead_code)]
 pub mod client;
-#[allow(dead_code)]
 pub mod models;
 
 // These modules are from the monolith and need adaptation for Bridge's PaymentProvider trait

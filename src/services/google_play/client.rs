@@ -99,6 +99,7 @@ impl GooglePlayClient {
 
     /// Override audience verification setting for testing
     /// Returns a clone with modified verify_aud setting
+    #[allow(dead_code)]
     pub fn with_audience_override(&self, verify_aud: bool) -> Self {
         Self {
             client: self.client.clone(),

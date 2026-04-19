@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PubSubMessage {
     pub message: PubSubMessageInner,
     pub subscription: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PubSubMessageInner {
     pub data: String, // Base64 encoded
@@ -13,6 +15,7 @@ pub struct PubSubMessageInner {
     // other fields like publish_time, etc.
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeveloperNotification {
@@ -31,6 +34,7 @@ pub struct DeveloperNotification {
     pub voided_purchase_notification: Option<VoidedPurchaseNotification>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionNotification {
@@ -41,6 +45,7 @@ pub struct SubscriptionNotification {
     pub subscription_id: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OneTimeProductNotification {
@@ -51,12 +56,14 @@ pub struct OneTimeProductNotification {
     pub product_id: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestNotification {
     pub version: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VoidedPurchaseNotification {
