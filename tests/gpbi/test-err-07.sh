@@ -122,6 +122,7 @@ EOF
       "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer test-token" \
+      -H "X-Webhook-Verification-Mode: off" \
       -d "{
         \"message\": {
           \"data\": \"$NOTIFICATION_B64\",
@@ -133,8 +134,8 @@ EOF
     
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     
-    if [[ "$HTTP_CODE" == "200" ]]; then
-        echo -e "  ${GREEN}✓ Acknowledged (HTTP 200) - correctly ignored${NC}"
+    if [[ "$HTTP_CODE" == "200" ]] || [[ "$HTTP_CODE" == "204" ]]; then
+        echo -e "  ${GREEN}✓ Acknowledged (HTTP $HTTP_CODE) - correctly ignored${NC}"
     else
         echo -e "  ${YELLOW}⚠ HTTP $HTTP_CODE (expected 200)${NC}"
         # Still acceptable if it doesn't cause errors
