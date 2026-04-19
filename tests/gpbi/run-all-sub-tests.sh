@@ -46,6 +46,7 @@ TESTS=(
     "test-sub-17.sh:SUB-17:Restore/Reinstall"
     "test-sub-18.sh:SUB-18:Multi-Device Restore"
     "test-sub-19.sh:SUB-19:Account System Restore"
+    "test-sub-19b.sh:SUB-19B:LinkingRequired Response (Different Account Verification)"
     "test-sub-20.sh:SUB-20:Price Change"
     "test-sub-21.sh:SUB-21:Price Step-Up (Korea)"
     "test-sub-22.sh:SUB-22:Out-of-App Linking"
