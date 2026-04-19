@@ -107,6 +107,9 @@ echo -e "Failed: ${RED}$FAILED${NC}"
 echo -e "Skipped: ${YELLOW}$SKIPPED${NC}"
 echo ""
 
+# Beep when done
+powershell -Command "[console]::beep(1000, 500)" 2>/dev/null || echo -e "\a"
+
 if [[ $FAILED -gt 0 ]]; then
     exit 1
 else
