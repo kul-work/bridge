@@ -90,6 +90,14 @@ pub trait SubscriptionWriteRepository: Send + Sync {
         provider: &str,
         subscription_id: &str,
     ) -> Result<(), BridgeError>;
+
+    async fn delete_pending_subscription(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        subscription_id: &str,
+        provider: &str,
+    ) -> Result<(), BridgeError>;
 }
 
 #[async_trait]

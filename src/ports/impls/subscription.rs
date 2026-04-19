@@ -160,6 +160,23 @@ impl SubscriptionWriteRepository for db::Database {
             subscription_id,
         ).await
     }
+
+    async fn delete_pending_subscription(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        subscription_id: &str,
+        provider: &str,
+    ) -> Result<(), BridgeError> {
+        db::subscriptions::delete_pending_subscription(
+            self.pool(),
+            app_id,
+            external_user_id,
+            subscription_id,
+            provider,
+        )
+        .await
+    }
 }
 
 #[async_trait]

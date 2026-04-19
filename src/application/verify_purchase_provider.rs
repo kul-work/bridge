@@ -580,10 +580,22 @@ fn mock_verify_google_play(
                 return map_google_subscription_verification(purchase, external_user_id);
             }
 
-            if purchase_token == "resubscribe-linking-required" {
-                return Ok(VerificationOutcome::LinkingRequired {
-                    obfuscated_account_id: "sub-19b-owner-hash".to_string(),
-                });
+            // Token designed to test linking_required: returns Verified so the first
+            // user becomes the owner; a second user with the same token will hit
+            // "token already bound to different user" → linking_required.
+            if purchase_token.starts_with("resubscribe-linking-required") {
+                let obfuscated_account_id = compute_obfuscated_id_hash(external_user_id);
+                return Ok(VerificationOutcome::Verified(VerifiedPurchase {
+                    status: "active".to_string(),
+                    current_period_end: Some(Utc::now() + Duration::days(30)),
+                    auto_renewing: Some(true),
+                    amount_cents: None,
+                    payment_state: None,
+                    acknowledgement: PaymentAcknowledgement::Pending,
+                    obfuscated_account_id: Some(obfuscated_account_id),
+                    resubscribe_obfuscated_account_id: None,
+                    linked_purchase_token: None,
+                }));
             }
 
             if purchase_token.contains("oap") || purchase_token.contains("resubscribe") {

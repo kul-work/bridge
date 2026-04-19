@@ -62,6 +62,15 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
         VerificationOutcome::LinkingRequired {
             obfuscated_account_id,
         } => {
+            tracing::info!(
+                "verify_purchase returning linking_required for user {} sub {}",
+                payload.external_user_id, payload.subscription_id
+            );
+            if let Err(e) = repo.delete_pending_subscription(
+                app_id, &payload.external_user_id, &payload.subscription_id, &payload.provider,
+            ).await {
+                tracing::warn!("Failed to clean up pending subscription on linking_required: {}", e);
+            }
             return Ok(VerifyPurchaseResponse {
                     status: "linking_required".to_string(),
                     subscription_id: payload.subscription_id.clone(),
@@ -91,6 +100,15 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
             {
                 Some(original_external_user_id) => original_external_user_id,
                 None => {
+                    tracing::info!(
+                        "verify_purchase returning linking_required (resubscribe) for user {} sub {}",
+                        payload.external_user_id, payload.subscription_id
+                    );
+                    if let Err(e) = repo.delete_pending_subscription(
+                        app_id, &payload.external_user_id, &payload.subscription_id, &payload.provider,
+                    ).await {
+                        tracing::warn!("Failed to clean up pending subscription on linking_required: {}", e);
+                    }
                     return Ok(VerifyPurchaseResponse {
                             status: "linking_required".to_string(),
                             subscription_id: payload.subscription_id.clone(),
@@ -110,6 +128,15 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
             };
         } else if let Some(owner_hash) = verified.obfuscated_account_id.as_deref() {
             if compute_obfuscated_id_hash(&payload.external_user_id) != owner_hash {
+                tracing::info!(
+                    "verify_purchase returning linking_required (hash mismatch) for user {} sub {}",
+                    payload.external_user_id, payload.subscription_id
+                );
+                if let Err(e) = repo.delete_pending_subscription(
+                    app_id, &payload.external_user_id, &payload.subscription_id, &payload.provider,
+                ).await {
+                    tracing::warn!("Failed to clean up pending subscription on linking_required: {}", e);
+                }
                 return Ok(VerifyPurchaseResponse {
                         status: "linking_required".to_string(),
                         subscription_id: payload.subscription_id.clone(),
@@ -149,6 +176,15 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
             if token_subscription.external_user_id != payload.external_user_id {
                 if payload.provider == "google_play" {
                     if let Some(obfuscated_account_id) = verified.obfuscated_account_id.clone() {
+                        tracing::info!(
+                            "verify_purchase returning linking_required (token bound) for user {} sub {}",
+                            payload.external_user_id, payload.subscription_id
+                        );
+                        if let Err(e) = repo.delete_pending_subscription(
+                            app_id, &payload.external_user_id, &payload.subscription_id, &payload.provider,
+                        ).await {
+                            tracing::warn!("Failed to clean up pending subscription on linking_required: {}", e);
+                        }
                         return Ok(VerifyPurchaseResponse {
                             status: "linking_required".to_string(),
                             subscription_id: payload.subscription_id.clone(),
@@ -224,6 +260,15 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
             if payload.provider == "google_play" {
                 if let BridgeError::FraudDetected(_) = &err {
                     if let Some(obfuscated_account_id) = verified.obfuscated_account_id.clone() {
+                        tracing::info!(
+                            "verify_purchase returning linking_required (commit fraud) for user {} sub {}",
+                            payload.external_user_id, payload.subscription_id
+                        );
+                        if let Err(e) = repo.delete_pending_subscription(
+                            app_id, &payload.external_user_id, &payload.subscription_id, &payload.provider,
+                        ).await {
+                            tracing::warn!("Failed to clean up pending subscription on linking_required: {}", e);
+                        }
                         return Ok(VerifyPurchaseResponse {
                             status: "linking_required".to_string(),
                             subscription_id: payload.subscription_id.clone(),

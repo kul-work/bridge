@@ -738,6 +738,35 @@ pub async fn upsert_pending_subscription(
     Ok(subscription)
 }
 
+/// Remove a pending subscription placeholder created by /register when
+/// verification returns linking_required (purchase belongs to a different account).
+pub async fn delete_pending_subscription(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+    subscription_id: &str,
+    provider: &str,
+) -> Result<(), BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    sqlx::query(
+        "DELETE FROM pay.subscriptions
+         WHERE app_id = $1 AND external_user_id = $2 AND subscription_id = $3
+           AND provider = $4 AND status = 'pending'"
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .bind(subscription_id)
+    .bind(provider)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
 pub async fn cancel_subscription_scheduled(
     pool: &PgPool,
     app_id: Uuid,
