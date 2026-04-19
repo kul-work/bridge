@@ -50,7 +50,6 @@ pub async fn list_apps(pool: &PgPool) -> Result<Vec<App>, BridgeError> {
 
 /// Get app by webhook ingress token
 /// TODO: Used by webhook ingress handlers (not yet implemented) to map incoming webhooks to apps.
-#[allow(dead_code)]
 pub async fn get_app_by_webhook_token(pool: &PgPool, token: Uuid) -> Result<App, BridgeError> {
     sqlx::query_as::<_, App>(
         "SELECT * FROM pay.apps WHERE webhook_ingress_token = $1 AND enabled = true"

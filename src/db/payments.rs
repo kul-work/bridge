@@ -6,7 +6,6 @@ use uuid::Uuid;
 
 /// Payment record for audit trail
 /// Currently stored but not actively queried. Struct construction is handled by SQLx FromRow.
-#[allow(dead_code)]
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Payment {
     pub id: Uuid,

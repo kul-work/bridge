@@ -142,7 +142,6 @@ pub async fn topup_agent(
     Ok(credit)
 }
 
-#[allow(dead_code)]
 pub async fn upsert_agent_credit(
     pool: &PgPool,
     app_id: Uuid,

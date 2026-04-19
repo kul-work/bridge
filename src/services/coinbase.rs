@@ -8,7 +8,6 @@ use crate::services::payment::{
     WebhookEvent,
 };
 
-#[allow(dead_code)]
 type HmacSha256 = Hmac<Sha256>;
 
 /// Coinbase charge details (status and amount from a verification fetch)

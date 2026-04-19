@@ -89,7 +89,6 @@ pub async fn get_webhook_provider(pool: &PgPool, id: Uuid) -> Result<WebhookProv
 /// Mark webhook as suppressed (stale event)
 /// Used for stale event suppression - called during webhook processing when
 /// newer events have already been processed for the same subscription.
-#[allow(dead_code)]
 pub async fn suppress_webhook(
     pool: &PgPool,
     webhook_id: Uuid,

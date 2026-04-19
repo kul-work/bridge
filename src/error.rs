@@ -48,7 +48,6 @@ pub enum AppError {
     InternalServerError(String),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum BridgeError {
     #[error("Database error: {0}")]
