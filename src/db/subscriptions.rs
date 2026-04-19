@@ -1028,6 +1028,28 @@ pub async fn lookup_subscription_id_by_purchase_token(
     Ok(row.map(|r| r.0))
 }
 
+pub async fn get_subscription_by_sub_id_and_user(
+    pool: &PgPool,
+    app_id: Uuid,
+    subscription_id: &str,
+    external_user_id: &str,
+) -> Result<Option<Subscription>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
+        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND subscription_id = $2 AND external_user_id = $3"
+    )
+    .bind(app_id)
+    .bind(subscription_id)
+    .bind(external_user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
+}
+
 pub async fn get_subscription_by_sub_id(
     pool: &PgPool,
     app_id: Uuid,

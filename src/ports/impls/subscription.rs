@@ -191,6 +191,17 @@ impl SubscriptionLookupRepository for db::Database {
             .map(|subscription| subscription.map(map_subscription_lookup_snapshot))
     }
 
+    async fn get_subscription_by_sub_id_and_user(
+        &self,
+        app_id: Uuid,
+        subscription_id: &str,
+        external_user_id: &str,
+    ) -> Result<Option<crate::ports::types::SubscriptionLookupSnapshot>, BridgeError> {
+        db::subscriptions::get_subscription_by_sub_id_and_user(self.pool(), app_id, subscription_id, external_user_id)
+            .await
+            .map(|subscription| subscription.map(map_subscription_lookup_snapshot))
+    }
+
     async fn get_subscription_by_purchase_token(
         &self,
         app_id: Uuid,

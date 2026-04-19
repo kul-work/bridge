@@ -108,6 +108,13 @@ pub trait SubscriptionLookupRepository: Send + Sync {
         subscription_id: &str,
     ) -> Result<Option<crate::ports::types::SubscriptionLookupSnapshot>, BridgeError>;
 
+    async fn get_subscription_by_sub_id_and_user(
+        &self,
+        app_id: Uuid,
+        subscription_id: &str,
+        external_user_id: &str,
+    ) -> Result<Option<crate::ports::types::SubscriptionLookupSnapshot>, BridgeError>;
+
     async fn get_subscription_by_purchase_token(
         &self,
         app_id: Uuid,

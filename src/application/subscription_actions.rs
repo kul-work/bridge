@@ -194,15 +194,9 @@ pub async fn acknowledge_subscription<R: SubscriptionActionsHandlerRepository + 
 ) -> Result<SubscriptionActionResponse, BridgeError>
 {
     let sub = repo
-        .get_subscription_by_sub_id(app_id, subscription_id)
+        .get_subscription_by_sub_id_and_user(app_id, subscription_id, external_user_id)
         .await?
         .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
-
-    if sub.external_user_id != external_user_id {
-        return Err(BridgeError::ValidationError(
-            "Subscription does not belong to this user".to_string(),
-        ));
-    }
 
     repo
         .mark_payment_acknowledged_for_subscription(
@@ -280,15 +274,9 @@ pub async fn accept_price_step_up<R: SubscriptionActionsHandlerRepository + ?Siz
 ) -> Result<PriceStepUpAcceptResponse, BridgeError>
 {
     let sub = repo
-        .get_subscription_by_sub_id(app_id, subscription_id)
+        .get_subscription_by_sub_id_and_user(app_id, subscription_id, &request.external_user_id)
         .await?
         .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
-
-    if sub.external_user_id != request.external_user_id {
-        return Err(BridgeError::ValidationError(
-            "Subscription does not belong to this user".to_string(),
-        ));
-    }
 
     if sub.provider != "google_play" {
         return Err(BridgeError::ValidationError(
@@ -346,15 +334,9 @@ pub async fn decline_price_step_up<R: SubscriptionActionsHandlerRepository + ?Si
 ) -> Result<PriceStepUpDeclineResponse, BridgeError>
 {
     let sub = repo
-        .get_subscription_by_sub_id(app_id, subscription_id)
+        .get_subscription_by_sub_id_and_user(app_id, subscription_id, &request.external_user_id)
         .await?
         .ok_or_else(|| BridgeError::SubscriptionNotFound("Subscription not found".to_string()))?;
-
-    if sub.external_user_id != request.external_user_id {
-        return Err(BridgeError::ValidationError(
-            "Subscription does not belong to this user".to_string(),
-        ));
-    }
 
     if sub.provider != "google_play" {
         return Err(BridgeError::ValidationError(
