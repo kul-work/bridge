@@ -135,8 +135,10 @@ EOF
 
 echo "Summary saved to: sub-suite-summary.json"
 
-# Beep when done
-powershell -Command "[console]::beep(1000, 500)" 2>/dev/null || echo -e "\a"
+# Beep when done (only when run directly, not from test-runner.sh)
+if [[ -z "${BRIDGE_TEST_RUNNER:-}" ]]; then
+    powershell -Command "[console]::beep(1000, 500)" 2>/dev/null || echo -e "\a"
+fi
 
 if [[ $FAILED -gt 0 ]]; then
     exit 1

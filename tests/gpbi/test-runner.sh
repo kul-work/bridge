@@ -21,6 +21,9 @@
 
 set -uo pipefail
 
+# Mark that we're the master runner so child scripts can skip beeps etc.
+export BRIDGE_TEST_RUNNER=1
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
