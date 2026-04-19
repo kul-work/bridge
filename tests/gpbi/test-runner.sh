@@ -419,9 +419,9 @@ end_time=$(date +%s)
 duration=$((end_time - start_time))
 
 # Deduplicate test counts and failed codes
-TOTAL_UNIQUE_RUN=$(echo "$ALL_TESTS_RUN_LIST" | tr ' ' '\n' | grep -v '^$' | sort -u | wc -l || echo 0)
+TOTAL_UNIQUE_RUN=$(echo "$ALL_TESTS_RUN_LIST" | tr ' ' '\n' | grep -v '^$' | sort -u | wc -l | tr -d '[:space:]' || echo 0)
 CLEAN_FAILS=$(echo "$FAILED_TEST_CODES" | tr ' ' '\n' | grep -v '^$' | sort -u | xargs | tr ' ' ',' || echo "")
-FAILED_TEST_COUNT=$(echo "$CLEAN_FAILS" | tr ',' '\n' | grep -v '^$' | wc -l | tr -d ' ' || echo 0)
+FAILED_TEST_COUNT=$(echo "$CLEAN_FAILS" | tr ',' '\n' | grep -v '^$' | wc -l | tr -d '[:space:]' || echo 0)
 
 echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║                  MASTER EXECUTION SUMMARY                  ║${NC}"
