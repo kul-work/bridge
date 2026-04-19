@@ -250,7 +250,7 @@ pub struct SubscriptionRecord {
     // Identifiers
     pub clerk_id: String,
     pub subscription_id: String,
-    pub provider: String, // "google_play", "stripe", "lemonsqueezy", "creem"
+    pub provider: String, // "google_play", "creem", "coinbase"
     pub provider_customer_id: Option<String>,
 
     // Amount in cents (for payment recording)

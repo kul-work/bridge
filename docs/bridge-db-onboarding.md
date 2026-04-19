@@ -55,7 +55,7 @@ COMMIT;
 ## 2) Create provider config rows in `pay.provider_configs`
 
 One row per `(app_id, provider)`:
-- `provider` must match exactly: `google_play`, `creem`, `lemonsqueezy`, `coinbase`
+- `provider` must match exactly: `google_play`, `creem`, `coinbase`
 - `enabled` should be `true` for runtime use
 
 ### Google Play
@@ -107,29 +107,6 @@ VALUES (
     "offer_id":"offer_123",
     "otp_id":"otp_456",
     "webhook_secret":"whsec_xxx"
-  }'::jsonb,
-  true
-);
-```
-
-### LemonSqueezy
-
-Required:
-- `api_key`
-- `webhook_secret`
-
-Recommended:
-- `product_id` (string that must parse to integer in checkout flow)
-
-```sql
-INSERT INTO pay.provider_configs (app_id, provider, config, enabled)
-VALUES (
-  '{{APP_ID}}'::uuid,
-  'lemonsqueezy',
-  '{
-    "api_key":"lsq_xxx",
-    "product_id":"12345",
-    "webhook_secret":"lsq_whsec_xxx"
   }'::jsonb,
   true
 );
@@ -190,7 +167,6 @@ Use this route shape:
 Examples:
 - `/webhooks/{token}/google_play`
 - `/webhooks/{token}/creem`
-- `/webhooks/{token}/lemonsqueezy`
 - `/webhooks/{token}/coinbase`
 
 ## 5) DB validation checks

@@ -7,7 +7,7 @@
 **Tech Stack:**
 - **Backend**: Rust + Axum + Tokio
 - **Database**: PostgreSQL (SQLx)
-- **API Support**: Multi-provider registry (Google Play, Creem, LemonSqueezy, Coinbase)
+- **API Support**: Multi-provider registry (Google Play, Creem, Coinbase)
 - **Security**: Double-ended HMAC validation on callbacks, provider signature checking.
 
 ## Architecture & Code Organization

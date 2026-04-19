@@ -5,7 +5,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         PAYMENT PROVIDERS                                    │
-│  (Google Play, Coinbase, Creem, LemonSqueezy)                                │
+│  (Google Play, Coinbase, Creem)                                              │
 └─────────────────┬───────────────────────────────────────────────────────────┘
                   │ POST /webhooks/{token}/{provider}
                   │ (with signature verification)
@@ -16,7 +16,6 @@
 │  src/webhooks/ingress.rs                                                      │
 │  ├─ handle_google_play()      [Extract token, verify PubSub signature]       │
 │  ├─ handle_creem()             [Extract token, verify HMAC signature]        │
-│  ├─ handle_lemonsqueezy()      [Extract token, verify hmac-sha256]           │
 │  ├─ handle_coinbase()          [Extract token, verify x-cc-webhook-signature]│
 │  │                                                                           │
 │  └─ Returns: 204 No Content (if successful ingestion)                        │

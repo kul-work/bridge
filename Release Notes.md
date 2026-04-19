@@ -36,7 +36,7 @@ Initial Bridge payment gateway implementation with:
 - **Retry Logic**: Exponential backoff (0s, 5m, 10m) for webhook delivery failures
 - **Database**: Complete webhook tracking tables with audit trail
 
-- Multi-provider payment processing (Google Play, Creem, LemonSqueezy, Coinbase)
+- Multi-provider payment processing (Google Play, Creem, Coinbase)
 - Checkout flow with session management
 - Purchase verification
 - Subscription management

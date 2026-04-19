@@ -33,7 +33,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - API keys scoped per app
 
 ### Provider Abstraction
-- Unified interface across Google Play (primary), Coinbase, Creem, and LemonSqueezy.
+- Unified interface across Google Play (primary), Coinbase, and Creem.
 - State normalization (each provider's "active" maps to Bridge's `active`).
 - Signature verification required on all provider webhooks.
 - Dynamic provider loading per-app (not startup-based env vars).
@@ -112,7 +112,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 **Supported providers**:
 - **Google Play**: Primary support for subscriptions and one-time purchases.
 - **Coinbase**: Support for crypto payments.
-- **Creem & LemonSqueezy**: Support for standard web payment checkouts.
+- **Creem**: Support for standard web payment checkouts.
 
 **Provider credentials**:
 - Stored in `provider_configs` table (JSONB `config` column)

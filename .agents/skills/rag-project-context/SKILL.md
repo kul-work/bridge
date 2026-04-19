@@ -139,7 +139,7 @@ See .agents/skills/rag-project-context/ for details.
 - ~20-30 min exploration + risk of missed patterns
 
 **With RAG:**
-- Handoff: "Add LemonSqueezy provider integration"
+- Handoff: "Add new provider integration"
 - Subagent returns: provider pattern, DB structure, validation approach, error handling
 - Write handler with confidence: ~5 min setup + focused implementation
 

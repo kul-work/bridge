@@ -52,40 +52,6 @@ pub async fn cancel_subscription(
             Ok(())
         }
 
-        "lemonsqueezy" => {
-            let api_key = config_str(config, "api_key", "LemonSqueezy")?;
-
-            let payload = serde_json::json!({
-                "data": {
-                    "type": "subscriptions",
-                    "id": subscription_id,
-                    "attributes": {
-                        "cancelled": true
-                    }
-                }
-            });
-
-            let response = client
-                .patch(format!("https://api.lemonsqueezy.com/v1/subscriptions/{}", subscription_id))
-                .bearer_auth(api_key)
-                .header("Accept", "application/vnd.api+json")
-                .header("Content-Type", "application/vnd.api+json")
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|e| BridgeError::ProviderError(format!("LemonSqueezy cancel failed: {}", e)))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                error!("LemonSqueezy cancel failed: {} - {}", status, body);
-                return Err(BridgeError::ProviderError(format!("LemonSqueezy cancel failed: {}", status)));
-            }
-
-            info!("LemonSqueezy subscription {} cancelled via API", subscription_id);
-            Ok(())
-        }
-
         "google_play" => {
             let service_account_path = config_str(config, "service_account_json", "Google Play")?;
             let package_name = config_str(config, "package_name", "Google Play")?;
@@ -141,40 +107,6 @@ pub async fn resume_subscription(
             Ok(())
         }
 
-        "lemonsqueezy" => {
-            let api_key = config_str(config, "api_key", "LemonSqueezy")?;
-
-            let payload = serde_json::json!({
-                "data": {
-                    "type": "subscriptions",
-                    "id": subscription_id,
-                    "attributes": {
-                        "cancelled": false
-                    }
-                }
-            });
-
-            let response = client
-                .patch(format!("https://api.lemonsqueezy.com/v1/subscriptions/{}", subscription_id))
-                .bearer_auth(api_key)
-                .header("Accept", "application/vnd.api+json")
-                .header("Content-Type", "application/vnd.api+json")
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|e| BridgeError::ProviderError(format!("LemonSqueezy resume failed: {}", e)))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                error!("LemonSqueezy resume failed: {} - {}", status, body);
-                return Err(BridgeError::ProviderError(format!("LemonSqueezy resume failed: {}", status)));
-            }
-
-            info!("LemonSqueezy subscription {} resumed via API", subscription_id);
-            Ok(())
-        }
-
         _ => Err(BridgeError::ValidationError(format!("Resume not supported for provider: {}", provider))),
     }
 }
@@ -216,34 +148,6 @@ pub async fn create_billing_portal(
             data["url"].as_str()
                 .map(|s| s.to_string())
                 .ok_or_else(|| BridgeError::ProviderError("Missing 'url' in billing portal response".to_string()))
-        }
-
-        "lemonsqueezy" => {
-            let api_key = config_str(config, "api_key", "LemonSqueezy")?;
-
-            let response = client
-                .get(format!("https://api.lemonsqueezy.com/v1/customers/{}", provider_customer_id))
-                .bearer_auth(api_key)
-                .header("Accept", "application/vnd.api+json")
-                .send()
-                .await
-                .map_err(|e| BridgeError::ProviderError(format!("LemonSqueezy billing portal failed: {}", e)))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                error!("LemonSqueezy billing portal failed: {} - {}", status, body);
-                return Err(BridgeError::ProviderError(format!("LemonSqueezy billing portal failed: {}", status)));
-            }
-
-            let data: Value = response.json().await
-                .map_err(|e| BridgeError::ProviderError(format!("Invalid billing portal response: {}", e)))?;
-
-            data["data"]["attributes"]["urls"]["customer_portal"].as_str()
-                .map(|s| s.to_string())
-                .ok_or_else(|| BridgeError::ValidationError(
-                    "Customer portal not available for this subscription".to_string(),
-                ))
         }
 
         _ => Err(BridgeError::ValidationError(format!("Billing portal not supported for provider: {}", provider))),
@@ -294,37 +198,6 @@ pub async fn fetch_subscription_status(
             Ok((status, period_end))
         }
 
-        "lemonsqueezy" => {
-            let api_key = config_str(config, "api_key", "LemonSqueezy")?;
-
-            let response = client
-                .get(format!("https://api.lemonsqueezy.com/v1/subscriptions/{}", subscription_id))
-                .bearer_auth(api_key)
-                .header("Accept", "application/vnd.api+json")
-                .send()
-                .await
-                .map_err(|e| BridgeError::ProviderError(format!("LemonSqueezy get subscription failed: {}", e)))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                error!("LemonSqueezy get subscription failed: {} - {}", status, body);
-                return Err(BridgeError::ProviderError(format!("LemonSqueezy get subscription failed: {}", status)));
-            }
-
-            let data: Value = response.json().await
-                .map_err(|e| BridgeError::ProviderError(format!("Invalid LemonSqueezy response: {}", e)))?;
-
-            let raw_status = data["data"]["attributes"]["status"].as_str().unwrap_or("unknown");
-            let status = normalize_lemonsqueezy_status(raw_status);
-
-            let period_end = data["data"]["attributes"]["renews_at"].as_str()
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&chrono::Utc));
-
-            Ok((status, period_end))
-        }
-
         "google_play" => {
             let service_account_path = config_str(config, "service_account_json", "Google Play")?;
             let package_name = config_str(config, "package_name", "Google Play")?;
@@ -360,19 +233,6 @@ fn normalize_creem_status(raw: &str) -> String {
         "canceled" | "cancelled" => "cancelled".to_string(),
         "expired" => "expired".to_string(),
         "paused" => "paused".to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn normalize_lemonsqueezy_status(raw: &str) -> String {
-    match raw {
-        "on_trial" => "trial".to_string(),
-        "active" => "active".to_string(),
-        "past_due" => "past_due".to_string(),
-        "cancelled" => "cancelled".to_string(),
-        "expired" => "expired".to_string(),
-        "paused" => "paused".to_string(),
-        "unpaid" => "past_due".to_string(),
         other => other.to_string(),
     }
 }

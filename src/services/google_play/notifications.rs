@@ -112,7 +112,6 @@ pub async fn send_email_payment_failed(
     
     let provider_display = match provider_name {
         "google_play" => "Google Play",
-        "lemonsqueezy" => "Lemon Squeezy",
         "creem" => "Creem",
         _ => provider_name,
     };
@@ -127,7 +126,6 @@ pub async fn send_email_payment_failed(
     // Provider-specific subscription management link
     let provider_link = match provider_name {
         "google_play" => Some("https://play.google.com/store/account/subscriptions".to_string()),
-        "lemonsqueezy" => None, // Lemon Squeezy manages via email links
         "creem" => None, // Creem manages via portal
         _ => None,
     };

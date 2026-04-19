@@ -8,7 +8,7 @@ CREATE TABLE provider_configs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     
-    provider TEXT NOT NULL,                      -- 'google_play', 'creem', 'apple', 'lemonsqueezy', 'coinbase'
+    provider TEXT NOT NULL,                      -- 'google_play', 'creem', 'apple', 'coinbase'
     
     -- Provider-specific configuration
     config JSONB NOT NULL,                       -- credentials, endpoints, product IDs, etc.
@@ -56,18 +56,11 @@ Examples:
     "private_key": "-----BEGIN PRIVATE KEY-----..."
   }
 
-  LemonSqueezy:
-  {
-    "api_key": "lemonsqueezy_key_xxxxx",
-    "product_id": "premium_monthly",
-    "webhook_secret": "lsq_secret_xxxxx"
-  }
-
   Coinbase Commerce:
   {
     "api_key": "cbkey_xxxxx",
     "webhook_secret": "cbwhsec_xxxxx"
   }';
 COMMENT ON COLUMN provider_configs.enabled IS 'Controls whether this provider config is active for this app.';
-COMMENT ON COLUMN provider_configs.provider IS 'Payment provider identifier: google_play, creem, apple, lemonsqueezy, coinbase, etc.';
+COMMENT ON COLUMN provider_configs.provider IS 'Payment provider identifier: google_play, creem, apple, coinbase, etc.';
 COMMENT ON COLUMN provider_configs.config IS 'Provider-specific config as JSON.';

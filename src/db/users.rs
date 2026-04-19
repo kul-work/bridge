@@ -151,14 +151,6 @@ async fn cancel_subscription_at_provider(
                 }
             }
         }
-        "lemonsqueezy" => {
-            // Get LemonSqueezy config and call cancel API
-            if let Ok(config) = crate::db::provider_configs::get_provider_config(pool, app_id, "lemonsqueezy").await {
-                if let Ok(ls_config) = serde_json::from_value::<serde_json::Value>(config.config) {
-                    cancel_lemonsqueezy_subscription(subscription_id, &ls_config).await?;
-                }
-            }
-        }
         "google_play" => {
             // Get Google Play config and cancel if we have purchase token
             if let Some(token) = purchase_token {
@@ -220,51 +212,6 @@ async fn cancel_creem_subscription(
     }
 
     tracing::info!("Creem subscription {} cancelled via API", subscription_id);
-    Ok(())
-}
-
-async fn cancel_lemonsqueezy_subscription(
-    subscription_id: &str,
-    config: &serde_json::Value,
-) -> Result<(), BridgeError> {
-    let api_key = config.get("api_key")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| BridgeError::ConfigError("Missing LemonSqueezy api_key".to_string()))?;
-
-    let client = reqwest::Client::new();
-    let url = format!(
-        "https://api.lemonsqueezy.com/v1/subscriptions/{}",
-        subscription_id
-    );
-
-    let response = client
-        .patch(&url)
-        .bearer_auth(api_key)
-        .header("Content-Type", "application/vnd.api+json")
-        .json(&serde_json::json!({
-            "data": {
-                "type": "subscriptions",
-                "id": subscription_id,
-                "attributes": {
-                    "cancelled_at": chrono::Utc::now().to_rfc3339()
-                }
-            }
-        }))
-        .send()
-        .await
-        .map_err(|e| BridgeError::ProviderError(format!("LemonSqueezy API call failed: {}", e)))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_msg = response.text().await.unwrap_or_default();
-        return Err(BridgeError::ProviderError(format!(
-            "LemonSqueezy cancel failed: {} - {}",
-            status,
-            error_msg
-        )));
-    }
-
-    tracing::info!("LemonSqueezy subscription {} cancelled via API", subscription_id);
     Ok(())
 }
 

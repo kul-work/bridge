@@ -260,30 +260,6 @@ fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> WebhookFields {
             google_new_price_cents: None,
             google_price_step_up_consent_deadline: None,
         },
-        "lemonsqueezy" => WebhookFields {
-            subscription_id: p.pointer("/data/id")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            purchase_token: None,
-            amount_cents: p.pointer("/data/attributes/total")
-                .and_then(|v| v.as_i64()).map(|a| a as i32),
-            auto_renewing: None,
-            current_period_end: p.pointer("/data/attributes/renews_at")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            provider_transaction_id: p.pointer("/data/id")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            provider_customer_id: p.pointer("/data/attributes/customer_id")
-                .and_then(|v| v.as_i64()).map(|c| c.to_string()),
-            product_id: p.pointer("/data/attributes/product_id")
-                .and_then(|v| v.as_i64()).map(|c| c.to_string()),
-            cancel_reason: None,
-            status: p.pointer("/data/attributes/status")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            google_subscription_state: None,
-            google_cancellation_context: None,
-            google_cancellation_feedback: None,
-            google_new_price_cents: None,
-            google_price_step_up_consent_deadline: None,
-        },
         "coinbase" => WebhookFields {
             subscription_id: None,
             purchase_token: None,
@@ -1683,24 +1659,6 @@ fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "subscription.price_step_up_consent_updated" => "subscription.price_step_up".to_string(),
             _ => event_type.to_string(),
         },
-        "lemonsqueezy" => match event_type {
-            "subscription_created" => "subscription.created".to_string(),
-            "subscription_updated" => "subscription.updated".to_string(),
-            "subscription_expired" => "subscription.expired".to_string(),
-            "subscription_cancelled" => "subscription.cancelled".to_string(),
-            "order_created" => "payment.pending".to_string(),
-            "order_failed" => "payment.failed".to_string(),
-            "order_completed" => "subscription.activated".to_string(),
-            "one_time_product_purchased" => "purchase.one_time".to_string(),
-            "one_time_product_canceled" => "purchase.one_time_cancelled".to_string(),
-            "purchase_voided" => "payment.refunded".to_string(),
-            "pending_purchase_canceled" => "subscription.pending_purchase_cancelled".to_string(),
-            "refund_created" => "payment.refunded".to_string(),
-            "dispute_created" => "dispute.created".to_string(),
-            "price_changed" => "subscription.price_changed".to_string(),
-            "price_change_updated" => "subscription.price_change_updated".to_string(),
-            _ => event_type.to_string(),
-        },
         "coinbase" => match event_type {
             "charge:confirmed" => "charge.confirmed".to_string(),
             "charge:failed" => "charge.failed".to_string(),
@@ -1805,11 +1763,7 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_lemonsqueezy_and_coinbase_special_events() {
-        assert_eq!(
-            normalize_event_type("lemonsqueezy", "refund_created"),
-            "payment.refunded"
-        );
+    fn test_normalize_coinbase_special_events() {
         assert_eq!(
             normalize_event_type("coinbase", "charge:failed"),
             "charge.failed"

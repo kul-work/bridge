@@ -37,9 +37,6 @@ pub(crate) async fn verify_purchase_with_provider(
         "creem" => verify_creem(subscription_id, purchase_token, provider_config)
             .await
             .map(VerificationOutcome::Verified),
-        "lemonsqueezy" => verify_lemonsqueezy(subscription_id, purchase_token, provider_config)
-            .await
-            .map(VerificationOutcome::Verified),
         "coinbase" => verify_coinbase(subscription_id, purchase_token, provider_config)
             .await
             .map(VerificationOutcome::Verified),
@@ -153,65 +150,6 @@ async fn verify_creem(
     let amount_cents = first_minor_unit_amount(&resp_json, &["/price", "/total", "/amount"]);
 
     tracing::info!("Creem subscription {} verified with status: {}", subscription_id, sub_status);
-    Ok(VerifiedPurchase {
-        status: sub_status,
-        current_period_end: period_end,
-        auto_renewing: None,
-        amount_cents,
-        payment_state: None,
-        acknowledgement: PaymentAcknowledgement::NotApplicable,
-        obfuscated_account_id: None,
-        resubscribe_obfuscated_account_id: None,
-        linked_purchase_token: None,
-    })
-}
-
-async fn verify_lemonsqueezy(
-    subscription_id: &str,
-    _purchase_token: &str,
-    config: &serde_json::Value,
-) -> Result<VerifiedPurchase, BridgeError> {
-    let api_key = config.get("api_key")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| BridgeError::ConfigError("Missing LemonSqueezy api_key".to_string()))?;
-
-    let client = reqwest::Client::new();
-    let url = format!(
-        "https://api.lemonsqueezy.com/v1/subscriptions/{}",
-        subscription_id
-    );
-
-    let response = client
-        .get(&url)
-        .bearer_auth(api_key)
-        .header("Content-Type", "application/vnd.api+json")
-        .send()
-        .await
-        .map_err(|e| BridgeError::ProviderError(format!("LemonSqueezy verify failed: {}", e)))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_msg = response.text().await.unwrap_or_default();
-        return Err(BridgeError::ProviderError(format!(
-            "LemonSqueezy verify failed: {} - {}",
-            status,
-            error_msg
-        )));
-    }
-
-    let resp_json: serde_json::Value = response.json().await
-        .map_err(|e| BridgeError::ProviderError(format!("Failed to parse LemonSqueezy response: {}", e)))?;
-
-    let sub_status = resp_json["data"]["attributes"]["status"].as_str().unwrap_or("active").to_string();
-    let period_end = resp_json["data"]["attributes"]["renews_at"].as_str()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc));
-    let amount_cents = first_minor_unit_amount(
-        &resp_json,
-        &["/data/attributes/total_cents", "/data/attributes/total"],
-    );
-
-    tracing::info!("LemonSqueezy subscription {} verified with status: {}", subscription_id, sub_status);
     Ok(VerifiedPurchase {
         status: sub_status,
         current_period_end: period_end,

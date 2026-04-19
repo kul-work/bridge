@@ -9,7 +9,7 @@ It operates as a private, centralized gateway (e.g., `pay.tydecode.com`) serving
 - **Version**: 0.1.2
 - **Backend**: Rust + Axum + Tokio
 - **Database**: PostgreSQL (SQLx)
-- **API Support**: Multi-provider registry (Creem, LemonSqueezy, Google Play, Coinbase)
+- **API Support**: Multi-provider registry (Creem, Google Play, Coinbase)
 - **Security**: Double-ended HMAC validation on callbacks, explicit provider signature cryptographic verification, rate limiting, and API key authentication.
 
 ## Core Principles

@@ -186,7 +186,7 @@ RETURNING request_count
 5. If `idempotency_key` provided: check cache/DB for existing response. If found → return cached response.
 6. Initialize provider client with the config loaded for this app/provider pair.
 7. Call provider API to create checkout session:
-   - **Web providers** (Creem, LemonSqueezy, Coinbase): provider returns a `redirect_url`.
+   - **Web providers** (Creem, Coinbase): provider returns a `redirect_url`.
    - **Mobile providers** (Google Play, Apple): provider returns `mobile_checkout_data` (SKU details for native SDK).
    - Pass `external_user_id` as metadata (for webhook resolution later).
    - Pass `email` as pass-through to provider API (never stored in Bridge DB).
@@ -369,7 +369,6 @@ RETURNING request_count
 6. Get signature header (provider-specific name):
    - Creem: `Webhook-Signature`
    - Google Play: `Authorization` (JWT Bearer)
-   - LemonSqueezy: `X-Signature`
    - Coinbase: `X-CC-Webhook-Signature`
 7. Extract signature value. Missing → `400`.
 8. Call `provider.verify_and_parse_webhook(body, signature, headers)`:
