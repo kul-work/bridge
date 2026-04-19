@@ -96,12 +96,13 @@ EXISTING_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT
 echo "Debug: Found subscription: $EXISTING_SUB"
 echo ""
 
+sleep 1  # Ensure webhook timestamp > subscription last_event_time (stale-event suppression uses strict <)
 TIMESTAMP=$(date +%s000)
 MESSAGE_ID="err-04-revoke-$(date +%s)"
 
 echo "Webhook details:"
 echo "  Message ID: $MESSAGE_ID"
-echo "  Notification Type: 13 (SUBSCRIPTION_REVOKED)"
+echo "  Notification Type: 12 (SUBSCRIPTION_REVOKED)"
 echo "  Purpose: Simulating Play Console refund/revoke"
 echo ""
 
@@ -113,7 +114,7 @@ NOTIFICATION_JSON=$(cat <<EOF
   "eventTimeMillis": "$TIMESTAMP",
   "subscriptionNotification": {
     "version": "1.0",
-    "notificationType": 13,
+    "notificationType": 12,
     "purchaseToken": "$PURCHASE_TOKEN",
     "subscriptionId": "$PRODUCT_ID"
   }
