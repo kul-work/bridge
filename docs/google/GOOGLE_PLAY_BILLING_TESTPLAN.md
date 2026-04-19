@@ -238,7 +238,6 @@ The following tests are **deferred** for Phase 2. See [GOOGLE_PLAY_BILLING_DEFER
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **API-01** | **Rate Limit Headers** | 1. Make any authenticated API call (e.g., `GET /api/v1/joke`).<br>2. Inspect response headers. | - Headers present:<br>  - `X-RateLimit-Limit`<br>  - `X-RateLimit-Remaining` | - Headers accurately reflect user's quota.<br>- Validated against `rate_limits` table in DB. | Global visibility for client-side quota management. |
 | **NOTIF-01** | **Payment Failure & Acknowledgment** | 1. Trigger Account Hold (SUB-08).<br>2. Call `GET /api/v1/subscription-status`.<br>3. Verify `payment_failure_notification=true`.<br>4. Call `POST /api/v1/notifications/payment-failure/acknowledge`.<br>5. Call `GET /api/v1/subscription-status` again. | - Step 2: Response shows failure flag and message.<br>- Step 4: Success (200 OK).<br>- Step 5: `payment_failure_notification=false`. | - DB updates `subscriptions.payment_failure_notification` to `false`.<br>- In-app alert cleared. | Ensures persistent alerts can be dismissed by user. |
-| **NOTIF-02** | **Notification History** | 1. Trigger an event that sends email (e.g., Payment Failure).<br>2. Call `GET /api/v1/notifications/history`. | - Returns JSON array of notification records. | - Validates `notifications` table population.<br>- Shows status (`sent`/`failed`), type, and timestamp. | Audit trail for support/debugging. |
 
 ---
 
