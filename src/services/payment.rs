@@ -1,10 +1,11 @@
+#![allow(dead_code)]
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Token validation mode for mobile stores
 /// TODO: Move to google_play module when it's fully ported
 /// Used by Google Play validation module (imported but not directly instantiated).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TokenValidationMode {
     #[default]
@@ -87,7 +88,6 @@ impl From<&str> for SubscriptionStatus {
 
 /// Purchase type for idempotent acknowledgment
 /// Used by Google Play lifecycle management (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PurchaseType {
     Subscription,
@@ -96,7 +96,6 @@ pub enum PurchaseType {
 
 /// Checkout session returned by payment provider
 /// Used by Google Play provider trait methods (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CheckoutSession {
     pub redirect_url: String,
@@ -106,7 +105,6 @@ pub struct CheckoutSession {
 /// PAUSED STATE CONTEXT
 /// Tracks metadata about subscription pauses (scheduled or active)
 /// Used by Google Play lifecycle management (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct PausedStateContext {
     /// When does pause take effect? (from Type 11 webhook)
@@ -126,7 +124,6 @@ pub struct PausedStateContext {
 /// This is the "source of truth" for business logic.
 /// All providers map to these fields; business logic never reads provider-specific fields.
 /// Used by Google Play subscription lifecycle (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct NormalizedSubscriptionData {
     // Core subscription state
@@ -158,7 +155,6 @@ impl Default for NormalizedSubscriptionData {
 /// All fields are read-only from Google; we store as-is for audit trail.
 /// Transformation to normalized data happens in separate function.
 /// Used by Google Play provider (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct GooglePlayRawData {
     // Google-specific enums (raw from API, not transformed)
@@ -244,7 +240,6 @@ impl Default for GooglePlayRawData {
 /// Forces developers to populate both normalized AND provider-specific data.
 /// Option<GooglePlayRawData> makes it explicit: this is provider-optional data.
 /// Used by Google Play lifecycle (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SubscriptionRecord {
     // Identifiers
@@ -268,7 +263,6 @@ pub struct SubscriptionRecord {
 
 /// Webhook event from payment provider
 /// Used by Google Play webhook parsing (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct WebhookEvent {
     pub event_id: Option<String>, // Webhook event ID for idempotency (e.g., "evt_xxx")
@@ -296,7 +290,6 @@ pub struct WebhookEvent {
 /// Google Play-specific fields returned by the provider during verification.
 /// Isolated here so non-Google providers don't carry irrelevant None fields.
 /// Used by Google Play provider (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct GooglePlayProviderData {
     /// For re-subscriptions: the old/expired subscription's token (from Google API)
@@ -314,7 +307,6 @@ pub struct GooglePlayProviderData {
 
 /// Provider-specific data attached to a SubscriptionDetails.
 /// Used by Google Play provider (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub enum ProviderData {
     GooglePlay(GooglePlayProviderData),
@@ -324,7 +316,6 @@ pub enum ProviderData {
 
 /// Subscription details from provider
 /// Used by Google Play provider (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SubscriptionDetails {
     pub subscription_id: String,
@@ -345,7 +336,6 @@ pub struct SubscriptionDetails {
     pub provider_data: ProviderData,
 }
 
-#[allow(dead_code)]
 impl SubscriptionDetails {
     /// Access Google Play-specific data if present.
     /// Used by google_play provider integration.
@@ -378,7 +368,6 @@ impl SubscriptionDetails {
 
 /// Result of a token verification, supporting account linking flows.
 /// Used by Google Play provider (imported in type signature).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum VerificationResult {
     /// The token was successfully verified and linked to the current user.
