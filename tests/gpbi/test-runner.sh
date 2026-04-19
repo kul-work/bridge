@@ -163,6 +163,7 @@ run_suite() {
     echo ""
 }
 
+run_smoke_tests() {
     # Run OTP-01 only
     echo "Step 1: OTP-01 (One-Time Purchase)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST OTP-01"
@@ -305,6 +306,7 @@ run_suite() {
         FAILED_SUITES=$((FAILED_SUITES + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES ERR-01"
     fi
+}
 
 run_replay_test() {
     local script="$1"

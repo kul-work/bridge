@@ -84,7 +84,7 @@ echo -e "${YELLOW}[2/4] Removing test report files${NC}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Clean SUB reports
-SUB_REPORTS=$(find "$SCRIPT_DIR" -name "sub-*-report.json" 2>/dev/null || echo "")
+SUB_REPORTS=$(find "$SCRIPT_DIR" -name "sub-*-report.json" -not -name "sub-pause-*-report.json" 2>/dev/null || echo "")
 if [[ -n "$SUB_REPORTS" ]]; then
     echo "$SUB_REPORTS" | while read -r file; do
         if [[ -f "$file" ]]; then
@@ -100,28 +100,10 @@ else
     echo "  No SUB report files found"
 fi
 
-# Clean ACK reports
-ACK_REPORTS=$(find "$SCRIPT_DIR" -name "ack-*-report.json" 2>/dev/null || echo "")
-if [[ -n "$ACK_REPORTS" ]]; then
-    echo "$ACK_REPORTS" | while read -r file; do
-        if [[ -f "$file" ]]; then
-            if [[ "$DRY_RUN" == "true" ]]; then
-                echo "  Would remove: $file"
-            else
-                rm -f "$file"
-                echo "  Removed: $file"
-            fi
-        fi
-    done
-else
-    echo "  No ACK report files found"
-fi
-
 # Clean all suite summary files
 SUITE_SUMMARIES=(
     "sub-suite-summary.json"
     "sub-core-suite-summary.json"
-    "ack-suite-summary.json"
     "trials-suite-summary.json"
     "restore-suite-summary.json"
     "price-suite-summary.json"

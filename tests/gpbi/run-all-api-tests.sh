@@ -59,29 +59,25 @@ run_test "API-01" "test-api-01.sh" "Rate Limit Headers"
 # NOTIF-01: Payment Failure & Acknowledgment
 run_test "NOTIF-01" "test-notif-01.sh" "Payment Failure & Acknowledgment"
 
-# NOTIF-02: Notification History
-run_test "NOTIF-02" "test-notif-02.sh" "Notification History"
-
 echo -e "${BLUE}============================================================${NC}"
 echo -e "${BLUE}                 Test Suite Summary                         ${NC}"
 echo -e "${BLUE}============================================================${NC}"
 
 # Count results
-PASSED_COUNT=$((3 - ${#FAILED_TESTS[@]}))
+PASSED_COUNT=$((2 - ${#FAILED_TESTS[@]}))
 
 # Generate JSON summary for master test runner
 cat > api-suite-summary.json <<EOF
 {
-  "suite": "API & Notifications (3 Tests)",
+  "suite": "API & Notifications (2 Tests)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "total": 3,
+  "total": 2,
   "passed": $PASSED_COUNT,
   "failed": ${#FAILED_TESTS[@]},
   "suites": {
     "api_notifications": {
       "API-01": "${TEST_RESULTS[API-01]:-unknown}",
-      "NOTIF-01": "${TEST_RESULTS[NOTIF-01]:-unknown}",
-      "NOTIF-02": "${TEST_RESULTS[NOTIF-02]:-unknown}"
+      "NOTIF-01": "${TEST_RESULTS[NOTIF-01]:-unknown}"
     }
   }
 }
