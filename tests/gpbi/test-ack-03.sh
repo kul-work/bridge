@@ -16,11 +16,12 @@
 #   - psql installed and in PATH
 #
 # Test Flow:
-#   1. Verify active subscription exists with acknowledged_at set
-#   2. Record current acknowledged_at timestamp
-#   3. Simulate renewal webhook (subscription.paid, notificationType 2)
-#   4. Verify renewal processed (current_period_end extended)
-#   5. Verify acknowledged_at unchanged (ACK NOT called for renewals)
+#   1. Clean up previous test data
+#   2. Register + verify-purchase to create active subscription with ACK
+#   3. Record current acknowledged_at timestamp
+#   4. Simulate renewal webhook (notificationType 2)
+#   5. Verify renewal processed (current_period_end extended)
+#   6. Verify acknowledged_at unchanged (ACK NOT called for renewals)
 #
 # DB Validation (from TESTPLAN):
 #   - pay.payments table: new row created for renewal
@@ -65,46 +66,76 @@ echo "ACK-03: No ACK on Subscription Renewal Test"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
-# Step 1: Generate a synthetic external_user_id for this run
-echo -e "${YELLOW}[1/6] Preparing generated user_id for this run${NC}"
+# Step 1: Clean up previous test data
+echo -e "${YELLOW}[1/7] Cleaning up previous test data${NC}"
 
-if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
-    exit 1
-fi
-
-USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" 2>/dev/null || true
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" 2>/dev/null || true
+echo -e "${GREEN}✓ Previous test data removed${NC}"
 echo ""
 
-# Step 2: Verify existing subscription with acknowledged_at set
-echo -e "${YELLOW}[2/6] Verifying existing subscription with acknowledged_at${NC}"
+# Step 2: Register purchase via API
+echo -e "${YELLOW}[2/7] Registering purchase via API${NC}"
 
-SUB_QUERY="SELECT status, current_period_end, purchase_token FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+echo "  POST $BRIDGE_API_URL/api/v1/purchase/register"
+REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"reason\": \"test-ack-03-setup\",
+    \"product_type\": \"subscription\",
+    \"amount_cents\": 0,
+    \"transaction_id\": \"test-ack-03-reg-$RUN_ID\"
+  }")
 
-SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
-
-if [[ -z "$SUB_RESULT" || "$SUB_RESULT" == *"(0 rows)"* ]]; then
-    # Insert new subscription if missing (corrected schema)
-    echo -e "${YELLOW}⚠ No subscription found. Setting up with ACK for test...${NC}"
-    # Note: excluding acknowledged_at from pay.subscriptions insert as it's gone
-    SETUP_QUERY="INSERT INTO pay.subscriptions (external_user_id, subscription_id, provider, status, auto_renewing, purchase_token, current_period_end, created_at, updated_at) VALUES ('$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'active', true, '$DUMMY_TOKEN', NOW() + INTERVAL '30 days', NOW(), NOW()) ON CONFLICT DO NOTHING;"
-    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$SETUP_QUERY" -t 2>/dev/null || true
-    
-    # Also ensure payment exists with ack
-    SETUP_PAYMENT="INSERT INTO pay.payments (external_user_id, provider, provider_transaction_id, subscription_id, amount_cents, status, acknowledged_at, created_at) VALUES ('$USER_ID', '$PROVIDER', '$DUMMY_TOKEN', '$PRODUCT_ID', 999, 'success', NOW(), NOW()) ON CONFLICT (provider, provider_transaction_id) DO UPDATE SET acknowledged_at = NOW();"
-    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$SETUP_PAYMENT" -t 2>/dev/null || true
-    
-    echo -e "${GREEN}✓ Test setup complete${NC}"
-    SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
+if [[ "$REGISTER_HTTP" == "200" ]]; then
+    echo -e "${GREEN}✓ Purchase registration successful${NC}"
+else
+    echo -e "${RED}✗ Purchase registration failed (HTTP $REGISTER_HTTP)${NC}"
+    exit 1
 fi
+echo ""
+
+# Step 3: Verify purchase (creates subscription + sets acknowledged_at via ACK)
+echo -e "${YELLOW}[3/7] Verifying purchase (creates subscription with ACK)${NC}"
+
+echo "  POST $BRIDGE_API_URL/api/v1/verify-purchase"
+VERIFY_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY" \
+  -d "{
+    \"external_user_id\": \"$USER_ID\",
+    \"provider\": \"$PROVIDER\",
+    \"subscription_id\": \"$PRODUCT_ID\",
+    \"purchase_token\": \"$DUMMY_TOKEN\",
+    \"product_type\": \"subscription\"
+  }")
+
+if [[ "$VERIFY_HTTP" == "200" ]]; then
+    echo -e "${GREEN}✓ Purchase verified (subscription created with ACK)${NC}"
+else
+    echo -e "${RED}✗ Purchase verification failed (HTTP $VERIFY_HTTP)${NC}"
+    exit 1
+fi
+echo ""
+
+# Step 4: Read current subscription state
+echo -e "${YELLOW}[4/7] Reading current subscription state${NC}"
+
+SUB_QUERY="SELECT status, current_period_end, purchase_token FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';"
+SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
 
 OLD_STATUS=$(echo "$SUB_RESULT" | awk -F '|' '{print $1}' | head -n1 | tr -d ' ')
 OLD_PERIOD_END=$(echo "$SUB_RESULT" | awk -F '|' '{print $2}' | head -n1 | tr -d ' ')
 PURCHASE_TOKEN=$(echo "$SUB_RESULT" | awk -F '|' '{print $3}' | head -n1 | tr -d ' ')
 
 # Fetch acknowledged_at from PAYMENTS table
-ACK_QUERY="SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$PURCHASE_TOKEN';"
+ACK_QUERY="SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$DUMMY_TOKEN';"
 OLD_ACKNOWLEDGED_AT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$ACK_QUERY" -t 2>/dev/null | head -n1 | tr -d ' ')
 
 echo "  Status: $OLD_STATUS"
@@ -115,8 +146,8 @@ echo ""
 
 if [[ -z "$OLD_ACKNOWLEDGED_AT" ]] || [[ "$OLD_ACKNOWLEDGED_AT" == "null" ]]; then
     echo -e "${YELLOW}⚠ acknowledged_at is NULL in pay.payments. Updating for test...${NC}"
-    # Update PAYMENTS table
-    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "UPDATE pay.payments SET acknowledged_at = NOW() WHERE provider_transaction_id = '$PURCHASE_TOKEN';" 2>/dev/null
+    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+      -c "UPDATE pay.payments SET acknowledged_at = NOW() WHERE provider_transaction_id = '$DUMMY_TOKEN';" 2>/dev/null
     OLD_ACKNOWLEDGED_AT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$ACK_QUERY" -t 2>/dev/null | head -n1 | tr -d ' ')
     echo "  Acknowledged At (set): $OLD_ACKNOWLEDGED_AT"
 fi
@@ -124,8 +155,8 @@ fi
 echo -e "${GREEN}✓ Subscription ready for renewal test${NC}"
 echo ""
 
-# Step 3: Count pay.payments before renewal
-echo -e "${YELLOW}[3/6] Counting pay.payments before renewal${NC}"
+# Step 5: Count pay.payments before renewal
+echo -e "${YELLOW}[5/7] Counting pay.payments before renewal${NC}"
 
 PAYMENT_COUNT_QUERY="SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
 OLD_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_COUNT_QUERY" -t 2>/dev/null | tr -d ' ')
@@ -133,8 +164,8 @@ OLD_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB
 echo "  Payment count before: $OLD_PAYMENT_COUNT"
 echo ""
 
-# Step 4: Simulate renewal webhook (subscription.paid, notificationType 2)
-echo -e "${YELLOW}[4/6] Sending subscription.paid (renewal) webhook${NC}"
+# Step 6: Simulate renewal webhook (notificationType 2)
+echo -e "${YELLOW}[6/7] Sending subscription.renewed webhook (notificationType 2)${NC}"
 
 TIMESTAMP=$(date +%s000)
 
@@ -146,7 +177,7 @@ NOTIFICATION_JSON=$(cat <<EOF
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 2,
-    "purchaseToken": "$PURCHASE_TOKEN",
+    "purchaseToken": "$DUMMY_TOKEN",
     "subscriptionId": "$PRODUCT_ID"
   }
 }
@@ -165,6 +196,7 @@ WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
@@ -194,14 +226,11 @@ else
 fi
 echo ""
 
-# Step 5: Wait for async processing
-echo -e "${YELLOW}[5/6] Waiting for async webhook processing (2 seconds)${NC}"
+# Step 7: Wait + verify acknowledged_at unchanged
+echo -e "${YELLOW}[7/7] Waiting for async webhook processing (2 seconds)${NC}"
 sleep 2
 echo -e "${GREEN}✓ Wait complete${NC}"
 echo ""
-
-# Step 6: Verify acknowledged_at unchanged
-echo -e "${YELLOW}[6/6] Verifying acknowledged_at unchanged after renewal${NC}"
 
 NEW_SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$SUB_QUERY" -t 2>/dev/null || echo "")
 
