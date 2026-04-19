@@ -1602,7 +1602,6 @@ pub async fn process_webhook(
 
 /// Normalize provider-specific event type to canonical format
 /// Maps provider events per architecture doc section 3.4
-#[allow(dead_code)]
 fn normalize_event_type(provider: &str, event_type: &str) -> String {
     match provider {
         "google_play" => match event_type {
