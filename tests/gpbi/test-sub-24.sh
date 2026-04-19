@@ -122,12 +122,10 @@ echo ""
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-24",
-  "test_name": "Subscription Korea Pricing Consent",
+  "test_name": "Restart After Cancellation",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "pass",
-  "register_http_code": $REGISTER_HTTP_CODE,
-  "verify_http_code": $VERIFY_HTTP_CODE,
-  "korea_pricing_consent_verified": true
+  "subscription_data": "$SUB_DATA"
 }
 EOF
 
