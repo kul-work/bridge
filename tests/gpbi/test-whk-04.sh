@@ -1,25 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# WHK-04: Webhook Without Prior verify_payment Call
+# WHK-04: Webhook Without Prior verify_purchase Call
 # 
-# Purpose: Verify that webhooks for subscriptions that were never registered
-#          via /api/v1/payment/verify are handled gracefully, fail softly,
-#          or are simply ignored without creating orphan database logic.
+# Purpose: Verify that webhooks for subscriptions never registered via 
+#          /api/v1/verify-purchase are handled gracefully.
 #
 # Usage: ./test-whk-04.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL
-#   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - Bridge database accessible (credentials via globals.cfg)
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Test uses header: X-Webhook-Verification-Mode: off
 #
 # TESTPLAN Reference:
-#   Backend Behavior: Backend attempts to find user by token.
-#                     If not found: Logs error and either rejects webhook or discards safely.
-#                     Database state unchanged (no user entry created).
+#   Expected Behavior: Webhook processed safely (HTTP 200/204 or soft 400/404).
+#                      No orphan records are created in the database.
+#                      Backend logic correctly identifies unknown tokens.
+#                      Ensures system stability against unsolicited triggers.
 ##############################################################################
 
 set -euo pipefail

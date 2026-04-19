@@ -3,23 +3,24 @@
 ##############################################################################
 # WHK-05: Refund Idempotency Verification
 # 
-# Purpose: Verify that sending a second refund webhook for the SAME token
-#          but a DIFFERENT message_id skips re-revocation logic and
-#          maintains idempotency.
+# Purpose: Verify that second refund webhooks for the SAME token but a 
+#          DIFFERENT message_id skip re-revocation logic.
 #
 # Usage: ./test-whk-05.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL
-#   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - Bridge database accessible (credentials via globals.cfg)
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Test uses header: X-Webhook-Verification-Mode: off
 #
 # TESTPLAN Reference:
-#   Backend Behavior: Backend processes first webhook: updates status, logs revocation.
-#                     Backend processes second webhook: detects 'refunded' status via idempotency check (token-based).
-#                     Skips re-revocation logic.
+#   Expected Behavior: Second refund webhook results in HTTP 200/204.
+#                      No duplicate records or re-applied state.
+#                      Backend logic detects previous 'VOIDED_PURCHASE' processing.
+#                      Ensures robust idempotency across different deliveries.
 ##############################################################################
 
 set -euo pipefail

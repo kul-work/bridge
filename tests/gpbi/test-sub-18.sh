@@ -1,24 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-18: Restore on Multiple Devices (Same Google Account) Test
+# SUB-18: Restore on Multiple Devices (Same Google Account)
 # 
 # Purpose: Verify that an active subscription is correctly reported on multiple 
 #          devices using the same account (different device IDs).
-#          1. Establish an active subscription
-#          2. Call the subscription list API with a different device ID
-#          3. Verify status returned is "active"
-#          4. Verify no duplicate records are created in Bridge DB
 #
 # Usage: ./test-sub-18.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Device B correctly identifies subscription as 'active' via GET /api/v1/subscriptions.
+#                      Backend logic correctly maps Device B to the existing record for that user.
+#                      Exactly one subscription record exists in the database.
+#                      Ensures multi-device access for a single logical subscriber sharing a Google account.
 ##############################################################################
 
 set -euo pipefail
@@ -125,7 +127,7 @@ echo ""
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-18",
-  "test_name": "Duplicate Webhook Suppression",
+  "test_name": "Restore on Multiple Devices",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,

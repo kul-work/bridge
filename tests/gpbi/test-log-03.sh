@@ -3,31 +3,25 @@
 ##############################################################################
 # LOG-03: ACK Failure & Retry Logging
 # 
-# Purpose: Verify that acknowledgment (ACK) failures and retries are logged
-#          with proper fields for monitoring ACK health.
+# Purpose: Verify that acknowledgment (ACK) flows, failures, and retries 
+#          are logged with structured metadata for monitoring.
 #
 # Usage: ./test-log-03.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: Initial purchase succeeds (access granted).
-#                      ACK retry queue processes in background.
-#   First attempt log:
-#     - event: ack_attempt
-#     - subscription_id, attempt: 1
-#     - status: failed, error: google_api_500
-#   Retry scheduled log:
-#     - event: ack_retry_scheduled
-#     - next_retry_seconds: 60
-#   Successful retry log:
-#     - Same as first with attempt: 2, status: success
-#
-# Note: This test simulates ACK flow since we can't easily inject Google API
-#       500 errors in the mock environment.
+#   Expected Behavior: Initial purchase triggers the provider ACK flow.
+#                      'ack_attempt' events are logged with fields: attempt_count, outcome.
+#                      If a failure occurs, 'ack_retry_scheduled' is logged with backoff details.
+#                      Enables troubleshooting and monitoring of transient provider failures.
+#                      Validates that the background processor reports activity and error states.
 ##############################################################################
 
 set -euo pipefail

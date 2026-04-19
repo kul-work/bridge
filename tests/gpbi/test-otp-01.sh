@@ -1,17 +1,27 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-01: Successful One-Time Purchase Test
+# OTP-01: Successful One-Time Purchase (Verified & Acknowledged)
 # 
-# Purpose: Verify that a successful INAPP product purchase is properly
-#          verified and stored in the database with status "active".
+# Purpose: Verify that a successful INAPP product purchase is properly 
+#          verified, stored in pay.payments, and acknowledged to the provider.
 #
 # Usage: ./test-otp-01.sh [--replay [fixture_file]]
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_OTP
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: POST /api/v1/verify-purchase returns 200 OK.
+#                      A record is created in pay.payments with status='success'.
+#                      No record is created in pay.subscriptions (correct for one-time).
+#                      'acknowledged_at' is set in pay.payments.
+#                      Ensures one-time products follow a clean 'verify-and-acknowledge' flow.
 ##############################################################################
 
 set -euo pipefail

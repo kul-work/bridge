@@ -3,21 +3,27 @@
 ##############################################################################
 # ERR-07: Unknown Notification Type
 # 
-# Purpose: Verify that webhooks with unknown notification types (e.g., type 99)
-#          are acknowledged (HTTP 200) but no action is taken (forward-compatible).
+# Purpose: Verify that webhooks with unknown or future notification types 
+#          (e.g., type 99) are acknowledged with HTTP 200 but no action 
+#          is taken (forward-compatible).
 #
 # Usage: ./test-err-07.sh
 #
 # Prerequisites:
-#   - Backend running with MOCK_EXTERNAL_APIS=false
-#   - DATABASE_URL configured and db accessible
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: HTTP 200 (acknowledged) but no action taken.
-#   Backend Response: Backend parses successfully but doesn't match any known
-#                     notification type. Logs warning: "Unknown notification type".
-#                     Returns gracefully; no DB change (forward-compatible).
+#   Expected Behavior: POST /webhooks/... returns HTTP 200 for unknown 'notificationType' values. 
+#                      The event is logged in webhook_log but ignored by business logic.
+#                      No state changes occur in pay.subscriptions or pay.payments.
+#                      Ensures forward-compatibility with future provider updates.
+#                      Validates that the system safely ignores unrecognized events.
+#                      Confirms that the ingress 'switch' logic handles the default case gracefully.
 ##############################################################################
 
 set -euo pipefail

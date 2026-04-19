@@ -1,24 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-22: Out-of-App Resubscribe Linking (SUB-RESUB-01) Test
+# SUB-22: Out-of-App Resubscribe Linking (SUB-RESUB-01)
 # 
 # Purpose: Verify out-of-app purchase context linking when user resubscribes
 #          after subscription expiry.
-#          1. Establish initial subscription for User 1
-#          2. Simulate expiration
-#          3. Resubscribe with NEW token (simulated out-of-app)
-#          4. Verify new subscription linked to User 1 (not orphaned)
 #
 # Usage: ./test-sub-22.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: New purchase_token is correctly linked to the existing external_user_id in pay.subscriptions.
+#                      Status returns to 'active'.
+#                      Backend correctly identifies the user identity via provider history.
+#                      Ensures users who resubscribe outside the app retain their historical identity.
 ##############################################################################
 
 set -euo pipefail
@@ -176,7 +178,7 @@ echo ""
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-22",
-  "test_name": "Price Change (Downgrade)",
+  "test_name": "Out-of-App Resubscribe Linking",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,

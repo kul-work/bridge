@@ -9,19 +9,22 @@
 # Usage: ./test-whk-01c.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL
-#   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - SUB-01 test completed (subscription record exists)
-#   - Bridge database accessible (credentials via globals.cfg)
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN/test-token
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Test uses headers:
-#     * X-Webhook-Verification-Mode: off (skip signature - can't forge valid JWT)
-#     * X-Webhook-Audience-Mode: strict (enforce audience validation)
+#   - Test uses specialized headers:
+#     * X-Webhook-Verification-Mode: off (simulates signature bypass)
+#     * X-Webhook-Audience-Mode: strict (simulates strict audience enforcement)
 #
 # TESTPLAN Reference:
-#   Backend Behavior: Code logs "JWT audience validated: <audience>",
-#                     Webhook proceeds through normal validation and DB update,
-#                     Subscription status updated correctly.
+#   Expected Behavior: Webhook ACCEPTED with HTTP 200/204.
+#                      Backend logs a 'JWT audience validated' success event.
+#                      Subscription status (e.g., status, period_end) updated correctly in pay.subscriptions.
+#                      Ensures legitimate webhooks are processed correctly under strict audience enforcement mode.
+#                      Validates the successful path of the audience verification middleware.
 ##############################################################################
 
 set -euo pipefail

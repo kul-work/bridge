@@ -1,23 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-16: Resubscribe Before Expiration (Continuous Access) Test
+# SUB-16: Resubscribe Before Expiration (Continuous Access)
 # 
 # Purpose: Verify the full resubscribe flow before expiration:
-#          1. Establish a cancelled subscription (access still valid)
-#          2. Perform new purchase verification with a NEW token
-#          3. Confirm status returns to "active" and period is extended
-#          4. Verify google_linked_purchase_token links to old cancelled token
+#          Establish cancelled sub -> Verify new purchase -> Active status & Token linking.
 #
 # Usage: ./test-sub-16.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Cancelled record in pay.subscriptions is reactivated (status='active').
+#                      purchase_token is updated to the NEW token.
+#                      google_linked_purchase_token is populated with the OLD token.
+#                      Ensures users can "re-enable" auto-renewal by starting a new logical purchase.
 ##############################################################################
 
 set -euo pipefail

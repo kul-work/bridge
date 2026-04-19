@@ -1,33 +1,29 @@
 #!/bin/bash
 
 ##############################################################################
-# ACK-03: No ACK on Subscription Renewal Test
+# ACK-03: No ACK on Subscription Renewal
 # 
 # Purpose: Verify that when a subscription renews via webhook, the backend
 #          does NOT call acknowledge() - only new purchases/resubscribes
-#          need acknowledgment, not renewals.
+#          need acknowledgment.
 #
 # Usage: ./test-ack-03.sh
 #
 # Prerequisites:
-#   - ACK-01 or SUB-01 must have passed (active subscription with ACK exists)
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
-# Test Flow:
-#   1. Clean up previous test data
-#   2. Register + verify-purchase to create active subscription with ACK
-#   3. Record current acknowledged_at timestamp
-#   4. Simulate renewal webhook (notificationType 2)
-#   5. Verify renewal processed (current_period_end extended)
-#   6. Verify acknowledged_at unchanged (ACK NOT called for renewals)
-#
-# DB Validation (from TESTPLAN):
-#   - pay.payments table: new row created for renewal
-#   - pay.subscriptions table: acknowledged_at unchanged
-#
-# Note: ACK-ing renewals would trigger unexpected refunds
+# TESTPLAN Reference:
+#   Expected Behavior: A subscription.renewed (notificationType=2) webhook is successfully processed.
+#                      The subscription's 'current_period_end' is correctly extended.
+#                      The 'acknowledged_at' timestamp in pay.payments remains UNCHANGED.
+#                      Ensures Google's acknowledgment API is only called for new purchases.
+#                      Prevents 'double-ACK' bugs and unintended refunds during billing cycles.
+#                      Validates that the webhook handler correctly differentiates event types.
 ##############################################################################
 
 set -euo pipefail

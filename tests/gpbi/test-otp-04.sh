@@ -1,18 +1,27 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-04: Slow Card (Pending State) Test
+# OTP-04: Slow Card (Pending State - One-Time Product)
 # 
-# Purpose: Verify that a slow test card (approves after ~5 minutes) is
-#          properly handled with status transitions from Trial/Pending to Active.
+# Purpose: Verify that a slow test card (pending state) is properly handled 
+#          with the correct status transitions from Pending to Success.
 #
 # Usage: ./test-otp-04.sh [--replay [fixture_file]] [--wait-for-approval]
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_OTP
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Optional: --wait-for-approval flag to poll until approval (timeout 10 min)
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Initial POST /api/v1/verify-purchase returns 202 Accepted (Pending).
+#                      A payment record is created in pay.payments with status='pending'.
+#                      Upon receiving the ONE_TIME_PRODUCT_PURCHASED notificationType=1 webhook (or polling), status transitions to 'success' (active).
+#                      'acknowledged_at' is set in pay.payments confirming finality.
+#                      Ensures the system correctly manages asynchronous payment lifecycles and 'pending' states for OTPs.
 ##############################################################################
 
 set -euo pipefail

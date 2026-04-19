@@ -1,27 +1,29 @@
 #!/bin/bash
 
 ##############################################################################
-# ERR-05: Google API Temporarily Unavailable
+# ERR-05: Provider API Temporarily Unavailable
 # 
-# Purpose: Verify that when Google API returns 5xx errors, the backend
-#          handles it gracefully without creating partial database state.
+# Purpose: Verify that when the provider API returns 5xx errors or timeouts,
+#          the backend handles it gracefully without creating partial
+#          database state.
 #
 # Usage: ./test-err-05.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - X-Token-Validation-Mode: strict header used in curl requests
 #
 # TESTPLAN Reference:
-#   Expected Behavior: API returns 502/503 or timeout error to client.
-#   Backend Response: Backend calls Google API, receives 5xx error.
-#                     Returns error to client (don't create partial DB state).
-#                     Client should retry after delay (exponential backoff).
-#
-# Note: This test simulates Google API unavailability using special token patterns
-#       that the mock API recognizes.
+#   Expected Behavior: POST /api/v1/verify-purchase returns a 5xx error or timeout. 
+#                      The internal database transaction is properly rolled back.
+#                      No partial or 'ghost' records are created in pay.subscriptions or pay.payments.
+#                      Ensures atomicity during external service outages or transient network failures.
+#                      Validates following a 'verify-then-commit' workflow.
+#                      Confirms that logs capture the provider error without exposing stack traces.
 ##############################################################################
 
 set -euo pipefail

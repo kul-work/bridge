@@ -1,17 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-03: User Cancellation Test
+# OTP-03: User Cancellation (One-Time Product)
 # 
-# Purpose: Verify that when a user cancels the Google Play purchase dialog
-#          (back button or X before completing payment), no database entries
-#          are created and the user can immediately retry.
+# Purpose: Verify that when a user cancels the Google Play purchase dialog 
+#          before completion, no database entries are created.
 #
 # Usage: ./test-otp-03.sh
 #
 # Prerequisites:
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
+#     * PRODUCT_ID_OTP
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: No verification call is made to the backend (transaction aborted on client).
+#                      No payment record is created in pay.payments.
+#                      No record is created in pay.subscriptions.
+#                      Ensures no 'ghost' records are created for unstarted or abandoned transactions.
+#                      Validates that the system state remains clean after an aborted purchase attempt.
 ##############################################################################
 
 set -euo pipefail

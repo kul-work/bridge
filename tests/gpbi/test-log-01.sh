@@ -3,26 +3,25 @@
 ##############################################################################
 # LOG-01: Structured Billing Event Logging
 # 
-# Purpose: Verify that billing lifecycle events are logged in structured
-#          JSON format with consistent fields, and no sensitive data is exposed.
+# Purpose: Verify that billing lifecycle events are logged in structured 
+#          JSON format with consistent fields for observability.
 #
 # Usage: ./test-log-01.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: No user-visible log leakage.
-#                      Logs appear in backend log aggregation system.
-#   Required fields per event:
-#     - purchase_verified: user_id, subscription_id, token_hash (NOT raw), status, timestamp
-#     - purchase_acknowledged: subscription_id, ack_status, timestamp
-#     - webhook_received: notification_type, event_id, timestamp
-#     - webhook_processed: notification_type, event_id, new_status, timestamp
-#     - access_granted/access_revoked: user_id, reason, timestamp
-#   NO sensitive data: raw tokens, emails, user_data
+#   Expected Behavior: Key events (verified, acknowledged, webhook processing) trigger structured JSON logs.
+#                      Logs contain consistent fields: event_id, user_id (opaque), event_type, and status.
+#                      No sensitive data (tokens, PII, keys) is present in standard log output.
+#                      Ensures high auditability and traceability across the pipeline.
+#                      Validates that logging correctly differentiates between event kinds.
 ##############################################################################
 
 set -euo pipefail

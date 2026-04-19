@@ -1,25 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-24: Restart After Cancellation - Expiry Extension Test
+# SUB-24: Restart After Cancellation - Expiry Extension
 # 
 # Purpose: Verify that when a user re-enables auto-renew (RTDN Type 7),
-#          the backend enriches with fresh Google Play API data so the
-#          expiry date is updated to the future (not left in the past).
-#          1. Establish a cancelled subscription with PAST expiry
-#          2. Send RTDN Type 7 (SUBSCRIPTION_RESTARTED) webhook
-#          3. Verify status changed to 'active'
-#          4. Verify current_period_end is now in the FUTURE
+#          the backend enriches with fresh data to extend future access.
 #
 # Usage: ./test-sub-24.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Subscription status transitions to 'active' in pay.subscriptions.
+#                      current_period_end is extended to the future based on fresh provider data.
+#                      auto_renewing flag is set to true.
+#                      Ensures users who change their mind about cancellation regain full future access.
 ##############################################################################
 
 set -euo pipefail

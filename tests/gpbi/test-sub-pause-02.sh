@@ -1,24 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-PAUSE-02: Pause Takes Effect (Auto-Transition) Test
+# SUB-PAUSE-02: Pause Takes Effect (Auto-Transition)
 #
-# Purpose: Verify that a subscription scheduled pause transitions to active 
-#          pause when the scheduled date arrives (triggered by Type 10 webhook).
-#          1. Establish a subscription with a PAST scheduled pause date
-#          2. Send Type 10 webhook (subscription.paused)
-#          3. Verify status changed to 'paused'
-#          4. Verify google_paused_at is set in DB
+# Purpose: Verify subscription transitions to 'paused' on schedule.
 #
 # Usage: ./test-sub-pause-02.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: subscription.paused (10) is processed.
+#                      Subscription status transitions to 'paused'.
+#                      'google_paused_at' timestamp is populated.
+#                      Ensures scheduled pauses correctly transition to enforcement.
 ##############################################################################
 
 set -euo pipefail

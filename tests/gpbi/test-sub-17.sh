@@ -1,24 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-17: Restore After Uninstall/Reinstall Test
+# SUB-17: Restore After Uninstall/Reinstall
 # 
 # Purpose: Verify that an active subscription is correctly reported upon 
 #          "reinstall" (calling the subscription status API).
-#          1. Establish an active subscription
-#          2. Call the subscription list API
-#          3. Verify status returned is "active"
-#          4. Verify no duplicate rows created
 #
 # Usage: ./test-sub-17.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: GET /api/v1/subscriptions returns 'active' for existing user.
+#                      No duplicate entries are created by the lookup/status calls (idempotency).
+#                      Ensures users who replace devices or reinstall apps regain access seamlessly.
 ##############################################################################
 
 set -euo pipefail
@@ -124,7 +125,7 @@ echo ""
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-17",
-  "test_name": "Idempotent Webhook Processing",
+  "test_name": "Restore After Uninstall/Reinstall",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,

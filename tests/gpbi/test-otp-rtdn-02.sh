@@ -1,20 +1,27 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-RTDN-02: Webhook Refund Completed Test
+# OTP-RTDN-02: Webhook Refund Completed (One-Time Product)
 # 
-# Purpose: Verify that a ONE_TIME_PRODUCT_CANCELED webhook (refund) is 
+# Purpose: Verify that a voidedPurchaseNotification (refund) is 
 #          properly received, validated, and revokes entitlement.
 #
-# Usage: ./test-otp-rtdn-02.sh \
-#                                [--token "purchase_token"] [--replay [fixture_file]]
+# Usage: ./test-otp-rtdn-02.sh [--token "purchase_token"] [--replay [fixture_file]]
 #
 # Prerequisites:
-#   - OTP-01 test already completed (payment record created)
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_OTP
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Google webhook signature verification disabled via test header
+#
+# TESTPLAN Reference:
+#   Expected Behavior: 'voidedPurchaseNotification' webhook arrives for an existing OTP purchase.
+#                      Backend processes the webhook and returns HTTP 200/204.
+#                      Payment record in pay.payments transitions to 'refunded'.
+#                      Subsequent identical webhooks (same message_id) are handled idempotently via webhook_log.
+#                      Ensures revenue and access are correctly adjusted after refund via RTDN.
 ##############################################################################
 
 set -euo pipefail

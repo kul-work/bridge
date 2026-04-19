@@ -1,24 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-04: Grace Period Entry and Recovery Test
+# SUB-04: Grace Period Entry and Recovery
 # 
-# Purpose: Verify the grace period entry and recovery flow:
-#          1. Establish an active subscription
-#          2. Simulate Google Pub/Sub grace period webhook (notificationType 6)
-#          3. Verify status changed to "in_grace_period" and fields set
-#          4. Simulate recovery webhook (notificationType 1)
-#          5. Verify status returned to "active" and grace fields cleared
+# Purpose: Verify the subscription grace period lifecycle via webhooks.
 #
 # Usage: ./test-sub-04.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Subscription transitions: active -> past_due (6) -> active (1).
+#                      'google_grace_period_start' is set during grace entry.
+#                      'google_grace_period_start' is cleared upon recovery.
+#                      Ensures seamless access transition during payment failure cycles.
 ##############################################################################
 
 set -euo pipefail

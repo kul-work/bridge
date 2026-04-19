@@ -1,33 +1,29 @@
 #!/bin/bash
 
 ##############################################################################
-# ACK-02: Subscription ACK Failure & Retry Queue Test
+# ACK-02: Subscription ACK Failure & Retry Queue
 # 
-# Purpose: Verify that when the initial ACK call fails (e.g., Google API 500),
-#          the backend queues the ACK for retry, grants entitlement anyway,
-#          and eventually succeeds on retry.
+# Purpose: Verify that when the initial ACK call fails, the backend 
+#          queues it for retry but grants entitlement anyway.
 #
 # Usage: ./test-ack-02.sh [--retry-wait <seconds>]
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - Backend must support simulated ACK failures (via test header)
-#   - DATABASE_URL configured and db accessible
+#   - Backend support for 'X-Test-Simulate-Ack-Failure: true'
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
-# Test Flow:
-#   1. Clean up any existing subscription for test user
-#   2. Call /api/v1/verify-purchase with header to simulate ACK failure
-#   3. Verify entitlement is granted (is_premium=true) even if ACK pending
-#   4. Wait for retry queue to process
-#   5. Verify acknowledged_at is eventually set (ACK succeeded after retry)
-#
-# DB Validation (from TESTPLAN):
-#   - pay.payments table: No specific changes
-#   - pay.subscriptions table: acknowledged_at NOT NULL (after retry)
-#
-# Note: Failed ACKs should be retried with exponential backoff
-#       Failure to retry = automatic refund by Google
+# TESTPLAN Reference:
+#   Expected Behavior: Entitlement is granted (status='active') even if the initial ACK call fails.
+#                      The system logs the failure and schedules a background retry.
+#                      Eventually, the retry succeeds and 'acknowledged_at' is populated.
+#                      Ensures transient provider errors do not degrade user experience.
+#                      Prevents accidental refunds by guaranteeing eventual consistency of ACKs.
+#                      Validates the robustness of the background worker and retry queue.
 ##############################################################################
 
 set -euo pipefail

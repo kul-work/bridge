@@ -1,23 +1,24 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-14: Bridge Free Trial - First-Time User Test
+# SUB-14: Free Trial - First-Time User
 #
-# Purpose: Verify the free trial flow for a first-time user:
-#          1. Perform trial purchase verification
-#          2. Verify status changed to "trial" in Bridge DB
-#          3. Verify is_trial flag is set to true
-#          4. Verify initial payment amount is 0
+# Purpose: Verify free trial flow: Intent -> Trial Verification -> Persistence.
 #
 # Usage: ./test-sub-14.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Subscription created with status='trial'.
+#                      Payment record exists with amount_cents=0.
+#                      'acknowledged_at' is set, confirming finality.
 ##############################################################################
 
 set -euo pipefail

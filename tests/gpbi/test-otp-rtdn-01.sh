@@ -1,20 +1,27 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-RTDN-01: Webhook Purchase Completed Test
+# OTP-RTDN-01: Webhook Purchase Completed (One-Time Product)
 # 
-# Purpose: Verify that a ONE_TIME_PRODUCT_PURCHASED webhook is properly 
+# Purpose: Verify that a ONE_TIME_PRODUCT_PURCHASED (Type 1) webhook is properly 
 #          received, validated, and processed by the backend.
 #
-# Usage: ./test-otp-rtdn-01.sh \
-#                                [--token "purchase_token"] [--replay [fixture_file]]
+# Usage: ./test-otp-rtdn-01.sh [--token "purchase_token"] [--replay [fixture_file]]
 #
 # Prerequisites:
-#   - OTP-01 test already completed (payment record created)
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_OTP
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - GOOGLE_VERIFY_WEBHOOK_SIGNATURE=false (for testing)
+#
+# TESTPLAN Reference:
+#   Expected Behavior: 'oneTimeProductNotification' webhook arrives with notificationType=1.
+#                      Backend processes the webhook and returns HTTP 200/204.
+#                      Payment record exists or is created in pay.payments with status='success'.
+#                      Subsequent identical webhooks (same message_id) are handled idempotently via webhook_log.
+#                      Ensures server-to-server reliability and eventual consistency for OTPs.
 ##############################################################################
 
 set -euo pipefail

@@ -3,22 +3,27 @@
 ##############################################################################
 # NET-02: verify_payment Call Fails / Network Timeout
 # 
-# Purpose: Verify that when verify_payment fails or times out, the system
-#          supports retry and eventually achieves correct state.
+# Purpose: Verify that when the initial verify-purchase call fails or times out, 
+#          the system correctly handles subsequent retries and achieves 
+#          the correct state through idempotency.
 #
 # Usage: ./test-net-02.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN/test-token
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: App should display error toast and allow retry.
-#                      User can manually retry verification in app.
-#   Backend State: No DB entry created on first attempt (simulated failure).
-#                  Webhook arrives; cannot find user (yet).
-#                  When retry succeeds: Token registered, subsequent webhooks ok.
+#   Expected Behavior: An initial verification attempt is simulated to fail (e.g., via non-reaching the backend or 5xx simulation).
+#                      A webhook arriving during this intermittent failure period is handled safely (ignored as the token is not yet 'owned').
+#                      A subsequent RETRY of POST /api/v1/verify-purchase successfully registers the token and creates the subscription.
+#                      A follow-up webhook for the same token is then processed successfully, now that the user-binding exists.
+#                      Ensures high reliability through a combination of client-side retries and server-side idempotency/state-merging.
+#                      Validates that the system correctly handles overlapping requests, intermittent failures, and eventual binding.
 ##############################################################################
 
 set -euo pipefail

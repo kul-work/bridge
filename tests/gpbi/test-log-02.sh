@@ -3,25 +3,25 @@
 ##############################################################################
 # LOG-02: Webhook Verification Failure Logging
 # 
-# Purpose: Verify that webhook verification failures are logged with proper
-#          fields (event, reason, message_id, timestamp) at WARN level,
-#          without exposing internal details.
+# Purpose: Verify that webhook verification failures are logged at the 
+#          WARN level with explicit reasons and metadata.
 #
 # Usage: ./test-log-02.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: HTTP 400/403 returned. No user impact.
-#   Log event fields:
-#     - event: webhook_verification_failed
-#     - reason: signature_mismatch | malformed_payload | unknown_type
-#     - message_id: for idempotency tracing (NOT full payload)
-#     - timestamp: ISO8601
-#   Level: WARN (not ERROR, avoids alert spam)
+#   Expected Behavior: Webhooks with invalid signatures or malformed payloads return 4xx status codes.
+#                      A 'webhook_verification_failed' event is logged at the WARN level.
+#                      Logs include explicit reasons: 'signature_mismatch' or 'malformed_payload'.
+#                      No sensitive internal data or raw PII is leaked in the log payload.
+#                      Ensures operational visibility into potential attacks or errors.
 ##############################################################################
 
 set -euo pipefail

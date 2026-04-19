@@ -3,20 +3,23 @@
 ##############################################################################
 # ACC-01: Premium Access Granted for Allowed States
 # 
-# Purpose: Verify that premium access is GRANTED for pay.subscriptions in
-#          allowed states: ACTIVE, IN_GRACE_PERIOD, CANCELED (pre-expiry).
+# Purpose: Verify premium access is GRANTED for paid or recoverable states.
 #
 # Usage: ./test-acc-01.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: Access granted, Premium feature works without error.
-#   Backend Logic: if subscription.state IN [ACTIVE, IN_GRACE_PERIOD, CANCELED]
-#                  and current_time < expiry_time then GRANT_ACCESS
+#   Expected Behavior: GET /api/v1/subscriptions returns active entitlements.
+#                      Allowed States: 'active', 'past_due' (grace), 'cancelled' (pre-expiry).
+#                      Premium features remain accessible within these periods.
+#                      Ensures revenue continuity and avoids premature denial.
 ##############################################################################
 
 set -euo pipefail

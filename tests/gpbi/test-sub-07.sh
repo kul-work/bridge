@@ -1,25 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-07: Slow Card (Pending Renewal) Test
+# SUB-07: Slow Card (Pending Renewal) Lifecycle
 # 
-# Purpose: Verify the behavior of a subscription renewal that starts as PENDING
-#          due to a "Slow Test Card" and later resolves to SUCCESS.
-#          1. Establish an active subscription
-#          2. Simulate Pending Renewal webhook (notificationType 2 + pending status)
-#          3. Verify status remains active (or reflects pending) and date NOT extended
-#          4. Simulate Successful Renewal (resolves to SUCCESS)
-#          5. Verify final status is active and period extended
+# Purpose: Verify handling of renewals starting as PENDING then resolving.
 #
 # Usage: ./test-sub-07.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Period is NOT extended while renewal state is 'PENDING'.
+#                      Subscription remains 'active' but no new credits added.
+#                      Period IS extended once status resolves to 'SUCCESS'.
+#                      Ensures revenue protection and strict access control for deferred funds.
 ##############################################################################
 
 set -euo pipefail

@@ -1,22 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-15: Free Trial - User with No Prior Subscriptions Test
+# SUB-15: Free Trial - User with No Prior Subscriptions
 # 
 # Purpose: Verify the full free trial flow for users with no prior subscriptions:
-#          1. Perform trial purchase verification
-#          2. Verify status changed to "trial" in Bridge DB
-#          3. Verify initial payment amount is 0
+#          Intent Registration -> Trial Verification -> Persistence (0 cents).
 #
 # Usage: ./test-sub-15.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Subscription record created in pay.subscriptions with status='trial'.
+#                      Payment record exists in pay.payments with amount_cents=0.
+#                      Ensures acquisition using trial offers is correctly handled when prior history is empty.
 ##############################################################################
 
 set -euo pipefail

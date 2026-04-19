@@ -1,24 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-23: Pending Purchase Canceled Test
+# SUB-23: Pending Purchase Canceled
 # 
-# Purpose: Verify that when a user cancels a pending purchase before payment
-#          completes, the backend correctly processes the pending_purchase_canceled
-#          webhook and cleans up the pending state.
-#          1. Establish a pending subscription
-#          2. Send subscription.pending_purchase_canceled (notificationType 20)
-#          3. Verify subscription status changed to 'cancelled'
+# Purpose: Verify that when a user cancels a pending purchase, the backend 
+#          correctly processes the pending_purchase_canceled webhook.
 #
 # Usage: ./test-sub-23.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: subscription.pending_purchase_canceled (notificationType 20) is processed.
+#                      Subscription status transitions to 'cancelled' in pay.subscriptions.
+#                      Cleanup of any transient pending metadata is performed.
+#                      Ensures abandonment of pending offers is correctly tracked.
 ##############################################################################
 
 set -euo pipefail
@@ -142,7 +144,7 @@ echo ""
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-23",
-  "test_name": "Subscription Deferred Proration Credit",
+  "test_name": "Pending Purchase Canceled",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,

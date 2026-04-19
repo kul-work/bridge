@@ -3,23 +3,23 @@
 ##############################################################################
 # ACC-03: Token Uniqueness & Fraud Prevention
 #
-# Purpose: Verify that the same purchase token cannot be verified by two
-#          different users (fraud prevention).
+# Purpose: Verify purchase token cannot be verified by different users.
 #
 # Usage: ./test-acc-03.sh
 #
-# Notes:
-#   - The test generates synthetic external_user_id values instead of
-#     depending on pre-existing app accounts in the database.
-#
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - globals.cfg sourced with Bridge API and DB settings
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: User B's verification fails because the token is already
-#                      associated with User A.
+#   Expected Behavior: User A successfully verifies a token (HTTP 200).
+#                      User B attempts verification and is REJECTED (LinkingRequired).
+#                      Database enforces unique binding of (token, provider).
+#                      Prevents token stealing/reuse across accounts.
 ##############################################################################
 
 set -euo pipefail

@@ -1,25 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-19: Restore with Account System (Multi-Account) Test
+# SUB-19: Restore with Account System (Multi-Account Token Isolation)
 # 
 # Purpose: Verify restore behavior when a second app account (User 2) 
 #          attempts to restore a subscription purchased by User 1 
 #          on the same device/Google account.
-#          1. Establish an active subscription for User 1
-#          2. Call the subscription list API for User 2
-#          3. Verify if User 2 is granted access (Strategy dependent)
-#          4. Verify User 1 remains the owner in DB
 #
 # Usage: ./test-sub-19.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: User 1 remains the primary owner of the purchase_token in pay.subscriptions.
+#                      System prevents unauthorized token 'stealing' or automatic reassignment to User 2.
+#                      Ensures account security and prevents sharing exploits across different app logins.
 ##############################################################################
 
 set -euo pipefail

@@ -1,21 +1,24 @@
 #!/bin/bash
 
 ##############################################################################
-# API-01: Rate Limit Headers Test
+# API-01: Rate Limit Headers
 #
-# Purpose: Verify that authenticated API responses include X-RateLimit headers.
+# Purpose: Verify that authenticated API responses include X-RateLimit headers
+#          for client-side throughput management.
 #
 # Usage: ./test-api-01.sh
 #
 # Prerequisites:
-#   - Bridge backend running
-#   - DATABASE_URL configured
-#   - BRIDGE_API_KEY set
+#   - Backend running
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
 #
-# Test Flow:
-#   1. Make authenticated request to /api/v1/agent/balance
-#   2. Inspect headers for X-RateLimit-Limit and X-RateLimit-Remaining
-#   3. Verify headers are present and numeric
+# TESTPLAN Reference:
+#   Expected Behavior: Authenticated API responses include numeric X-RateLimit-Limit 
+#                      and X-RateLimit-Remaining headers.
+#                      Ensures client applications can safely implement 'Retry-After' policies.
+#                      Validates that the rate-limiting middleware is correctly applied.
+#                      Guarantees service stability by providing backpressure signaling.
 ##############################################################################
 
 set -euo pipefail

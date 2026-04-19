@@ -1,24 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-PAUSE-03: Manual Resume from Pause Test
+# SUB-PAUSE-03: Manual Resume from Pause
 #
-# Purpose: Verify that a paused subscription can be manually resumed by the 
-#          user (triggered by Type 1 webhook).
-#          1. Establish a subscription in 'paused' state
-#          2. Send Type 1 webhook (subscription.recovered)
-#          3. Verify status changed back to 'active'
-#          4. Verify google_paused_at is cleared in DB
+# Purpose: Verify paused subscription can be manually resumed by user.
 #
 # Usage: ./test-sub-pause-03.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: subscription.restarted (7) is processed as a resume.
+#                      Subscription status transitions back to 'active'.
+#                      'google_paused_at' timestamp is cleared.
+#                      Ensures users can recover from paused state manually and immediately.
 ##############################################################################
 
 set -euo pipefail

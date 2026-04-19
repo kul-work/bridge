@@ -1,22 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-05: Bridge Subscription Expiration Test
+# SUB-05: Subscription Expiration Lifecycle
 #
-# Purpose: Verify the subscription expiration flow:
-#          1. Establish a cancelled subscription
-#          2. Simulate Google Pub/Sub expiration webhook (notificationType 13)
-#          3. Verify status changed to "expired" in Bridge DB
+# Purpose: Verify final subscription expiration triggered by webhooks.
 #
 # Usage: ./test-sub-05.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Subscription status transitions to 'expired'.
+#                      Access is revoked (status indicates final expiration).
+#                      Historical payment records remain unchanged.
+#                      Validates webhook mapping of notificationType 13 (EXPIRED).
 ##############################################################################
 
 set -euo pipefail

@@ -10,17 +10,21 @@
 # Usage: ./test-whk-01d.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL
-#   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - Bridge database accessible (credentials via globals.cfg)
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN/test-token
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Test uses headers:
-#     * X-Webhook-Verification-Mode: off (skip signature verification)
-#     * X-Webhook-Audience-Mode: off (skip audience validation - dev/local mode)
+#   - Test uses specialized header: 
+#     * X-Webhook-Verification-Mode: off (simulates signature bypass for dev/local testing)
 #
 # TESTPLAN Reference:
-#   Backend Behavior: Code skips audience validation (no check performed),
-#                     Webhook proceeds through normal validation and DB update.
+#   Expected Behavior: Webhook ACCEPTED with HTTP 200/204 despite a mismatched or missing JWT audience.
+#                      Backend logic correctly identifies that 'GOOGLE_VERIFY_AUDIENCE' is set to false and skips strict enforcement.
+#                      Database state (pay.subscriptions, pay.webhook_provider) updated/maintained correctly as if in production.
+#                      Ensures developer velocity in local environments without needing to configure or rotate strict JWT artifacts.
+#                      Validates the existence of a 'bypass' path for non-production environments.
 ##############################################################################
 
 set -euo pipefail

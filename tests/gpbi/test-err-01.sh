@@ -3,23 +3,25 @@
 ##############################################################################
 # ERR-01: Invalid Purchase Token Format
 # 
-# Purpose: Verify that malformed or fake tokens are rejected properly
-#          with no database entries created.
+# Purpose: Verify that malformed or fake purchase tokens are rejected
+#          properly with no database entries created.
 #
 # Usage: ./test-err-01.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - X-Token-Validation-Mode: strict header used in curl requests
 #
 # TESTPLAN Reference:
-#   Expected Behavior: API returns error (400 or 422).
-#   Backend Response: Backend rejects token format validation OR calls
-#                     Google API which returns 404/401.
-#                     No DB entry created.
-#                     Error logged: "Invalid or revoked purchase token".
+#   Expected Behavior: POST /api/v1/verify-purchase returns a 4xx HTTP error for malformed tokens. 
+#                      No database records are created in pay.subscriptions or pay.payments.
+#                      Ensures robustness against invalid, random, or fuzzed token input.
+#                      Validates that input sanitization and early validation logic are effective.
+#                      Guarantees that only syntactically valid tokens reach provider handlers.
 ##############################################################################
 
 set -euo pipefail

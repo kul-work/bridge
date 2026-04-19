@@ -4,26 +4,23 @@
 # WHK-02: Duplicate Webhook Delivery (Idempotency)
 # 
 # Purpose: Verify that duplicate webhooks (same message_id) are handled
-#          idempotently - second webhook returns success but does NOT
-#          create duplicate database entries.
+#          idempotently - returns success but no duplicate DB entries.
 #
 # Usage: ./test-whk-02.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL
-#   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - Bridge database accessible (credentials via globals.cfg)
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Test uses header: X-Webhook-Verification-Mode: off
-#     (Skips signature verification - tests idempotency, not signature validation)
 #
 # TESTPLAN Reference:
-#   Backend Behavior: Backend checks webhook event_id (derived from message_id),
-#                     Uses event_id as idempotency key; skips processing if already recorded,
-#                     No duplicate subscription status update in DB,
-#                     Logs show second attempt as "already processed".
-#   DB Validation: pay.payments table: No duplicate rows for same provider_transaction_id
-#                  (idempotency enforced).
+#   Expected Behavior: Second identical webhook returns HTTP 200/204.
+#                      No duplicate entries are created in the database.
+#                      Backend correctly utilizes 'webhook_log' to track message_ids.
+#                      Ensures resilience against 'at-least-once' delivery.
 ##############################################################################
 
 set -euo pipefail

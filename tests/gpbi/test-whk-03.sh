@@ -3,25 +3,23 @@
 ##############################################################################
 # WHK-03: Out-of-Order Webhook Delivery
 # 
-# Purpose: Verify that backend handles out-of-order webhooks gracefully by
-#          querying Google API as source of truth on each webhook, not
-#          relying on event sequence.
+# Purpose: Verify that backend handles out-of-order webhooks gracefully.
 #
 # Usage: ./test-whk-03.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL
-#   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - Bridge database accessible (credentials via globals.cfg)
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Test uses header: X-Webhook-Verification-Mode: off
-#     (Skips signature verification - tests out-of-order handling, not signatures)
 #
 # TESTPLAN Reference:
-#   Backend Behavior: Backend handles gracefully - each webhook calls 
-#                     get_subscription() to fetch authoritative state from Google API,
-#                     Stores latest state from API, not relying on webhook order,
-#                     Eventual consistency achieved within seconds.
+#   Expected Behavior: Backend achieves eventual consistency regardless of order.
+#                      Authoritative state is fetched from provider API.
+#                      Final database state reflects the actual provider state.
+#                      Ensures robustness against network delivery jitter or delays.
 ##############################################################################
 
 set -euo pipefail

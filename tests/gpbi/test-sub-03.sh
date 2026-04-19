@@ -1,24 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-03: Bridge User-Initiated Cancellation Test
+# SUB-03: User-Initiated Subscription Cancellation
 #
-# Purpose: Verify the user-initiated subscription cancellation flow:
-#          1. Establish an active subscription
-#          2. Simulate Google Pub/Sub cancellation webhook (notificationType 3)
-#          3. Verify status changed to "cancelled" in Bridge DB
-#          4. Verify auto_renewing is set to false
-#          5. Verify cancellation_initiated_at is populated
+# Purpose: Verify the user-initiated subscription cancellation flow via webhook.
 #
 # Usage: ./test-sub-03.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Subscription status transitions to 'cancelled'.
+#                      'auto_renewing' flag is set to false.
+#                      'cancellation_initiated_at' is correctly populated.
+#                      Ensures users can stop future billing while maintaining current period access.
 ##############################################################################
 
 set -euo pipefail

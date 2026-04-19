@@ -3,21 +3,24 @@
 ##############################################################################
 # ERR-06: Webhook Payload Malformed
 # 
-# Purpose: Verify that malformed webhook payloads (invalid JSON, missing fields)
-#          are rejected with HTTP 400 and no database state change.
+# Purpose: Verify that malformed webhook payloads (invalid JSON, missing fields, 
+#          bad base64) are rejected with HTTP 400 and no database state change.
 #
 # Usage: ./test-err-06.sh
 #
 # Prerequisites:
-#   - Backend running with MOCK_EXTERNAL_APIS=false
-#   - DATABASE_URL configured and db accessible
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: HTTP 400 returned.
-#   Backend Response: Backend rejects parsing early.
-#                     Logs error: "Failed to parse webhook payload".
-#                     No DB state change.
+#   Expected Behavior: POST /webhooks/... returns a 400 HTTP error for invalid JSON or missing fields. 
+#                      Decoding failures for base64 fields are correctly caught and rejected.
+#                      No records are created in webhook_log, and no state changes occur.
+#                      Ensures ingress is resilient against data corruption and malformed input.
+#                      Validates that the ingress validation layer identifies schema violations.
 ##############################################################################
 
 set -euo pipefail

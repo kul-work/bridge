@@ -1,22 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# NOTIF-01: Payment Failure & Acknowledgment
+# NOTIF-01: Payment Failure Notification & Acknowledgment
 #
-# Purpose: Verify payment failure sets notification flag, and user can acknowledge it.
+# Purpose: Verify that recoverable payment failures (e.g., account hold) 
+#          trigger user notifications that can be acknowledged via API.
 #
 # Usage: ./test-notif-01.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, GCP_PROJECT_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
+#   - psql installed and in PATH
 #
-# Test Flow:
-#   1. Initial purchase (Active)
-#   2. Trigger Account Hold (simulates payment failure)
-#   3. Verify payment_failure_notification=true via API
-#   4. Call acknowledge endpoint
-#   5. Verify payment_failure_notification=false via API
+# TESTPLAN Reference:
+#   Expected Behavior: A SUBSCRIPTION_ACCOUNT_HOLD (5) webhook is processed.
+#                      The 'payment_failure_notification' flag is set to true.
+#                      A POST /api/v1/subscriptions/{id}/acknowledge call clears the flag.
+#                      Ensures the notification pipeline for recoverable errors is functional.
 ##############################################################################
 
 set -euo pipefail

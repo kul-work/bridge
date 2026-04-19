@@ -1,23 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-06: Re-subscription (After Expiry) Test
+# SUB-06: Re-subscription Lifecycle
 # 
-# Purpose: Verify the full re-subscription flow after expiry:
-#          1. Establish an expired subscription
-#          2. Perform new purchase verification with a NEW token
-#          3. Confirm new subscription linked correctly via google_linked_purchase_token
-#          4. Verify status returned to "active"
+# Purpose: Verify re-subscription after previous expiry via verify-purchase.
 #
 # Usage: ./test-sub-06.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: 'expired' record is reactivated to status='active'.
+#                      'purchase_token' is updated to the NEW token.
+#                      'google_linked_purchase_token' is set to the OLD token.
+#                      Ensures continuity of user subscription history and entitlements.
 ##############################################################################
 
 set -euo pipefail

@@ -3,21 +3,23 @@
 ##############################################################################
 # ACC-02: Premium Access Revoked for Blocked States
 # 
-# Purpose: Verify that premium access is REVOKED for pay.subscriptions in
-#          blocked states: PENDING, ON_HOLD, EXPIRED, REVOKED.
+# Purpose: Verify premium access is REVOKED for blocked states.
 #
 # Usage: ./test-acc-02.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: Access denied, Error shown: "Subscription inactive"
-#                      or "Payment issue", Premium feature returns 403/402.
-#   Backend Logic: if subscription.state IN [PENDING, ON_HOLD, EXPIRED, REVOKED]
-#                  then REVOKE_ACCESS
+#   Expected Behavior: GET /api/v1/subscriptions returns NO entitlements for blocked states.
+#                      Blocked States: 'pending', 'on_hold', 'expired', 'revoked'.
+#                      Premium features are immediately inaccessible.
+#                      Ensures revenue protection and validates entitlement filters.
 ##############################################################################
 
 set -euo pipefail

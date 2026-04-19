@@ -1,23 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-09: Bridge Subscription Revoked (Refund) Test
+# SUB-09: Subscription Revoked (Refund / Voided Purchase)
 #
-# Purpose: Verify the subscription revocation (refund) flow:
-#          1. Establish an active subscription
-#          2. Simulate Voided Purchase webhook (Refund)
-#          3. Verify status changed to "revoked" in Bridge DB
-#          4. Verify payment status updated to "refunded"
+# Purpose: Verify revocation and refund flow via voided purchase webhook.
 #
 # Usage: ./test-sub-09.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Subscription status transitions to 'revoked'.
+#                      'revoked_at' timestamp is correctly populated.
+#                      The payment record in pay.payments is set to status='refunded'.
+#                      Ensures revenue reversal and access revocation are synchronized.
 ##############################################################################
 
 set -euo pipefail

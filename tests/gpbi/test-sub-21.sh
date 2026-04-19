@@ -1,25 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-21: Price Step-Up Consent (Korea Only) Test
+# SUB-21: Price Step-Up Consent (Korea Only)
 # 
 # Purpose: Verify that for South Korean users, the backend correctly handles
-#          the price_step_up_consent_updated webhook when transitioning from
-#          a lower price phase (e.g., free trial) to regular price.
-#          1. Establish a trial subscription
-#          2. Simulate price_step_up_consent_updated (notificationType 22)
-#          3. Simulate price_changed (notificationType 8)
-#          4. Verify final subscription state
+#          the price_step_up_consent_updated webhook when transitioning.
 #
 # Usage: ./test-sub-21.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: price_step_up_consent_updated (notificationType 22) is processed.
+#                      price_changed (notificationType 8) transition is correctly recorded.
+#                      Final subscription state remains valid (active/trial).
+#                      Compliance with South Korea specific billing regulations (consent flows).
 ##############################################################################
 
 set -euo pipefail
@@ -177,7 +178,7 @@ echo ""
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-21",
-  "test_name": "Price Change (Automatic Upgrade)",
+  "test_name": "Price Step-Up Consent (Korea Only)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,

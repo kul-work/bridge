@@ -1,22 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-02: Bridge Subscription Renewal (Automatic) Test
+# SUB-02: Subscription Renewal (Automatic)
 #
-# Purpose: Verify the automatic subscription renewal flow:
-#          1. Establish an active subscription
-#          2. Simulate Google Pub/Sub renewal webhook (notificationType 2)
-#          3. Verify current_period_end was extended in Bridge DB
+# Purpose: Verify the automatic subscription renewal flow triggered by webhooks.
 #
 # Usage: ./test-sub-02.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Subscription status remains 'active'.
+#                      'current_period_end' is extended in pay.subscriptions.
+#                      A new payment record is created in pay.payments with status='success'.
+#                      Ensures recurring revenue cycles are correctly tracked and persistent.
 ##############################################################################
 
 set -euo pipefail

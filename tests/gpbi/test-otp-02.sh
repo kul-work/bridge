@@ -1,18 +1,27 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-02: Declined Payment Test
+# OTP-02: Declined Payment (One-Time Product)
 # 
-# Purpose: Verify that a declined payment (test card that always declines)
-#          is rejected by the payment verification endpoint and no database
-#          entry is created.
+# Purpose: Verify that a declined payment (e.g., test card that always declines) 
+#          is correctly rejected by the payment verification endpoint.
 #
 # Usage: ./test-otp-02.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_OTP
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: POST /api/v1/verify-purchase returns an error (PAYMENT_PROVIDER_ERROR) for declined tokens.
+#                      No payment record is created in pay.payments.
+#                      No record is created in pay.subscriptions.
+#                      Ensures transaction atomicity and prevents awarding products for failed payments.
+#                      Validates correct mapping of provider-level decline reasons to internal error codes.
 ##############################################################################
 
 set -euo pipefail

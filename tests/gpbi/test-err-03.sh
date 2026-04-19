@@ -10,18 +10,18 @@
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - X-Token-Validation-Mode: strict header used in curl requests
 #
 # TESTPLAN Reference:
-#   Expected Behavior: API returns error.
-#   Backend Response: Google API rejects token (valid only 60 days post-expiry).
-#                     Backend returns error: "Purchase token expired".
-#                     No DB entry created.
-#
-# Note: This test simulates an expired token scenario since we can't wait
-#       60+ days in a test environment.
+#   Expected Behavior: POST /api/v1/verify-purchase returns a 4xx HTTP error (Gone/BadRequest) for tokens > 60 days old. 
+#                      No database records are created or updated for expired tokens.
+#                      Ensures legacy or discarded tokens cannot be used to gain fraudulent access.
+#                      Validates strict compliance with provider token retention policies.
+#                      Confirms that the backend correctly identifies 'Gone' status from the provider.
 ##############################################################################
 
 set -euo pipefail

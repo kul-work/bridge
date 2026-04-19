@@ -1,25 +1,30 @@
 #!/bin/bash
 
 ##############################################################################
-# NET-03: Webhook Processing Times Out
+# NET-03: Webhook Processing Times Out / Retries
 # 
-# Purpose: Verify that when webhook processing times out, the backend handles
-#          it safely and Google's retry (with same message_id) is handled 
-#          idempotently.
+# Purpose: Verify that when webhook processing times out or fails on the 
+#          initial attempt, Google's subsequent RETRY (with the same message_id) 
+#          is handled idempotently by the backend.
 #
 # Usage: ./test-net-03.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN/test-token
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: Webhook request should timeout and be retried by Google
-#                      (with backoff).
-#   Backend State: Incomplete webhook processing: State may be partially updated
-#                  or rolled back. Google retries with same message_id; backend
-#                  idempotency key prevents double-processing on retry.
+#   Expected Behavior: An initial webhook attempt is simulated to timeout or fail. 
+#                      Google retries the webhook with the EXACT SAME 'message_id' (as per standard Pub/Sub behavior).
+#                      The backend's idempotency layer (webhook_log) identifies the duplicate request.
+#                      The retry is handled gracefully, ensuring only ONE logical operation occurs (no duplicate payments or status flips).
+#                      Final state: Exactly one subscription record and one webhook_log entry exist for the transaction.
+#                      Ensures absolute resilience against transient processing delays, partial failures, or network jitters in the ingress pipeline.
+#                      Validates that the 'webhook_log' uniqueness constraint for message_id is active and functional.
 ##############################################################################
 
 set -euo pipefail

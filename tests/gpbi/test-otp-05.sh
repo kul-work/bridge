@@ -1,20 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-05: Refund After Purchase Test
+# OTP-05: Refund Lifecycle (One-Time Product)
 # 
-# Purpose: Verify that a refunded OTP purchase is detected and the payment 
-#          status changes to 'refunded' via webhook simulation.
+# Purpose: Verify that a refunded OTP purchase is detected via RTDN and 
+#          the payment status is correctly updated to 'refunded'.
 #
-# Usage: ./test-otp-05.sh \
-#                        [--token "purchase_token"]
+# Usage: ./test-otp-05.sh [--token "purchase_token"]
 #
 # Prerequisites:
-#   - OTP-01 test already completed (payment record created)
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_OTP
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Google webhook signature verification disabled via test header
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Initial purchase succeeds (status='success').
+#                      A 'voidedPurchaseNotification' webhook arrives for the token.
+#                      The payment record in pay.payments transitions to status='refunded'.
+#                      Ensures revenue metrics and user balance are correctly updated upon refund.
 ##############################################################################
 
 set -euo pipefail

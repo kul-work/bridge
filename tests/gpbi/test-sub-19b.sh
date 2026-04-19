@@ -1,25 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-19B: LinkingRequired Response (Different Account Verification)
+# SUB-19B: LinkingRequired Response (Account Conflict)
 # 
-# Purpose: Test the backend's handling of external_account_identifiers hash 
-#          mismatch when a different user attempts to verify another user's 
-#          purchase token.
-#          1. Clean up test users scripts/data
-#          2. User 1 performs verification (owner)
-#          3. User 2 attempts to verify the same token
-#          4. Verify backend returns LinkingRequired
+# Purpose: Test backend handling of external_account_identifiers hash mismatch 
+#          when User 2 attempts to verify User 1's purchase token.
 #
 # Usage: ./test-sub-19b.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: User 2 verification attempt triggers 'LinkingRequired' error.
+#                      Backend detects that the token is already bound to a different external_user_id.
+#                      DB state remains unchanged (User 1 remains primary owner).
+#                      Ensures protection against token takeover and enforces explicit re-binding policies.
 ##############################################################################
 
 set -euo pipefail

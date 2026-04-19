@@ -3,24 +3,28 @@
 ##############################################################################
 # NET-04: Webhook Arrives While verify_payment In-Flight
 # 
-# Purpose: Verify that when webhook and verify_payment are processed
-#          concurrently (race condition), the final state is correct
-#          with no duplication or data loss.
+# Purpose: Verify that when a Real-Time Developer Notification (RTDN) and 
+#          a verify-purchase API call are processed concurrently (race condition), 
+#          the system correctly handles the overlap without duplication or data loss.
 #
 # Usage: ./test-net-04.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: One request succeeds, the other may conflict or be
-#                      idempotent. Final state: Subscription is Active,
-#                      no duplication or data loss.
-#   Backend State: Both requests call get_subscription() concurrently.
-#                  DB update uses subscription_id + user_id as unique key.
-#                  Idempotency key prevents double-state-change.
+#   Expected Behavior: Both requests (verify-purchase and RTDN webhook) are launched simultaneously for a new purchase token.
+#                      The backend uses strict database unique constraints (on purchase_token/provider) and transaction isolation to prevent duplicate records.
+#                      One request successfully creates the 'active' subscription and payment records.
+#                      The other request is gracefully handled as a duplicate or merged into the existing state (idempotency).
+#                      Final state: Exactly one subscription record exists in pay.subscriptions, correctly bound to the user.
+#                      Ensures absolute atomicity and consistency during high-concurrency provider update events.
+#                      Validates the robustness of the combined verification and ingress pipeline under stress.
 ##############################################################################
 
 set -euo pipefail

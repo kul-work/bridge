@@ -1,26 +1,28 @@
 #!/bin/bash
 
 ##############################################################################
-# NET-01: Webhook Arrives Before verify_payment
+# NET-01: Webhook Arrives Before verify_purchase
 # 
-# Purpose: Verify that when a webhook arrives BEFORE the app calls
-#          verify_payment, the system handles it gracefully and achieves
-#          eventual consistency.
+# Purpose: Verify that when a webhook (RTDN) arrives BEFORE the client
+#          calls verify-purchase, the system handles the out-of-order
+#          event gracefully and achieves eventual consistency.
 #
 # Usage: ./test-net-01.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: Webhook is processed but may not find user (safe).
-#                      verify_payment call succeeds and registers token.
-#                      Final state: Premium access granted (eventual consistency).
-#   Backend State: If webhook arrives first: Lookup fails, no action (safe).
-#                  verify_payment call: Token registered in DB.
-#                  Status: Active stored with full subscription details.
+#   Expected Behavior: A SUBSCRIPTION_PURCHASED (4) webhook arrives for a token not yet tied to a user.
+#                      The webhook handler finishes successfully (idempotent 'noop' or placeholder).
+#                      A subsequent POST /api/v1/verify-purchase call for the SAME token links it.
+#                      Final state: Subscription is 'active' and correctly bound to the user.
+#                      Ensures robustness against network race conditions between RTDN and client verification.
 ##############################################################################
 
 set -euo pipefail

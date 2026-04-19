@@ -3,20 +3,26 @@
 ##############################################################################
 # ERR-04: Revoked/Refunded Purchase Token
 # 
-# Purpose: Verify that after a purchase is revoked/refunded, the status
-#          correctly shows revoked/expired and access is revoked.
+# Purpose: Verify that after a purchase is revoked or refunded, the 
+#          backend correctly processes the revocation webhook and 
+#          revokes service access.
 #
 # Usage: ./test-err-04.sh
 #
 # Prerequisites:
-#   - Backend running with MOCK_EXTERNAL_APIS=false
-#   - DATABASE_URL configured and db accessible
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: Status should show revoked/expired. Access revoked.
-#   Backend Response: Backend get_subscription() call to Google returns state
-#                     indicating revocation. DB updated: status → Expired/Revoked.
+#   Expected Behavior: A subscription.revoked (notificationType=12) webhook is successfully processed.
+#                      The subscription status is updated to 'revoked' (or cancelled/expired) in pay.subscriptions.
+#                      Subsequent requests to entitlement endpoints return a 4xx error.
+#                      Ensures refunds and revocations are correctly propagated and enforced.
+#                      Validates idempotency and stale-event suppression logic using event timestamps.
 ##############################################################################
 
 set -euo pipefail

@@ -10,16 +10,19 @@
 # Usage: ./test-whk-06.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL
-#   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - Bridge database accessible (credentials via globals.cfg)
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN/test-token
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Test uses header: X-Webhook-Verification-Mode: off
 #
 # TESTPLAN Reference:
-#   Backend Behavior: Backend checks (purchase_token, event_type) combination.
-#                     If already processed successfully, skips logic even if message_id is new.
-#                     Prevents double-processing if Google sends same logical event.
+#   Expected Behavior: Second renewal webhook (for same token, novel message_id) results in HTTP 200/204.
+#                      No duplicate records are created in pay.webhook_provider or pay.payments.
+#                      Backend logic correctly detects previous processing for the specific token/event tuple.
+#                      Ensures infrastructure stability against duplicate logical notifications even if message_ids differ.
+#                      Validates that the (purchase_token, event_type) unique constraint handles deduplication correctly.
 ##############################################################################
 
 set -euo pipefail

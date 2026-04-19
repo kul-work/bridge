@@ -1,24 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-01: Bridge Initial Subscription Purchase Test
+# SUB-01: Initial Subscription Onboarding Flow
 #
-# Purpose: Verify the full subscription purchase flow:
-#          1. Clean up previous test data
-#          2. Pre-register purchase (POST /api/v1/purchase/register)
-#          3. Verify purchase (POST /api/v1/verify-purchase)
-#          4. Verify status is "active" or "trial" in Bridge DB
-#          5. Verify payment record is acknowledged
+# Purpose: Verify the standard end-to-end subscription onboarding flow:
+#          Intent Registration -> Verification -> Persistence.
 #
 # Usage: ./test-sub-01.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: A new subscription record is created with status 'active'/'trial'.
+#                      A payment record is created in pay.payments with status='success'.
+#                      The purchase is marked as 'acknowledged' (acknowledged_at is set).
+#                      Ensures the baseline onboarding lifecycle works correctly.
 ##############################################################################
 
 set -euo pipefail

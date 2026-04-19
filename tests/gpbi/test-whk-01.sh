@@ -9,13 +9,16 @@
 # Usage: ./test-whk-01.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL
-#   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - Test intentionally sends a bad authorization header. No DB or psql required.
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * WEBHOOK_INGRESS_TOKEN, BRIDGE_API_URL
+#
 # TESTPLAN Reference:
-#   Backend Behavior: Code logs "Pub/Sub signature verification failed",
-#                     Error response: WebhookVerificationFailed,
-#                     Database state unchanged.
+#   Expected Behavior: Webhook REJECTED with HTTP 400/403.
+#                      Backend logs "Pub/Sub signature verification failed".
+#                      Ensures only trusted triggers reach processing logic.
+#                      Validates that auth middleware enforces signature checks.
 ##############################################################################
 
 set -euo pipefail

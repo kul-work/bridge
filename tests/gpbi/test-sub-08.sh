@@ -1,24 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-08: Account Hold (Payment Failure) Test
+# SUB-08: Account Hold (Final Payment Failure)
 # 
-# Purpose: Verify that a subscription that enters Account Hold (after billing 
-#          failure) results in immediate revocation of premium access.
-#          1. Establish an active subscription
-#          2. Simulate Account Hold webhook (notificationType 5 = SUBSCRIPTION_ON_HOLD)
-#          3. Verify status changed to "on_hold" in Bridge DB
-#          4. Verify payment_failure_notification flag is set
+# Purpose: Verify access revocation upon entering Account Hold.
 #
 # Usage: ./test-sub-08.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: Subscription status transitions to 'on_hold'.
+#                      'payment_failure_notification' flag is set to true.
+#                      Access is revoked (on_hold denies active entitlement).
+#                      Validates webhook mapping for notificationType 5 (ACCOUNT_HOLD).
 ##############################################################################
 
 set -euo pipefail

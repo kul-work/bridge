@@ -1,25 +1,26 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-20: Price Change (Opt-In Increase, User Accepts) Test
+# SUB-20: Price Change (Opt-In Increase, User Accepts)
 # 
-# Purpose: Verify that when a developer initiates a price increase requiring
-#          user opt-in, the backend correctly processes the price_change_updated
-#          webhook and handles the user's acceptance.
-#          1. Establish an active subscription
-#          2. Simulate subscription.price_change_updated webhook
-#          3. Simulate user acceptance and renewal with new price
-#          4. Verify payment recorded with updated amount_cents
+# Purpose: Verify that when a user accepts a price increase opt-in, the 
+#          backend correctly records the renewal at the NEW price.
 #
 # Usage: ./test-sub-20.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: subscription.price_change_updated (notificationType 19) is logged.
+#                      Subsequent renewal (notificationType 2) records payment with NEW price.
+#                      Payment amount in pay.payments reflects the increased cents.
+#                      Ensures pricing logic correctly adapts to user-accepted increases.
 ##############################################################################
 
 set -euo pipefail

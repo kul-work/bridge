@@ -3,23 +3,25 @@
 ##############################################################################
 # ERR-02: Subscription ID Mismatch
 # 
-# Purpose: Verify that a valid token with WRONG subscription_id is rejected
-#          with no database entries created.
+# Purpose: Verify that a valid purchase token used with a WRONG 
+#          subscription_id is rejected with no database entries created.
 #
 # Usage: ./test-err-02.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - X-Token-Validation-Mode: strict header used in curl requests
 #
 # TESTPLAN Reference:
-#   Expected Behavior: API returns error.
-#   Backend Response: Backend verifies token against subscription_id with
-#                     Google API. Google rejects mismatch.
-#                     Error: "Token does not match subscription_id".
-#                     No DB entry created.
+#   Expected Behavior: POST /api/v1/verify-purchase returns a 4xx HTTP error when the subscription_id does not match the token's actual SKU. 
+#                      No database records are created in pay.subscriptions or pay.payments for the mismatched ID.
+#                      Ensures tokens are correctly bound to the requested product/SKU.
+#                      Validates that the backend cross-references token metadata with the provided SKU.
+#                      Guarantees SKU integrity and prevents cross-product entitlement fraud.
 ##############################################################################
 
 set -euo pipefail

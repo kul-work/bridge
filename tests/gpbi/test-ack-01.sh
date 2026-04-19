@@ -1,32 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# ACK-01: Subscription ACK on Initial Purchase Test
+# ACK-01: Subscription ACK on Initial Purchase
 # 
-# Purpose: Verify that when a new subscription is purchased, the backend 
-#          immediately calls purchases.pay.subscriptions.acknowledge() and the
-#          acknowledged_at field is set in the database.
+# Purpose: Verify backend immediately calls acknowledge() for new purchases.
 #
 # Usage: ./test-ack-01.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
-#   - DATABASE_URL configured and db accessible
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
-# Test Flow:
-#   1. Clean up any existing subscription for test user
-#   2. Call /api/v1/verify-purchase with new subscription token
-#   3. Verify subscription created with status='active'
-#   4. Verify acknowledged_at is NOT NULL (ACK was called)
-#   5. Check backend logs confirm acknowledge() was called
-#
-# DB Validation (from TESTPLAN):
-#   - pay.payments table: No specific changes
-#   - pay.subscriptions table: acknowledged_at NOT NULL
-#
-# Note: ACK NOT called on renewals (only on initial purchases and resubscribes)
-#       ACK must complete within 3 days or Google refunds automatically
+# TESTPLAN Reference:
+#   Expected Behavior: Subscription created with status='active'.
+#                      'acknowledged_at' is immediately set in pay.payments.
+#                      Backend invokes provider acknowledgment API.
+#                      Ensures compliance with Google's 3-day ACK deadline.
 ##############################################################################
 
 set -euo pipefail

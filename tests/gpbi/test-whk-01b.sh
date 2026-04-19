@@ -9,19 +9,20 @@
 # Usage: ./test-whk-01b.sh
 #
 # Prerequisites:
-#   - Backend running and listening on $BRIDGE_API_URL
-#   - Backend configured with: MOCK_EXTERNAL_APIS=true
-#   - GOOGLE_PUB_SUB_AUDIENCE set (e.g., https://api.yourdomain.com)
-#   - Bridge database accessible (credentials via globals.cfg)
+#   - Backend running with MOCK_EXTERNAL_APIS=true
+#   - globals.cfg sourced with required vars:
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN/test-token
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
-#   - Test uses header: X-Webhook-Verification-Mode: strict
-#     (Forces signature verification regardless of GOOGLE_VERIFY_WEBHOOK_SIGNATURE setting)
+#   - GOOGLE_PUB_SUB_AUDIENCE set (e.g., https://api.yourdomain.com)
 #
 # TESTPLAN Reference:
-#   Backend Behavior: Code logs "JWT audience mismatch: got 'https://different-domain.com',
-#                     expected 'https://api.yourdomain.com'",
-#                     Error response: WebhookVerificationFailed,
-#                     Database state unchanged.
+#   Expected Behavior: Webhook REJECTED with a relevant HTTP 4xx (Unauthorized/BadRequest) status code.
+#                      Backend logs an 'audience mismatch' error, explicitly listing the received vs. expected audience values.
+#                      Database state remains unchanged (no new records in pay.subscriptions or pay.webhook_provider).
+#                      Ensures webhooks are intended for this specific environment and prevents cross-environment replay attacks.
+#                      Validates strict JWT audience claim enforcement in the webhook verification middleware.
 ##############################################################################
 
 set -euo pipefail

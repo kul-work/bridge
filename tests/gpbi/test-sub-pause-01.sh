@@ -1,24 +1,25 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-PAUSE-01: Schedule Pause (Type 11 webhook) Test
+# SUB-PAUSE-01: Schedule Pause (Type 11 webhook)
 #
-# Purpose: Verify that a user can schedule a subscription pause for a future 
-#          date and maintain access until that date arrives.
-#          1. Establish initial active subscription
-#          2. Send Type 11 webhook (subscription.pause_scheduled)
-#          3. Verify status remains 'active' (user retains access)
-#          4. Verify google_pause_scheduled_at is set in DB
+# Purpose: Verify scheduling a subscription pause for a future date.
 #
 # Usage: ./test-sub-pause-01.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars:
-#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN
-#     * PRODUCT_ID_SUB, PROVIDER, PACKAGE_NAME
+#     * PROVIDER, PACKAGE_NAME, PRODUCT_ID_SUB, BRIDGE_APP_ID
+#     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#
+# TESTPLAN Reference:
+#   Expected Behavior: subscription.pause_scheduled (11) is processed.
+#                      Subscription remains 'active' (user retains access).
+#                      'google_pause_scheduled_at' is populated.
+#                      Ensures scheduled lifecycle events are correctly persisted.
 ##############################################################################
 
 set -euo pipefail
