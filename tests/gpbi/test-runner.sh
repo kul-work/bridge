@@ -83,6 +83,7 @@ fi
 
 # Result tracking
 FAILED_SUITES=0
+FAILED_TESTS=0
 SUITES_RUN=0
 ALL_TESTS_RUN_LIST=""
 FAILED_TEST_CODES=""
@@ -171,7 +172,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ OTP-01 Passed${NC}"
     else 
         echo -e "${RED}✗ OTP-01 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES OTP-01"
     fi
     
@@ -182,7 +183,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ SUB-01 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-01 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-01"
     fi
 
@@ -193,7 +194,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ SUB-02 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-02 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-02"
     fi
 
@@ -204,7 +205,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ SUB-03 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-03 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-03"
     fi
 
@@ -215,7 +216,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ SUB-06 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-06 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-06"
     fi
 
@@ -226,7 +227,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ SUB-09 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-09 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-09"
     fi
 
@@ -237,7 +238,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ SUB-19B Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-19B Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-19B"
     fi
 
@@ -248,7 +249,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ SUB-PAUSE-01 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-PAUSE-01 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-PAUSE-01"
     fi
 
@@ -259,7 +260,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ SUB-PAUSE-02 Passed${NC}"
     else 
         echo -e "${RED}✗ SUB-PAUSE-02 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-PAUSE-02"
     fi
 
@@ -270,7 +271,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ WHK-01 Passed${NC}"
     else 
         echo -e "${RED}✗ WHK-01 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES WHK-01"
     fi
 
@@ -281,7 +282,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ WHK-02 Passed${NC}"
     else 
         echo -e "${RED}✗ WHK-02 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES WHK-02"
     fi
 
@@ -292,7 +293,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ ACK-01 Passed${NC}"
     else 
         echo -e "${RED}✗ ACK-01 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES ACK-01"
     fi
  
@@ -303,7 +304,7 @@ run_smoke_tests() {
         echo -e "${GREEN}✓ ERR-01 Passed${NC}"
     else 
         echo -e "${RED}✗ ERR-01 Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES ERR-01"
     fi
 }
@@ -325,7 +326,7 @@ run_replay_test() {
         echo -e "${GREEN}✓ $test_id Passed${NC}"
     else
         echo -e "${RED}✗ $test_id Failed${NC}"
-        FAILED_SUITES=$((FAILED_SUITES + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         FAILED_TEST_CODES="$FAILED_TEST_CODES $test_id"
     fi
     echo ""
@@ -422,11 +423,7 @@ FAILED_TEST_COUNT=$(echo "$CLEAN_FAILS" | tr ',' '\n' | grep -v '^$' | wc -l | t
 echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║                  MASTER EXECUTION SUMMARY                  ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
-if [[ "$SCOPE" == "full" ]]; then
-    echo "Scope: MASTER"
-else
-    echo "Scope: ${SCOPE^^}"
-fi
+echo "Scope: ${SCOPE^^}"
 echo "Total Duration: ${duration}s"
 echo "Suites Executed: $SUITES_RUN"
 echo "Unique Tests Run: $TOTAL_UNIQUE_RUN"
@@ -434,11 +431,13 @@ echo "Unique Tests Run: $TOTAL_UNIQUE_RUN"
 # Beep when done
 powershell -Command "[console]::beep(1000, 500)" 2>/dev/null || echo -e "\a"
 
-if [[ $FAILED_SUITES -eq 0 ]]; then
+if [[ $FAILED_SUITES -eq 0 && $FAILED_TEST_COUNT -eq 0 ]]; then
     echo -e "${GREEN}Result: ALL SUITES PASSED${NC}"
     exit 0
 else
-    echo -e "${RED}Result: FAILURE ($FAILED_SUITES suites failed)${NC}"
-    echo -e "${RED}Failed Tests ($FAILED_TEST_COUNT): $CLEAN_FAILS${NC}"
+    echo -e "${RED}Result: FAILURE ($FAILED_SUITES suite(s) failed, $FAILED_TEST_COUNT test(s) failed)${NC}"
+    if [[ $FAILED_TEST_COUNT -gt 0 ]]; then
+        echo -e "${RED}Failed Tests: $CLEAN_FAILS${NC}"
+    fi
     exit 1
 fi

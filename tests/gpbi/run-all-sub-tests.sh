@@ -107,6 +107,34 @@ echo -e "Failed: ${RED}$FAILED${NC}"
 echo -e "Skipped: ${YELLOW}$SKIPPED${NC}"
 echo ""
 
+# Generate JSON summary for master test runner
+SUITE_ENTRIES=""
+for test_entry in "${TESTS[@]}"; do
+    IFS=':' read -r _ test_id _ <<< "$test_entry"
+    STATUS="${RESULTS[$test_id]:-unknown}"
+    if [[ -n "$SUITE_ENTRIES" ]]; then
+        SUITE_ENTRIES="$SUITE_ENTRIES,"
+    fi
+    SUITE_ENTRIES="$SUITE_ENTRIES
+      \"$test_id\": \"$STATUS\""
+done
+
+cat > sub-suite-summary.json <<EOF
+{
+  "suite": "Subscriptions ($TOTAL Tests)",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "total": $TOTAL,
+  "passed": $PASSED,
+  "failed": $FAILED,
+  "suites": {
+    "sub": {$SUITE_ENTRIES
+    }
+  }
+}
+EOF
+
+echo "Summary saved to: sub-suite-summary.json"
+
 # Beep when done
 powershell -Command "[console]::beep(1000, 500)" 2>/dev/null || echo -e "\a"
 
