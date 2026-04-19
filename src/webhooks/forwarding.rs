@@ -10,14 +10,12 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use chrono::Utc;
 
-#[allow(dead_code)]
 type HmacSha256 = Hmac<Sha256>;
 
 const WEBHOOK_FORWARD_TIMEOUT_SECS: u64 = 10;
 
 /// Forward webhook to app callback URL with HMAC signature
 /// Used for future webhook delivery to app callbacks.
-#[allow(dead_code)]
 pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository + ?Sized>(
     repo: &R,
     app_id: Uuid,
@@ -149,7 +147,6 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
 }
 
 /// Create a webhook delivery and forward it in one step.
-#[allow(dead_code)]
 pub async fn queue_and_forward_webhook<
     R: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + ?Sized,
 >(
@@ -166,7 +163,6 @@ pub async fn queue_and_forward_webhook<
 }
 
 /// Create a webhook provider record, enqueue a delivery, and forward it.
-#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub async fn create_and_forward_webhook<
     R: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + ?Sized,
@@ -199,7 +195,6 @@ pub async fn create_and_forward_webhook<
 }
 
 /// Create HMAC-SHA256 signature for webhook
-#[allow(dead_code)]
 fn create_signature(payload: &str, secret: &str) -> Result<String, BridgeError> {
     // Signature format: HMAC-SHA256(secret, raw JSON payload)
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
