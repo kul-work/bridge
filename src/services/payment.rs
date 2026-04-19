@@ -345,10 +345,11 @@ pub struct SubscriptionDetails {
     pub provider_data: ProviderData,
 }
 
+#[allow(dead_code)]
 impl SubscriptionDetails {
     /// Access Google Play-specific data if present.
     /// Used by google_play provider integration.
-    #[allow(dead_code)]
+    
     pub fn google_play(&self) -> Option<&GooglePlayProviderData> {
         match &self.provider_data {
             ProviderData::GooglePlay(data) => Some(data),
@@ -358,22 +359,18 @@ impl SubscriptionDetails {
 
     // Convenience accessors for frequently used Google Play fields
     /// Used by google_play provider integration.
-    #[allow(dead_code)]
     pub fn google_obfuscated_account_id(&self) -> Option<&str> {
         self.google_play().and_then(|g| g.obfuscated_account_id.as_deref())
     }
     /// Used by google_play provider integration.
-    #[allow(dead_code)]
     pub fn google_linked_purchase_token(&self) -> Option<&str> {
         self.google_play().and_then(|g| g.linked_purchase_token.as_deref())
     }
     /// Used by google_play provider integration.
-    #[allow(dead_code)]
     pub fn google_out_of_app_purchase_context(&self) -> Option<&google_play_models::OutOfAppPurchaseContext> {
         self.google_play().and_then(|g| g.out_of_app_purchase_context.as_ref())
     }
     /// Used by google_play provider integration.
-    #[allow(dead_code)]
     pub fn google_pause_scheduled_at(&self) -> Option<DateTime<Utc>> {
         self.google_play().and_then(|g| g.pause_scheduled_at)
     }
