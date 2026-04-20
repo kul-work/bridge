@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 ##############################################################################
 # WHK-01: Valid Signature Acceptance
@@ -61,9 +62,13 @@ echo "WHK-01: Valid Signature Acceptance"
 echo -e "${YELLOW}========================================${NC}"
 
 # Step 2: Cleanup and setup state
-echo -e "${YELLOW}[2/4] Cleaning up old data for user $USER_ID${NC}"
+echo -e "${YELLOW}[2/4] Cleaning up old data from Bridge DB${NC}"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
+  -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' OR subscription_id = '$SUBSCRIPTION_ID';" > /dev/null 2>&1 || true
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' OR subscription_id = '$SUBSCRIPTION_ID';" > /dev/null 2>&1 || true
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.webhook_provider WHERE provider = 'creem' AND (provider_webhook_id LIKE 'whk-01-%' OR subscription_id = '$SUBSCRIPTION_ID');" > /dev/null 2>&1 || true
 echo -e "${GREEN}✓ Cleaned${NC}"
 
 # Step 3: Trigger Webhook with VALID signature
@@ -110,7 +115,7 @@ fi
 
 # Step 4: Verify DB
 echo -e "${YELLOW}[4/4] Verifying database state${NC}"
-sleep 2 # process time
+sleep 3 # process time
 
 SUBS_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND status = 'active';" -t | tr -d '[:space:]' || echo "")

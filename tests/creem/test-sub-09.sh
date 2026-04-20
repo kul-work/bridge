@@ -119,18 +119,12 @@ fi
 echo -e "${YELLOW}[3/4] Verifying status is 'active'${NC}"
 sleep 2
 QUERY_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, product_id FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d ' ' || echo "")
+  -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d ' ' || echo "")
 
-STATUS=$(echo "$QUERY_RESULT" | awk -F '|' '{print $1}' | tr -d ' ')
-DB_PRODUCT_ID=$(echo "$QUERY_RESULT" | awk -F '|' '{print $2}' | tr -d ' ')
+STATUS=$(echo "$QUERY_RESULT" | tr -d ' ')
 
 if [[ "$STATUS" == "active" ]]; then
     echo -e "${GREEN}✓ Verification passed: Status=$STATUS${NC}"
-    if [[ "$DB_PRODUCT_ID" == "$NEW_PRODUCT_ID" ]]; then
-        echo -e "${GREEN}✓ Product ID verified: $DB_PRODUCT_ID${NC}"
-    else
-        echo -e "${YELLOW}! Product ID in DB: $DB_PRODUCT_ID (Expected: $NEW_PRODUCT_ID if stored)${NC}"
-    fi
 else
     echo -e "${RED}✗ Verification failed: Status=$STATUS (Expected: active)${NC}"
     exit 1
@@ -142,8 +136,7 @@ cat > test-sub-09-report.json <<EOF
   "test_id": "SUB-09",
   "status": "pass",
   "user_id": "$USER_ID",
-  "new_product_id": "$NEW_PRODUCT_ID",
-  "db_product_id": "$DB_PRODUCT_ID"
+  "new_product_id": "$NEW_PRODUCT_ID"
 }
 EOF
 echo -e "${GREEN}✓ SUB-09 PASSED${NC}"

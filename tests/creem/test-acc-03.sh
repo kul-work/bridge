@@ -84,7 +84,7 @@ test_revoked_access() {
     # Check Bridge API
     echo "  Checking Bridge API GET /api/v1/subscriptions..."
     local RESPONSE=$(curl -s -X GET "$APP_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
-      -H "x-api-key: $BRIDGE_API_KEY")
+      -H "Authorization: Bearer $BRIDGE_API_KEY")
     
     local RETURNED_STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | head -n 1 | cut -d'"' -f4 || echo "")
     

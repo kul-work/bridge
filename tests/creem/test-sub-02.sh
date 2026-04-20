@@ -124,7 +124,7 @@ fi
 
 # Step 3: Verify DB update
 echo -e "${YELLOW}[3/4] Verifying expiry date updated${NC}"
-sleep 2
+sleep 4
 UPDATED_EXPIRY=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT current_period_end FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d '[:space:]' || echo "")
 

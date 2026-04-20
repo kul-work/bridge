@@ -1,10 +1,10 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-12: Manual Payment for Existing Sub (Webhook)
+# SUB-12: Subscription Payment Refunded
 # 
-# Purpose: Verify that a Creem payment.success webhook correctly records 
-#          a payment for a user with an existing active subscription.
+# Purpose: Verify that a Creem refund.created webhook correctly records 
+#          a refund for a user with an existing active subscription.
 #
 # Usage: ./test-sub-12.sh --user-id "test_user"
 #
@@ -79,10 +79,10 @@ REFUND_ID="ref_sub_12_$(date +%s)"
 CHARGE_ID="ch_sub_12_$(date +%s)"
 
 # Create a dummy payment to refund in pay.payments
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "INSERT INTO pay.payments (external_user_id, provider, provider_transaction_id, subscription_id, amount_cents, currency, status, created_at, app_id) \
-      VALUES ('$USER_ID', 'creem', '$CHARGE_ID', '$SUBSCRIPTION_ID', 2999, 'USD', 'success', NOW(), '$BRIDGE_APP_ID') \
-      ON CONFLICT (provider, provider_transaction_id) DO NOTHING;" > /dev/null
+    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+      -c "INSERT INTO pay.payments (external_user_id, provider, provider_transaction_id, subscription_id, amount_cents, currency, status, created_at, app_id) \
+          VALUES ('$USER_ID', 'creem', '$CHARGE_ID', '$SUBSCRIPTION_ID', 2999, 'USD', 'success', NOW(), '$BRIDGE_APP_ID') \
+          ON CONFLICT (app_id, provider, provider_transaction_id) DO NOTHING;" > /dev/null
 
 PAYLOAD=$(cat <<EOF
 {

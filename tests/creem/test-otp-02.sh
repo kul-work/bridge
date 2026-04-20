@@ -30,7 +30,7 @@ NC='\033[0m'
 
 # Defaults
 TIMESTAMP=$(date +%s)
-EMAIL="all_user_$TIMESTAMP@example.com"
+EMAIL="creem_otp_user_$TIMESTAMP@example.com"
 USER_ID=""
 
 # Parse arguments
@@ -57,71 +57,92 @@ if [[ -z "$USER_ID" ]]; then
 fi
 
 echo -e "${YELLOW}========================================${NC}"
-echo "OTP-02: Sync Redirect Verification"
+echo "OTP-02: Refund Processed (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
 
-# Step 1: User Identity
-echo -e "${YELLOW}[1/4] Using External User ID: $USER_ID${NC}"
-echo -e "${GREEN}✓ Ready${NC}"
+# Step 1: Ensure existing payment exists (from OTP-01)
+echo -e "${YELLOW}[1/4] Checking for existing payment to refund${NC}"
+CHECKOUT_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "SELECT purchase_token FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 
-# Step 2: Cleanup
-echo -e "${YELLOW}[2/4] Cleaning up old data from Bridge DB${NC}"
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" > /dev/null 2>&1 || true
-echo -e "${GREEN}✓ Cleaned${NC}"
+if [[ -z "$CHECKOUT_ID" ]]; then
+    echo -e "${YELLOW}No payment found. Running OTP-01 first...${NC}"
+    ./test-otp-01.sh --user-id "$USER_ID"
+    
+    CHECKOUT_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+      -c "SELECT purchase_token FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
+fi
 
-# Step 3: Simulate Redirect URL
-# Creem redirects to success_url?checkout_id=...&order_id=...&signature=...
-CHECKOUT_ID="chk_sync_$(date +%s)"
-ORDER_ID="ord_sync_$(date +%s)"
+if [[ -z "$CHECKOUT_ID" ]]; then
+    echo -e "${RED}✗ No successful payment found to refund${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ Targeted Checkout: $CHECKOUT_ID${NC}"
 
-# Construct string for signing (params sorted alphabetically, joined by &)
-SIGNING_STRING="checkout_id=$CHECKOUT_ID&customer_id=cust_creem_01&order_id=$ORDER_ID&product_id=$PRODUCT_ID_OTP"
-SIGNATURE=$(echo -n "$SIGNING_STRING" | openssl dgst -sha256 -hmac "$CREEM_WEBHOOK_SECRET" | sed 's/^.* //')
+# Step 2: Trigger Webhook
+echo -e "${YELLOW}[2/4] Sending payment.refunded webhook to Bridge${NC}"
+EVENT_ID="evt_refund_02_$(date +%s)"
+PAYLOAD=$(cat <<EOF
+{
+  "id": "$EVENT_ID",
+  "eventType": "payment.refunded",
+  "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "object": {
+    "id": "ref_$(date +%s)",
+    "checkout_id": "$CHECKOUT_ID",
+    "customer": {
+      "email": "$EMAIL",
+      "id": "cust_creem_02"
+    },
+    "metadata": {
+      "user_id": "$USER_ID"
+    },
+    "product_id": "$PRODUCT_ID_OTP",
+    "status": "refunded",
+    "amount": 2999
+  }
+}
+EOF
+)
 
-echo -e "${YELLOW}[3/4] Calling success_url with signature fallback${NC}"
-# We call the /api/checkout/verify or similar endpoint if Bridge has a dedicated verification endpoint
-# Based on legacy script, it calls /story which seems to be a success redirect handler
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET \
-  "$APP_URL/story?checkout_id=$CHECKOUT_ID&customer_id=cust_creem_01&order_id=$ORDER_ID&product_id=$PRODUCT_ID_OTP&signature=$SIGNATURE" \
-  -H "X-External-User-ID: $USER_ID")
+# Use HMAC-SHA256 with Creem Webhook Secret
+SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$CREEM_WEBHOOK_SECRET" | sed 's/^.* //')
 
-if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "302" ]]; then
-    echo -e "${GREEN}✓ Verification call accepted (HTTP $HTTP_CODE)${NC}"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+  "$APP_URL/webhooks/$WEBHOOK_TOKEN/creem" \
+  -H "Content-Type: application/json" \
+  -H "creem-signature: $SIGNATURE" \
+  -d "$PAYLOAD")
+
+if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" || "$HTTP_CODE" == "204" ]]; then
+    echo -e "${GREEN}✓ Webhook accepted (HTTP $HTTP_CODE)${NC}"
 else
-    echo -e "${RED}✗ Verification call failed (HTTP $HTTP_CODE)${NC}"
+    echo -e "${RED}✗ Webhook failed (HTTP $HTTP_CODE)${NC}"
     exit 1
 fi
 
-# Step 4: Verify payment or activation in DB
-echo -e "${YELLOW}[4/4] Verifying record in DB${NC}"
-sleep 2
-# Some systems might create a payment record directly or an 'active' one-time-sub
-# We'll check both pay.payments and pay.subscriptions
-RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND provider_transaction_id = '$ORDER_ID';" -t | tr -d '[:space:]' || echo "")
+# Step 3: Verify DB
+echo -e "${YELLOW}[3/4] Verifying Bridge pay.payments table for 'refunded' status${NC}"
+sleep 3 # Allow async processing
+STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "SELECT status FROM pay.payments WHERE purchase_token = '$CHECKOUT_ID' LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 
-if [[ -z "$RESULT" ]]; then
-    # Maybe it was stored in subscriptions (legacy behavior for granting access)
-    RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-      -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID_OTP';" -t | tr -d '[:space:]' || echo "")
-fi
-
-if [[ -n "$RESULT" ]]; then
-    echo -e "${GREEN}✓ Record verified: Status=$RESULT${NC}"
+if [[ "$STATUS" == "refunded" ]]; then
+    echo -e "${GREEN}✓ Payment verified: Status=$STATUS${NC}"
 else
-    echo -e "${RED}✗ No record found in DB after sync verification${NC}"
-    # Note: If MOCK_EXTERNAL_APIS is true, it might work; otherwise, might need webhook
+    echo -e "${RED}✗ Unexpected status: Status=$STATUS (expected 'refunded')${NC}"
     exit 1
 fi
 
-# Report
+# Step 4: Report
 cat > test-otp-02-report.json <<EOF
 {
   "test_id": "OTP-02",
   "status": "pass",
   "user_id": "$USER_ID",
-  "db_status": "$RESULT"
+  "checkout_id": "$CHECKOUT_ID",
+  "http_code": $HTTP_CODE,
+  "db_status": "$STATUS"
 }
 EOF
 echo -e "${GREEN}✓ OTP-02 PASSED${NC}"

@@ -66,7 +66,7 @@ echo -e "${YELLOW}[1/2] Attempting billing portal call with invalid subscription
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$APP_URL/api/v1/subscriptions/invalid_sub_123/portal?external_user_id=$USER_ID" \
   -H "Content-Type: application/json" \
-  -H "x-api-key: $BRIDGE_API_KEY")
+  -H "Authorization: Bearer $BRIDGE_API_KEY")
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | head -n -1)

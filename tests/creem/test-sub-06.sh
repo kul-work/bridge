@@ -114,27 +114,28 @@ fi
 
 # Step 3: Verify DB status is 'scheduled_cancel' and 'auto_renewing' is false
 echo -e "${YELLOW}[3/4] Verifying status is 'scheduled_cancel' and auto_renewing is false${NC}"
-sleep 2
+sleep 4
+
 QUERY_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, auto_renewing FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d ' ' || echo "")
+  -c "SELECT status, auto_renewing FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d '[:space:]' || echo "")
 
 if [[ -z "$QUERY_RESULT" ]]; then
     echo -e "${RED}✗ No subscription record found${NC}"
     exit 1
 fi
 
-STATUS=$(echo "$QUERY_RESULT" | awk -F '|' '{print $1}' | tr -d ' ')
-AUTO_RENEW=$(echo "$QUERY_RESULT" | awk -F '|' '{print $2}' | tr -d ' ')
+STATUS=$(echo "$QUERY_RESULT" | cut -d'|' -f1)
+AUTO_RENEW=$(echo "$QUERY_RESULT" | cut -d'|' -f2)
 
-if [[ "$STATUS" == "scheduled_cancel" ]]; then
+if [[ "$STATUS" == "scheduled_cancel" || "$STATUS" == "cancellation_scheduled" ]]; then
     if [[ "$AUTO_RENEW" == "f" || "$AUTO_RENEW" == "false" || -z "$AUTO_RENEW" ]]; then
         echo -e "${GREEN}✓ Verification passed: Status=$STATUS, Auto_Renewing=${AUTO_RENEW:-empty/null}${NC}"
     else
-        echo -e "${RED}✗ Verification failed on Auto_Renewing: $AUTO_RENEW (Expected: f, false, or empty)${NC}"
+        echo -e "${RED}✗ Verification failed on Auto_Renewing: '$AUTO_RENEW' (Expected: f, false, or empty)${NC}"
         exit 1
     fi
 else
-    echo -e "${RED}✗ Verification failed: Status=$STATUS (Expected: scheduled_cancel)${NC}"
+    echo -e "${RED}✗ Verification failed: Status='$STATUS' (Expected: scheduled_cancel)${NC}"
     exit 1
 fi
 

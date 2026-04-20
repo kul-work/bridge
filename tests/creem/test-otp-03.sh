@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-03: Failed Payment Processing (Webhook)
+# OTP-03: Failed Payment (Webhook)
 # 
 # Purpose: Verify that a Creem payment.failed webhook is properly 
 #          processed, updating the payment record to 'failed'.
@@ -57,57 +57,36 @@ if [[ -z "$USER_ID" ]]; then
 fi
 
 echo -e "${YELLOW}========================================${NC}"
-echo "OTP-03: Refund Creation (Webhook)"
+echo "OTP-03: Failed Payment (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
 
-# Step 1: Ensure existing payment exists (from OTP-01)
-echo -e "${YELLOW}[1/4] Checking for existing payment to refund${NC}"
-TX_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "SELECT provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
-
-if [[ -z "$TX_ID" ]]; then
-    echo -e "${YELLOW}No payment found. Running OTP-01 first...${NC}"
-    ./test-otp-01.sh --user-id "$USER_ID"
-    
-    TX_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-      -c "SELECT provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
-fi
-
-if [[ -z "$TX_ID" ]]; then
-    echo -e "${RED}✗ No successful payment found to refund${NC}"
-    exit 1
-fi
-echo -e "${GREEN}✓ Targeted Transaction: $TX_ID${NC}"
-
-# Step 2: Send refund.created webhook
-echo -e "${YELLOW}[2/4] Sending refund.created webhook${NC}"
-EVENT_ID="evt_refund_$(date +%s)"
+# Step 1: Trigger Webhook
+echo -e "${YELLOW}[1/3] Sending payment.failed webhook to Bridge${NC}"
+EVENT_ID="evt_fail_03_$(date +%s)"
+CHECKOUT_ID="chk_fail_03_$(date +%s)"
 PAYLOAD=$(cat <<EOF
 {
   "id": "$EVENT_ID",
-  "eventType": "refund.created",
+  "eventType": "payment.failed",
   "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "object": {
-    "id": "ref_order_03_$(date +%s)",
-    "order_id": "$TX_ID",
+    "id": "$CHECKOUT_ID",
     "customer": {
-        "email": "$EMAIL",
-        "id": "cust_creem_03"
+      "email": "$EMAIL",
+      "id": "cust_creem_03"
     },
-    "checkout": {
-      "id": "ch_test_$(date +%s)",
-      "metadata": {
-        "user_id": "$USER_ID"
-      }
+    "metadata": {
+      "user_id": "$USER_ID"
     },
     "product_id": "$PRODUCT_ID_OTP",
-    "amount": 2999,
-    "status": "succeeded"
+    "status": "failed",
+    "amount": 2999
   }
 }
 EOF
 )
 
+# Use HMAC-SHA256 with Creem Webhook Secret
 SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$CREEM_WEBHOOK_SECRET" | sed 's/^.* //')
 
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
@@ -123,26 +102,27 @@ else
     exit 1
 fi
 
-# Step 3: Verify DB status is 'refunded'
-echo -e "${YELLOW}[3/4] Verifying payment status is 'refunded'${NC}"
-sleep 2
+# Step 2: Verify DB
+echo -e "${YELLOW}[2/3] Verifying Bridge pay.payments table for 'failed' status${NC}"
+sleep 3 # Allow async processing
 STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND provider_transaction_id = '$TX_ID' LIMIT 1;" -t | tr -d '[:space:]' || echo "")
+  -c "SELECT status FROM pay.payments WHERE purchase_token = '$CHECKOUT_ID' LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 
-if [[ "$STATUS" == "refunded" ]]; then
-    echo -e "${GREEN}✓ Status verified: $STATUS${NC}"
+if [[ "$STATUS" == "failed" ]]; then
+    echo -e "${GREEN}✓ Payment verified: Status=$STATUS${NC}"
 else
-    echo -e "${RED}✗ Unexpected status: $STATUS (Expected: refunded)${NC}"
+    echo -e "${RED}✗ Unexpected status: Status=$STATUS (expected 'failed')${NC}"
     exit 1
 fi
 
-# Step 4: Report
+# Step 3: Report
 cat > test-otp-03-report.json <<EOF
 {
   "test_id": "OTP-03",
   "status": "pass",
   "user_id": "$USER_ID",
-  "event_id": "$EVENT_ID",
+  "checkout_id": "$CHECKOUT_ID",
+  "http_code": $HTTP_CODE,
   "db_status": "$STATUS"
 }
 EOF

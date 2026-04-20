@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-04: Partially Refunded Processing (Webhook)
+# OTP-04: Partially Refunded (Webhook)
 # 
 # Purpose: Verify that a Creem payment.partially_refunded webhook is properly 
 #          processed, updating the payment record to 'partially_refunded'.
@@ -57,28 +57,39 @@ if [[ -z "$USER_ID" ]]; then
 fi
 
 echo -e "${YELLOW}========================================${NC}"
-echo "OTP-04: Failed/Declined Payment (Webhook)"
+echo "OTP-04: Partially Refunded (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
 
-# Step 1: User Identity
-echo -e "${YELLOW}[1/4] Using External User ID: $USER_ID${NC}"
-echo -e "${GREEN}✓ Ready${NC}"
+# Step 1: Ensure existing payment exists (from OTP-01)
+echo -e "${YELLOW}[1/4] Checking for existing payment to partially refund${NC}"
+CHECKOUT_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "SELECT purchase_token FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 
-# Step 2: Record Initial State
-echo -e "${YELLOW}[2/4] Recording initial payment count (success only)${NC}"
-COUNT_BEFORE=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success';" -t | tr -d '[:space:]' || echo "0")
+if [[ -z "$CHECKOUT_ID" ]]; then
+    echo -e "${YELLOW}No payment found. Running OTP-01 first...${NC}"
+    ./test-otp-01.sh --user-id "$USER_ID"
+    
+    CHECKOUT_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+      -c "SELECT purchase_token FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
+fi
 
-# Step 3: Trigger Webhook with FAILED status
-echo -e "${YELLOW}[3/4] Sending checkout.failed webhook${NC}"
-EVENT_ID="evt_fail_$(date +%s)"
+if [[ -z "$CHECKOUT_ID" ]]; then
+    echo -e "${RED}✗ No successful payment found to partially refund${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ Targeted Checkout: $CHECKOUT_ID${NC}"
+
+# Step 2: Trigger Webhook
+echo -e "${YELLOW}[2/4] Sending payment.partially_refunded webhook to Bridge${NC}"
+EVENT_ID="evt_part_refund_04_$(date +%s)"
 PAYLOAD=$(cat <<EOF
 {
   "id": "$EVENT_ID",
-  "eventType": "checkout.failed",
+  "eventType": "payment.partially_refunded",
   "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "object": {
-    "id": "chk_failed_04_$(date +%s)",
+    "id": "pref_$(date +%s)",
+    "checkout_id": "$CHECKOUT_ID",
     "customer": {
       "email": "$EMAIL",
       "id": "cust_creem_04"
@@ -87,12 +98,14 @@ PAYLOAD=$(cat <<EOF
       "user_id": "$USER_ID"
     },
     "product_id": "$PRODUCT_ID_OTP",
-    "status": "failed"
+    "status": "partially_refunded",
+    "amount": 1499
   }
 }
 EOF
 )
 
+# Use HMAC-SHA256 with Creem Webhook Secret
 SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$CREEM_WEBHOOK_SECRET" | sed 's/^.* //')
 
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
@@ -108,26 +121,28 @@ else
     exit 1
 fi
 
-# Step 4: Verify Response and DB
-echo -e "${YELLOW}[4/4] Verifying database state unchanged for success count${NC}"
-sleep 2
-COUNT_AFTER=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success';" -t | tr -d '[:space:]' || echo "0")
+# Step 3: Verify DB
+echo -e "${YELLOW}[3/4] Verifying Bridge pay.payments table for 'partially_refunded' status${NC}"
+sleep 3 # Allow async processing
+STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "SELECT status FROM pay.payments WHERE purchase_token = '$CHECKOUT_ID' LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 
-if [[ "$COUNT_BEFORE" == "$COUNT_AFTER" ]]; then
-    echo -e "${GREEN}✓ Verify succeeded: No new successful payments recorded.${NC}"
+if [[ "$STATUS" == "partially_refunded" ]]; then
+    echo -e "${GREEN}✓ Payment verified: Status=$STATUS${NC}"
 else
-    echo -e "${RED}✗ Verify failed: Database state changed! (Before: $COUNT_BEFORE, After: $COUNT_AFTER)${NC}"
+    echo -e "${RED}✗ Unexpected status: Status=$STATUS (expected 'partially_refunded')${NC}"
     exit 1
 fi
 
-# Report
+# Step 4: Report
 cat > test-otp-04-report.json <<EOF
 {
   "test_id": "OTP-04",
   "status": "pass",
   "user_id": "$USER_ID",
-  "notes": "Failed payments should not produce successful entitlement records"
+  "checkout_id": "$CHECKOUT_ID",
+  "http_code": $HTTP_CODE,
+  "db_status": "$STATUS"
 }
 EOF
 echo -e "${GREEN}✓ OTP-04 PASSED${NC}"

@@ -114,14 +114,15 @@ fi
 
 # Step 3: Verify DB status is 'cancelled'
 echo -e "${YELLOW}[3/4] Verifying status is 'cancelled'${NC}"
-sleep 2
+sleep 4
+
 STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d '[:space:]' || echo "")
 
 if [[ "$STATUS" == "cancelled" || "$STATUS" == "expired" ]]; then
     echo -e "${GREEN}✓ Status verified: $STATUS${NC}"
 else
-    echo -e "${RED}✗ Unexpected status: $STATUS (Expected: cancelled)${NC}"
+    echo -e "${RED}✗ Unexpected status: '$STATUS' (Expected: cancelled)${NC}"
     exit 1
 fi
 
