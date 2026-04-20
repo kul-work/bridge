@@ -2,18 +2,21 @@
 
 ##############################################################################
 # OTP-04: Failed/Declined Payment (Webhook)
+# 
+# Purpose: Verify that a Creem checkout.failed webhook does not create 
+#          a successful payment record.
+#
+# Usage: ./test-otp-04.sh --user-id "test_user"
+#
+# Prerequisites:
+#   - Backend running and accessible at $BRIDGE_API_URL
+#   - globals.cfg sourced
 ##############################################################################
 
 set -euo pipefail
 
 # Source global configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/.env" ]; then
-    # Load variables from .env
-    set -a
-    source "$SCRIPT_DIR/.env"
-    set +a
-fi
 source "$SCRIPT_DIR/globals.cfg"
 
 # Colors for output
@@ -23,22 +26,15 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Defaults
-DB_URL="$DATABASE_URL"
-EMAIL=""
-
-# Database password
-export PGPASSWORD="${DATABASE_PASSWORD:-}"
-if [[ -z "$PGPASSWORD" ]]; then
-    # Fallback to extraction from URL if not set explicitly
-    export PGPASSWORD="${DB_URL##*:}"
-    export PGPASSWORD="${PGPASSWORD%%@*}"
-fi
+TIMESTAMP=$(date +%s)
+EMAIL="creem_otp_user_$TIMESTAMP@example.com"
+USER_ID="test_otp_user_$TIMESTAMP"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
+        --user-id)
+            USER_ID="$2"
             shift 2
             ;;
         *)
@@ -48,30 +44,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    exit 1
-fi
-
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-04: Failed/Declined Payment (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
 
-# Step 1: Fetch user_id
-echo -e "${YELLOW}[1/4] Fetching user_id for: $EMAIL${NC}"
-USER_ID=$(timeout 5 psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT clerk_id FROM users WHERE email = '$EMAIL';" -t 2>&1 || true)
-USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-
-if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ User not found or DB error${NC}"
-    echo "$USER_ID"
-    exit 1
-fi
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+# Step 1: User Identity
+echo -e "${YELLOW}[1/4] Using External User ID: $USER_ID${NC}"
+echo -e "${GREEN}✓ Ready${NC}"
 
 # Step 2: Record Initial State
-echo -e "${YELLOW}[2/4] Recording initial payment count${NC}"
-COUNT_BEFORE=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM payments WHERE clerk_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID_OTP';" -t 2>/dev/null | tr -d ' ')
+echo -e "${YELLOW}[2/4] Recording initial payment count (success only)${NC}"
+COUNT_BEFORE=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success';" -t | tr -d '[:space:]' || echo "0")
 
 # Step 3: Trigger Webhook with FAILED status
 echo -e "${YELLOW}[3/4] Sending checkout.failed webhook${NC}"
@@ -80,10 +64,12 @@ PAYLOAD=$(cat <<EOF
 {
   "id": "$EVENT_ID",
   "eventType": "checkout.failed",
+  "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "object": {
-    "id": "chk_failed_01",
+    "id": "chk_failed_04_$(date +%s)",
     "customer": {
-      "email": "$EMAIL"
+      "email": "$EMAIL",
+      "id": "cust_creem_04"
     },
     "metadata": {
       "user_id": "$USER_ID"
@@ -98,26 +84,37 @@ EOF
 SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$CREEM_WEBHOOK_SECRET" | sed 's/^.* //')
 
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-  "$APP_URL/webhooks/creem" \
+  "$APP_URL/webhooks/$WEBHOOK_TOKEN/creem" \
   -H "Content-Type: application/json" \
   -H "creem-signature: $SIGNATURE" \
   -d "$PAYLOAD")
 
+if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" || "$HTTP_CODE" == "204" ]]; then
+    echo -e "${GREEN}✓ Webhook accepted (HTTP $HTTP_CODE)${NC}"
+else
+    echo -e "${RED}✗ Webhook failed (HTTP $HTTP_CODE)${NC}"
+    exit 1
+fi
+
 # Step 4: Verify Response and DB
-echo -e "${YELLOW}[4/4] Verifying database state unchanged${NC}"
-COUNT_AFTER=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM payments WHERE clerk_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID_OTP' AND status = 'success';" -t 2>/dev/null | tr -d ' ')
+echo -e "${YELLOW}[4/4] Verifying database state unchanged for success count${NC}"
+sleep 2
+COUNT_AFTER=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success';" -t | tr -d '[:space:]' || echo "0")
 
 if [[ "$COUNT_BEFORE" == "$COUNT_AFTER" ]]; then
     echo -e "${GREEN}✓ Verify succeeded: No new successful payments recorded.${NC}"
 else
-    echo -e "${RED}✗ Verify failed: Database state changed!${NC}"
+    echo -e "${RED}✗ Verify failed: Database state changed! (Before: $COUNT_BEFORE, After: $COUNT_AFTER)${NC}"
     exit 1
 fi
 
+# Report
 cat > test-otp-04-report.json <<EOF
 {
   "test_id": "OTP-04",
   "status": "pass",
+  "user_id": "$USER_ID",
   "notes": "Failed payments should not produce successful entitlement records"
 }
 EOF

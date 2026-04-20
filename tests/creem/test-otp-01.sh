@@ -6,7 +6,7 @@
 # Purpose: Verify that a successful Creem checkout.completed webhook is 
 #          properly verified and stored in the database with status 'success'.
 #
-# Usage: ./test-otp-01.sh
+# Usage: ./test-otp-01.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
@@ -33,10 +33,6 @@ USER_ID="test_otp_user_$TIMESTAMP"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
-            shift 2
-            ;;
         --user-id)
             USER_ID="$2"
             shift 2

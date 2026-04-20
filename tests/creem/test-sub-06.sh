@@ -6,24 +6,17 @@
 # Purpose: Verify that a Creem subscription.scheduled_cancel webhook properly 
 #          updates status to 'scheduled_cancel' and auto_renewing=false.
 #
-# Usage: ./test-sub-06.sh --email "user@example.com"
+# Usage: ./test-sub-06.sh --user-id "test_user"
 #
 # Prerequisites:
-#   - Backend running and accessible at $APP_URL
-#   - Existing active subscription for the user (run SUB-01 first)
-#   - psql installed and database accessible
+#   - Backend running and accessible at $BRIDGE_API_URL
+#   - globals.cfg sourced
 ##############################################################################
 
 set -euo pipefail
 
 # Source global configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/.env" ]; then
-    # Load variables from .env
-    set -a
-    source "$SCRIPT_DIR/.env"
-    set +a
-fi
 source "$SCRIPT_DIR/globals.cfg"
 
 # Colors for output
@@ -33,22 +26,15 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Defaults
-DB_URL="$DATABASE_URL"
-EMAIL=""
-
-# Database password
-export PGPASSWORD="${DATABASE_PASSWORD:-}"
-if [[ -z "$PGPASSWORD" ]]; then
-    # Fallback to extraction from URL if not set explicitly
-    export PGPASSWORD="${DB_URL##*:}"
-    export PGPASSWORD="${PGPASSWORD%%@*}"
-fi
+TIMESTAMP=$(date +%s)
+EMAIL="creem_user_$TIMESTAMP@example.com"
+USER_ID="test_creem_user_$TIMESTAMP"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
+        --user-id)
+            USER_ID="$2"
             shift 2
             ;;
         *)
@@ -58,33 +44,21 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    exit 1
-fi
-
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-06: Scheduled Cancellation (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
 
 # Step 1: Ensure active subscription exists
 echo -e "${YELLOW}[1/4] Checking for existing active subscription${NC}"
-USER_ID=$(timeout 5 psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT clerk_id FROM users WHERE email = '$EMAIL';" -t 2>&1 || true)
-USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
+SUB_EXISTS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT id FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID' AND status = 'active';" -t | tr -d '[:space:]' || echo "")
 
-if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ User not found or DB error${NC}"
-    echo "$USER_ID"
-    exit 1
-fi
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
-
-SUB_EXISTS=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT COUNT(*) FROM subscriptions WHERE clerk_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID' AND status = 'active';" -t 2>/dev/null | tr -d ' ')
-
-if [[ "$SUB_EXISTS" == "0" ]]; then
+if [[ -z "$SUB_EXISTS" ]]; then
     echo -e "${YELLOW}No active sub found for $USER_ID. Running SUB-01 first...${NC}"
-    ./test-sub-01.sh --email "$EMAIL"
+    ./test-sub-01.sh --user-id "$USER_ID"
 fi
+
+echo -e "${GREEN}✓ Ready${NC}"
 
 # Step 2: Trigger scheduled_cancel Webhook
 echo -e "${YELLOW}[2/4] Sending subscription.scheduled_cancel webhook${NC}"
@@ -94,10 +68,12 @@ PAYLOAD=$(cat <<EOF
 {
   "id": "$EVENT_ID",
   "eventType": "subscription.scheduled_cancel",
+  "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "object": {
     "id": "$SUBSCRIPTION_ID",
     "customer": {
-      "email": "$EMAIL"
+      "email": "$EMAIL",
+      "id": "cust_creem_06"
     },
     "metadata": {
       "user_id": "$USER_ID"
@@ -112,12 +88,12 @@ EOF
 SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$CREEM_WEBHOOK_SECRET" | sed 's/^.* //')
 
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-  "$APP_URL/webhooks/creem" \
+  "$APP_URL/webhooks/$WEBHOOK_TOKEN/creem" \
   -H "Content-Type: application/json" \
   -H "creem-signature: $SIGNATURE" \
   -d "$PAYLOAD")
 
-if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "204" ]]; then
+if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" || "$HTTP_CODE" == "204" ]]; then
     echo -e "${GREEN}✓ Webhook accepted (HTTP $HTTP_CODE)${NC}"
 else
     echo -e "${RED}✗ Webhook failed (HTTP $HTTP_CODE)${NC}"
@@ -126,8 +102,14 @@ fi
 
 # Step 3: Verify DB status is 'scheduled_cancel' and 'auto_renewing' is false
 echo -e "${YELLOW}[3/4] Verifying status is 'scheduled_cancel' and auto_renewing is false${NC}"
-sleep 1
-QUERY_RESULT=$(psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT status, auto_renewing FROM subscriptions WHERE clerk_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t 2>/dev/null || echo "")
+sleep 2
+QUERY_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT status, auto_renewing FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d ' ' || echo "")
+
+if [[ -z "$QUERY_RESULT" ]]; then
+    echo -e "${RED}✗ No subscription record found${NC}"
+    exit 1
+fi
 
 STATUS=$(echo "$QUERY_RESULT" | awk -F '|' '{print $1}' | tr -d ' ')
 AUTO_RENEW=$(echo "$QUERY_RESULT" | awk -F '|' '{print $2}' | tr -d ' ')
@@ -140,7 +122,7 @@ if [[ "$STATUS" == "scheduled_cancel" ]]; then
         exit 1
     fi
 else
-    echo -e "${RED}✗ Verification failed: Status=$STATUS, Auto_Renewing=$AUTO_RENEW (Expected: scheduled_cancel, f/false/empty)${NC}"
+    echo -e "${RED}✗ Verification failed: Status=$STATUS (Expected: scheduled_cancel)${NC}"
     exit 1
 fi
 
@@ -148,7 +130,10 @@ fi
 cat > test-sub-06-report.json <<EOF
 {
   "test_id": "SUB-06",
-  "status": "pass"
+  "status": "pass",
+  "user_id": "$USER_ID",
+  "db_status": "$STATUS",
+  "auto_renewing": "$AUTO_RENEW"
 }
 EOF
 echo -e "${GREEN}✓ SUB-06 PASSED${NC}"

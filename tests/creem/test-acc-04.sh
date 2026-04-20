@@ -6,24 +6,17 @@
 # Purpose: Verify that premium access is handled correctly for subscriptions in
 #          'past_due' state (Grace Period).
 #
-# Usage: ./test-acc-04.sh --email "user@example.com"
+# Usage: ./test-acc-04.sh --user-id "test_user"
 #
 # Prerequisites:
-#   - Backend running and accessible at $APP_URL
-#   - psql installed and database accessible
-#   - User with given email exists in the database
+#   - Backend running and accessible at $BRIDGE_API_URL
+#   - globals.cfg sourced
 ##############################################################################
 
 set -euo pipefail
 
 # Source global configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/.env" ]; then
-    # Load variables from .env
-    set -a
-    source "$SCRIPT_DIR/.env"
-    set +a
-fi
 source "$SCRIPT_DIR/globals.cfg"
 
 # Colors for output
@@ -34,21 +27,14 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Defaults
-DB_URL="$DATABASE_URL"
-EMAIL=""
-
-# Database password
-export PGPASSWORD="${DATABASE_PASSWORD:-}"
-if [[ -z "$PGPASSWORD" ]]; then
-    export PGPASSWORD="${DB_URL##*:}"
-    export PGPASSWORD="${PGPASSWORD%%@*}"
-fi
+TIMESTAMP=$(date +%s)
+USER_ID="test_acc_user_$TIMESTAMP"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --email)
-            EMAIL="$2"
+        --user-id)
+            USER_ID="$2"
             shift 2
             ;;
         *)
@@ -58,80 +44,53 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    exit 1
-fi
-
 echo -e "${YELLOW}========================================${NC}"
 echo "ACC-04: Premium Access During Past Due (Grace Period)"
 echo -e "${YELLOW}========================================${NC}"
 
-# Step 1: Fetch user_id
-echo -e "${YELLOW}[1/4] Fetching user_id for: $EMAIL${NC}"
-USER_ID=$(timeout 5 psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "SELECT clerk_id FROM users WHERE email = '$EMAIL';" -t 2>&1 || true)
-USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
-
-if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ User not found or DB error${NC}"
-    echo "$USER_ID"
-    exit 1
-fi
-echo -e "${GREEN}✓ User ID: $USER_ID${NC}"
+# Step 1: User Identity
+echo -e "${YELLOW}[1/4] Using External User ID: $USER_ID${NC}"
+echo -e "${GREEN}✓ Ready${NC}"
 
 # Step 2: Set up DB with past_due status
 echo -e "${YELLOW}[2/4] Setting up DB for past_due state${NC}"
-GRACE_START=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-FUTURE_EXPIRY=$(date -u -d "+3 days" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -v+3d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2099-12-31T23:59:59Z")
+FUTURE_EXPIRY=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+3 days" 2>/dev/null || date -u -v+3d +"%Y-%m-%dT%H:%M:%SZ")
 
-echo "  Setting status=past_due, google_grace_period_start=$GRACE_START, expiry=$FUTURE_EXPIRY..."
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM subscriptions WHERE clerk_id = '$USER_ID';" > /dev/null
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "INSERT INTO subscriptions (clerk_id, subscription_id, status, provider, auto_renewing, current_period_end, google_grace_period_start) VALUES ('$USER_ID', '$PRODUCT_ID_SUB', 'past_due', '$PROVIDER', true, '$FUTURE_EXPIRY', '$GRACE_START');" > /dev/null
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "UPDATE users SET is_premium = true, premium_expires_at = '$FUTURE_EXPIRY' WHERE clerk_id = '$USER_ID';" > /dev/null
+echo "  Setting status=past_due, current_period_end=$FUTURE_EXPIRY..."
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, provider, auto_renewing, current_period_end, app_id) \
+      VALUES ('$USER_ID', '$PRODUCT_ID_SUB', 'past_due', 'creem', true, '$FUTURE_EXPIRY', '$BRIDGE_APP_ID');" > /dev/null
 echo -e "${GREEN}✓ DB updated${NC}"
 
-# Step 3: Verify access
-echo -e "${YELLOW}[3/4] Verifying access during grace period${NC}"
+# Step 3: Verify access via Bridge API
+echo -e "${YELLOW}[3/4] Verifying access during grace period via Bridge API${NC}"
+RESPONSE=$(curl -s -X GET "$APP_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
+  -H "x-api-key: $BRIDGE_API_KEY")
 
-# Check /api/v1/subscription-status
-echo "  Checking /api/v1/subscription-status..."
-STATUS_RESPONSE=$(curl -s -X GET "$APP_URL/api/v1/subscription-status" \
-  -H "X-Test-User-ID: $USER_ID" \
-  -H "X-Test-Email: $EMAIL" \
-  -H "x-client-version: 99.99.0")
+STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | head -n 1 | cut -d'"' -f4 || echo "")
 
-IS_PREMIUM=$(echo "$STATUS_RESPONSE" | grep -o '"is_premium":[^,}]*' | cut -d: -f2 | tr -d ' ' || echo "false")
-
-if [[ "$IS_PREMIUM" == "true" ]]; then
-    echo -e "  ${GREEN}✓ /subscription-status reports is_premium=true (Access Granted)${NC}"
+# In Bridge, past_due might be considered "active" for grace period or just reported as past_due.
+# The client app should decide if they grant access. We verify Bridge reports the state correctly.
+if [[ "$STATUS" == "past_due" ]]; then
+    echo -e "  ${GREEN}✓ API reports correct status=$STATUS (Grace Period active)${NC}"
+    ACC_PASS="true"
 else
-    echo -e "  ${YELLOW}! /subscription-status reports is_premium=false (Access Denied)${NC}"
-fi
-
-# Check premium endpoint (GET /api/v1/story)
-echo "  Checking premium endpoint (GET /api/v1/story)..."
-PREMIUM_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$APP_URL/api/v1/story" \
-  -H "X-Test-User-ID: $USER_ID" \
-  -H "X-Test-Email: $EMAIL" \
-  -H "x-client-version: 99.99.0")
-
-if [[ "$PREMIUM_HTTP_CODE" == "200" || "$PREMIUM_HTTP_CODE" == "201" ]]; then
-    echo -e "  ${GREEN}✓ Premium endpoint accessible (HTTP $PREMIUM_HTTP_CODE)${NC}"
-    PAST_DUE_PASS="true"
-else
-    echo -e "  ${RED}✗ Premium endpoint denied (HTTP $PREMIUM_HTTP_CODE)${NC}"
-    PAST_DUE_PASS="false"
+    echo -e "  ${RED}✗ API reports unexpected status=$STATUS (Expected: past_due)${NC}"
+    echo "  Response: $RESPONSE"
+    ACC_PASS="false"
 fi
 
 # Step 4: Summary and Cleanup
 echo -e "${YELLOW}[4/4] Summary${NC}"
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "DELETE FROM subscriptions WHERE clerk_id = '$USER_ID';" > /dev/null
-psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p $DATABASE_PORT -d "$DATABASE_NAME" -c "UPDATE users SET is_premium = false, premium_expires_at = NULL WHERE clerk_id = '$USER_ID';" > /dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
 
-if [[ "$PAST_DUE_PASS" == "true" ]]; then
-    echo -e "\n${GREEN}✓ ACC-04 PASSED (Access granted during grace period)${NC}"
+if [[ "$ACC_PASS" == "true" ]]; then
+    echo -e "\n${GREEN}✓ ACC-04 PASSED${NC}"
     exit 0
 else
-    echo -e "\n${RED}✗ ACC-04 FAILED (Access denied during grace period)${NC}"
+    echo -e "\n${RED}✗ ACC-04 FAILED${NC}"
     exit 1
 fi
