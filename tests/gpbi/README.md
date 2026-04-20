@@ -5,16 +5,42 @@ Comprehensive testing suite for validating the Google Play Billing system integr
 ## Location
 `tests/gpbi/`
 
-## Migrated Tests
+## Directory Structure
+
+```text
+tests/gpbi/
+├── .env                        # Local environment secrets (not in git)
+├── globals.cfg                 # Global test configuration (URLs, tokens)
+├── test-runner.sh              # Main entry point for running suites
+├── run-all-*-tests.sh          # Suite runners (e.g., sub, otp, whk, err)
+├── test-*.sh                   # Generic test scripts (sub, otp, acc, etc.)
+├── cleanup-*.sh                # Cleanup scripts for specific entities
+├── cleanup-nuclear.sh          # Resets all test data in DB
+└── *report.json                # JSON report output from last run
+```
+
+## Key Test Suites
+
+| Suite | Runner Script | Description |
+| :--- | :--- | :--- |
+| **Subscriptions** | `run-all-sub-tests.sh` | Core subscription lifecycle (Purchase, Renewal, Cancellation) |
+| **One-Time Purchases** | `run-all-otp-tests.sh` | OTP verification and refund handling |
+| **Webhooks** | `run-all-whk-tests.sh` | Ingress validation, signature checks, and idempotency |
+| **Account Linking** | `run-all-acc-tests.sh` | Identity mapping and account reconciliation |
+| **Error Handling** | `run-all-err-tests.sh` | Network failures, invalid data, and provider API errors |
+
+## Tests Highlights
 
 | Test ID | Name | Description |
 | :--- | :--- | :--- |
 | **SUB-01** | Initial Purchase | Verifies `/api/v1/verify-purchase` and record creation. |
+| **OTP-01** | One-Time Purchase | Verifies purchase verification, payment record creation, and provider acknowledgment. |
 | **SUB-02** | Renewal | Verifies extension of `current_period_end` on renewal webhook. |
 | **SUB-03** | Cancellation | Verifies status transition to `cancelled` on cancellation webhook. |
 | **SUB-05** | Expiration | Verifies status transition to `expired` on expiration webhook. |
 | **SUB-09** | Revocation (Refund) | Verifies status `revoked` and payment `refunded` on voided purchase webhook. |
 | **WHK-01** | Invalid Signature | Verifies rejection of webhooks with bad authorization headers. |
+| **WHK-02** | Duplicate Webhook | Verifies idempotent handling (returns success, but no duplicate record). |
 
 ## Usage
 
@@ -23,11 +49,18 @@ Comprehensive testing suite for validating the Google Play Billing system integr
 2.  **Mock APIs Enabled**: Set `MOCK_EXTERNAL_APIS=true` in `.env`.
 3.  **Signature Verification (Optional)**: If testing security (`WHK-01`), set `verify_webhook_signature: true` in `pay.provider_configs` for the test app. Otherwise, set to `false` for easy local simulation.
 
-### Running a Test
+### Running Tests
 ```bash
 cd tests/gpbi
-# Run SUB-01
+
+# Run a single test
 ./test-sub-01.sh
+
+# Run an entire suite
+./run-all-sub-tests.sh
+
+# Run all suites via the main runner
+./test-runner.sh
 ```
 
 ## Configuration
