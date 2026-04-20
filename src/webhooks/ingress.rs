@@ -15,7 +15,7 @@ use crate::{
     state::AppState,
 };
 
-const CREEM_SIGNATURE_HEADERS: [&str; 2] = ["Webhook-Signature", "x-signature"];
+const CREEM_SIGNATURE_HEADERS: [&str; 3] = ["creem-signature", "Webhook-Signature", "x-signature"];
 
 fn spawn_process_and_forward_webhook(
     database: Arc<Database>,
@@ -505,6 +505,19 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
     use super::{extract_header_value, CREEM_SIGNATURE_HEADERS};
+
+    #[test]
+    fn prefers_creem_signature_over_all_others() {
+        let mut headers = HeaderMap::new();
+        headers.insert("creem-signature", HeaderValue::from_static("creem-sig"));
+        headers.insert("Webhook-Signature", HeaderValue::from_static("primary-signature"));
+        headers.insert("x-signature", HeaderValue::from_static("legacy-signature"));
+
+        assert_eq!(
+            extract_header_value(&headers, &CREEM_SIGNATURE_HEADERS),
+            Some("creem-sig")
+        );
+    }
 
     #[test]
     fn prefers_webhook_signature_over_legacy_signature_header() {

@@ -24,6 +24,51 @@ pub enum WebhookEventType {
     Unknown(String),
 }
 
+fn normalize_event_type_with_payload(
+    provider: &str,
+    event_type: &str,
+    payload: Option<&serde_json::Value>,
+) -> String {
+    if provider == "creem" && event_type == "checkout.completed" {
+        if let Some(payload) = payload {
+            let object = payload.get("object").unwrap_or(&serde_json::Value::Null);
+            let billing_type = object.get("billing_type")
+                .and_then(|v| v.as_str())
+                .or_else(|| object.get("product")
+                    .and_then(|v| v.get("billing_type"))
+                    .and_then(|v| v.as_str()))
+                .or_else(|| object.get("order")
+                    .and_then(|v| v.get("type"))
+                    .and_then(|v| v.as_str()))
+                .or_else(|| object.get("subscription")
+                    .and_then(|v| v.get("product"))
+                    .and_then(|v| v.get("billing_type"))
+                    .and_then(|v| v.as_str()));
+
+            if matches!(billing_type, Some("recurring") | Some("monthly")) {
+                return "subscription.created".to_string();
+            }
+
+            if matches!(billing_type, Some("one_time") | Some("one-time") | Some("otp") | Some("lifetime")) {
+                return "purchase.one_time".to_string();
+            }
+
+            if object.pointer("/subscription/id").and_then(|v| v.as_str()).is_some() {
+                return "subscription.created".to_string();
+            }
+
+            if object.get("checkout_id").and_then(|v| v.as_str()).is_some()
+                || object.get("order_id").and_then(|v| v.as_str()).is_some()
+                || object.pointer("/order/id").and_then(|v| v.as_str()).is_some()
+            {
+                return "purchase.one_time".to_string();
+            }
+        }
+    }
+
+    normalize_event_type(provider, event_type)
+}
+
 /// Canonical webhook payload sent to apps
 /// Used for webhook forwarding to app callbacks.
 #[allow(dead_code)]
@@ -75,6 +120,7 @@ fn extract_metadata_user_id(payload: &serde_json::Value) -> Option<String> {
     [
         "/metadata/user_id",
         "/object/metadata/user_id",
+        "/object/checkout/metadata/user_id",
         "/event/data/metadata/external_user_id",
         "/event/data/metadata/user_id",
     ]
@@ -234,31 +280,121 @@ fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> WebhookFields {
                 .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
                 .map(|dt| dt.to_rfc3339()),
         },
-        "creem" => WebhookFields {
-            subscription_id: p.pointer("/object/subscription/id")
+        "creem" => {
+            let obj = p.get("object").unwrap_or(&serde_json::Value::Null);
+            let raw_event_type = p.get("eventType").and_then(|v| v.as_str()).unwrap_or("");
+            
+            // Extract top-level identifiers with fallbacks
+            let object_id = obj.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let object_subscription_id = obj.get("subscription_id")
                 .and_then(|v| v.as_str()).map(|s| s.to_string())
-                .or_else(|| p.pointer("/object/subscription_id")
-                    .and_then(|v| v.as_str()).map(|s| s.to_string())),
-            purchase_token: None,
-            amount_cents: p.pointer("/object/amount")
-                .and_then(|v| v.as_i64()).map(|a| a as i32),
-            auto_renewing: None,
-            current_period_end: p.pointer("/object/current_period_end")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            provider_transaction_id: p.pointer("/object/id")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            provider_customer_id: p.pointer("/object/customer/id")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            product_id: p.pointer("/object/product/id")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            cancel_reason: None,
-            status: p.pointer("/object/status")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            google_subscription_state: None,
-            google_cancellation_context: None,
-            google_cancellation_feedback: None,
-            google_new_price_cents: None,
-            google_price_step_up_consent_deadline: None,
+                .or_else(|| obj.get("subscription")
+                    .and_then(|v| v.get("id"))
+                    .and_then(|v| v.as_str()).map(|s| s.to_string()));
+            let object_checkout_id = obj.get("checkout_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let object_order_id = obj.get("order_id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string())
+                .or_else(|| obj.get("order")
+                    .and_then(|v| v.get("id"))
+                    .and_then(|v| v.as_str()).map(|s| s.to_string()));
+
+            // Extract product_id with fallbacks (direct, nested.id, checkout product)
+            let object_product_id = obj.get("product_id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string())
+                .or_else(|| obj.get("product")
+                    .and_then(|v| v.get("id"))
+                    .and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .or_else(|| obj.get("checkout")
+                    .and_then(|v| v.get("product"))
+                    .and_then(|v| v.as_str()).map(|s| s.to_string()));
+
+            let normalized_event_type = normalize_event_type_with_payload(
+                "creem",
+                raw_event_type,
+                Some(p),
+            );
+            let subscription_obj = if raw_event_type == "checkout.completed"
+                && normalized_event_type == "subscription.created"
+            {
+                obj.get("subscription").unwrap_or(&serde_json::Value::Null).clone()
+            } else {
+                obj.clone()
+            };
+
+            // Determine subscription_id based on event type
+            let subscription_id = match normalized_event_type.as_str() {
+                "purchase.one_time" => object_product_id.clone().or_else(|| object_id.clone()),
+                "payment.refunded" => object_subscription_id.clone()
+                    .or_else(|| object_product_id.clone())
+                    .or_else(|| object_id.clone()),
+                "subscription.created" => {
+                    if raw_event_type == "checkout.completed" {
+                        subscription_obj.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+                            .or_else(|| object_subscription_id.clone())
+                    } else {
+                        object_subscription_id.clone().or_else(|| object_id.clone())
+                    }
+                }
+                _ => object_subscription_id.clone().or_else(|| object_id.clone()),
+            };
+
+            // Extract status from subscription object (for checkout.completed with recurring, nested in subscription)
+            let status = subscription_obj.get("status").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+            // Extract current_period_end with fallback to renews_at
+            let current_period_end = subscription_obj.get("current_period_end_date")
+                .and_then(|v| v.as_str())
+                .or_else(|| subscription_obj.get("renews_at").and_then(|v| v.as_str()))
+                .map(|s| s.to_string());
+
+            // Extract amount with multiple fallbacks (last_transaction.amount, order.amount, product.price, amount)
+            let amount_cents = obj.get("last_transaction")
+                .and_then(|v| v.get("amount"))
+                .and_then(|v| v.as_i64())
+                .or_else(|| obj.get("order")
+                    .and_then(|v| v.get("amount"))
+                    .and_then(|v| v.as_i64()))
+                .or_else(|| obj.get("product")
+                    .and_then(|v| v.get("price"))
+                    .and_then(|v| v.as_i64()))
+                .or_else(|| obj.get("amount").and_then(|v| v.as_i64()))
+                .map(|a| a as i32);
+
+            // Extract purchase_token (checkout_id for OTP, order_id for refunds)
+            let purchase_token = match normalized_event_type.as_str() {
+                "purchase.one_time" => object_checkout_id
+                    .or_else(|| object_order_id.clone())
+                    .or_else(|| object_id.clone()),
+                "payment.refunded" => object_order_id
+                    .or_else(|| object_checkout_id)
+                    .or_else(|| object_subscription_id.clone())
+                    .or_else(|| object_id.clone()),
+                _ => None,
+            };
+
+            // Extract provider_transaction_id (last_transaction_id)
+            let provider_transaction_id = obj.get("last_transaction_id")
+                .and_then(|v| v.as_str()).map(|s| s.to_string());
+
+            WebhookFields {
+                subscription_id,
+                purchase_token,
+                amount_cents,
+                auto_renewing: obj.get("auto_renewing").and_then(|v| v.as_bool()),
+                current_period_end,
+                provider_transaction_id,
+                provider_customer_id: obj.get("customer")
+                    .and_then(|v| v.get("id"))
+                    .and_then(|v| v.as_str()).map(|s| s.to_string()),
+                product_id: object_product_id,
+                cancel_reason: None,
+                status,
+                google_subscription_state: None,
+                google_cancellation_context: None,
+                google_cancellation_feedback: None,
+                google_new_price_cents: None,
+                google_price_step_up_consent_deadline: None,
+            }
         },
         "coinbase" => WebhookFields {
             subscription_id: None,
@@ -592,7 +728,11 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
     if webhook.provider == "google_play" {
         fields = enrich_google_play_fields(repo, app_id, &webhook, fields).await?;
     }
-    let canonical_event = normalize_event_type(&webhook.provider, &webhook.event_type);
+    let canonical_event = normalize_event_type_with_payload(
+        &webhook.provider,
+        &webhook.event_type,
+        Some(&webhook.payload),
+    );
     let timestamp_epoch_ms = webhook
         .timestamp_epoch_ms
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
@@ -723,7 +863,11 @@ pub async fn process_webhook(
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    let canonical_event = normalize_event_type(&webhook.provider, &webhook.event_type);
+    let canonical_event = normalize_event_type_with_payload(
+        &webhook.provider,
+        &webhook.event_type,
+        Some(&webhook.payload),
+    );
 
     if webhook.provider == "coinbase" && canonical_event == "charge.failed" {
         let fields = extract_webhook_fields(&webhook);
@@ -1758,6 +1902,208 @@ mod tests {
         assert_eq!(
             normalize_event_type("creem", "refund.created"),
             "payment.refunded"
+        );
+    }
+
+    #[test]
+    fn test_normalize_creem_checkout_completed_recurring_to_subscription_created() {
+        let payload = serde_json::json!({
+            "eventType": "checkout.completed",
+            "object": {
+                "billing_type": "recurring",
+                "subscription": {
+                    "id": "sub_001"
+                }
+            }
+        });
+
+        assert_eq!(
+            normalize_event_type_with_payload("creem", "checkout.completed", Some(&payload)),
+            "subscription.created"
+        );
+    }
+
+    #[test]
+    fn test_normalize_creem_checkout_completed_one_time_to_purchase_one_time() {
+        let payload = serde_json::json!({
+            "eventType": "checkout.completed",
+            "object": {
+                "billing_type": "one_time",
+                "checkout_id": "co_001"
+            }
+        });
+
+        assert_eq!(
+            normalize_event_type_with_payload("creem", "checkout.completed", Some(&payload)),
+            "purchase.one_time"
+        );
+    }
+
+    #[test]
+    fn test_creem_field_extraction_subscription_active() {
+        let payload = serde_json::json!({
+            "id": "evt_123",
+            "eventType": "subscription.active",
+            "createdAt": "2026-04-20T10:00:00Z",
+            "object": {
+                "id": "sub_456",
+                "subscription_id": "sub_789",
+                "product_id": "prod_premium",
+                "status": "paid",
+                "amount": 9999,
+                "metadata": {
+                    "user_id": "user_ext_001"
+                }
+            }
+        });
+
+        let webhook = WebhookProviderSnapshot {
+            provider: "creem".to_string(),
+            provider_webhook_id: "wh_123".to_string(),
+            event_type: "subscription.active".to_string(),
+            subscription_id: Some("sub_789".to_string()),
+            purchase_token: None,
+            payload,
+            timestamp_epoch_ms: Some(1713607200000),
+            suppressed: false,
+            suppressed_reason: None,
+        };
+
+        let fields = extract_webhook_fields(&webhook);
+        assert_eq!(fields.subscription_id, Some("sub_789".to_string()));
+        assert_eq!(fields.product_id, Some("prod_premium".to_string()));
+        assert_eq!(fields.status, Some("paid".to_string()));
+        assert_eq!(fields.amount_cents, Some(9999));
+    }
+
+    #[test]
+    fn test_creem_field_extraction_checkout_completed_recurring() {
+        let payload = serde_json::json!({
+            "id": "evt_co_123",
+            "eventType": "checkout.completed",
+            "createdAt": "2026-04-20T10:00:00Z",
+            "object": {
+                "id": "checkout_abc",
+                "product_id": "prod_monthly",
+                "billing_type": "recurring",
+                "amount": 4999,
+                "last_transaction_id": "txn_001",
+                "subscription": {
+                    "id": "sub_new_456",
+                    "status": "paid",
+                    "current_period_end_date": "2026-05-20T10:00:00Z",
+                    "metadata": {
+                        "user_id": "user_ext_002"
+                    }
+                }
+            }
+        });
+
+        let webhook = WebhookProviderSnapshot {
+            provider: "creem".to_string(),
+            provider_webhook_id: "wh_456".to_string(),
+            event_type: "checkout.completed".to_string(),
+            subscription_id: Some("sub_new_456".to_string()),
+            purchase_token: None,
+            payload,
+            timestamp_epoch_ms: Some(1713607200000),
+            suppressed: false,
+            suppressed_reason: None,
+        };
+
+        let fields = extract_webhook_fields(&webhook);
+        assert_eq!(fields.subscription_id, Some("sub_new_456".to_string()));
+        assert_eq!(fields.product_id, Some("prod_monthly".to_string()));
+        assert_eq!(fields.status, Some("paid".to_string()));
+        assert_eq!(fields.current_period_end, Some("2026-05-20T10:00:00Z".to_string()));
+    }
+
+    #[test]
+    fn test_creem_field_extraction_checkout_completed_one_time() {
+        let payload = serde_json::json!({
+            "id": "evt_co_otp_123",
+            "eventType": "checkout.completed",
+            "createdAt": "2026-04-20T10:00:00Z",
+            "object": {
+                "id": "checkout_otp_001",
+                "billing_type": "one_time",
+                "product_id": "prod_lifetime",
+                "checkout_id": "co_otp_001",
+                "amount": 9999
+            }
+        });
+
+        let webhook = WebhookProviderSnapshot {
+            provider: "creem".to_string(),
+            provider_webhook_id: "wh_otp_001".to_string(),
+            event_type: "checkout.completed".to_string(),
+            subscription_id: None,
+            purchase_token: None,
+            payload,
+            timestamp_epoch_ms: Some(1713607200000),
+            suppressed: false,
+            suppressed_reason: None,
+        };
+
+        let fields = extract_webhook_fields(&webhook);
+        assert_eq!(fields.subscription_id, Some("prod_lifetime".to_string()));
+        assert_eq!(fields.purchase_token, Some("co_otp_001".to_string()));
+        assert_eq!(fields.amount_cents, Some(9999));
+    }
+
+    #[test]
+    fn test_creem_field_extraction_refund_with_amount_fallback() {
+        let payload = serde_json::json!({
+            "id": "evt_ref_123",
+            "eventType": "refund.created",
+            "createdAt": "2026-04-20T10:00:00Z",
+            "object": {
+                "id": "refund_789",
+                "order_id": "order_original",
+                "subscription_id": "sub_refunded",
+                "last_transaction": {
+                    "amount": 2999
+                }
+            }
+        });
+
+        let webhook = WebhookProviderSnapshot {
+            provider: "creem".to_string(),
+            provider_webhook_id: "wh_789".to_string(),
+            event_type: "refund.created".to_string(),
+            subscription_id: Some("sub_refunded".to_string()),
+            purchase_token: None,
+            payload,
+            timestamp_epoch_ms: Some(1713607200000),
+            suppressed: false,
+            suppressed_reason: None,
+        };
+
+        let fields = extract_webhook_fields(&webhook);
+        assert_eq!(fields.subscription_id, Some("sub_refunded".to_string()));
+        assert_eq!(fields.purchase_token, Some("order_original".to_string()));
+        assert_eq!(fields.amount_cents, Some(2999));
+    }
+
+    #[test]
+    fn test_creem_metadata_user_id_from_checkout_path() {
+        let payload = serde_json::json!({
+            "id": "evt_123",
+            "eventType": "checkout.completed",
+            "createdAt": "2026-04-20T10:00:00Z",
+            "object": {
+                "id": "checkout_123",
+                "checkout": {
+                    "metadata": {
+                        "user_id": "user_from_checkout"
+                    }
+                }
+            }
+        });
+
+        assert_eq!(
+            extract_metadata_user_id(&payload).as_deref(),
+            Some("user_from_checkout")
         );
     }
 

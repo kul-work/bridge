@@ -2,12 +2,14 @@ use uuid::Uuid;
 
 use crate::error::BridgeError;
 use crate::application::checkout_helpers::{
-    coinbase_amount_from_config, compute_request_fingerprint, extract_checkout_id,
-    extract_checkout_url, extract_coinbase_checkout_id, extract_coinbase_checkout_url,
+    coinbase_amount_from_config, compute_request_fingerprint,
+    extract_coinbase_checkout_id, extract_coinbase_checkout_url,
     normalize_provider_name, normalize_required_field, resolve_checkout_redirect_urls,
 };
 use crate::application::checkout_types::{CheckoutRequest, CheckoutResponse};
 use crate::ports::CheckoutHandlerRepository;
+use crate::services::creem::config::CreemConfig;
+use crate::services::creem::client::CreemClient;
 
 pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
     repo: &R,
@@ -65,80 +67,42 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
 
     let response = match provider.as_str() {
         "creem" => {
-            let api_key = provider_config
-                .config
-                .get("api_key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| BridgeError::ConfigError("Missing Creem api_key".to_string()))?;
-            let api_url = provider_config
-                .config
-                .get("api_url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("https://api.creem.com");
+            let creem_config = CreemConfig::from_json(&provider_config.config)?;
+            let creem_client = CreemClient::new(creem_config.clone());
 
             let product_selector = product_type.as_deref().unwrap_or(product_id.as_str());
             let selected_product_id = match product_selector {
-                "offer" => provider_config
-                    .config
-                    .get("offer_id")
-                    .and_then(|v| v.as_str())
+                "offer" => creem_config
+                    .offer_id
+                    .as_deref()
                     .ok_or_else(|| BridgeError::ConfigError("Missing Creem offer_id".to_string()))?,
-                "otp" => provider_config
-                    .config
-                    .get("otp_id")
-                    .and_then(|v| v.as_str())
+                "otp" => creem_config
+                    .otp_id
+                    .as_deref()
                     .ok_or_else(|| BridgeError::ConfigError("Missing Creem otp_id".to_string()))?,
-                _ => provider_config
-                    .config
-                    .get("product_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| BridgeError::ConfigError("Missing Creem product_id".to_string()))?,
+                _ => creem_config.product_id.as_str(),
             };
 
-            let creem_payload = serde_json::json!({
-                "product_id": selected_product_id,
-                "customer": { "email": email },
-                "metadata": {
-                    "user_id": external_user_id,
-                    "external_user_id": external_user_id,
-                    "product_id": product_id,
-                },
-                "success_url": checkout_urls.success_url,
-                "cancel_url": checkout_urls.cancel_url
+            let metadata = serde_json::json!({
+                "user_id": external_user_id,
+                "external_user_id": external_user_id,
+                "product_id": product_id,
             });
 
-            let client = reqwest::Client::new();
-            let creem_response = client
-                .post(format!("{}/checkouts", api_url.trim_end_matches('/')))
-                .header("x-api-key", api_key)
-                .header("Content-Type", "application/json")
-                .json(&creem_payload)
-                .send()
-                .await
-                .map_err(|e| BridgeError::ProviderError(format!("Creem checkout failed: {}", e)))?;
-
-            if !creem_response.status().is_success() {
-                let status = creem_response.status();
-                let body = creem_response.text().await.unwrap_or_default();
-                return Err(BridgeError::ProviderError(format!(
-                    "Creem checkout failed: {} - {}",
-                    status, body
-                )));
-            }
-
-            let data: serde_json::Value = creem_response
-                .json()
-                .await
-                .map_err(|e| BridgeError::ProviderError(format!("Invalid Creem response: {}", e)))?;
-
-            let redirect_url = extract_checkout_url(&data)
-                .ok_or_else(|| BridgeError::ProviderError("Missing Creem checkout_url".to_string()))?;
-            let session_id = extract_checkout_id(&data).unwrap_or(checkout_id.as_str());
+            let (session_id, redirect_url) = creem_client
+                .create_checkout(
+                    selected_product_id,
+                    &email,
+                    metadata,
+                    &checkout_urls.success_url,
+                    &checkout_urls.cancel_url,
+                )
+                .await?;
 
             CheckoutResponse {
-                checkout_id: session_id.to_string(),
+                checkout_id: if session_id.is_empty() { checkout_id } else { session_id },
                 provider: provider.clone(),
-                redirect_url: Some(redirect_url.to_string()),
+                redirect_url: Some(redirect_url),
                 mobile_checkout_data: None,
             }
         }

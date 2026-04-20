@@ -147,7 +147,8 @@ async fn cancel_subscription_at_provider(
             // Get Creem config and call cancel API
             if let Ok(config) = crate::db::provider_configs::get_provider_config(pool, app_id, "creem").await {
                 if let Ok(creem_config) = serde_json::from_value::<serde_json::Value>(config.config) {
-                    cancel_creem_subscription(subscription_id, &creem_config).await?;
+                    let creem_client = crate::services::creem::client::CreemClient::from_json(&creem_config)?;
+                    creem_client.cancel_subscription(subscription_id, None).await?;
                 }
             }
         }
@@ -170,48 +171,6 @@ async fn cancel_subscription_at_provider(
         }
     }
 
-    Ok(())
-}
-
-async fn cancel_creem_subscription(
-    subscription_id: &str,
-    config: &serde_json::Value,
-) -> Result<(), BridgeError> {
-    let api_key = config.get("api_key")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| BridgeError::ConfigError("Missing Creem api_key".to_string()))?;
-    
-    let api_url = config.get("api_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("https://api.creem.com");
-
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}/subscriptions/{}/cancel",
-        api_url.trim_end_matches('/'),
-        subscription_id
-    );
-
-    let response = client
-        .post(&url)
-        .header("x-api-key", api_key)
-        .header("Content-Type", "application/json")
-        .json(&serde_json::json!({}))
-        .send()
-        .await
-        .map_err(|e| BridgeError::ProviderError(format!("Creem API call failed: {}", e)))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_msg = response.text().await.unwrap_or_default();
-        return Err(BridgeError::ProviderError(format!(
-            "Creem cancel failed: {} - {}",
-            status,
-            error_msg
-        )));
-    }
-
-    tracing::info!("Creem subscription {} cancelled via API", subscription_id);
     Ok(())
 }
 

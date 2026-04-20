@@ -1,6 +1,7 @@
 use crate::error::BridgeError;
+use crate::services::creem::client::CreemClient;
 use serde_json::Value;
-use tracing::{info, error};
+use tracing::info;
 
 /// Extract a config string field or return ConfigError
 fn config_str<'a>(config: &'a Value, key: &str, provider: &str) -> Result<&'a str, BridgeError> {
@@ -17,37 +18,10 @@ pub async fn cancel_subscription(
     mode: Option<&str>,
     config: &Value,
 ) -> Result<(), BridgeError> {
-    let client = reqwest::Client::new();
-
     match provider {
         "creem" => {
-            let api_key = config_str(config, "api_key", "Creem")?;
-            let api_url = config.get("api_url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("https://api.creem.com");
-
-            let payload = if let Some(mode) = mode {
-                serde_json::json!({ "mode": mode })
-            } else {
-                serde_json::json!({})
-            };
-
-            let response = client
-                .post(format!("{}/subscriptions/{}/cancel", api_url.trim_end_matches('/'), subscription_id))
-                .header("x-api-key", api_key)
-                .header("Content-Type", "application/json")
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|e| BridgeError::ProviderError(format!("Creem cancel failed: {}", e)))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                error!("Creem cancel failed: {} - {}", status, body);
-                return Err(BridgeError::ProviderError(format!("Creem cancel failed: {}", status)));
-            }
-
+            let creem_client = CreemClient::from_json(config)?;
+            creem_client.cancel_subscription(subscription_id, mode).await?;
             info!("Creem subscription {} cancelled via API", subscription_id);
             Ok(())
         }
@@ -79,30 +53,10 @@ pub async fn resume_subscription(
     subscription_id: &str,
     config: &Value,
 ) -> Result<(), BridgeError> {
-    let client = reqwest::Client::new();
-
     match provider {
         "creem" => {
-            let api_key = config_str(config, "api_key", "Creem")?;
-            let api_url = config.get("api_url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("https://api.creem.com");
-
-            let response = client
-                .post(format!("{}/subscriptions/{}/resume", api_url.trim_end_matches('/'), subscription_id))
-                .header("x-api-key", api_key)
-                .header("Content-Type", "application/json")
-                .send()
-                .await
-                .map_err(|e| BridgeError::ProviderError(format!("Creem resume failed: {}", e)))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                error!("Creem resume failed: {} - {}", status, body);
-                return Err(BridgeError::ProviderError(format!("Creem resume failed: {}", status)));
-            }
-
+            let creem_client = CreemClient::from_json(config)?;
+            creem_client.resume_subscription(subscription_id).await?;
             info!("Creem subscription {} resumed via API", subscription_id);
             Ok(())
         }
@@ -117,37 +71,10 @@ pub async fn create_billing_portal(
     provider_customer_id: &str,
     config: &Value,
 ) -> Result<String, BridgeError> {
-    let client = reqwest::Client::new();
-
     match provider {
         "creem" => {
-            let api_key = config_str(config, "api_key", "Creem")?;
-            let api_url = config.get("api_url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("https://api.creem.com");
-
-            let response = client
-                .post(format!("{}/customers/billing", api_url.trim_end_matches('/')))
-                .header("x-api-key", api_key)
-                .header("Content-Type", "application/json")
-                .json(&serde_json::json!({ "customer_id": provider_customer_id }))
-                .send()
-                .await
-                .map_err(|e| BridgeError::ProviderError(format!("Creem billing portal failed: {}", e)))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                error!("Creem billing portal failed: {} - {}", status, body);
-                return Err(BridgeError::ProviderError(format!("Creem billing portal failed: {}", status)));
-            }
-
-            let data: Value = response.json().await
-                .map_err(|e| BridgeError::ProviderError(format!("Invalid billing portal response: {}", e)))?;
-
-            data["url"].as_str()
-                .map(|s| s.to_string())
-                .ok_or_else(|| BridgeError::ProviderError("Missing 'url' in billing portal response".to_string()))
+            let creem_client = CreemClient::from_json(config)?;
+            creem_client.create_billing_portal(provider_customer_id).await
         }
 
         _ => Err(BridgeError::ValidationError(format!("Billing portal not supported for provider: {}", provider))),
@@ -161,41 +88,10 @@ pub async fn fetch_subscription_status(
     _purchase_token: Option<&str>,
     config: &Value,
 ) -> Result<(String, Option<chrono::DateTime<chrono::Utc>>), BridgeError> {
-    let client = reqwest::Client::new();
-
     match provider {
         "creem" => {
-            let api_key = config_str(config, "api_key", "Creem")?;
-            let api_url = config.get("api_url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("https://api.creem.com");
-
-            let response = client
-                .get(format!("{}/subscriptions/{}", api_url.trim_end_matches('/'), subscription_id))
-                .header("x-api-key", api_key)
-                .header("Content-Type", "application/json")
-                .send()
-                .await
-                .map_err(|e| BridgeError::ProviderError(format!("Creem get subscription failed: {}", e)))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                error!("Creem get subscription failed: {} - {}", status, body);
-                return Err(BridgeError::ProviderError(format!("Creem get subscription failed: {}", status)));
-            }
-
-            let data: Value = response.json().await
-                .map_err(|e| BridgeError::ProviderError(format!("Invalid Creem response: {}", e)))?;
-
-            let raw_status = data["status"].as_str().unwrap_or("unknown");
-            let status = normalize_creem_status(raw_status);
-
-            let period_end = data["renews_at"].as_str()
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&chrono::Utc));
-
-            Ok((status, period_end))
+            let creem_client = CreemClient::from_json(config)?;
+            creem_client.fetch_subscription_status(subscription_id).await
         }
 
         "google_play" => {
@@ -222,18 +118,6 @@ pub async fn fetch_subscription_status(
         }
 
         _ => Err(BridgeError::ValidationError(format!("Status fetch not supported for provider: {}", provider))),
-    }
-}
-
-fn normalize_creem_status(raw: &str) -> String {
-    match raw {
-        "trialing" => "trial".to_string(),
-        "active" | "paid" => "active".to_string(),
-        "past_due" | "unpaid" => "past_due".to_string(),
-        "canceled" | "cancelled" => "cancelled".to_string(),
-        "expired" => "expired".to_string(),
-        "paused" => "paused".to_string(),
-        other => other.to_string(),
     }
 }
 

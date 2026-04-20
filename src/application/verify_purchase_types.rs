@@ -90,7 +90,6 @@ pub(crate) struct VerifiedPurchase {
 }
 
 pub(crate) enum PaymentAcknowledgement {
-    NotApplicable,
     Pending,
     AlreadyAcknowledged,
 }

@@ -328,7 +328,7 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
                     .await?;
             }
         }
-        PaymentAcknowledgement::NotApplicable | PaymentAcknowledgement::Pending => {}
+        PaymentAcknowledgement::Pending => {}
     }
 
     let response = VerifyPurchaseResponse {

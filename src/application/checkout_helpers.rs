@@ -78,20 +78,6 @@ pub(crate) fn coinbase_amount_from_config(config: &serde_json::Value) -> Result<
     ))
 }
 
-pub(crate) fn extract_checkout_url(data: &serde_json::Value) -> Option<&str> {
-    data.pointer("/checkout_url")
-        .and_then(|value| value.as_str())
-        .or_else(|| data.pointer("/data/attributes/url").and_then(|value| value.as_str()))
-        .or_else(|| data.pointer("/data/url").and_then(|value| value.as_str()))
-        .or_else(|| data.get("url").and_then(|value| value.as_str()))
-}
-
-pub(crate) fn extract_checkout_id(data: &serde_json::Value) -> Option<&str> {
-    data.pointer("/id")
-        .and_then(|value| value.as_str())
-        .or_else(|| data.pointer("/data/id").and_then(|value| value.as_str()))
-}
-
 pub(crate) fn extract_coinbase_checkout_url(data: &serde_json::Value) -> Option<&str> {
     data.pointer("/data/hosted_url")
         .and_then(|value| value.as_str())

@@ -34,14 +34,11 @@ pub(crate) async fn verify_purchase_with_provider(
             provider_config,
         )
         .await,
-        "creem" => verify_creem(subscription_id, purchase_token, provider_config)
-            .await
-            .map(VerificationOutcome::Verified),
-        "coinbase" => verify_coinbase(subscription_id, purchase_token, provider_config)
-            .await
-            .map(VerificationOutcome::Verified),
+        "apple" => Err(BridgeError::ValidationError(
+            "Apple verify-purchase not yet implemented".to_string(),
+        )),
         _ => Err(BridgeError::ValidationError(format!(
-            "Unknown provider: {}",
+            "verify-purchase not supported for provider: {} (mobile stores only)",
             provider
         ))),
     }
@@ -101,143 +98,7 @@ async fn verify_google_play(
     }
 }
 
-async fn verify_creem(
-    subscription_id: &str,
-    purchase_token: &str,
-    config: &serde_json::Value,
-) -> Result<VerifiedPurchase, BridgeError> {
-    let api_key = config.get("api_key")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| BridgeError::ConfigError("Missing Creem api_key".to_string()))?;
-    
-    let api_url = config.get("api_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("https://api.creem.com");
 
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}/subscriptions/{}/verify",
-        api_url.trim_end_matches('/'),
-        subscription_id
-    );
-
-    let response = client
-        .post(&url)
-        .header("x-api-key", api_key)
-        .header("Content-Type", "application/json")
-        .json(&serde_json::json!({ "purchase_token": purchase_token }))
-        .send()
-        .await
-        .map_err(|e| BridgeError::ProviderError(format!("Creem verify failed: {}", e)))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_msg = response.text().await.unwrap_or_default();
-        return Err(BridgeError::ProviderError(format!(
-            "Creem verify failed: {} - {}",
-            status,
-            error_msg
-        )));
-    }
-
-    let resp_json: serde_json::Value = response.json().await
-        .map_err(|e| BridgeError::ProviderError(format!("Failed to parse Creem response: {}", e)))?;
-
-    let sub_status = resp_json["status"].as_str().unwrap_or("active").to_string();
-    let period_end = resp_json["current_period_end"].as_str()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc));
-    let amount_cents = first_minor_unit_amount(&resp_json, &["/price", "/total", "/amount"]);
-
-    tracing::info!("Creem subscription {} verified with status: {}", subscription_id, sub_status);
-    Ok(VerifiedPurchase {
-        status: sub_status,
-        current_period_end: period_end,
-        auto_renewing: None,
-        amount_cents,
-        payment_state: None,
-        acknowledgement: PaymentAcknowledgement::NotApplicable,
-        obfuscated_account_id: None,
-        resubscribe_obfuscated_account_id: None,
-        linked_purchase_token: None,
-    })
-}
-
-async fn verify_coinbase(
-    subscription_id: &str,
-    purchase_token: &str,
-    config: &serde_json::Value,
-) -> Result<VerifiedPurchase, BridgeError> {
-    let api_key = config.get("api_key")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| BridgeError::ConfigError("Missing Coinbase api_key".to_string()))?;
-
-    let client = reqwest::Client::new();
-    let url = format!(
-        "https://api.commerce.coinbase.com/charges/{}",
-        purchase_token
-    );
-
-    let response = client
-        .get(&url)
-        .header("X-CC-Api-Key", api_key)
-        .header("X-CC-Version", "2018-03-22")
-        .send()
-        .await
-        .map_err(|e| BridgeError::ProviderError(format!("Coinbase verify failed: {}", e)))?;
-
-    let status_code = response.status();
-    if !status_code.is_success() {
-        let error_msg = response.text().await.unwrap_or_default();
-        return Err(BridgeError::ProviderError(format!(
-            "Coinbase verify failed: {} - {}",
-            status_code,
-            error_msg
-        )));
-    }
-
-    let resp_json: serde_json::Value = response.json().await
-        .map_err(|e| BridgeError::ProviderError(format!("Failed to parse Coinbase response: {}", e)))?;
-
-    let charge_status = resp_json["data"]["status"].as_str().unwrap_or("completed").to_string();
-    let confirmed = resp_json["data"]["confirmed_at"].as_str()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc));
-    let amount_cents = resp_json["data"]["payments"]
-        .as_array()
-        .and_then(|payments| {
-            let total = payments
-                .iter()
-                .filter(|payment| payment["status"].as_str() == Some("CONFIRMED"))
-                .filter_map(|payment| {
-                    payment["value"]["local"]["amount"]
-                        .as_str()
-                        .and_then(|amount| amount.parse::<f64>().ok())
-                })
-                .map(|amount| (amount * 100.0).round() as i64)
-                .sum::<i64>();
-
-            (total > 0)
-                .then_some(total)
-                .and_then(|total| i32::try_from(total).ok())
-        })
-        .or_else(|| parse_major_unit_amount_to_cents(&resp_json["data"]["pricing"]["local"]["amount"]));
-
-    let verified_status = if charge_status == "completed" { "active".to_string() } else { "pending".to_string() };
-    
-    tracing::info!("Coinbase charge {} verified with status: {}", subscription_id, verified_status);
-    Ok(VerifiedPurchase {
-        status: verified_status,
-        current_period_end: confirmed,
-        auto_renewing: None,
-        amount_cents,
-        payment_state: None,
-        acknowledgement: PaymentAcknowledgement::NotApplicable,
-        obfuscated_account_id: None,
-        resubscribe_obfuscated_account_id: None,
-        linked_purchase_token: None,
-    })
-}
 
 pub(crate) async fn forward_verify_purchase_callback<
     R: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + ?Sized,
@@ -355,36 +216,7 @@ async fn build_google_play_client(config: &serde_json::Value) -> Result<GooglePl
         .map_err(|e| BridgeError::ConfigError(format!("Failed to init Google Play client: {}", e)))
 }
 
-fn parse_minor_unit_amount(value: &serde_json::Value) -> Option<i32> {
-    value
-        .as_i64()
-        .and_then(|amount| i32::try_from(amount).ok())
-        .or_else(|| {
-            value
-                .as_str()
-                .and_then(|amount| amount.parse::<i64>().ok())
-                .and_then(|amount| i32::try_from(amount).ok())
-        })
-}
 
-fn parse_major_unit_amount_to_cents(value: &serde_json::Value) -> Option<i32> {
-    let amount = value
-        .as_f64()
-        .or_else(|| value.as_str().and_then(|amount| amount.parse::<f64>().ok()))?;
-
-    let cents = (amount * 100.0).round();
-    if !cents.is_finite() || cents < 0.0 || cents > i32::MAX as f64 {
-        return None;
-    }
-
-    Some(cents as i32)
-}
-
-fn first_minor_unit_amount(resp_json: &serde_json::Value, paths: &[&str]) -> Option<i32> {
-    paths
-        .iter()
-        .find_map(|path| resp_json.pointer(path).and_then(parse_minor_unit_amount))
-}
 
 fn google_money_to_cents(money: &Money) -> Option<i32> {
     let units = money.units.as_deref()?.parse::<i64>().ok()?;
