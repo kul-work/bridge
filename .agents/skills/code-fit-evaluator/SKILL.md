@@ -1,6 +1,9 @@
 ---
 name: code-fit-evaluator
 description: "Evaluates whether proposed code changes FIT the existing system's architecture, patterns, and direction. Strict accept/reject with JSON output. Use after implementing changes to validate architectural alignment before committing."
+resources:
+  - patterns.md
+  - drift_rules.json
 ---
 
 # Code Fit Evaluator
@@ -52,9 +55,10 @@ These issues compound over time into architectural drift that's expensive to fix
 
 1. **Gather the diff**: Run `git diff` (or `git diff --cached` for staged)
 2. **Build the intent** (structured, not free text)
-3. **Identify reference patterns** from the codebase
-4. **Run evaluation** using the prompt templates below
-5. **Act on result**: accept → done, reject → fix and re-evaluate
+3. **Select reference patterns** from `patterns.md` (do NOT search codebase)
+4. **Check drift rules** from `drift_rules.json` against the diff
+5. **Run evaluation** using the prompt templates below
+6. **Act on result**: accept → done, reject → fix and re-evaluate
 
 ## Evaluation Persona (System Prompt)
 
@@ -106,8 +110,8 @@ Fill this per evaluation. All sections are required unless marked optional.
 ## ARCHITECTURE SUMMARY
 {{short_arch_summary}}
 
-## EXISTING PATTERNS (REFERENCE IMPLEMENTATIONS)
-{{code_examples_or_descriptions}}
+## EXISTING PATTERNS (FROM patterns.md)
+{{patterns_verbatim_from_patterns_md}}
 
 ## CHANGED CODE (DIFF)
 {{diff}}
@@ -138,25 +142,28 @@ Focus on:
 
 ## OUTPUT FORMAT (STRICT)
 
+```json
 {
   "decision": "accept" | "reject",
   "confidence": 0.0-1.0,
+  "matched_patterns": ["pattern names from patterns.md"],
+  "matched_drift_rules": ["rule IDs from drift_rules.json, if any"],
   "reasons": [
     {
-      "type": "pattern_deviation | duplication | layer_violation | abstraction_mismatch | inconsistency | hidden_complexity",
+      "type": "aligned_pattern | pattern_deviation | duplication | layer_violation | abstraction_mismatch | inconsistency | hidden_complexity | drift_violation",
       "explanation": "short, specific reason"
     }
   ],
-  "rewrite_guidance": [
-    "concrete, minimal directional fixes"
-  ]
+  "rewrite_guidance": ["concrete, minimal directional fixes on reject, omit on accept"]
 }
+```
 
 Rules:
 - Max 5 reasons
 - Keep explanations concise and technical
-- rewrite_guidance must be actionable
-- No empty fields
+- rewrite_guidance required only on reject
+- `matched_patterns` and `matched_drift_rules` prove the support files were used
+- Never output a reason without evidence from patterns.md or drift_rules.json
 ```
 
 ## Intent Template
@@ -202,31 +209,15 @@ Use this compressed summary for Bridge evaluations. Adapt if project changes.
 
 ## Reference Patterns Section
 
-**Critical for evaluation quality.** Provide real distilled patterns, not raw code dumps.
+**Patterns are pre-distilled in `patterns.md`.** Agent loads this file automatically.
 
-### Good Example
+Do NOT search codebase for patterns. Use only what's in `patterns.md`:
+- New HTTP Handler
+- Webhook Ingress  
+- Provider Integration
+- DB Query Module
 
-```
-Pattern: Webhook ingress processing
-- All webhooks go through webhooks/ingress.rs
-- Provider signature verified first
-- Idempotency checked via webhook_log table
-- Status normalized to canonical states
-- No business logic in webhook handlers
-
-Pattern: Error handling
-- thiserror for typed domain errors
-- anyhow for context propagation
-- Handlers map errors to HTTP status codes
-- No unwrap() in production paths
-```
-
-### Bad Example
-
-```
-(dumping 200 lines of raw handler code without explanation)
-(pasting unrelated module as "context")
-```
+Present relevant pattern(s) directly in the evaluation prompt without rephrasing.
 
 ## Output Format
 
@@ -236,13 +227,14 @@ Pattern: Error handling
 {
   "decision": "accept",
   "confidence": 0.92,
+  "matched_patterns": ["Webhook Ingress"],
+  "matched_drift_rules": [],
   "reasons": [
     {
-      "type": "pattern_deviation",
-      "explanation": "none — follows existing webhook ingress pattern"
+      "type": "aligned_pattern",
+      "explanation": "follows Webhook Ingress pattern: signature verification, idempotency check, status normalization"
     }
-  ],
-  "rewrite_guidance": []
+  ]
 }
 ```
 
@@ -252,19 +244,21 @@ Pattern: Error handling
 {
   "decision": "reject",
   "confidence": 0.85,
+  "matched_patterns": ["New HTTP Handler"],
+  "matched_drift_rules": [],
   "reasons": [
     {
       "type": "duplication",
-      "explanation": "retry logic duplicated from BillingRetryService into handler"
+      "explanation": "retry logic duplicated from BillingRetryService into handler. New HTTP Handler pattern says handlers only orchestrate, no business logic."
     },
     {
       "type": "layer_violation",
-      "explanation": "business rule (grace period calc) placed in HTTP handler instead of application layer"
+      "explanation": "grace period calculation (business rule) placed in handler instead of application layer"
     }
   ],
   "rewrite_guidance": [
-    "Move grace period calculation to application/billing.rs",
-    "Reuse existing retry_with_backoff from services/payment.rs"
+    "Move grace period calculation to application/ module",
+    "Reuse existing retry logic from services/ layer"
   ]
 }
 ```
@@ -287,6 +281,11 @@ Auto-reject if any score < 0.7 (enforce outside the model).
 
 When this skill is invoked, the agent MUST:
 
+0. **Load reference materials (MANDATORY)**
+   - Read `patterns.md` for Bridge canonical patterns
+   - Read `drift_rules.json` for structural violations to detect
+   - **STOP if either file is unavailable. Do NOT proceed without them.**
+
 1. **Collect the diff**
    - Run `git diff` for unstaged changes (default)
    - Run `git diff --cached` for staged changes
@@ -298,20 +297,43 @@ When this skill is invoked, the agent MUST:
    - What modules does it touch?
    - What must NOT happen?
 
-3. **Extract reference patterns** from the codebase:
-   - Find 2-4 existing implementations of the expected pattern
-   - Distill each into a short description (not raw code)
+3. **Extract reference patterns** from `patterns.md`:
+   - Use patterns already documented there (do not search codebase)
+   - Present the relevant pattern(s) in the evaluation prompt
 
-4. **Assemble the evaluation prompt** using the templates above
+4. **Check drift rules** against the diff:
+   - Load `drift_rules.json` rules
+   - Scan diff for matches
+   - Flag any violations found
 
-5. **Present the JSON result** to the user:
+5. **Assemble the evaluation prompt** using the templates above
+
+6. **Present the JSON result** to the user:
    - If **accept**: confirm and proceed
    - If **reject**: show reasons + rewrite_guidance, ask if user wants to fix
 
-6. **On rejection iteration** (max 2-3 rounds):
+7. **On rejection iteration** (max 2-3 rounds):
    - Apply rewrite_guidance
    - Re-run evaluation with updated diff
    - Stop if stuck in reject loop — escalate to user
+
+## Drift Rules
+
+**Pre-loaded from `drift_rules.json`.** Agent checks all violations automatically.
+
+Severity semantics:
+- **reject** → violation found in added code → REJECT immediately
+- **warn** → violation found in added code → include in reasons but don't auto-reject
+- **check** → contextual verification required → if check fails, REJECT
+
+Current rules:
+- `MONEY_FLOAT` (reject): Money must use integer cents (i64), never f64/f32
+- `STATUS_STRING` (reject): Status fields must use typed enums, not raw String
+- `HANDLER_DB` (reject): Direct DB access forbidden in handlers, use db/ layer
+- `UNWRAP_PROD` (warn): unwrap() in production paths, prefer ? or expect()
+- `MISSING_IDEMPOTENCY` (check): Webhook processing must verify webhook_log idempotency
+
+Agent must report matched rule IDs in output.
 
 ## Pitfalls
 

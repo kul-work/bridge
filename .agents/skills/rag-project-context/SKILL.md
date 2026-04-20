@@ -11,11 +11,11 @@ Pre-loads codebase understanding via subagent analysis, enabling code generation
 
 Complex projects require understanding across:
 - Architectural patterns (how handlers work, error strategies)
-- Design decisions (why certain choices exist)
+- Invariant constraints (non-negotiable rules that code must follow)
 - Integration points (how subsystems connect)
-- Project lessons (what works, what doesn't)
+- Layer boundaries and error handling conventions
 
-Reading all this on-demand burns the main context window. Over time, code becomes technically correct but architecturally misaligned.
+Reading all this on-demand burns the main context window. Over time, code becomes technically correct but violates invariants or architectural boundaries.
 
 ## Solution
 
@@ -40,13 +40,14 @@ Subagent analyzes:
   - How existing webhooks work (src/webhooks/)
   - Current retry patterns in codebase
   - Database structures for webhook state
-  - Error handling conventions
+  - Error handling conventions (from INVARIANTS.md)
   - Provider integration patterns
-  - LESSONS.md + any architectural docs
+  - Architectural constraints (from INVARIANTS.md + DESIGN.md)
                 ↓
 Returns summary:
   "Webhooks use [pattern], retries stored in [table],
-   errors logged via [mechanism], providers validated by [method]"
+   errors logged via [mechanism], providers validated by [method],
+   must follow invariants [list]"
                 ↓
 Main agent writes handler with full context
 ```
@@ -60,9 +61,10 @@ You are a codebase analyzer. Extract and summarize architecture for: [TASK]
 
 From c:/share/tyde/bridge, start with:
 
-**Reference Docs** (read first for context):
-- DESIGN.md (system components, data flows, architecture)
-- DECISIONS.md (why architectural choices exist)
+**Reference Docs** (read first for hard constraints):
+- INVARIANTS.md (non-negotiable rules: money handling, status, layer boundaries, webhooks, errors)
+- DESIGN.md (system components, data flows, subsystem architecture)
+- AGENTS.md (code style, developer principles, patterns)
 
 Then extract from codebase:
 
@@ -71,9 +73,10 @@ Then extract from codebase:
    - If adding service: show service patterns, testing, configuration
    - If modifying webhooks: show webhook flow, validation, retry logic
 
-2. **Design Decisions** (cross-reference DECISIONS.md)
-   - What constraints or architectural choices led to current design?
-   - Where does DECISIONS.md explain this pattern?
+2. **Invariant Constraints** (from INVARIANTS.md)
+   - Which invariants apply to this task?
+   - What rules MUST be followed (not optional)?
+   - What cannot change by design?
 
 3. **Integration Points**: How does this connect to other subsystems?
    - Which modules does it touch?
@@ -81,17 +84,18 @@ Then extract from codebase:
    - Which external services interact?
    - Reference DESIGN.md's component diagram for context
 
-4. **Project Lessons**:
-   - Pitfalls to avoid from DECISIONS.md
-   - What integrations work well (from existing code)
-   - Architectural principles (from DESIGN.md)
+4. **Architectural Principles**:
+   - Layer boundaries that must be respected (INVARIANTS.md)
+   - Error handling conventions (INVARIANTS.md + existing code)
+   - What patterns work well (from existing code)
+   - K.I.S.S. principle: is there a simpler approach?
 
 Compress into ONE concise summary (<500 tokens). Focus on what's needed for [TASK].
 
 Return as markdown with:
 - Code file references (e.g., src/handlers/webhook.rs#L45-60)
-- Design.md section references (e.g., "See DESIGN.md §4.2 Webhook Ingress")
-- Decisions.md decision references (e.g., "See DECISIONS.md: Webhook Processing")
+- INVARIANTS.md references (e.g., "See INVARIANTS.md: Webhook Processing")
+- DESIGN.md section references (e.g., "See DESIGN.md §4.2 Webhook Ingress")
 ```
 
 ## When to Use
@@ -145,7 +149,8 @@ See .agents/skills/rag-project-context/ for details.
 
 ## Notes
 
-- Works best with LESSONS.md present in project
+- INVARIANTS.md is non-negotiable—violations cause architectural drift
 - Subagent should emphasize "show the code, not concepts"
 - Compress summaries ruthlessly—only include what this task needs
 - Thread history from subagent is temporary; extract actionable patterns only
+- Reference INVARIANTS.md heavily—these rules are why the system works

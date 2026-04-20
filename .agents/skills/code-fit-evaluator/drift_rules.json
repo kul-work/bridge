@@ -1,0 +1,44 @@
+{
+  "bridge_drift_rules": [
+    {
+      "id": "MONEY_FLOAT",
+      "pattern": "(f64|f32)\\s+(amount|price|cost|fee|currency|value)",
+      "applies_to_paths": ["src/**/*.rs"],
+      "match_scope": "added_lines",
+      "severity": "reject",
+      "message": "Float type used for money fields. Must use i64 for integer cents."
+    },
+    {
+      "id": "STATUS_STRING",
+      "pattern": "status\\s*:\\s*String",
+      "applies_to_paths": ["src/**/*.rs"],
+      "match_scope": "added_lines",
+      "severity": "reject",
+      "message": "Raw String for status field. Must use typed enum (e.g., SubscriptionStatus, PaymentStatus)."
+    },
+    {
+      "id": "HANDLER_DB",
+      "pattern": "sqlx::query",
+      "applies_to_paths": ["src/handlers/**/*.rs"],
+      "match_scope": "added_lines",
+      "severity": "reject",
+      "message": "Direct DB access in handler. Must go through src/db/ module."
+    },
+    {
+      "id": "UNWRAP_PROD",
+      "pattern": "\\.unwrap\\(\\)",
+      "applies_to_paths": ["src/**/*.rs"],
+      "match_scope": "added_lines",
+      "severity": "warn",
+      "message": "unwrap() detected in production path. Use ? operator or expect() with context message."
+    },
+    {
+      "id": "MISSING_IDEMPOTENCY",
+      "pattern": "webhook.*process|handle.*webhook",
+      "applies_to_paths": ["src/webhooks/**/*.rs"],
+      "match_scope": "added_lines",
+      "severity": "check",
+      "message": "Webhook processing detected. Agent must verify webhook_log idempotency check is explicitly present in control flow."
+    }
+  ]
+}
