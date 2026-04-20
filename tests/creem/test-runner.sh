@@ -37,6 +37,8 @@ USER_ID=""
 SCOPE="full"
 CLEAR_FIRST=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+start_time=0
+end_time=0
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -60,13 +62,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$USER_ID" ]]; then
-    # Generate stable USER_ID from EMAIL
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
-fi
-
 cd "$SCRIPT_DIR"
 source "globals.cfg"
+
+# Now that globals.cfg is sourced (providing default EMAIL if needed), 
+# ensure USER_ID is generated from the final EMAIL.
+if [[ -z "$USER_ID" ]]; then
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
 
 echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║             Creem Billing - Master Test Runner             ║${NC}"
@@ -164,11 +167,6 @@ run_smoke_tests() {
         fi
         echo ""
     done
-
-if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
-fi
 }
 
 start_time=$(date +%s)
@@ -226,11 +224,6 @@ echo "Suites Executed: $SUITES_RUN"
 echo "Unique Tests Run: $TOTAL_UNIQUE_RUN"
 
 # Beep when done
-
-if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
-fi
 powershell -Command "[console]::beep(1000, 500)" 2>/dev/null || echo -e "\a"
 
 if [[ $FAILED_SUITES -eq 0 ]]; then
