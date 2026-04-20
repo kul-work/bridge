@@ -18,10 +18,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    exit 1
-fi
+
 
 PASSED=0
 FAILED=0

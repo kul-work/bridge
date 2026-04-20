@@ -33,6 +33,7 @@ NC='\033[0m'
 
 # Defaults
 EMAIL=""
+USER_ID=""
 SCOPE="full"
 CLEAR_FIRST=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,23 +61,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
+    # Generate stable USER_ID from EMAIL
     USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
 fi
 
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    exit 1
-fi
+cd "$SCRIPT_DIR"
+source "globals.cfg"
 
 echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║             Creem Billing - Master Test Runner             ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
-echo "Scope: $SCOPE"
-echo "Email: $EMAIL"
 echo ""
-
-cd "$SCRIPT_DIR"
 
 # verify prerequisites
 if [[ ! -f "globals.cfg" ]]; then

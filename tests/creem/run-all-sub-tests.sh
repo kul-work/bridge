@@ -46,10 +46,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$EMAIL" ]]; then
-    echo -e "${RED}Error: --email is required${NC}"
-    exit 1
-fi
+
 
 echo -e "${BLUE}╔════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║       Creem Subscription Suite (CBI)           ║${NC}"
