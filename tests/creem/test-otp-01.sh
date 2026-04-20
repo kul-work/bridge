@@ -113,7 +113,7 @@ fi
 # Step 4: Verify DB
 echo -e "${YELLOW}[4/5] Verifying Bridge pay.payments table${NC}"
 sleep 3 # Allow async processing
-QUERY="SELECT status, amount_cents FROM pay.payments WHERE external_user_id = '$USER_ID' AND (product_id = '$PRODUCT_ID_OTP' OR subscription_id = '$PRODUCT_ID_OTP') ORDER BY created_at DESC LIMIT 1;"
+QUERY="SELECT status, amount_cents FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' ORDER BY created_at DESC LIMIT 1;"
 PAYMENT_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "$QUERY" -t 2>/dev/null || echo "")
 
 if [[ -z "$PAYMENT_RESULT" ]] || [[ "$PAYMENT_RESULT" == *"(0 rows)"* ]]; then

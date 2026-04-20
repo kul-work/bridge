@@ -272,6 +272,13 @@ pub async fn handle_creem(
     let subscription_id = payload["object"]["subscription"]["id"]
         .as_str()
         .or_else(|| payload["object"]["subscription_id"].as_str())
+        .or_else(|| payload["object"]["id"].as_str())
+        .map(|s| s.to_string());
+
+    let purchase_token = payload["object"]["checkout_id"]
+        .as_str()
+        .or_else(|| payload["object"]["order_id"].as_str())
+        .or_else(|| payload["object"]["id"].as_str())
         .map(|s| s.to_string());
 
     let timestamp_ms = payload["createdAt"].as_str().and_then(|s| {
@@ -288,7 +295,7 @@ pub async fn handle_creem(
             event_id,
             event_type,
             subscription_id,
-            None,
+            purchase_token,
             payload.clone(),
             timestamp_ms,
         )

@@ -62,9 +62,9 @@ echo -e "${GREEN}✓ Ready${NC}"
 # Step 2: Cleanup
 echo -e "${YELLOW}[2/5] Cleaning up old data from Bridge DB${NC}"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" > /dev/null 2>&1 || true
+  -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' OR subscription_id = '$SUBSCRIPTION_ID';" > /dev/null 2>&1 || true
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null 2>&1 || true
+  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' OR subscription_id = '$SUBSCRIPTION_ID';" > /dev/null 2>&1 || true
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.webhook_log WHERE provider = 'creem' AND provider_webhook_id LIKE 'evt_sub_01_%';" > /dev/null 2>&1 || true
 echo -e "${GREEN}✓ Cleaned${NC}"

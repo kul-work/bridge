@@ -323,7 +323,7 @@ fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> WebhookFields {
 
             // Determine subscription_id based on event type
             let subscription_id = match normalized_event_type.as_str() {
-                "purchase.one_time" => object_product_id.clone().or_else(|| object_id.clone()),
+                "purchase.one_time" => None,
                 "payment.refunded" => object_subscription_id.clone()
                     .or_else(|| object_product_id.clone())
                     .or_else(|| object_id.clone()),
@@ -947,7 +947,7 @@ pub async fn process_webhook(
                             external_user_id: user_id,
                             provider: &provider,
                             provider_transaction_id: fields.provider_transaction_id.as_deref()
-                                .unwrap_or(sub_id_str),
+                                .unwrap_or(&webhook.provider_webhook_id),
                             subscription_id: fields_subscription_id.as_deref(),
                             product_id: fields.product_id.as_deref(),
                             amount_cents: fields.amount_cents.unwrap_or(0),

@@ -156,8 +156,10 @@ impl VerifyPurchaseRepository for db::Database {
                     &resolved_external_user_id,
                     &provider,
                     &purchase_token,
-                    Some(&subscription_id),
-                    Some(&subscription_id),
+                    if is_subscription { Some(&subscription_id) } else { None },
+                    // Google Play subscriptions have no separate product_id; subscription_id *is* the product.
+                    // Pass None to avoid storing the subscription name as product_id (misleading).
+                    None,
                     amount_cents,
                     &payment_status,
                 )
