@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# ACC-02: Premium Access Retained During Scheduled Cancel
+# ACC-02: Scheduled Cancel Access
 # 
-# Purpose: Verify that premium access is RETAINED for subscriptions in
-#          'scheduled_cancel' state BEFORE the current_period_end date.
+# Purpose: Verify that premium access REMAINS active for subscriptions in
+#          'scheduled_cancel' (Pending Cancel) state until the period end.
 #
 # Usage: ./test-acc-02.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

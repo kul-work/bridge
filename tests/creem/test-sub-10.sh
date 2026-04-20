@@ -1,16 +1,19 @@
-#!/bash
+#!/bin/bash
 
 ##############################################################################
-# SUB-10: Admin Pause (Webhook)
+# SUB-10: Recovery from Past Due (Webhook)
 # 
-# Purpose: Verify that a Creem subscription.paused webhook properly 
-#          updates the subscription status to 'paused' in the database.
+# Purpose: Verify that a Creem subscription.active webhook correctly 
+#          restores an 'active' status from a 'past_due' or 'unpaid' state.
 #
 # Usage: ./test-sub-10.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

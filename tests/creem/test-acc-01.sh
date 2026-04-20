@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# ACC-01: Premium Access Granted for Active States
+# ACC-01: Active Subscription Access
 # 
-# Purpose: Verify that premium access is GRANTED for subscriptions in
-#          active states: active, trialing.
+# Purpose: Verify that users with 'active' status in the pay.subscriptions 
+#          table correctly receive access via the Bridge API.
 #
 # Usage: ./test-acc-01.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

@@ -3,15 +3,18 @@
 ##############################################################################
 # WHK-03: Duplicate Delivery (Idempotency)
 # 
-# Purpose: Verify that duplicate webhooks (same event ID) are handled
-#          idempotently - second attempt returns success but does not
+# Purpose: Verify that duplicate webhooks (same event ID) are handled 
+#          idempotently - second attempt returns success but does not 
 #          create duplicate database entries.
 #
 # Usage: ./test-whk-03.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

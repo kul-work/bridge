@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-06: Scheduled Cancellation (Webhook)
+# SUB-06: Subscription Resumed (Webhook)
 # 
-# Purpose: Verify that a Creem subscription.scheduled_cancel webhook properly 
-#          updates status to 'scheduled_cancel' and auto_renewing=false.
+# Purpose: Verify that a Creem subscription.resumed webhook restores the 
+#          status to 'active' and grants access.
 #
 # Usage: ./test-sub-06.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

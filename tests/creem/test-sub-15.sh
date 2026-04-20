@@ -1,16 +1,19 @@
-#!/bash
+#!/bin/bash
 
 ##############################################################################
 # SUB-15: Admin Resumes Paused Subscription (Webhook)
 # 
-# Purpose: Verify that a Creem subscription.active webhook properly 
-#          restores a 'paused' subscription back to 'active'.
+# Purpose: Verify that a Creem subscription.resumed webhook (triggered by 
+#          admin) restores the subscription status to 'active' and grants access.
 #
 # Usage: ./test-sub-15.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

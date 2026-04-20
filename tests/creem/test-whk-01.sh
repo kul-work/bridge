@@ -3,14 +3,17 @@
 ##############################################################################
 # WHK-01: Valid Signature Acceptance
 # 
-# Purpose: Verify that legitimate webhooks with correct creem-signature
+# Purpose: Verify that legitimate webhooks with correct creem-signature 
 #          are accepted and processed by the backend.
 #
 # Usage: ./test-whk-01.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

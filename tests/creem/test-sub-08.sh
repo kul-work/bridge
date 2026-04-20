@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-08: Resume Scheduled Cancellation (Webhook)
+# SUB-08: Subscription Refunded (Webhook)
 # 
-# Purpose: Verify that a Creem subscription.active webhook properly 
-#          restores auto_renewing=true when resuming a scheduled cancellation.
+# Purpose: Verify that a Creem payment.refunded webhook for a subscription 
+#          is processed correctly.
 #
 # Usage: ./test-sub-08.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-05: Subscription Expiry (Webhook)
+# SUB-05: Subscription Paused (Webhook)
 # 
-# Purpose: Verify that a Creem subscription.inactive webhook properly 
-#          updates the subscription status to 'expired' and revokes access.
+# Purpose: Verify that a Creem subscription.paused webhook updates the 
+#          status to 'paused' and suspends access.
 #
 # Usage: ./test-sub-05.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-14: Scheduled Cancellation Period Ends (Expiry Webhook)
+# SUB-14: Admin Pauses Subscription (Webhook)
 # 
-# Purpose: Verify that a Creem subscription.expired webhook properly 
-#          terminates a subscription that was previously scheduled to cancel.
+# Purpose: Verify that a Creem subscription.paused webhook (triggered by 
+#          admin) correctly updates the subscription status and revokes access.
 #
 # Usage: ./test-sub-14.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

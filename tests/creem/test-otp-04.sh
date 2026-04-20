@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-04: Failed/Declined Payment (Webhook)
+# OTP-04: Partially Refunded Processing (Webhook)
 # 
-# Purpose: Verify that a Creem checkout.failed webhook does not create 
-#          a successful payment record.
+# Purpose: Verify that a Creem payment.partially_refunded webhook is properly 
+#          processed, updating the payment record to 'partially_refunded'.
 #
 # Usage: ./test-otp-04.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

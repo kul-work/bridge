@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-13: Payment Recovery from Past Due (Webhook)
+# SUB-13: Status Sync after Provider Recovery
 # 
-# Purpose: Verify that a Creem subscription.paid webhook properly 
-#          recovers a 'past_due' subscription back to 'active'.
+# Purpose: Verify that the backend correctly updates subscription state to 
+#          'active' from blocked states once a valid payment webhook arrives.
 #
 # Usage: ./test-sub-13.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

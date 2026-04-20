@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-03: Refund Creation (Webhook)
+# OTP-03: Failed Payment Processing (Webhook)
 # 
-# Purpose: Verify that a Creem refund.created webhook properly updates 
-#          the payment status to 'refunded' and revokes entitlements.
+# Purpose: Verify that a Creem payment.failed webhook is properly 
+#          processed, updating the payment record to 'failed'.
 #
 # Usage: ./test-otp-03.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

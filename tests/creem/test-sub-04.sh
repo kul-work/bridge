@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-04: Grace Period (Webhook)
+# SUB-04: Subscription Expired (Webhook)
 # 
-# Purpose: Verify that a Creem subscription.past_due webhook properly 
-#          updates the subscription status to 'in_grace_period' (Grace Period).
+# Purpose: Verify that a Creem subscription.expired webhook updates the 
+#          subscription status to 'expired' and revokes access.
 #
 # Usage: ./test-sub-04.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

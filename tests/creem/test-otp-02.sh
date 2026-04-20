@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# OTP-02: Sync Redirect Verification
+# OTP-02: Refund Processed (Webhook)
 # 
-# Purpose: Verify that the backend can validate a payment synchronously
-#          via query parameters on the success redirect URL.
+# Purpose: Verify that a Creem payment.refunded webhook is properly 
+#          processed, updating the payment record to 'refunded'.
 #
 # Usage: ./test-otp-02.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail

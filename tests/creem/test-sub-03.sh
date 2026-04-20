@@ -1,16 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-03: User Cancellation (Webhook)
+# SUB-03: User Cancellation (Scheduled)
 # 
-# Purpose: Verify that a Creem subscription.canceled webhook properly 
-#          updates the subscription status to 'cancelled' in the database.
+# Purpose: Verify that a Creem subscription.cancelled webhook updates 
+#          the subscription status to 'scheduled_cancel'.
 #
 # Usage: ./test-sub-03.sh --user-id "test_user"
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL
-#   - globals.cfg sourced
+#   - globals.cfg sourced with required vars:
+#     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
+#     * WEBHOOK_TOKEN
+#   - psql installed and database accessible
 ##############################################################################
 
 set -euo pipefail
