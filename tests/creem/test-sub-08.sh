@@ -31,11 +31,15 @@ NC='\033[0m'
 # Defaults
 TIMESTAMP=$(date +%s)
 EMAIL="creem_user_$TIMESTAMP@example.com"
-USER_ID="test_creem_user_$TIMESTAMP"
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -47,13 +51,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
+
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-08: Resume Scheduled Cancellation (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
 
 # Step 1: Ensure subscription exists in scheduled_cancel state
 echo -e "${YELLOW}[1/4] Checking for existing scheduled cancellation${NC}"
-STATUS_CHECK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+STATUS_CHECK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status, auto_renewing FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d ' ' || echo "")
 STATUS_VAL=$(echo "$STATUS_CHECK" | awk -F '|' '{print $1}' | tr -d ' ')
 AUTO_RENEW_VAL=$(echo "$STATUS_CHECK" | awk -F '|' '{print $2}' | tr -d ' ')
@@ -62,7 +71,7 @@ if [[ "$STATUS_VAL" != "scheduled_cancel" ]]; then
     echo -e "${YELLOW}Subscription not in scheduled_cancel state. Running SUB-06 first...${NC}"
     ./test-sub-06.sh --user-id "$USER_ID"
     
-    STATUS_CHECK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+    STATUS_CHECK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
       -c "SELECT status, auto_renewing FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d ' ' || echo "")
     STATUS_VAL=$(echo "$STATUS_CHECK" | awk -F '|' '{print $1}' | tr -d ' ')
 fi
@@ -113,7 +122,7 @@ fi
 # Step 3: Verify DB status is 'active' and 'auto_renewing' is true
 echo -e "${YELLOW}[3/4] Verifying status is 'active' and auto_renewing is true${NC}"
 sleep 2
-QUERY_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+QUERY_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status, auto_renewing FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d ' ' || echo "")
 
 STATUS=$(echo "$QUERY_RESULT" | awk -F '|' '{print $1}' | tr -d ' ')

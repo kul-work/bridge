@@ -81,28 +81,11 @@ TRUNCATE payments CASCADE;
 TRUNCATE subscriptions CASCADE;
 TRUNCATE webhook_delivery CASCADE;
 TRUNCATE webhook_provider CASCADE;
+TRUNCATE price_step_up_expiry CASCADE;
+TRUNCATE agent_credits CASCADE;
+TRUNCATE agent_transactions CASCADE;
 
-SET search_path TO hiha;
-
-TRUNCATE notifications CASCADE;
-TRUNCATE webhook_callbacks CASCADE;
-
-DO $$
-DECLARE
-  v_user_id text := 'user_36lLgcNtpsqKzB5hpan8wYIN5ew';
-BEGIN
-  -- Delete all the users but
-  DELETE FROM users WHERE clerk_id != v_user_id;
-  -- Reset user to free tier
-  UPDATE users SET
-    is_premium = false,
-    premium_activated_at = NULL,
-    premium_expires_at = NULL
-  WHERE clerk_id = v_user_id;
-  
-  COMMIT;
-END
-$$;
+RAISE NOTICE 'Nuclear cleanup of pay schema completed';
 EOF
 )
 
@@ -117,7 +100,7 @@ else
     echo -e "${YELLOW}Executing cleanup...${NC}"
     echo ""
     
-    psql -U "$DATABASE_USER" -h "$DATABASE_HOST" -p "$DATABASE_PORT" -d "$DATABASE_NAME" <<< "$CLEANUP_SQL" 2>&1
+    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" <<< "$CLEANUP_SQL" 2>&1
     
     echo ""
     echo -e "${YELLOW}========================================${NC}"

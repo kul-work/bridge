@@ -31,11 +31,15 @@ NC='\033[0m'
 # Defaults
 TIMESTAMP=$(date +%s)
 EMAIL="creem_user_$TIMESTAMP@example.com"
-USER_ID="test_creem_user_$TIMESTAMP"
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -47,20 +51,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
+
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-02: Subscription Renewal (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
 
 # Step 1: Ensure existing subscription exists
 echo -e "${YELLOW}[1/4] Checking for existing active subscription${NC}"
-SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT current_period_end FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID' AND status = 'active';" -t | tr -d '[:space:]' || echo "")
 
 if [[ -z "$SUB_RESULT" ]]; then
     echo -e "${YELLOW}No active sub found. Running SUB-01 first...${NC}"
     ./test-sub-01.sh --user-id "$USER_ID"
     
-    SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+    SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
       -c "SELECT current_period_end FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID' AND status = 'active';" -t | tr -d '[:space:]' || echo "")
 fi
 
@@ -116,7 +125,7 @@ fi
 # Step 3: Verify DB update
 echo -e "${YELLOW}[3/4] Verifying expiry date updated${NC}"
 sleep 2
-UPDATED_EXPIRY=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+UPDATED_EXPIRY=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT current_period_end FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d '[:space:]' || echo "")
 
 if [[ "$UPDATED_EXPIRY" != "$OLD_EXPIRY" ]]; then

@@ -7,7 +7,7 @@ target/
 .env
 .env.local
 .env.*.local
-tests/**/globals.cfg
+#tests/**/globals.cfg
 
 # IDE
 .vscode/

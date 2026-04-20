@@ -29,11 +29,15 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Defaults
-USER_ID="test_err_user_$(date +%s)"
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -44,6 +48,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "ERR-02: Invalid Customer Portal Call"

@@ -31,11 +31,15 @@ NC='\033[0m'
 # Defaults
 TIMESTAMP=$(date +%s)
 EMAIL="creem_otp_user_$TIMESTAMP@example.com"
-USER_ID="test_otp_user_$TIMESTAMP"
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -47,20 +51,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
+
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-03: Refund Creation (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
 
 # Step 1: Ensure existing payment exists (from OTP-01)
 echo -e "${YELLOW}[1/4] Checking for existing payment to refund${NC}"
-TX_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+TX_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 
 if [[ -z "$TX_ID" ]]; then
     echo -e "${YELLOW}No payment found. Running OTP-01 first...${NC}"
     ./test-otp-01.sh --user-id "$USER_ID"
     
-    TX_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+    TX_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
       -c "SELECT provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 fi
 
@@ -117,7 +126,7 @@ fi
 # Step 3: Verify DB status is 'refunded'
 echo -e "${YELLOW}[3/4] Verifying payment status is 'refunded'${NC}"
 sleep 2
-STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND provider_transaction_id = '$TX_ID' LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 
 if [[ "$STATUS" == "refunded" ]]; then

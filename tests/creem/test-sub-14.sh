@@ -31,11 +31,15 @@ NC='\033[0m'
 # Defaults
 TIMESTAMP=$(date +%s)
 EMAIL="creem_user_$TIMESTAMP@example.com"
-USER_ID="test_creem_user_$TIMESTAMP"
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -47,6 +51,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
+
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-14: Scheduled Cancellation Expiry"
 echo -e "${YELLOW}========================================${NC}"
@@ -54,7 +63,7 @@ echo -e "${YELLOW}========================================${NC}"
 # Step 1: Ensure active subscription exists with auto_renewing=false
 echo -e "${YELLOW}[1/4] Checking for existing scheduled cancellation${NC}"
 # Use status scheduled_cancel from our previous tests logic
-STATUS_CHECK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+STATUS_CHECK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status, auto_renewing FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d ' ' || echo "")
 STATUS_VAL=$(echo "$STATUS_CHECK" | awk -F '|' '{print $1}' | tr -d ' ')
 AUTO_RENEW_VAL=$(echo "$STATUS_CHECK" | awk -F '|' '{print $2}' | tr -d ' ')
@@ -109,7 +118,7 @@ fi
 # Step 3: Verify DB status is 'expired'
 echo -e "${YELLOW}[3/4] Verifying status is 'expired'${NC}"
 sleep 2
-QUERY_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+QUERY_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d ' ' || echo "")
 
 STATUS=$(echo "$QUERY_RESULT" | tr -d ' ')

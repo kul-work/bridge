@@ -31,11 +31,15 @@ NC='\033[0m'
 # Defaults
 TIMESTAMP=$(date +%s)
 EMAIL="all_user_$TIMESTAMP@example.com"
-USER_ID="test_otp_user_$TIMESTAMP"
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -47,6 +51,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
+
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-02: Sync Redirect Verification"
 echo -e "${YELLOW}========================================${NC}"
@@ -57,7 +66,7 @@ echo -e "${GREEN}✓ Ready${NC}"
 
 # Step 2: Cleanup
 echo -e "${YELLOW}[2/4] Cleaning up old data from Bridge DB${NC}"
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" > /dev/null 2>&1 || true
 echo -e "${GREEN}✓ Cleaned${NC}"
 
@@ -89,12 +98,12 @@ echo -e "${YELLOW}[4/4] Verifying record in DB${NC}"
 sleep 2
 # Some systems might create a payment record directly or an 'active' one-time-sub
 # We'll check both pay.payments and pay.subscriptions
-RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND provider_transaction_id = '$ORDER_ID';" -t | tr -d '[:space:]' || echo "")
 
 if [[ -z "$RESULT" ]]; then
     # Maybe it was stored in subscriptions (legacy behavior for granting access)
-    RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+    RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
       -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID_OTP';" -t | tr -d '[:space:]' || echo "")
 fi
 

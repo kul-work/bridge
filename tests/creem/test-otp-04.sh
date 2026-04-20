@@ -31,11 +31,15 @@ NC='\033[0m'
 # Defaults
 TIMESTAMP=$(date +%s)
 EMAIL="creem_otp_user_$TIMESTAMP@example.com"
-USER_ID="test_otp_user_$TIMESTAMP"
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -47,6 +51,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
+
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-04: Failed/Declined Payment (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
@@ -57,7 +66,7 @@ echo -e "${GREEN}✓ Ready${NC}"
 
 # Step 2: Record Initial State
 echo -e "${YELLOW}[2/4] Recording initial payment count (success only)${NC}"
-COUNT_BEFORE=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+COUNT_BEFORE=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success';" -t | tr -d '[:space:]' || echo "0")
 
 # Step 3: Trigger Webhook with FAILED status
@@ -102,7 +111,7 @@ fi
 # Step 4: Verify Response and DB
 echo -e "${YELLOW}[4/4] Verifying database state unchanged for success count${NC}"
 sleep 2
-COUNT_AFTER=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+COUNT_AFTER=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success';" -t | tr -d '[:space:]' || echo "0")
 
 if [[ "$COUNT_BEFORE" == "$COUNT_AFTER" ]]; then

@@ -31,11 +31,15 @@ NC='\033[0m'
 
 # Defaults
 TIMESTAMP=$(date +%s)
-USER_ID="test_acc_user_$TIMESTAMP"
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -46,6 +50,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "ACC-02: Premium Access Retained During Scheduled Cancel"
@@ -60,9 +69,9 @@ echo -e "${YELLOW}[2/4] Setting up DB for scheduled cancellation${NC}"
 FUTURE_EXPIRY=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+15 days" 2>/dev/null || date -u -v+15d +"%Y-%m-%dT%H:%M:%SZ")
 
 echo "  Setting status=scheduled_cancel, auto_renewing=false, current_period_end=$FUTURE_EXPIRY..."
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, provider, auto_renewing, current_period_end, app_id) \
       VALUES ('$USER_ID', '$PRODUCT_ID_SUB', 'scheduled_cancel', 'creem', false, '$FUTURE_EXPIRY', '$BRIDGE_APP_ID');" > /dev/null
 echo -e "${GREEN}✓ DB updated${NC}"
@@ -87,7 +96,7 @@ fi
 
 # Step 4: Summary and Cleanup
 echo -e "${YELLOW}[4/4] Summary${NC}"
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
 
 if [[ "$ACC_PASS" == "true" ]]; then

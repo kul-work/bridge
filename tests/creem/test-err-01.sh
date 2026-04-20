@@ -73,7 +73,7 @@ echo "  Response: HTTP $HTTP_CODE"
 # Step 3: Verify no record created
 echo -e "${YELLOW}[3/3] Verifying no records created in pay.subscriptions${NC}"
 sleep 2
-SUBS_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+SUBS_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT count(*) FROM pay.subscriptions WHERE subscription_id = '$SUB_ID';" -t | tr -d '[:space:]' || echo "0")
 
 if [[ "$SUBS_COUNT" == "0" ]]; then

@@ -32,11 +32,15 @@ NC='\033[0m'
 # Defaults
 TIMESTAMP=$(date +%s)
 EMAIL="creem_whk_user_$TIMESTAMP@example.com"
-USER_ID="test_whk_user_$TIMESTAMP"
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -48,17 +52,22 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
+
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-03: Duplicate Delivery (Idempotency)"
 echo -e "${YELLOW}========================================${NC}"
 
 # Step 2: Cleanup and initial state
 echo -e "${YELLOW}[2/4] Cleaning initial state for user $USER_ID${NC}"
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
-# Clean up recorded webhooks in pay.webhook_log
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.webhook_log WHERE provider = 'creem' AND provider_webhook_id LIKE 'whk-03%';" > /dev/null 2>&1 || true
+# Clean up recorded webhooks in pay.webhook_provider
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.webhook_provider WHERE provider = 'creem' AND provider_webhook_id LIKE 'whk-03%';" > /dev/null 2>&1 || true
 echo -e "${GREEN}✓ Cleaned${NC}"
 
 # Step 3: Send FIRST webhook
@@ -111,7 +120,7 @@ echo "  Second delivery response: HTTP $HTTP_CODE_2"
 
 # Verification
 sleep 2 # process time
-SUBS_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+SUBS_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT count(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" -t | tr -d '[:space:]' || echo "0")
 
 echo "  Final subscription count: $SUBS_COUNT"

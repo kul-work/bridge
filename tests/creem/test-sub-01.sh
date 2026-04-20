@@ -31,11 +31,15 @@ NC='\033[0m'
 # Defaults
 TIMESTAMP=$(date +%s)
 EMAIL="creem_user_$TIMESTAMP@example.com"
-USER_ID="test_creem_user_$TIMESTAMP" # Consistent with GPBI tests and unique
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -47,6 +51,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
+
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-01: Initial Subscription (Active)"
 echo -e "${YELLOW}========================================${NC}"
@@ -57,12 +66,12 @@ echo -e "${GREEN}✓ Ready${NC}"
 
 # Step 2: Cleanup
 echo -e "${YELLOW}[2/5] Cleaning up old data from Bridge DB${NC}"
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' OR subscription_id = '$SUBSCRIPTION_ID';" > /dev/null 2>&1 || true
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' OR subscription_id = '$SUBSCRIPTION_ID';" > /dev/null 2>&1 || true
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.webhook_log WHERE provider = 'creem' AND provider_webhook_id LIKE 'evt_sub_01_%';" > /dev/null 2>&1 || true
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.webhook_provider WHERE provider = 'creem' AND provider_webhook_id LIKE 'evt_sub_01_%';" > /dev/null 2>&1 || true
 echo -e "${GREEN}✓ Cleaned${NC}"
 
 # Step 3: Trigger Webhook
@@ -118,7 +127,7 @@ echo -e "${YELLOW}[4/5] Verifying pay.subscriptions table${NC}"
 sleep 2 # Allow async processing
 QUERY="SELECT status, auto_renewing FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID' LIMIT 1;"
 
-SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$QUERY" -t 2>/dev/null || echo "")
+SUB_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "$QUERY" -t 2>/dev/null || echo "")
 
 if [[ -z "$SUB_RESULT" ]] || [[ "$SUB_RESULT" == *"(0 rows)"* ]]; then
     echo -e "${RED}✗ No subscription record found for query: $QUERY${NC}"

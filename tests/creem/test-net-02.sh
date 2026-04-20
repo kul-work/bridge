@@ -32,11 +32,15 @@ NC='\033[0m'
 # Defaults
 TIMESTAMP=$(date +%s)
 EMAIL="creem_net_user_$TIMESTAMP@example.com"
-USER_ID="test_net_user_$TIMESTAMP"
+USER_ID=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
         --user-id)
             USER_ID="$2"
             shift 2
@@ -48,16 +52,21 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
+
 echo -e "${YELLOW}========================================${NC}"
 echo "NET-02: Concurrent Deliveries (Race Condition)"
 echo -e "${YELLOW}========================================${NC}"
 
 # Step 2: Cleanup and prepare payload
 echo -e "${YELLOW}[2/4] Preparing payload and cleaning state for user $USER_ID${NC}"
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.webhook_log WHERE provider = 'creem' AND provider_webhook_id LIKE 'net-02%';" > /dev/null 2>&1 || true
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.webhook_provider WHERE provider = 'creem' AND provider_webhook_id LIKE 'net-02%';" > /dev/null 2>&1 || true
 
 EVENT_ID="net-02-race-$(date +%s)"
 PERIOD_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+30 days" 2>/dev/null || date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ")
@@ -99,6 +108,11 @@ for i in {1..3}; do
     -d "$PAYLOAD" &
 done
 
+if [[ -z "$USER_ID" ]]; then
+    # Generate a stable-ish USER_ID from email if not provided
+    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+fi
+
 echo "Waiting for all background processes to complete..."
 wait
 echo -e "${GREEN}✓ All requests finished${NC}"
@@ -107,10 +121,10 @@ echo -e "${GREEN}✓ All requests finished${NC}"
 echo -e "${YELLOW}[4/4] Verifying database for duplicate records${NC}"
 sleep 2 # process time
 
-SUBS_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+SUBS_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT count(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" -t | tr -d '[:space:]' || echo "0")
-WEBHOOK_LOG_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT count(*) FROM pay.webhook_log WHERE provider = 'creem' AND provider_webhook_id = '$EVENT_ID';" -t | tr -d '[:space:]' || echo "0")
+WEBHOOK_LOG_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "SELECT count(*) FROM pay.webhook_provider WHERE provider = 'creem' AND provider_webhook_id = '$EVENT_ID';" -t | tr -d '[:space:]' || echo "0")
 
 echo "  Subscription records created: $SUBS_COUNT"
 echo "  Webhook log entries: $WEBHOOK_LOG_COUNT"
