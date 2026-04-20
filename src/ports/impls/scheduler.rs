@@ -179,6 +179,7 @@ impl WebhookProcessingTransactionRepository for db::Database {
                     &request.provider,
                     &request.provider_transaction_id,
                     request.subscription_id.as_deref(),
+                    request.product_id.as_deref(),
                     request.amount_cents,
                     &request.status,
                 )
@@ -239,6 +240,7 @@ impl WebhookProcessingTransactionRepository for db::Database {
                         &payment.provider,
                         &payment.provider_transaction_id,
                         payment.subscription_id.as_deref(),
+                        payment.product_id.as_deref(),
                         payment.amount_cents,
                         &payment.status,
                     )

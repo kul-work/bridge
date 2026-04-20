@@ -942,16 +942,16 @@ pub async fn process_webhook(
                         payment_state: None,
                         provider_customer_id: fields_provider_customer_id.as_deref(),
                         event_time_ms: timestamp_epoch_ms,
-                        payment: fields.provider_transaction_id.as_deref().map(|txn_id| {
-                            WebhookPaymentRecordRequest {
-                                app_id,
-                                external_user_id: user_id,
-                                provider: &provider,
-                                provider_transaction_id: txn_id,
-                                subscription_id: fields_subscription_id.as_deref(),
-                                amount_cents: fields.amount_cents.unwrap_or(0),
-                                status: "success",
-                            }
+                        payment: Some(WebhookPaymentRecordRequest {
+                            app_id,
+                            external_user_id: user_id,
+                            provider: &provider,
+                            provider_transaction_id: fields.provider_transaction_id.as_deref()
+                                .unwrap_or(sub_id_str),
+                            subscription_id: fields_subscription_id.as_deref(),
+                            product_id: fields.product_id.as_deref(),
+                            amount_cents: fields.amount_cents.unwrap_or(0),
+                            status: "success",
                         }),
                         adopt_stale_payment: provider == "creem",
                     })
@@ -1262,6 +1262,7 @@ pub async fn process_webhook(
                     provider: &provider,
                     provider_transaction_id: txn_id,
                     subscription_id: fields_subscription_id.as_deref(),
+                    product_id: fields.product_id.as_deref(),
                     amount_cents: fields.amount_cents.unwrap_or(0),
                     status: "pending",
                 })
@@ -1316,6 +1317,7 @@ pub async fn process_webhook(
                     provider: &provider,
                     provider_transaction_id: txn_id,
                     subscription_id: Some(sub_id),
+                    product_id: fields.product_id.as_deref(),
                     amount_cents: fields.amount_cents.unwrap_or(0),
                     status: "failed",
                 })
@@ -1506,6 +1508,7 @@ pub async fn process_webhook(
                     provider: &provider,
                     provider_transaction_id: txn_id,
                     subscription_id: fields_subscription_id.as_deref(),
+                    product_id: fields.product_id.as_deref(),
                     amount_cents: fields.amount_cents.unwrap_or(0),
                     status: "dispute_created",
                 })
@@ -1632,6 +1635,7 @@ pub async fn process_webhook(
                         provider: &provider,
                         provider_transaction_id: txn_id,
                         subscription_id: fields_subscription_id.as_deref(),
+                        product_id: fields.product_id.as_deref(),
                         amount_cents: fields.amount_cents.unwrap_or(0),
                         status: "price_changed",
                     })

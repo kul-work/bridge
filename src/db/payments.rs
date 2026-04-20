@@ -53,16 +53,18 @@ pub async fn record_payment_tx(
     provider: &str,
     provider_transaction_id: &str,
     subscription_id: Option<&str>,
+    product_id: Option<&str>,
     amount_cents: i32,
     status: &str,
 ) -> Result<(), crate::error::BridgeError> {
     let result = sqlx::query(
-        "INSERT INTO pay.payments (app_id, external_user_id, provider, provider_transaction_id, subscription_id, amount_cents, status, webhook_received_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+        "INSERT INTO pay.payments (app_id, external_user_id, provider, provider_transaction_id, subscription_id, product_id, amount_cents, status, webhook_received_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
          ON CONFLICT (app_id, provider, provider_transaction_id)
          DO UPDATE SET
            status = EXCLUDED.status,
            subscription_id = COALESCE(EXCLUDED.subscription_id, payments.subscription_id),
+           product_id = COALESCE(EXCLUDED.product_id, payments.product_id),
            amount_cents = CASE WHEN EXCLUDED.amount_cents > 0 THEN EXCLUDED.amount_cents ELSE payments.amount_cents END,
            webhook_received_at = NOW()
          WHERE payments.external_user_id = EXCLUDED.external_user_id"
@@ -72,6 +74,7 @@ pub async fn record_payment_tx(
     .bind(provider)
     .bind(provider_transaction_id)
     .bind(subscription_id)
+    .bind(product_id)
     .bind(amount_cents)
     .bind(status)
     .execute(&mut **tx)

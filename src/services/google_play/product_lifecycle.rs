@@ -35,6 +35,7 @@ pub async fn handle_otp_purchased<R: WebhookProcessingTransactionRepository + ?S
             provider: &webhook.provider,
             provider_transaction_id: txn_id,
             subscription_id: fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()),
+            product_id: fields.product_id.as_deref(),
             amount_cents: fields.amount_cents.unwrap_or(0),
             status: "success",
         })
@@ -84,6 +85,7 @@ pub async fn handle_otp_cancelled<
             provider: &webhook.provider,
             provider_transaction_id: token,
             subscription_id: fields.subscription_id.as_deref().or(webhook.subscription_id.as_deref()),
+            product_id: fields.product_id.as_deref(),
             amount_cents: fields.amount_cents.unwrap_or(0),
             status: "cancelled",
         })

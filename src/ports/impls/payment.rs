@@ -157,6 +157,7 @@ impl VerifyPurchaseRepository for db::Database {
                     &provider,
                     &purchase_token,
                     Some(&subscription_id),
+                    Some(&subscription_id),
                     amount_cents,
                     &payment_status,
                 )
