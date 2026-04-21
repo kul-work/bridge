@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use axum::http::HeaderMap;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use crate::application::checkout_helpers::parse_cents;
 use crate::error::AppError;
 use crate::services::payment::{
     CheckoutSession, PaymentProvider, SubscriptionDetails,
@@ -98,7 +99,7 @@ impl CoinbaseProvider {
             for payment in payments {
                 if payment["status"].as_str() == Some("CONFIRMED") {
                     let val_str = payment["value"]["local"]["amount"].as_str().unwrap_or("0");
-                    amount_cents += (val_str.parse::<f64>().unwrap_or(0.0) * 100.0).round() as i32;
+                    amount_cents += parse_cents(val_str).unwrap_or(0);
                 }
             }
         }

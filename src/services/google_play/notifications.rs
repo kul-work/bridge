@@ -1,4 +1,5 @@
 /// Google Play notification and email helpers
+use crate::application::checkout_helpers::format_cents_as_dollars;
 use crate::error::AppError;
 use chrono::DateTime;
 use chrono::Utc;
@@ -70,7 +71,7 @@ pub async fn send_email_price_step_up(
     email_service.send_email(
         email,
         "Subscription Price Increase",
-        &format!("Your subscription {} price is increasing to ${} effective {}.", subscription_id, new_price_cents as f64 / 100.0, deadline),
+        &format!("Your subscription {} price is increasing to ${} effective {}.", subscription_id, format_cents_as_dollars(new_price_cents), deadline),
     ).await
 }
 

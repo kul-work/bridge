@@ -1,3 +1,4 @@
+use crate::application::checkout_helpers::parse_cents;
 use crate::ports::WebhookProviderSnapshot;
 
 use super::normalize::normalize_event_type_with_payload;
@@ -197,8 +198,7 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
             purchase_token: None,
             amount_cents: p.pointer("/event/data/pricing/local/amount")
                 .and_then(|v| v.as_str())
-                .and_then(|s| s.parse::<f64>().ok())
-                .map(|a| (a * 100.0) as i32),
+                .and_then(parse_cents),
             auto_renewing: None,
             current_period_end: None,
             provider_transaction_id: p.pointer("/event/data/id")
