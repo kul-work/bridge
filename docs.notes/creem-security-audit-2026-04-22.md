@@ -90,18 +90,6 @@ This leaks **length information** via timing. While the header is hex-encoded (p
 
 ---
 
-## Positive Controls Observed
-
-- **HMAC-SHA256 signature verification** with constant-time comparison (ingress).
-- **Idempotency** via unique DB index on `(app_id, provider, provider_webhook_id)` plus secondary dedup on `(app_id, provider, purchase_token, event_type)`.
-- **Stale event suppression** via `timestamp_epoch_ms` high-water mark.
-- **Row-Level Security (RLS)** on `webhook_provider`, `webhook_delivery`, and `payments`.
-- **Callback HMAC signing** (`sha256=<sig>`) for outbound webhooks to HiHa.
-- **App-scoped transactions** (`begin_app_tx`) ensuring tenant isolation at the DB level.
-- **Creem orphan guard** drops webhooks that cannot resolve a user after DB lookups, preventing unscoped event processing.
-
----
-
 ## Actionable Summary
 
 | Priority | Fix | Location |
