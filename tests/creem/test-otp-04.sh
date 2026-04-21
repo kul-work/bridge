@@ -63,14 +63,14 @@ echo -e "${YELLOW}========================================${NC}"
 # Step 1: Ensure existing payment exists (from OTP-01)
 echo -e "${YELLOW}[1/4] Checking for existing payment to partially refund${NC}"
 CHECKOUT_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "SELECT purchase_token FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
+  -c "SELECT provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 
 if [[ -z "$CHECKOUT_ID" ]]; then
     echo -e "${YELLOW}No payment found. Running OTP-01 first...${NC}"
     ./test-otp-01.sh --user-id "$USER_ID"
     
     CHECKOUT_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-      -c "SELECT purchase_token FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
+      -c "SELECT provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID_OTP' AND status = 'success' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 fi
 
 if [[ -z "$CHECKOUT_ID" ]]; then
@@ -125,7 +125,7 @@ fi
 echo -e "${YELLOW}[3/4] Verifying Bridge pay.payments table for 'partially_refunded' status${NC}"
 sleep 3 # Allow async processing
 STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status FROM pay.payments WHERE purchase_token = '$CHECKOUT_ID' LIMIT 1;" -t | tr -d '[:space:]' || echo "")
+  -c "SELECT status FROM pay.payments WHERE provider_transaction_id = '$CHECKOUT_ID' LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 
 if [[ "$STATUS" == "partially_refunded" ]]; then
     echo -e "${GREEN}✓ Payment verified: Status=$STATUS${NC}"

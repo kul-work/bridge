@@ -106,7 +106,7 @@ fi
 echo -e "${YELLOW}[2/3] Verifying Bridge pay.payments table for 'failed' status${NC}"
 sleep 3 # Allow async processing
 STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status FROM pay.payments WHERE purchase_token = '$CHECKOUT_ID' LIMIT 1;" -t | tr -d '[:space:]' || echo "")
+  -c "SELECT status FROM pay.payments WHERE provider_transaction_id = '$CHECKOUT_ID' LIMIT 1;" -t | tr -d '[:space:]' || echo "")
 
 if [[ "$STATUS" == "failed" ]]; then
     echo -e "${GREEN}✓ Payment verified: Status=$STATUS${NC}"
