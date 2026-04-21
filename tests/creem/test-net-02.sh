@@ -77,7 +77,7 @@ PAYLOAD=$(cat <<EOF
   "eventType": "subscription.active",
   "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "object": {
-    "id": "$SUBSCRIPTION_ID",
+    "id": "sub-$EVENT_ID",
     "customer": {
       "email": "$EMAIL",
       "id": "cust_net_02_race"
