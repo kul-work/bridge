@@ -66,7 +66,7 @@ STATUS_CHECK=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_POR
   -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d ' ' || echo "")
 STATUS_VAL=$(echo "$STATUS_CHECK" | tr -d ' ')
 
-if [[ "$STATUS_VAL" != "past_due" && "$STATUS_VAL" != "unpaid" && "$STATUS_VAL" != "in_grace_period" ]]; then
+if [[ "$STATUS_VAL" != "past_due" && "$STATUS_VAL" != "unpaid" ]]; then
     echo -e "${YELLOW}Subscription not in past_due state. Running SUB-04 first...${NC}"
     ./test-sub-04.sh --user-id "$USER_ID"
     

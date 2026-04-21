@@ -73,13 +73,13 @@ fi
 echo -e "${GREEN}✓ Ready${NC}"
 
 # Step 2: Trigger Expiry Webhook
-echo -e "${YELLOW}[2/4] Sending subscription.inactive webhook${NC}"
+echo -e "${YELLOW}[2/4] Sending subscription.expired webhook${NC}"
 EVENT_ID="evt_sub_05_$(date +%s)"
 
 PAYLOAD=$(cat <<EOF
 {
   "id": "$EVENT_ID",
-  "eventType": "subscription.inactive",
+  "eventType": "subscription.expired",
   "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "object": {
     "id": "$SUBSCRIPTION_ID",
@@ -112,16 +112,16 @@ else
     exit 1
 fi
 
-# Step 3: Verify DB status is 'expired' or 'inactive'
-echo -e "${YELLOW}[3/4] Verifying status is 'expired' or 'inactive'${NC}"
+# Step 3: Verify DB status is 'expired'
+echo -e "${YELLOW}[3/4] Verifying status is 'expired'${NC}"
 sleep 2
 STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d '[:space:]' || echo "")
 
-if [[ "$STATUS" == "expired" || "$STATUS" == "inactive" ]]; then
+if [[ "$STATUS" == "expired" ]]; then
     echo -e "${GREEN}✓ Status verified: $STATUS${NC}"
 else
-    echo -e "${RED}✗ Unexpected status: $STATUS (Expected: expired/inactive)${NC}"
+    echo -e "${RED}✗ Unexpected status: $STATUS (Expected: expired)${NC}"
     exit 1
 fi
 

@@ -112,8 +112,8 @@ else
     exit 1
 fi
 
-# Step 3: Verify DB status is 'scheduled_cancel' and 'auto_renewing' is false
-echo -e "${YELLOW}[3/4] Verifying status is 'scheduled_cancel' and auto_renewing is false${NC}"
+# Step 3: Verify DB status is 'active' (retained) and 'auto_renewing' is false
+echo -e "${YELLOW}[3/4] Verifying status is 'active' and auto_renewing is false${NC}"
 sleep 4
 
 QUERY_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
@@ -127,7 +127,7 @@ fi
 STATUS=$(echo "$QUERY_RESULT" | cut -d'|' -f1)
 AUTO_RENEW=$(echo "$QUERY_RESULT" | cut -d'|' -f2)
 
-if [[ "$STATUS" == "scheduled_cancel" || "$STATUS" == "cancellation_scheduled" ]]; then
+if [[ "$STATUS" == "active" ]]; then
     if [[ "$AUTO_RENEW" == "f" || "$AUTO_RENEW" == "false" || -z "$AUTO_RENEW" ]]; then
         echo -e "${GREEN}✓ Verification passed: Status=$STATUS, Auto_Renewing=${AUTO_RENEW:-empty/null}${NC}"
     else
@@ -135,7 +135,7 @@ if [[ "$STATUS" == "scheduled_cancel" || "$STATUS" == "cancellation_scheduled" ]
         exit 1
     fi
 else
-    echo -e "${RED}✗ Verification failed: Status='$STATUS' (Expected: scheduled_cancel)${NC}"
+    echo -e "${RED}✗ Verification failed: Status='$STATUS' (Expected: active with auto_renewing=false)${NC}"
     exit 1
 fi
 

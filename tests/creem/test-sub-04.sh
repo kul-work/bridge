@@ -112,16 +112,16 @@ else
     exit 1
 fi
 
-# Step 3: Verify DB status is 'in_grace_period'
-echo -e "${YELLOW}[3/4] Verifying status is 'in_grace_period'${NC}"
+# Step 3: Verify DB status is 'past_due' (grace period maps to past_due in Bridge)
+echo -e "${YELLOW}[3/4] Verifying status is 'past_due' (grace period)${NC}"
 sleep 2
 STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" -t | tr -d '[:space:]' || echo "")
 
-if [[ "$STATUS" == "in_grace_period" ]]; then
-    echo -e "${GREEN}✓ Status verified: $STATUS${NC}"
+if [[ "$STATUS" == "past_due" ]]; then
+    echo -e "${GREEN}✓ Status verified: $STATUS (grace period)${NC}"
 else
-    echo -e "${RED}✗ Unexpected status: $STATUS (Expected: in_grace_period)${NC}"
+    echo -e "${RED}✗ Unexpected status: $STATUS (Expected: past_due)${NC}"
     exit 1
 fi
 
