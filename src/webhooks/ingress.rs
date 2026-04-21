@@ -275,11 +275,18 @@ pub async fn handle_creem(
         .or_else(|| payload["object"]["id"].as_str())
         .map(|s| s.to_string());
 
-    let purchase_token = payload["object"]["checkout_id"]
-        .as_str()
-        .or_else(|| payload["object"]["order_id"].as_str())
-        .or_else(|| payload["object"]["id"].as_str())
-        .map(|s| s.to_string());
+    let purchase_token = if event_type.starts_with("subscription.") {
+        payload["object"]["checkout_id"]
+            .as_str()
+            .or_else(|| payload["object"]["order_id"].as_str())
+            .map(|s| s.to_string())
+    } else {
+        payload["object"]["checkout_id"]
+            .as_str()
+            .or_else(|| payload["object"]["order_id"].as_str())
+            .or_else(|| payload["object"]["id"].as_str())
+            .map(|s| s.to_string())
+    };
 
     let timestamp_ms = payload["createdAt"].as_str().and_then(|s| {
         chrono::DateTime::parse_from_rfc3339(s)
