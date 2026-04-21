@@ -161,7 +161,8 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                     .or(object_checkout_id)
                     .or_else(|| object_subscription_id.clone())
                     .or_else(|| object_id.clone()),
-                "payment.partially_refunded" => object_checkout_id
+                "payment.partially_refunded" => object_order_id
+                    .or(object_checkout_id)
                     .or_else(|| object_id.clone()),
                 _ => None,
             };
