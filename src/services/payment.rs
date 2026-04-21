@@ -1,30 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Token validation mode for mobile stores
-/// TODO: Move to google_play module when it's fully ported
-/// Used by Google Play validation module (imported but not directly instantiated).
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TokenValidationMode {
-    #[default]
-    Strict,  // Full validation
-    Relaxed, // Basic validation only
-    Off,     // No validation
-}
-
-/// Placeholder for Google Play-specific models
-/// TODO: Move to google_play module when it's fully ported
-pub mod google_play_models {
-    use serde::{Deserialize, Serialize};
-
-    #[allow(dead_code)]
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct OutOfAppPurchaseContext {
-        pub expired_subscriptions: Vec<String>,
-    }
-}
-
 /// Subscription status (normalized across all providers)
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -309,7 +285,7 @@ pub struct GooglePlayProviderData {
     pub price_change_new_price_cents: Option<i32>,
     pub price_change_state: Option<String>,
     /// Out-of-app purchase context: expired subscription identifiers for resubscription linking
-    pub out_of_app_purchase_context: Option<google_play_models::OutOfAppPurchaseContext>,
+    pub out_of_app_purchase_context: Option<crate::services::google_play::models::OutOfAppPurchaseContext>,
     /// SUB-PAUSE: Pause scheduling
     pub pause_scheduled_at: Option<DateTime<Utc>>,
 }
@@ -339,9 +315,9 @@ pub struct SubscriptionDetails {
     pub auto_renewing: Option<bool>,
     /// Amount in cents (e.g., 2999 = $29.99). Issue #3: Price parsing for mobile/Google Play.
     pub amount_cents: Option<i32>,
-    #[allow(dead_code)]
     /// When the purchase was acknowledged with the provider (for 3-day rule compliance)
     /// db update_subscription_acknowledged_at() is doing that
+    #[allow(dead_code)]
     pub acknowledged_at: Option<DateTime<Utc>>,
     /// Provider-specific data (Google Play fields, etc.)
     pub provider_data: ProviderData,
@@ -368,7 +344,7 @@ impl SubscriptionDetails {
         self.google_play().and_then(|g| g.linked_purchase_token.as_deref())
     }
     /// Used by google_play provider integration.
-    pub fn google_out_of_app_purchase_context(&self) -> Option<&google_play_models::OutOfAppPurchaseContext> {
+    pub fn google_out_of_app_purchase_context(&self) -> Option<&crate::services::google_play::models::OutOfAppPurchaseContext> {
         self.google_play().and_then(|g| g.out_of_app_purchase_context.as_ref())
     }
     /// Used by google_play provider integration.
