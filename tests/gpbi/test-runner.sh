@@ -14,7 +14,7 @@
 #   full      - Run ALL tests (Default)
 #   commerce  - Run only commerce logic (OTP + SUB + ACK)
 #   infra     - Run infrastructure checks (ACC, ERR, LOG, NET, WHK)
-#   smoke     - Run minimal health check (OTP-01, SUB-01, SUB-02, SUB-03, SUB-06, SUB-09, SUB-19B, SUB-PAUSE-01, SUB-PAUSE-02, WHK-01, WHK-02, ACK-01, ERR-01)
+#   smoke     - Run minimal health check (OTP-01, SUB-01, SUB-02, SUB-03, SUB-06, SUB-09, SUB-19B, SUB-25, SUB-26, SUB-PAUSE-01, SUB-PAUSE-02, WHK-01, WHK-02, ACK-01, ERR-01)
 #   replay    - Run ONLY tests with fixture replay capability (18 tests, deterministic, Google API fixture used)
 #
 ##############################################################################
@@ -289,8 +289,30 @@ run_smoke_tests() {
         FAILED_TEST_CODES="$FAILED_TEST_CODES WHK-02"
     fi
 
+    # Run SUB-25 (Deferred)
+    echo "Step 11a: SUB-25 (Subscription Deferred)"
+    ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST SUB-25"
+    if bash test-sub-25.sh; then
+        echo -e "${GREEN}✓ SUB-25 Passed${NC}"
+    else 
+        echo -e "${RED}✗ SUB-25 Failed${NC}"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-25"
+    fi
+
+    # Run SUB-26 (Renewal Pending)
+    echo "Step 11b: SUB-26 (Subscription Renewal Pending)"
+    ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST SUB-26"
+    if bash test-sub-26.sh; then
+        echo -e "${GREEN}✓ SUB-26 Passed${NC}"
+    else 
+        echo -e "${RED}✗ SUB-26 Failed${NC}"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        FAILED_TEST_CODES="$FAILED_TEST_CODES SUB-26"
+    fi
+
     # Run ACK-01 (Acknowledgment)
-    echo "Step 11: ACK-01 (Initial Purchase Acknowledgment)"
+    echo "Step 12: ACK-01 (Initial Purchase Acknowledgment)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST ACK-01"
     if bash test-ack-01.sh; then
         echo -e "${GREEN}✓ ACK-01 Passed${NC}"
@@ -301,7 +323,7 @@ run_smoke_tests() {
     fi
  
     # Run ERR-01 (Basic Validation Check)
-    echo "Step 12: ERR-01 (Invalid Token Check)"
+    echo "Step 13: ERR-01 (Invalid Token Check)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST ERR-01"
     if bash test-err-01.sh; then
         echo -e "${GREEN}✓ ERR-01 Passed${NC}"

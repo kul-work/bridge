@@ -52,6 +52,8 @@ TESTS=(
     "test-sub-22.sh:SUB-22:Out-of-App Linking"
     "test-sub-23.sh:SUB-23:Pending Cancel"
     "test-sub-24.sh:SUB-24:Restart After Cancel"
+    "test-sub-25.sh:SUB-25:Subscription Deferred"
+    "test-sub-26.sh:SUB-26:Subscription Renewal Pending"
     "test-sub-pause-01.sh:PAUSE-01:Pause Scheduled"
     "test-sub-pause-02.sh:PAUSE-02:Pause Effective"
     "test-sub-pause-03.sh:PAUSE-03:Manual Resume"

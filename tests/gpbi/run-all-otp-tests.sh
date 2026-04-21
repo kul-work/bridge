@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ##############################################################################
-# Run All OTP Tests (OTP-01 to OTP-05)
+# Run All OTP Tests (OTP-01 to OTP-05, RTDN-01 to 04)
 # 
 # Executes complete OTP test suite with proper setup and cleanup.
 #
@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo -e "${BLUE}╔════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║  OTP Test Suite Runner (OTP-01 to 05, RTDN)    ║${NC}"
+echo -e "${BLUE}║  OTP Test Suite Runner (OTP-01 to 05, RTDN-01 to 04)  ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════╝${NC}"
 echo ""
 echo "Configuration:"
@@ -86,7 +86,7 @@ run_test() {
 }
 
 # Check if scripts are executable
-for script in test-otp-{01..05}.sh test-otp-rtdn-{01..02}.sh; do
+for script in test-otp-{01..05}.sh test-otp-rtdn-{01..04}.sh; do
     if [[ ! -f "$script" ]]; then
         echo -e "${RED}Error: $script not found${NC}"
         exit 1
@@ -135,6 +135,18 @@ run_test "test-otp-rtdn-01.sh" "OTP-RTDN-01: Webhook Purchase Completed"
 # OTP-RTDN-02: Webhook Refund Completed
 run_test "test-otp-rtdn-02.sh" "OTP-RTDN-02: Webhook Refund Completed"
 
+# Reset status to 'success' for new RTDN types
+run_test "test-otp-01.sh" "OTP-01: Reset for RTDN-03"
+
+# OTP-RTDN-03: Webhook OTP Refunded (Type 2)
+run_test "test-otp-rtdn-03.sh" "OTP-RTDN-03: Webhook OTP Refunded (Type 2)"
+
+# Reset status to 'success' for new RTDN types
+run_test "test-otp-01.sh" "OTP-01: Reset for RTDN-04"
+
+# OTP-RTDN-04: Webhook OTP Canceled (Type 14)
+run_test "test-otp-rtdn-04.sh" "OTP-RTDN-04: Webhook OTP Canceled (Type 14)"
+
 # Summary
 echo ""
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
@@ -163,7 +175,7 @@ JSON_RESULTS+="]"
 # Generate summary report
 cat > otp-suite-summary.json <<EOF
 {
-  "test_suite": "OTP-01 to OTP-05 + RTDN-01/02",
+  "test_suite": "OTP-01 to OTP-05 + RTDN-01 to 04",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "total_tests": $TESTS_RUN,
   "passed": $PASSED,
