@@ -249,7 +249,9 @@ fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> WebhookFields {
             subscription_id: p.pointer("/subscriptionNotification/subscriptionId")
                 .and_then(|v| v.as_str()).map(|s| s.to_string()),
             purchase_token: p.pointer("/subscriptionNotification/purchaseToken")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+                .and_then(|v| v.as_str()).map(|s| s.to_string())
+                .or_else(|| p.pointer("/oneTimeProductNotification/purchaseToken")
+                    .and_then(|v| v.as_str()).map(|s| s.to_string())),
             amount_cents: p.pointer("/oneTimeProductNotification/priceMicros")
                 .and_then(|v| v.as_i64()).map(|m| (m / 10_000) as i32),
             auto_renewing: p.pointer("/subscriptionNotification/autoRenewing")
@@ -259,7 +261,9 @@ fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> WebhookFields {
                 .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
                 .map(|dt| dt.to_rfc3339()),
             provider_transaction_id: p.pointer("/subscriptionNotification/purchaseToken")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
+                .and_then(|v| v.as_str()).map(|s| s.to_string())
+                .or_else(|| p.pointer("/oneTimeProductNotification/purchaseToken")
+                    .and_then(|v| v.as_str()).map(|s| s.to_string())),
             provider_customer_id: None,
             product_id: p.pointer("/subscriptionNotification/subscriptionId")
                 .and_then(|v| v.as_str()).map(|s| s.to_string())

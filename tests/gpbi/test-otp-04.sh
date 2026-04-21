@@ -105,7 +105,7 @@ CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID'
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
 
-CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
+CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID';"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_PAYMENTS_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous payment records removed${NC}"
 echo ""
@@ -169,7 +169,7 @@ echo ""
 # Step 4: Query database to verify initial storage (pending state)
 echo -e "${YELLOW}[4/5] Querying database to verify payment record${NC}"
 
-DB_QUERY="SELECT external_user_id, subscription_id, status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+DB_QUERY="SELECT external_user_id, product_id, status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
 
 echo "Query:"
 echo "  $DB_QUERY"
@@ -200,7 +200,7 @@ echo ""
 # Step 5: Verify payment record was created
 echo -e "${YELLOW}[5/6] Verifying payment record was created${NC}"
 
-PAYMENT_QUERY="SELECT amount_cents, status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+PAYMENT_QUERY="SELECT amount_cents, status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
 
 echo "Query:"
 echo "  $PAYMENT_QUERY"
@@ -246,7 +246,7 @@ if [[ "$WAIT_FOR_APPROVAL" == "true" ]]; then
         HTTP_CODE_POLL=$(echo "$VERIFY_RESPONSE_POLL" | tail -n1)
         
         # Check DB status
-         DB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+         DB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
          
          echo "[$ELAPSED/$MAX_WAIT s] Status: $DB_STATUS"
          
@@ -261,7 +261,7 @@ if [[ "$WAIT_FOR_APPROVAL" == "true" ]]; then
          echo -e "${YELLOW}⚠ Approval did not complete within 10 minutes${NC}"
          echo -e "${YELLOW}  This may be normal for slow card tests${NC}"
          # Get final status
-         FINAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+         FINAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
     fi
     echo ""
 else

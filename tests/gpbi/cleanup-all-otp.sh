@@ -81,7 +81,7 @@ echo ""
 echo -e "${YELLOW}[3/4] Removing all payment records from database${NC}"
 
 # Delete all payment records for OTP test users with the product
-DB_DELETE_PAYMENT="DELETE FROM pay.payments WHERE external_user_id LIKE '${USER_ID_PREFIX}%' AND subscription_id = '$PRODUCT_ID';"
+DB_DELETE_PAYMENT="DELETE FROM pay.payments WHERE external_user_id LIKE '${USER_ID_PREFIX}%' AND product_id = '$PRODUCT_ID';"
 
 echo "Query:"
 echo "  $DB_DELETE_PAYMENT"

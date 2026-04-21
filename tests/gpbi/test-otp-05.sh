@@ -82,7 +82,7 @@ CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID'
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
 
-CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
+CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID';"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_PAYMENTS_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous payment records removed${NC}"
 echo ""
@@ -117,7 +117,7 @@ fi
 echo -e "${GREEN}✓ Setup purchase successful (HTTP 200)${NC}"
 
 # Verify initial DB state
-DB_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id = '$PURCHASE_TOKEN';"
+DB_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id = '$PURCHASE_TOKEN';"
 INITIAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ')
 
 if [[ "$INITIAL_STATUS" != "success" ]]; then
@@ -188,7 +188,7 @@ echo ""
 # Step 5: Verify payment record in pay.payments table with refunded status
 echo -e "${YELLOW}[5/7] Verifying payment record has refunded status${NC}"
 
-PAYMENT_QUERY="SELECT amount_cents, status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+PAYMENT_QUERY="SELECT amount_cents, status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
 
 echo "Query:"
 echo "  $PAYMENT_QUERY"
@@ -265,7 +265,7 @@ echo ""
 # Step 7: Final verification
 echo -e "${YELLOW}[7/7] Final verification${NC}"
 
-FINAL_DB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+FINAL_DB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
 
 echo "Status transition:"
 echo "  Before refund: $INITIAL_STATUS"

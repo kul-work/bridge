@@ -109,7 +109,7 @@ echo ""
 # Step 1.5: Clean up stale payment records (but preserve OTP-01's token)
 echo -e "${YELLOW}[1.5/6] Cleaning up stale payment records${NC}"
 if [[ -n "$PURCHASE_TOKEN" ]]; then
-    PAYMENT_CLEANUP="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id != '$PURCHASE_TOKEN';"
+    PAYMENT_CLEANUP="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id != '$PURCHASE_TOKEN';"
     psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_CLEANUP" 2>/dev/null
     echo -e "${GREEN}✓ Stale payment records removed (preserved OTP-01 token)${NC}"
 else
@@ -121,9 +121,9 @@ echo ""
 echo -e "${YELLOW}[2/6] Verifying payment record exists${NC}"
 
 if [[ -n "$PURCHASE_TOKEN" ]]; then
-    DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider_transaction_id = '$PURCHASE_TOKEN' ORDER BY created_at DESC LIMIT 1;"
+    DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id = '$PURCHASE_TOKEN' ORDER BY created_at DESC LIMIT 1;"
 else
-    DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+    DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
 fi
 
 echo "Query:"
@@ -275,8 +275,8 @@ echo ""
 echo -e "${YELLOW}[5/6] Verifying payment record status updated to refunded (idempotency)${NC}"
 
 # First verify count is exactly 1 (idempotency check)
-PAYMENT_COUNT_QUERY="SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
-PAYMENT_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+PAYMENT_COUNT_QUERY="SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID';"
+PAYMENT_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
 PAYMENT_COUNT="0"
 PAYMENT_STATUS=""
 
@@ -317,7 +317,7 @@ echo ""
 # Step 6: Final verification - check payment status changed
 echo -e "${YELLOW}[6/6] Final verification - checking payment status${NC}"
 
-FINAL_DB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+FINAL_DB_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
 
 echo "Status transition:"
 echo "  Before refund: $INITIAL_STATUS"

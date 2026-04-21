@@ -76,7 +76,7 @@ CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID'
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
 
-CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
+CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID';"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_PAYMENTS_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous payment records removed${NC}"
 echo ""
@@ -153,7 +153,7 @@ echo ""
 # Step 5: Verify NO payment record was created
 echo -e "${YELLOW}[5/5] Verifying no payment record was created${NC}"
 
-PAYMENT_QUERY="SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';"
+PAYMENT_QUERY="SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID';"
 
 echo "Query:"
 echo "  $PAYMENT_QUERY"
