@@ -21,6 +21,20 @@ This guide condenses the comprehensive `CREEM_BILLING_TESTPLAN.md` into logical 
 ### Backend Prerequisite: Metadata Binding
 **Critical**: All Checkouts initiated by the backend **MUST** pass `metadata.user_id` (or equivalent identifier) to ensure webhooks can map transactions back to the correct internal user.
 
+### Environment Configuration: `globals.cfg`
+All automated test scripts in `tests/creem/` rely on a shared `globals.cfg` file. Ensure this file contains:
+- `BRIDGE_API_URL`: Base URL of the running Bridge instance.
+- `WEBHOOK_TOKEN`: The unique token for the Creem webhook endpoint.
+- `CREEM_WEBHOOK_SECRET`: The secret used to sign payloads.
+- `BRIDGE_DB_*`: Connectivity details for backend validation.
+
+### Environment Configuration: `globals.cfg`
+All automated test scripts in `tests/creem/` rely on a shared `globals.cfg` file. Ensure this file contains:
+- `BRIDGE_API_URL`: Base URL of the running Bridge instance.
+- `WEBHOOK_TOKEN`: The unique token for the Creem webhook endpoint.
+- `CREEM_WEBHOOK_SECRET`: The secret used to sign payloads.
+- `BRIDGE_DB_*`: Connectivity details for backend validation.
+
 
 ## 1. Subscription Flows
 
@@ -82,9 +96,11 @@ Just a quick, isolated scenario to ensure strong customer authentication works.
 ### 🛍️ Flow 2.1: OTP Happy Path & Revocation
 Tests a standard non-consumable purchase and a subsequent admin refund.
 1. **User clicks "Buy" and checks out** with the `4242` test card.
-   - *Covers*: **OTP-01** (Successful Purchase via Webhook) and **OTP-02** (Sync redirect verification if implemented). Check that premium access is unlocked immediately.
+   - *Covers*: **OTP-01** (Successful Purchase via Webhook) and **OTP-02** (Sync redirect verification). Check that premium access is unlocked immediately.
 2. **Admin goes to the Creem Dashboard and issues a Refund**.
-   - *Covers*: **OTP-03** (Refund Creation). Refresh the app to verify premium access is dynamically revoked.
+   - *Covers*: **OTP-03** (Refund Processed). Refresh the app to verify premium access is dynamically revoked.
+3. **Admin issues a Partial Refund**.
+   - *Covers*: **OTP-04** (Partially Refunded).
 
 ---
 
@@ -95,7 +111,9 @@ Send webhook payloads manually (e.g., via Postman or cURL) to verify the backend
 1. **Send a legitimate JSON payload with a broken/invalid `creem-signature` header**.
    - *Covers*: **WHK-02** (Invalid Signature). Expect HTTP 400/401.
 2. **Send a valid payload (correct signature) but with a fake event type** (e.g., `new_feature.enabled`).
-   - *Covers*: **WHK-04** (Unknown Event Type). Expect HTTP 200 OK and no backend crash.
+   - *Covers*: **WHK-04** (Unknown Event Type). Expect HTTP 200 OK.
+3. **Send a multi-stage event (e.g., checkout.completed)** to verify mapping.
+   - *Covers*: **WHK-05** (Webhook Normalization).
 
 ### 🔂 Flow 3.2: Webhook Idempotency
 Ensures network retries don't duplicate state.
