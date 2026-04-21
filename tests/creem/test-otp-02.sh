@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem checkout.refunded webhook is properly
 #          processed and updates the payment status to 'refunded' in the DB.
 #
-# Usage: ./test-otp-02.sh --user-id "test_user"
+# Usage: ./test-otp-02.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

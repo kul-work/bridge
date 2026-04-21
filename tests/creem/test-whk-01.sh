@@ -7,7 +7,7 @@ set -euo pipefail
 # Purpose: Verify that legitimate webhooks with correct creem-signature 
 #          are accepted and processed by the backend.
 #
-# Usage: ./test-whk-01.sh --user-id "test_user"
+# Usage: ./test-whk-01.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

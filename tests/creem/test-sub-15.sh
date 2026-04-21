@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem subscription.active webhook (triggered by 
 #          admin resume) restores the subscription status to 'active'.
 #
-# Usage: ./test-sub-15.sh --user-id "test_user"
+# Usage: ./test-sub-15.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

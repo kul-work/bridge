@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem refund.created webhook correctly records 
 #          a refund for a subscription and updates the payment status.
 #
-# Usage: ./test-sub-12.sh --user-id "test_user"
+# Usage: ./test-sub-12.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

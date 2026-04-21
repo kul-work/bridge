@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem payment.failed webhook is properly
 #          processed and updates the payment status to 'failed' in the DB.
 #
-# Usage: ./test-otp-03.sh --user-id "test_user"
+# Usage: ./test-otp-03.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

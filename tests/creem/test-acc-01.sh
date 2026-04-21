@@ -6,7 +6,7 @@
 # Purpose: Verify that users with 'active' status in the pay.subscriptions 
 #          table correctly receive access via the Bridge API.
 #
-# Usage: ./test-acc-01.sh --user-id "test_user"
+# Usage: ./test-acc-01.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

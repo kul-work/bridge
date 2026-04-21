@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem subscription.expired webhook updates the 
 #          status to 'expired'.
 #
-# Usage: ./test-sub-05.sh --user-id "test_user"
+# Usage: ./test-sub-05.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

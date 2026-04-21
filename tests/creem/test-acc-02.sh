@@ -6,7 +6,7 @@
 # Purpose: Verify that premium access REMAINS active for subscriptions in
 #          'scheduled_cancel' (Pending Cancel) state until the period end.
 #
-# Usage: ./test-acc-02.sh --user-id "test_user"
+# Usage: ./test-acc-02.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

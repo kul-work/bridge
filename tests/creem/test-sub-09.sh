@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem subscription.update webhook with a new 
 #          product_id properly updates the subscription's plan in the database.
 #
-# Usage: ./test-sub-09.sh --user-id "test_user"
+# Usage: ./test-sub-09.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

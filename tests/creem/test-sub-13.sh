@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem subscription.paid webhook correctly 
 #          restores an 'active' status from a 'past_due' or 'unpaid' state.
 #
-# Usage: ./test-sub-13.sh --user-id "test_user"
+# Usage: ./test-sub-13.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

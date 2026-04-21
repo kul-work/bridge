@@ -6,7 +6,7 @@
 # Purpose: Verify that webhooks with invalid signatures are rejected 
 #          and do NOT modify the database.
 #
-# Usage: ./test-whk-02.sh --user-id "test_user"
+# Usage: ./test-whk-02.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

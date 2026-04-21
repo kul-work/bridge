@@ -6,7 +6,7 @@
 # Purpose: Verify that premium access is handled correctly for subscriptions in
 #          'past_due' state (Grace Period).
 #
-# Usage: ./test-acc-04.sh --user-id "test_user"
+# Usage: ./test-acc-04.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

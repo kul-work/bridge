@@ -6,7 +6,7 @@
 # Purpose: Verify that calling the billing portal endpoint with an invalid
 #          subscription ID or non-existent user results in a proper error.
 #
-# Usage: ./test-err-02.sh --user-id "test_user"
+# Usage: ./test-err-02.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

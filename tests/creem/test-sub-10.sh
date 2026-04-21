@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem subscription.paused webhook correctly 
 #          updates the subscription status to 'paused'.
 #
-# Usage: ./test-sub-10.sh --user-id "test_user"
+# Usage: ./test-sub-10.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

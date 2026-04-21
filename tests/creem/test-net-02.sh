@@ -7,7 +7,7 @@
 #          deliveries for the same event ID without creating duplicate
 #          database records (Race Condition handling).
 #
-# Usage: ./test-net-02.sh --user-id "test_user"
+# Usage: ./test-net-02.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

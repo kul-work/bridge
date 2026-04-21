@@ -7,7 +7,7 @@
 #          Simulates an initial failure (e.g., bad signature)
 #          followed by a successful retry.
 #
-# Usage: ./test-net-01.sh --user-id "test_user"
+# Usage: ./test-net-01.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem subscription.canceled webhook updates 
 #          the subscription status to 'cancelled'.
 #
-# Usage: ./test-sub-03.sh --user-id "test_user"
+# Usage: ./test-sub-03.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

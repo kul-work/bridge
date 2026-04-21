@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem subscription.active (renewal) webhook properly 
 #          extends the subscription period in the database.
 #
-# Usage: ./test-sub-02.sh --user-id "test_user"
+# Usage: ./test-sub-02.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

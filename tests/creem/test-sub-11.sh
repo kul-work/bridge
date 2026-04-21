@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem subscription.active webhook properly 
 #          processes when transitioning from an incomplete state (like 3DS).
 #
-# Usage: ./test-sub-11.sh --user-id "test_user"
+# Usage: ./test-sub-11.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

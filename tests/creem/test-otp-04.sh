@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem payment.partially_refunded webhook is properly
 #          processed and updates the payment status to 'partially_refunded' in the DB.
 #
-# Usage: ./test-otp-04.sh --user-id "test_user"
+# Usage: ./test-otp-04.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

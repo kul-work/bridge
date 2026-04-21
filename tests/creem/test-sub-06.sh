@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem subscription.scheduled_cancel webhook 
 #          updates auto_renewing to false while keeping status active.
 #
-# Usage: ./test-sub-06.sh --user-id "test_user"
+# Usage: ./test-sub-06.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

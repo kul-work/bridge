@@ -6,7 +6,7 @@
 # Purpose: Verify that the backend gracefully handles (ignores) webhooks 
 #          with unknown or future event types without erroring.
 #
-# Usage: ./test-whk-04.sh --user-id "test_user"
+# Usage: ./test-whk-04.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

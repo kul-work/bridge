@@ -6,7 +6,7 @@
 # Purpose: Verify that a Creem subscription.past_due webhook updates the 
 #          subscription status to 'past_due' (Grace Period).
 #
-# Usage: ./test-sub-04.sh --user-id "test_user"
+# Usage: ./test-sub-04.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)

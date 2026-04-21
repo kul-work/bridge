@@ -6,7 +6,7 @@
 # Purpose: Verify that premium access is REVOKED for subscriptions in
 #          blocked states: expired, paused, revoked, cancelled (post-expiry).
 #
-# Usage: ./test-acc-03.sh --user-id "test_user"
+# Usage: ./test-acc-03.sh [--email "user@example.com"] [--user-id "test_user"]
 #
 # Prerequisites:
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)
