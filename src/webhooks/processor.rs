@@ -71,7 +71,6 @@ fn normalize_event_type_with_payload(
 
 /// Canonical webhook payload sent to apps
 /// Used for webhook forwarding to app callbacks.
-#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CanonicalWebhookPayload {
     pub event_id: String,
@@ -97,7 +96,6 @@ pub struct CanonicalWebhookPayload {
     pub cancellation_mode: Option<String>,
 }
 
-#[allow(dead_code)]
 pub(crate) struct WebhookFields {
     pub(crate) subscription_id: Option<String>,
     pub(crate) purchase_token: Option<String>,
@@ -841,7 +839,6 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
 }
 
 /// Process webhook: dedup, ordering, normalization, DB mutations
-#[allow(dead_code)]
 pub async fn process_webhook(
     repo: &impl WebhookProcessingRepository,
     webhook_provider_id: Uuid,
