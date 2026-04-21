@@ -14,7 +14,8 @@ This document outlines comprehensive test scenarios for validating the Creem Bil
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **OTP-01** | **Successful Purchase (Webhook)** | 1. Click "Buy".<br>2. Redirected to Creem Checkout.<br>3. Enter `4242` test card.<br>4. Complete payment. | - Redirected to `success_url`.<br>- Success message shown.<br>- Premium unlocked. | - Backend generates `POST /v1/checkouts` with `metadata.user_id`.<br>- Webhook `checkout.completed` received.<br>- Validates `creem-signature`.<br>- Extracts `metadata.user_id`.<br>- Updates `payments` table and grants entitlement. | Verifies the happy path using asynchronous webhooks as the primary source of truth. |
 | **OTP-02** | **Sync Redirect Verification** | 1. Implement synchronous signature check on `success_url`.<br>2. Complete purchase as in OTP-01.<br>3. Block or delay webhook delivery for testing. | - Redirected to `success_url`.<br>- Immediate confirmation on page load. | - Backend reads `signature` query parameter from redirect.<br>- Verifies signature using API key.<br>- Grants entitlement synchronously if webhook hasn't fired yet. | Handles race conditions if the user lands on the success page before the webhook arrives. |
-| **OTP-03** | **Refund Creation** | 1. Complete OTP-01.<br>2. Go to Creem Dashboard.<br>3. Refund the transaction. | - Upon app refresh, premium access is revoked. | - Webhook `refund.created` received.<br>- Validates signature.<br>- Looks up transaction in `payments` table.<br>- Updates status to `refunded` and revokes access. | Tests administrative revocation of one-time purchases. |
+| **OTP-03** | **Refund Processed** | 1. Complete OTP-01.<br>2. Go to Creem Dashboard.<br>3. Refund the transaction. | - Upon app refresh, premium access is revoked. | - Webhook `payment.refunded` received.<br>- Validates signature.<br>- Looks up transaction in `payments` table.<br>- Updates status to `refunded` and revokes access. | Verified by `test-otp-02.sh`. |
+| **OTP-04** | **Partially Refunded** | 1. Complete OTP-01.<br>2. Go to Creem Dashboard.<br>3. Partially refund the transaction. | - Premium access maintained or restricted per policy. | - Webhook `payment.partially_refunded` received.<br>- Updates `payments` status to `partially_refunded`. | Verified by `test-otp-04.sh`. |
 
 ---
 
@@ -28,7 +29,7 @@ This document outlines comprehensive test scenarios for validating the Creem Bil
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **SUB-01** | **Initial Subscription (Active)** | 1. Select subscription plan.<br>2. Enter `4242` test card.<br>3. Complete checkout. | - Redirected to success URL.<br>- "Premium" status appears. | - Webhook `subscription.active` received on first sign-up.<br>- `metadata.user_id` parsed.<br>- Sub record created with `status='active'`.<br>- Premium access granted.<br>- Verify `subscription.paid` also handled for subsequent renewal cycles (see SUB-03). | Standard conversion of a new subscriber. Both `subscription.active` and `subscription.paid` must be handled independently. |
 | **SUB-02** | **Free Trial Signup** | 1. Select plan with trial period.<br>2. Complete checkout (no initial charge). | - "Premium (Trial)" status appears.<br>- No charge shown. | - Webhook `subscription.trialing` received.<br>- Sub built with `status='trialing'`.<br>- Premium access granted. | User gets full access during trial. Next event will be `subscription.paid` or `subscription.past_due`. |
-| **SUB-03** | **Subscription Renewal** | 1. Wait for billing cycle to renew (or mock event via CLI). | - Premium status maintained. | - Webhook `subscription.paid` received.<br>- `current_period_end_date` extended in the database.<br>- Status remains `active`. | Ensures continuous access for paying customers. |
+| **SUB-03** | **Subscription Renewal** | 1. Wait for billing cycle to renew (or mock event via CLI). | - Premium status maintained. | - Webhook `subscription.active` (renewal) or `subscription.paid` received.<br>- `current_period_end` extended in the database.<br>- Status remains `active`. | Verified by `test-sub-02.sh`. |
 | **SUB-04** | **Payment Failure (Past Due)** | 1. Active sub renews with a failing card (`4000...0002`). | - In-app notification to update payment method. | - Webhook `subscription.past_due` received.<br>- Update DB status to `unpaid` / `past_due`.<br>- Depending on SLA, restrict access or trigger grace period logic. | Creem will retry according to platform settings. |
 | **SUB-05** | **Retries Exhausted (Expiration)** | 1. Past due subscription exhausts all retries.<br>2. Creem expires the subscription. | - "Premium" badge disappears.<br>- Downgraded to free. | - Webhook `subscription.expired` received.<br>- Update DB status to `expired`.<br>- Premium access **revoked**. | Terminal state for failed payments. |
 
@@ -63,7 +64,8 @@ This document outlines comprehensive test scenarios for validating the Creem Bil
 | **WHK-01** | **Valid Signature Acceptance** | 1. Send legitimate webhook payload with correct `creem-signature`. | - HTTP 200/204 OK. | - Signature passes validation.<br>- Payload processed and state updated. | Baseline for healthy communication. |
 | **WHK-02** | **Invalid Signature Rejection** | 1. Send legitimate JSON payload but alter the `creem-signature` header.<br>2. Or alter the JSON body while keeping the valid signature. | - HTTP 400/401 Unauthorized. | - Signature validation routine fails.<br>- Logs: "Webhook signature verification failed."<br>- Request discarded safely. | Protects against spoofed payment notifications. |
 | **WHK-03** | **Duplicate Delivery (Idempotency)** | 1. Trigger realistic webhook (`checkout.completed`).<br>2. Re-send the exact payload via cURL/Postman. | - First returns 200, updates DB.<br>- Second returns 200, no duplicate state. | - Uses webhook ID or event ID to ensure idempotent processing.<br>- If ID exists, skip processing. | Creem may retry requests if network is unstable; apps must process exactly once. |
-| **WHK-04** | **Unknown Event Type** | 1. Send webhook with an unexpected/future `type` (e.g., `new_feature.enabled`). | - HTTP 200 OK. | - Backend parses payload, ignores unknown type.<br>- No state change, no errors. | Ensures forward compatibility with Creem API changes. |
+| **WHK-04** | **Unknown Event Type** | 1. Send webhook with an unexpected/future `type` (e.g., `new_feature.enabled`). | - HTTP 200 OK. | - Backend parses payload, ignores unknown type.<br>- No state change, no errors. | Verified by `test-whk-04.sh`. |
+| **WHK-05** | **Webhook Normalization** | 1. Send `checkout.completed` (recurring). | - HTTP 200 OK. | - Normalizer maps `checkout.completed` + `recurring` → `active` subscription. | Verified by `test-whk-05.sh`. |
 
 ---
 
@@ -114,7 +116,7 @@ This document outlines comprehensive test scenarios for validating the Creem Bil
 ## Acceptance Criteria for Production
 
 - ✅ **Checkout Creation**: All checkout sessions pass `metadata.user_id` properly.
-- ✅ **One-Time Fulfillment**: OTP-01 and OTP-03 are thoroughly tested.
+- ✅ **One-Time Fulfillment**: OTP-01 through OTP-04 are thoroughly tested.
 - ✅ **Subscription Logic**: SUB-01 through SUB-15 are verified against test cards (lifecycle, cancellations, incomplete checkouts, recovery, and refunds).
 - ✅ **Cancellation Scenarios**: Both immediate (SUB-07) and scheduled (SUB-06, SUB-14) cancellations behave correctly regarding access, including period-end expiry.
 - ✅ **Security**: `creem-signature` validation is strictly enforced; no open webhooks.
