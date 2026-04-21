@@ -497,6 +497,7 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         "purchase.one_time" => "purchase.one_time".to_string(),
         "purchase.one_time_cancelled" => "purchase.one_time".to_string(),
         "payment.refunded" => "payment.refunded".to_string(),
+        "payment.partially_refunded" => "payment.partially_refunded".to_string(),
         "dispute.created" => "dispute.created".to_string(),
         "subscription.updated" => fields
             .status
@@ -510,6 +511,7 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         "payment.pending" => Some("pending".to_string()),
         "payment.failed" => Some("failed".to_string()),
         "payment.refunded" => Some("refunded".to_string()),
+        "payment.partially_refunded" => Some("partially_refunded".to_string()),
         "purchase.one_time" => Some(if canonical_event == "purchase.one_time_cancelled" {
             "cancelled".to_string()
         } else if canonical_event == "purchase.one_time" {

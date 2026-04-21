@@ -616,23 +616,6 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     .or(ctx.webhook.subscription_id.as_deref())
                     .unwrap_or("");
 
-                if sub_id.is_empty() {
-                    warn!(
-                        "Skipping order.failed event {}: missing subscription_id",
-                        ctx.webhook.provider_webhook_id
-                    );
-                    return Ok(EventHandling::ReturnNone);
-                }
-
-                if repo.get_subscription_by_sub_id(ctx.app_id, sub_id).await?.is_none() {
-                    warn!(
-                        "Skipping order.failed event {}: subscription {} not found",
-                        ctx.webhook.provider_webhook_id,
-                        sub_id
-                    );
-                    return Ok(EventHandling::ReturnNone);
-                }
-
                 let txn_id = ctx.fields.provider_transaction_id.as_deref()
                     .or(ctx.fields.subscription_id.as_deref())
                     .unwrap_or(&ctx.webhook.provider_webhook_id);
@@ -641,12 +624,33 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     external_user_id: user_id,
                     provider: ctx.provider,
                     provider_transaction_id: txn_id,
-                    subscription_id: Some(sub_id),
+                    subscription_id: if sub_id.is_empty() { None } else { Some(sub_id) },
                     product_id: ctx.fields.product_id.as_deref(),
                     amount_cents: ctx.fields.amount_cents.unwrap_or(0),
                     status: "failed",
                 })
                 .await?;
+
+                if sub_id.is_empty() {
+                    return Ok(EventHandling::Handled(EventEffects {
+                        callback_event_type: Some("payment.failed".to_string()),
+                        callback_status_override: Some("failed".to_string()),
+                        ..Default::default()
+                    }));
+                }
+
+                if repo.get_subscription_by_sub_id(ctx.app_id, sub_id).await?.is_none() {
+                    warn!(
+                        "Skipping order.failed subscription update {}: subscription {} not found",
+                        ctx.webhook.provider_webhook_id,
+                        sub_id
+                    );
+                    return Ok(EventHandling::Handled(EventEffects {
+                        callback_event_type: Some("payment.failed".to_string()),
+                        callback_status_override: Some("failed".to_string()),
+                        ..Default::default()
+                    }));
+                }
 
                 let updated = repo
                     .apply_subscription_transition(
@@ -662,7 +666,11 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                         "Skipping stale order.failed update for subscription {}",
                         sub_id
                     );
-                    return Ok(EventHandling::ReturnNone);
+                    return Ok(EventHandling::Handled(EventEffects {
+                        callback_event_type: Some("payment.failed".to_string()),
+                        callback_status_override: Some("failed".to_string()),
+                        ..Default::default()
+                    }));
                 };
 
                 return Ok(EventHandling::Handled(EventEffects {
@@ -756,6 +764,24 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
             Ok(EventHandling::Handled(EventEffects {
                 callback_event_type: Some("payment.refunded".to_string()),
                 callback_status_override: Some("refunded".to_string()),
+                ..Default::default()
+            }))
+        }
+
+        "payment.partially_refunded" => {
+            if let Some(_user_id) = ctx.external_user_id.as_deref() {
+                // For Creem OTP: checkout_id in the payload maps to purchase_token
+                if let Some(token) = ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()) {
+                    let existing = repo.get_payment_status(ctx.app_id, token).await?;
+                    if existing.as_deref() != Some("partially_refunded") {
+                        repo.update_payment_status(ctx.app_id, token, "partially_refunded").await?;
+                    }
+                }
+            }
+
+            Ok(EventHandling::Handled(EventEffects {
+                callback_event_type: Some("payment.partially_refunded".to_string()),
+                callback_status_override: Some("partially_refunded".to_string()),
                 ..Default::default()
             }))
         }
