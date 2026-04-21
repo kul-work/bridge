@@ -6,7 +6,6 @@
 /// - one-time checkout.completed
 /// - refund.created
 /// - invalid signature rejection
-
 use serde_json::json;
 use sha2::Sha256;
 use hmac::{Hmac, Mac};

@@ -351,7 +351,6 @@ pub struct SubscriptionDetails {
 impl SubscriptionDetails {
     /// Access Google Play-specific data if present.
     /// Used by google_play provider integration.
-    
     pub fn google_play(&self) -> Option<&GooglePlayProviderData> {
         match &self.provider_data {
             ProviderData::GooglePlay(data) => Some(data),
@@ -389,5 +388,4 @@ pub enum VerificationResult {
     /// The client should prompt the user to log in to the correct account.
     LinkingRequired { obfuscated_account_id: String },
 }
-
 
