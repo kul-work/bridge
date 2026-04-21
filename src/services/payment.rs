@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// Subscription status (normalized across all providers)
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SubscriptionStatus {
     #[serde(rename = "active")]
     Active,
@@ -25,6 +25,8 @@ pub enum SubscriptionStatus {
     OnHold,
     #[serde(rename = "paused")]
     Paused,
+    #[serde(untagged)]
+    Unknown(String),
 }
 
 impl std::fmt::Display for SubscriptionStatus {
@@ -40,6 +42,7 @@ impl std::fmt::Display for SubscriptionStatus {
             SubscriptionStatus::Revoked => "revoked",
             SubscriptionStatus::OnHold => "on_hold",
             SubscriptionStatus::Paused => "paused",
+            SubscriptionStatus::Unknown(raw) => raw,
         };
         write!(f, "{}", s)
     }
@@ -58,7 +61,7 @@ impl From<&str> for SubscriptionStatus {
             "revoked" => SubscriptionStatus::Revoked,
             "on_hold" => SubscriptionStatus::OnHold,
             "paused" => SubscriptionStatus::Paused,
-            _ => SubscriptionStatus::Expired,
+            _ => SubscriptionStatus::Unknown(s.to_string()),
         }
     }
 }

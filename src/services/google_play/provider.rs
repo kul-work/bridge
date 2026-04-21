@@ -224,7 +224,7 @@ impl GooglePlayProvider {
                         0 => SubscriptionStatus::Active,
                         1 => SubscriptionStatus::Cancelled,
                         2 => SubscriptionStatus::Pending,
-                        _ => SubscriptionStatus::Expired,
+                        _ => SubscriptionStatus::Unknown(format!("purchase_state:{}", purchase.purchase_state)),
                     };
 
                     // acknowledgement_state: 1 = ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED
@@ -370,10 +370,10 @@ impl GooglePlayProvider {
                 "SUBSCRIPTION_STATE_PAUSED" => SubscriptionStatus::Paused,
                 "SUBSCRIPTION_STATE_PENDING" => SubscriptionStatus::Pending,
                 "SUBSCRIPTION_STATE_EXPIRED" => SubscriptionStatus::Expired,
-                _ => SubscriptionStatus::Expired,
+                _ => SubscriptionStatus::Unknown(state_str.clone()),
             }
         } else {
-            SubscriptionStatus::Expired
+            SubscriptionStatus::Unknown("no_subscription_state".to_string())
         };
 
         let auto_renewing = purchase.auto_renewing.or_else(|| {
@@ -652,7 +652,7 @@ impl GooglePlayProvider {
                         0 => SubscriptionStatus::Active,
                         1 => SubscriptionStatus::Cancelled,
                         2 => SubscriptionStatus::Pending,
-                        _ => SubscriptionStatus::Expired,
+                        _ => SubscriptionStatus::Unknown(format!("purchase_state:{}", purchase.purchase_state)),
                     };
 
                     let acknowledged_at = match purchase.acknowledgement_state {
@@ -772,7 +772,7 @@ impl GooglePlayProvider {
                 0 => SubscriptionStatus::Active,
                 1 => SubscriptionStatus::Cancelled,
                 2 => SubscriptionStatus::Pending, // Slow card/pre-order - await webhook confirmation
-                _ => SubscriptionStatus::Expired,
+                _ => SubscriptionStatus::Unknown(format!("purchase_state:{}", purchase.purchase_state)),
             };
 
             // One-time products don't expire (lifetime access), so set expiration to None.
@@ -1065,10 +1065,10 @@ impl GooglePlayProvider {
                 "SUBSCRIPTION_STATE_PAUSED" => SubscriptionStatus::Paused,
                 "SUBSCRIPTION_STATE_PENDING" => SubscriptionStatus::Pending,
                 "SUBSCRIPTION_STATE_EXPIRED" => SubscriptionStatus::Expired,
-                _ => SubscriptionStatus::Expired,
+                _ => SubscriptionStatus::Unknown(state_str.clone()),
             }
         } else {
-            SubscriptionStatus::Expired // Default safe
+            SubscriptionStatus::Unknown("no_subscription_state".to_string())
         };
 
         let auto_renewing = purchase.auto_renewing.or_else(|| {
@@ -1517,6 +1517,7 @@ impl PaymentProvider for GooglePlayProvider {
                             SubscriptionStatus::Trial => 0,
                             SubscriptionStatus::Revoked => 1,
                             SubscriptionStatus::Expired => 6,
+                            SubscriptionStatus::Unknown(_) => 6, // treat as expired for Google Play state mapping
                         });
                     }
                     Ok(_) => {
