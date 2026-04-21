@@ -108,6 +108,7 @@ impl WebhookProcessingMutationRepository for db::Database {
     async fn apply_subscription_transition(
         &self,
         app_id: Uuid,
+        external_user_id: &str,
         subscription_id: &str,
         event_time_ms: i64,
         transition: SubscriptionWebhookTransition,
@@ -115,6 +116,7 @@ impl WebhookProcessingMutationRepository for db::Database {
         db::subscriptions::apply_webhook_transition(
             self.pool(),
             app_id,
+            external_user_id,
             subscription_id,
             event_time_ms,
             transition,

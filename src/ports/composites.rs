@@ -115,6 +115,7 @@ pub trait WebhookProcessingMutationRepository: WebhookSuppressionRepository + Se
     async fn apply_subscription_transition(
         &self,
         app_id: Uuid,
+        external_user_id: &str,
         subscription_id: &str,
         event_time_ms: i64,
         transition: crate::ports::types::SubscriptionWebhookTransition,

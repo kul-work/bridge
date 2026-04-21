@@ -64,6 +64,7 @@ pub use crate::ports::SubscriptionWebhookTransition;
 pub async fn apply_webhook_transition(
     pool: &PgPool,
     app_id: Uuid,
+    external_user_id: &str,
     subscription_id: &str,
     event_time_ms: i64,
     transition: SubscriptionWebhookTransition,
@@ -78,11 +79,12 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -100,12 +102,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2
+                 WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND last_event_time < $2
                  RETURNING *",
             )
             .bind(grace_period_end)
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -124,12 +127,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2
+                 WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND last_event_time < $2
                  RETURNING *",
             )
             .bind(revocation_reason)
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -144,11 +148,12 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -164,11 +169,12 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -189,12 +195,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2
+                 WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND last_event_time < $2
                  RETURNING *",
             )
             .bind(current_period_end)
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -215,13 +222,14 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $3,
                      updated_at = NOW()
-                 WHERE app_id = $4 AND subscription_id = $5 AND last_event_time < $3
+                 WHERE app_id = $4 AND external_user_id = $5 AND subscription_id = $6 AND last_event_time < $3
                  RETURNING *",
             )
             .bind(google_cancellation_context)
             .bind(google_cancellation_feedback)
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -236,11 +244,12 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -263,7 +272,7 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $4,
                      updated_at = NOW()
-                 WHERE app_id = $5 AND subscription_id = $6 AND last_event_time < $4
+                 WHERE app_id = $5 AND external_user_id = $6 AND subscription_id = $7 AND last_event_time < $4
                  RETURNING *",
             )
             .bind(current_period_end)
@@ -271,6 +280,7 @@ pub async fn apply_webhook_transition(
             .bind(google_cancellation_feedback)
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -283,11 +293,12 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND subscription_id = $3
+                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -304,11 +315,12 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND subscription_id = $3 AND last_event_time < $1
+                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -326,13 +338,14 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $3,
                      updated_at = NOW()
-                 WHERE app_id = $4 AND subscription_id = $5 AND last_event_time < $3
+                 WHERE app_id = $4 AND external_user_id = $5 AND subscription_id = $6 AND last_event_time < $3
                  RETURNING *",
             )
             .bind(google_new_price_cents)
             .bind(google_price_step_up_consent_deadline)
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -347,12 +360,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2
+                 WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND last_event_time < $2
                  RETURNING *",
             )
             .bind(google_pause_scheduled_at)
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -367,12 +381,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2
+                 WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND last_event_time < $2
                  RETURNING *",
             )
             .bind(google_deferred_until)
             .bind(event_time_ms)
             .bind(app_id)
+            .bind(external_user_id)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await

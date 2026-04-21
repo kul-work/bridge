@@ -47,6 +47,7 @@ pub async fn handle_subscription_revoked<
 >(
     repo: &R,
     app_id: Uuid,
+    external_user_id: &str,
     webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
@@ -74,6 +75,7 @@ pub async fn handle_subscription_revoked<
     let updated = repo
         .apply_subscription_transition(
             app_id,
+            external_user_id,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::Revoked {
@@ -100,6 +102,7 @@ pub async fn handle_subscription_resumed<
 >(
     repo: &R,
     app_id: Uuid,
+    external_user_id: &str,
     webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
@@ -109,7 +112,7 @@ pub async fn handle_subscription_resumed<
     };
 
     let Some(subscription) = repo
-        .get_subscription_by_sub_id(app_id, subscription_id)
+        .get_subscription_by_sub_id_and_user(app_id, subscription_id, external_user_id)
         .await?
     else {
         return Ok(None);
@@ -127,6 +130,7 @@ pub async fn handle_subscription_resumed<
     let updated = repo
         .apply_subscription_transition(
             app_id,
+            external_user_id,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::Resumed {
@@ -153,6 +157,7 @@ pub async fn handle_subscription_cancelled_with_context<
 >(
     repo: &R,
     app_id: Uuid,
+    external_user_id: &str,
     webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
@@ -169,6 +174,7 @@ pub async fn handle_subscription_cancelled_with_context<
     let updated = repo
         .apply_subscription_transition(
             app_id,
+            external_user_id,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::Cancelled {
@@ -197,6 +203,7 @@ pub async fn handle_subscription_cancellation_scheduled<
 >(
     repo: &R,
     app_id: Uuid,
+    external_user_id: &str,
     webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
@@ -208,6 +215,7 @@ pub async fn handle_subscription_cancellation_scheduled<
     let updated = repo
         .apply_subscription_transition(
             app_id,
+            external_user_id,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::CancellationScheduled {
@@ -235,6 +243,7 @@ pub async fn handle_price_step_up_consent_required<
 >(
     repo: &R,
     app_id: Uuid,
+    external_user_id: &str,
     webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
@@ -251,6 +260,7 @@ pub async fn handle_price_step_up_consent_required<
     let updated = repo
         .apply_subscription_transition(
             app_id,
+            external_user_id,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::PriceStepUp {
@@ -272,6 +282,7 @@ pub async fn handle_subscription_pending_purchase_cancelled<
 >(
     repo: &R,
     app_id: Uuid,
+    external_user_id: &str,
     webhook: &WebhookProviderSnapshot,
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
@@ -283,6 +294,7 @@ pub async fn handle_subscription_pending_purchase_cancelled<
     let updated = repo
         .apply_subscription_transition(
             app_id,
+            external_user_id,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::PendingPurchaseCancelled,

@@ -134,12 +134,13 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
         }
 
         "subscription.pending" => {
-            if let Some(_user_id) = ctx.external_user_id.as_deref() {
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
                 let sub_id = ctx.fields.subscription_id.as_deref()
                     .or(ctx.webhook.subscription_id.as_deref())
                     .unwrap_or("");
                 let updated = repo.apply_subscription_transition(
                     ctx.app_id,
+                    user_id,
                     sub_id,
                     ctx.timestamp_epoch_ms,
                     SubscriptionWebhookTransition::Pending,
@@ -203,11 +204,12 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
         }
 
         "subscription.grace_period" => {
-            if let Some(_user_id) = ctx.external_user_id.as_deref() {
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
                 let sub_id = ctx.fields.subscription_id.clone().unwrap_or_default();
                 let grace_end = ctx.fields.current_period_end.as_deref().and_then(parse_rfc3339_utc);
                 let updated = repo.apply_subscription_transition(
                     ctx.app_id,
+                    user_id,
                     &sub_id,
                     ctx.timestamp_epoch_ms,
                     SubscriptionWebhookTransition::GracePeriod {
@@ -232,26 +234,31 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
         }
 
         "subscription.revoked" => {
-            let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_revoked(
-                repo,
-                ctx.app_id,
-                ctx.webhook,
-                ctx.fields,
-                ctx.timestamp_epoch_ms,
-            ).await? else {
-                return Ok(EventHandling::ReturnNone);
-            };
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
+                let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_revoked(
+                    repo,
+                    ctx.app_id,
+                    user_id,
+                    ctx.webhook,
+                    ctx.fields,
+                    ctx.timestamp_epoch_ms,
+                ).await? else {
+                    return Ok(EventHandling::ReturnNone);
+                };
 
-            Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)))
+                return Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)));
+            }
+            Ok(EventHandling::Handled(EventEffects::default()))
         }
 
         "subscription.on_hold" => {
-            if let Some(_user_id) = ctx.external_user_id.as_deref() {
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
                 let sub_id = ctx.fields.subscription_id.as_deref()
                     .or(ctx.webhook.subscription_id.as_deref())
                     .unwrap_or("");
                 let updated = repo.apply_subscription_transition(
                     ctx.app_id,
+                    user_id,
                     sub_id,
                     ctx.timestamp_epoch_ms,
                     SubscriptionWebhookTransition::OnHold,
@@ -274,12 +281,13 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
         }
 
         "subscription.paused" => {
-            if let Some(_user_id) = ctx.external_user_id.as_deref() {
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
                 let sub_id = ctx.fields.subscription_id.clone().unwrap_or_default();
-                if let Ok(Some(sub)) = repo.get_subscription_by_sub_id(ctx.app_id, &sub_id).await {
+                if let Ok(Some(sub)) = repo.get_subscription_by_sub_id_and_user(ctx.app_id, &sub_id, user_id).await {
                     if sub.status == "active" || sub.status == "trial" {
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
+                            user_id,
                             &sub_id,
                             ctx.timestamp_epoch_ms,
                             SubscriptionWebhookTransition::Paused,
@@ -310,35 +318,46 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
         }
 
         "subscription.resumed" => {
-            let outcome = crate::services::google_play::subscription_lifecycle::handle_subscription_resumed(
-                repo,
-                ctx.app_id,
-                ctx.webhook,
-                ctx.fields,
-                ctx.timestamp_epoch_ms,
-            ).await?;
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
+                let outcome = crate::services::google_play::subscription_lifecycle::handle_subscription_resumed(
+                    repo,
+                    ctx.app_id,
+                    user_id,
+                    ctx.webhook,
+                    ctx.fields,
+                    ctx.timestamp_epoch_ms,
+                ).await?;
 
-            Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()))
+                return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
+            }
+
+            Ok(EventHandling::Handled(EventEffects::default()))
         }
 
         "subscription.cancellation_scheduled" => {
-            let outcome = crate::services::google_play::subscription_lifecycle::handle_subscription_cancellation_scheduled(
-                repo,
-                ctx.app_id,
-                ctx.webhook,
-                ctx.fields,
-                ctx.timestamp_epoch_ms,
-            ).await?;
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
+                let outcome = crate::services::google_play::subscription_lifecycle::handle_subscription_cancellation_scheduled(
+                    repo,
+                    ctx.app_id,
+                    user_id,
+                    ctx.webhook,
+                    ctx.fields,
+                    ctx.timestamp_epoch_ms,
+                ).await?;
 
-            Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()))
+                return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
+            }
+
+            Ok(EventHandling::Handled(EventEffects::default()))
         }
 
         "subscription.expired" => {
-            if let Some(_user_id) = ctx.external_user_id.as_deref() {
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
                 if let Some(purchase_token) = ctx.fields.purchase_token.as_deref() {
                     if let Some(sub) = repo.get_subscription_by_purchase_token(ctx.app_id, purchase_token).await? {
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
+                            user_id,
                             &sub.subscription_id,
                             ctx.timestamp_epoch_ms,
                             SubscriptionWebhookTransition::Expired,
@@ -356,6 +375,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         let sub_id = ctx.fields.subscription_id.clone().unwrap_or_default();
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
+                            user_id,
                             &sub_id,
                             ctx.timestamp_epoch_ms,
                             SubscriptionWebhookTransition::Expired,
@@ -373,10 +393,11 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         info!("Skipped stale expired event for subscription {}", sub_id);
                         return Ok(EventHandling::ReturnNone);
                     }
-                } else {
+                } else if let Some(user_id) = ctx.external_user_id.as_deref() {
                     let sub_id = ctx.fields.subscription_id.clone().unwrap_or_default();
                     let updated = repo.apply_subscription_transition(
                         ctx.app_id,
+                        user_id,
                         &sub_id,
                         ctx.timestamp_epoch_ms,
                         SubscriptionWebhookTransition::Expired,
@@ -400,29 +421,39 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
         }
 
         "subscription.cancelled" => {
-            let outcome = crate::services::google_play::subscription_lifecycle::handle_subscription_cancelled_with_context(
-                repo,
-                ctx.app_id,
-                ctx.webhook,
-                ctx.fields,
-                ctx.timestamp_epoch_ms,
-            ).await?;
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
+                let outcome = crate::services::google_play::subscription_lifecycle::handle_subscription_cancelled_with_context(
+                    repo,
+                    ctx.app_id,
+                    user_id,
+                    ctx.webhook,
+                    ctx.fields,
+                    ctx.timestamp_epoch_ms,
+                ).await?;
 
-            Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()))
+                return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
+            }
+
+            Ok(EventHandling::Handled(EventEffects::default()))
         }
 
         "subscription.pending_purchase_cancelled" => {
-            let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_pending_purchase_cancelled(
-                repo,
-                ctx.app_id,
-                ctx.webhook,
-                ctx.fields,
-                ctx.timestamp_epoch_ms,
-            ).await? else {
-                return Ok(EventHandling::ReturnNone);
-            };
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
+                let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_pending_purchase_cancelled(
+                    repo,
+                    ctx.app_id,
+                    user_id,
+                    ctx.webhook,
+                    ctx.fields,
+                    ctx.timestamp_epoch_ms,
+                ).await? else {
+                    return Ok(EventHandling::ReturnNone);
+                };
 
-            Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)))
+                return Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)));
+            }
+
+            Ok(EventHandling::Handled(EventEffects::default()))
         }
 
         "subscription.updated" => {
@@ -466,42 +497,50 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
         }
 
         "subscription.price_step_up" => {
-            let outcome = crate::services::google_play::subscription_lifecycle::handle_price_step_up_consent_required(
-                repo,
-                ctx.app_id,
-                ctx.webhook,
-                ctx.fields,
-                ctx.timestamp_epoch_ms,
-            ).await?;
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
+                let outcome = crate::services::google_play::subscription_lifecycle::handle_price_step_up_consent_required(
+                    repo,
+                    ctx.app_id,
+                    user_id,
+                    ctx.webhook,
+                    ctx.fields,
+                    ctx.timestamp_epoch_ms,
+                ).await?;
 
-            Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()))
+                return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
+            }
+
+            Ok(EventHandling::Handled(EventEffects::default()))
         }
 
         "subscription.pause_scheduled" => {
-            if let Some(sub_id) = ctx.fields.subscription_id.as_deref().or(ctx.webhook.subscription_id.as_deref()) {
-                let pause_scheduled_at = ctx.webhook.payload.pointer("/subscriptionNotification/pauseScheduleTimeMillis")
-                    .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
-                    .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
+                if let Some(sub_id) = ctx.fields.subscription_id.as_deref().or(ctx.webhook.subscription_id.as_deref()) {
+                    let pause_scheduled_at = ctx.webhook.payload.pointer("/subscriptionNotification/pauseScheduleTimeMillis")
+                        .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
+                        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
 
-                if let Some(schedule_at) = pause_scheduled_at {
-                    let updated = repo.apply_subscription_transition(
-                        ctx.app_id,
-                        sub_id,
-                        ctx.timestamp_epoch_ms,
-                        SubscriptionWebhookTransition::PauseScheduled {
-                            google_pause_scheduled_at: schedule_at,
-                        },
-                    ).await?;
+                    if let Some(schedule_at) = pause_scheduled_at {
+                        let updated = repo.apply_subscription_transition(
+                            ctx.app_id,
+                            user_id,
+                            sub_id,
+                            ctx.timestamp_epoch_ms,
+                            SubscriptionWebhookTransition::PauseScheduled {
+                                google_pause_scheduled_at: schedule_at,
+                            },
+                        ).await?;
 
-                    if let Some(updated_sub) = updated {
-                        return Ok(EventHandling::Handled(EventEffects {
-                            callback_status_override: Some("active".to_string()),
-                            canonical_subscription: Some(updated_sub.into()),
-                            ..Default::default()
-                        }));
+                        if let Some(updated_sub) = updated {
+                            return Ok(EventHandling::Handled(EventEffects {
+                                callback_status_override: Some("active".to_string()),
+                                canonical_subscription: Some(updated_sub.into()),
+                                ..Default::default()
+                            }));
+                        }
+
+                        info!("Skipped stale pause_scheduled event for subscription {}", sub_id);
                     }
-
-                    info!("Skipped stale pause_scheduled event for subscription {}", sub_id);
                 }
             }
 
@@ -509,22 +548,25 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
         }
 
         "subscription.deferred" => {
-            if let Some(sub_id) = ctx.fields.subscription_id.as_deref().or(ctx.webhook.subscription_id.as_deref()) {
-                let deferred_until = ctx.webhook.payload.pointer("/subscriptionNotification/deferredExpiryTimeMillis")
-                    .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
-                    .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
-                if let Some(until) = deferred_until {
-                    let updated = repo.apply_subscription_transition(
-                        ctx.app_id,
-                        sub_id,
-                        ctx.timestamp_epoch_ms,
-                        SubscriptionWebhookTransition::Deferred {
-                            google_deferred_until: until,
-                        },
-                    ).await?;
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
+                if let Some(sub_id) = ctx.fields.subscription_id.as_deref().or(ctx.webhook.subscription_id.as_deref()) {
+                    let deferred_until = ctx.webhook.payload.pointer("/subscriptionNotification/deferredExpiryTimeMillis")
+                        .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
+                        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
+                    if let Some(until) = deferred_until {
+                        let updated = repo.apply_subscription_transition(
+                            ctx.app_id,
+                            user_id,
+                            sub_id,
+                            ctx.timestamp_epoch_ms,
+                            SubscriptionWebhookTransition::Deferred {
+                                google_deferred_until: until,
+                            },
+                        ).await?;
 
-                    if updated.is_none() {
-                        info!("Skipped stale deferred event for subscription {}", sub_id);
+                        if updated.is_none() {
+                            info!("Skipped stale deferred event for subscription {}", sub_id);
+                        }
                     }
                 }
             }
@@ -639,11 +681,12 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     }));
                 }
 
-                if repo.get_subscription_by_sub_id(ctx.app_id, sub_id).await?.is_none() {
+                if repo.get_subscription_by_sub_id_and_user(ctx.app_id, sub_id, user_id).await?.is_none() {
                     warn!(
-                        "Skipping order.failed subscription update {}: subscription {} not found",
+                        "Skipping order.failed subscription update {}: subscription {} not found for user {}",
                         ctx.webhook.provider_webhook_id,
-                        sub_id
+                        sub_id,
+                        user_id
                     );
                     return Ok(EventHandling::Handled(EventEffects {
                         callback_event_type: Some("payment.failed".to_string()),
@@ -655,6 +698,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 let updated = repo
                     .apply_subscription_transition(
                         ctx.app_id,
+                        user_id,
                         sub_id,
                         ctx.timestamp_epoch_ms,
                         SubscriptionWebhookTransition::PaymentFailed,
@@ -726,6 +770,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     if let Some(sub) = repo.get_subscription_by_purchase_token(ctx.app_id, token).await? {
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
+                            _user_id,
                             &sub.subscription_id,
                             ctx.timestamp_epoch_ms,
                             SubscriptionWebhookTransition::Revoked {
@@ -744,6 +789,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 } else if let Some(sub_id) = ctx.fields.subscription_id.as_deref() {
                     let updated = repo.apply_subscription_transition(
                         ctx.app_id,
+                        _user_id,
                         sub_id,
                         ctx.timestamp_epoch_ms,
                         SubscriptionWebhookTransition::Revoked {
