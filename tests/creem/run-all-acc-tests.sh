@@ -1,9 +1,10 @@
 #!/bin/bash
 
 ##############################################################################
-# run-all-acc-tests.sh
+# CBI Access Control Test Suite (ACC-01 to ACC-04)
 # 
-# Purpose: Run all Access Control (ACC) tests for Creem Billing Integration.
+# Purpose: Orchestrates the execution of all Access Control (ACC) 
+#          test scenarios (ACC-01 through ACC-04).
 #
 # Usage: ./run-all-acc-tests.sh --email "user@example.com"
 ##############################################################################

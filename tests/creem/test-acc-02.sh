@@ -9,10 +9,11 @@
 # Usage: ./test-acc-02.sh --user-id "test_user"
 #
 # Prerequisites:
-#   - Backend running and accessible at $BRIDGE_API_URL
+#   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)
 #   - globals.cfg sourced with required vars:
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
-#     * WEBHOOK_TOKEN
+#     * BRIDGE_API_KEY (for API access)
+#     * BRIDGE_APP_ID, PRODUCT_ID_SUB (for DB setup)
 #   - psql installed and database accessible
 ##############################################################################
 

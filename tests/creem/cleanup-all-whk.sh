@@ -1,9 +1,10 @@
 #!/bin/bash
 
 ##############################################################################
-# cleanup-all-whk.sh
+# Cleanup CBI Webhook Tests (WHK-01 to WHK-04)
 # 
-# Purpose: Clean up test data created by WHK tests for a specific user.
+# Purpose: Removes all webhook test records and reports generated 
+#          by WHK-01 through WHK-04 to ensure a clean state for re-runs.
 #
 # Usage: ./cleanup-all-whk.sh --email "user@example.com"
 ##############################################################################

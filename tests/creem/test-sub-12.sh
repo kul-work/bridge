@@ -1,18 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-12: Subscription Payment Refunded
+# SUB-12: Subscription Payment Refunded (Webhook)
 # 
 # Purpose: Verify that a Creem refund.created webhook correctly records 
-#          a refund for a user with an existing active subscription.
+#          a refund for a subscription and updates the payment status.
 #
 # Usage: ./test-sub-12.sh --user-id "test_user"
 #
 # Prerequisites:
-#   - Backend running and accessible at $BRIDGE_API_URL
+#   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)
 #   - globals.cfg sourced with required vars:
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
-#     * WEBHOOK_TOKEN
+#     * WEBHOOK_TOKEN, CREEM_WEBHOOK_SECRET (for simulation)
+#     * PRODUCT_ID_SUB (for identification)
 #   - psql installed and database accessible
 ##############################################################################
 

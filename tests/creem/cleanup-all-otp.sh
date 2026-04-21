@@ -1,7 +1,12 @@
 #!/bin/bash
 
 ##############################################################################
-# Cleanup CBI OTP Tests
+# Cleanup CBI OTP Tests (OTP-01 to OTP-04)
+# 
+# Purpose: Removes all OTP records and test reports generated 
+#          by OTP-01 through OTP-04 to ensure a clean state for re-runs.
+#
+# Usage: ./cleanup-all-otp.sh --email "user@example.com"
 ##############################################################################
 
 set -euo pipefail

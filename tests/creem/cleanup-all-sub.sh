@@ -1,10 +1,10 @@
 #!/bin/bash
 
 ##############################################################################
-# Cleanup CBI Subscription Tests
+# Cleanup CBI Subscription Tests (SUB-01 to SUB-15)
 # 
 # Purpose: Removes all subscription records and test reports generated 
-#          by SUB-01 through SUB-05 to ensure a clean state for re-runs.
+#          by SUB-01 through SUB-15 to ensure a clean state for re-runs.
 #
 # Usage: ./cleanup-all-sub.sh --email "user@example.com"
 ##############################################################################

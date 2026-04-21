@@ -6,13 +6,14 @@
 # Purpose: Verify that webhooks missing metadata.user_id are handled
 #          gracefully by the backend (logged but not causing crashes).
 #
-# Usage: ./test-err-01.sh --user-id "test_user"
+# Usage: ./test-err-01.sh
 #
 # Prerequisites:
-#   - Backend running and accessible at $BRIDGE_API_URL
+#   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)
 #   - globals.cfg sourced with required vars:
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
-#     * WEBHOOK_TOKEN
+#     * WEBHOOK_TOKEN, CREEM_WEBHOOK_SECRET (for simulation)
+#     * PRODUCT_ID_SUB (for payload)
 #   - psql installed and database accessible
 ##############################################################################
 

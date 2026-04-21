@@ -1,18 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-07: Payment Failed (Subscription)
+# SUB-07: Immediate Cancellation (Webhook)
 # 
-# Purpose: Verify that a Creem payment.failed webhook for a subscription 
-#          updates the status to 'past_due' or 'unpaid'.
+# Purpose: Verify that a Creem subscription.canceled webhook updates 
+#          the status to 'cancelled'.
 #
 # Usage: ./test-sub-07.sh --user-id "test_user"
 #
 # Prerequisites:
-#   - Backend running and accessible at $BRIDGE_API_URL
+#   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)
 #   - globals.cfg sourced with required vars:
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
-#     * WEBHOOK_TOKEN
+#     * WEBHOOK_TOKEN, CREEM_WEBHOOK_SECRET (for simulation)
+#     * PRODUCT_ID_SUB (for payload)
 #   - psql installed and database accessible
 ##############################################################################
 

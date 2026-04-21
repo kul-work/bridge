@@ -1,19 +1,12 @@
 #!/bin/bash
 
 ##############################################################################
-# CBI Subscription Test Suite (B1-B5)
+# CBI Subscription Test Suite (SUB-01 to SUB-15)
 # 
 # Purpose: Orchestrates the execution of all Creem Subscription (SUB) 
-#          test scenarios (SUB-01 through SUB-05).
+#          test scenarios (SUB-01 through SUB-15).
 #
 # Usage: ./run-all-sub-tests.sh --email "user@example.com"
-#
-# Scopes:
-#   SUB-01: Initial Active Subscription
-#   SUB-02: Subscription Renewal
-#   SUB-03: User Cancellation
-#   SUB-04: Grace Period (Past Due)
-#   SUB-05: Expiration (Inactive)
 ##############################################################################
 
 set -euo pipefail

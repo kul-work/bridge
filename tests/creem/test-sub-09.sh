@@ -1,18 +1,19 @@
 #!/bin/bash
 
 ##############################################################################
-# SUB-09: Plan Upgrade (Webhook)
+# SUB-09: Plan Upgrade/Downgrade (Webhook)
 # 
-# Purpose: Verify that a Creem subscription.active webhook with a new 
+# Purpose: Verify that a Creem subscription.update webhook with a new 
 #          product_id properly updates the subscription's plan in the database.
 #
 # Usage: ./test-sub-09.sh --user-id "test_user"
 #
 # Prerequisites:
-#   - Backend running and accessible at $BRIDGE_API_URL
+#   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)
 #   - globals.cfg sourced with required vars:
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
-#     * WEBHOOK_TOKEN
+#     * WEBHOOK_TOKEN, CREEM_WEBHOOK_SECRET (for simulation)
+#     * PRODUCT_ID_SUB (for payload)
 #   - psql installed and database accessible
 ##############################################################################
 

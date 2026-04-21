@@ -1,17 +1,12 @@
 #!/bin/bash
 
 ##############################################################################
-# CBI OTP Test Suite Runner
+# CBI OTP Test Suite Runner (OTP-01 to OTP-04)
 # 
 # Purpose: Orchestrates the execution of all Creem One-Time Payment (OTP) 
-#          test scenarios (OTP-01 to OTP-03).
+#          test scenarios (OTP-01 to OTP-04).
 #
 # Usage: ./run-all-otp-tests.sh --email "user@example.com"
-#
-# Scopes:
-#   OTP-01: Successful Webhook
-#   OTP-02: Sync Redirect Fallback
-#   OTP-03: Refund Handling
 ##############################################################################
 
 set -euo pipefail
@@ -86,7 +81,8 @@ chmod +x test-otp-*.sh cleanup-all-otp.sh
 # Run Tests (Specified in Section A of CREEM_BILLING_TESTPLAN.md)
 run_test "test-otp-01.sh" "OTP-01: Successful Purchase (Webhook)"
 run_test "test-otp-02.sh" "OTP-02: Sync Redirect Verification"
-run_test "test-otp-03.sh" "OTP-03: Refund Creation (Webhook)"
+run_test "test-otp-03.sh" "OTP-03: Failed One-Time Purchase"
+run_test "test-otp-04.sh" "OTP-04: Partially Refunded One-Time Purchase"
 
 # Build JSON results array
 JSON_RESULTS="["

@@ -1,6 +1,13 @@
 #!/bin/bash
 
-# cleanup-all-net.sh: Cleanup helper for NET tests
+##############################################################################
+# Cleanup CBI Network Resilience Tests (NET-01 to NET-02)
+# 
+# Purpose: Removes all network resilience test records and reports generated 
+#          by NET-01 through NET-02 to ensure a clean state for re-runs.
+#
+# Usage: ./cleanup-all-net.sh --email "user@example.com"
+##############################################################################
 
 set -euo pipefail
 

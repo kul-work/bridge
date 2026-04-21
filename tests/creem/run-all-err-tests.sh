@@ -1,6 +1,13 @@
 #!/bin/bash
 
-# run-all-err-tests.sh: Run all Error Handling tests
+##############################################################################
+# CBI Error Handling Test Suite (ERR-01 to ERR-02)
+# 
+# Purpose: Orchestrates the execution of all Error Handling (ERR) 
+#          test scenarios (ERR-01 through ERR-02).
+#
+# Usage: ./run-all-err-tests.sh --email "user@example.com"
+##############################################################################
 
 set -euo pipefail
 

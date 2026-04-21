@@ -4,20 +4,18 @@
 # cleanup-nuclear.sh - Complete Database Cleanup for Testing
 # 
 # Purpose: Reset entire test database to a clean state. Truncates all
-#          test-related tables and resets user premium statuses. Only
-#          runs on localhost connections for safety.
+#          test-related tables. Only runs on localhost connections for safety.
 #
-# Usage: ./cleanup-nuclear.sh
-#        ./cleanup-nuclear.sh --dry-run
+# Usage: ./cleanup-nuclear.sh [--dry-run]
 #
-# What it cleans:
-#   - Payments (pay.payments)
-#   - Subscriptions (pay.subscriptions)
-#   - Webhook delivery logs (pay.webhook_delivery)
-#   - Webhook provider configs (pay.webhook_provider)
-#   - Notifications (hiha.notifications)
-#   - Webhook callbacks (hiha.webhook_callbacks)
-#   - User premium status via clerk_id (hiha.users)
+# What it cleans (Truncates CASCADE):
+#   - pay.payments
+#   - pay.subscriptions
+#   - pay.webhook_delivery
+#   - pay.webhook_provider
+#   - pay.price_step_up_expiry
+#   - pay.agent_credits
+#   - pay.agent_transactions
 #
 # Safety: Only executes on localhost connections (127.0.0.1 or ::1)
 ##############################################################################

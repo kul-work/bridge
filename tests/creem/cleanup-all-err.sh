@@ -1,6 +1,13 @@
 #!/bin/bash
 
-# cleanup-all-err.sh: Cleanup helper for ERR tests
+##############################################################################
+# Cleanup CBI Error Handling Tests (ERR-01 to ERR-02)
+# 
+# Purpose: Removes all error handling test records and reports generated 
+#          by ERR-01 through ERR-02 to ensure a clean state for re-runs.
+#
+# Usage: ./cleanup-all-err.sh --email "user@example.com"
+##############################################################################
 
 set -euo pipefail
 

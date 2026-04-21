@@ -1,9 +1,10 @@
 #!/bin/bash
 
 ##############################################################################
-# cleanup-all-acc.sh
+# Cleanup CBI Access Control Tests (ACC-01 to ACC-04)
 # 
-# Purpose: Clean up any test data created by ACC tests for a specific user.
+# Purpose: Removes all access control test records and reports generated 
+#          by ACC-01 through ACC-04 to ensure a clean state for re-runs.
 #
 # Usage: ./cleanup-all-acc.sh --email "user@example.com"
 ##############################################################################

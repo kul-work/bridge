@@ -1,6 +1,13 @@
 #!/bin/bash
 
-# run-all-net-tests.sh: Run all Network Resilience tests
+##############################################################################
+# CBI Network Resilience Test Suite (NET-01 to NET-02)
+# 
+# Purpose: Orchestrates the execution of all Network Resilience (NET) 
+#          test scenarios (NET-01 through NET-02).
+#
+# Usage: ./run-all-net-tests.sh --email "user@example.com"
+##############################################################################
 
 set -euo pipefail
 

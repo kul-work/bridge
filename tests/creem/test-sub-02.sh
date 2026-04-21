@@ -3,16 +3,17 @@
 ##############################################################################
 # SUB-02: Subscription Renewal (Webhook)
 # 
-# Purpose: Verify that a Creem subscription.renewed webhook properly 
+# Purpose: Verify that a Creem subscription.active (renewal) webhook properly 
 #          extends the subscription period in the database.
 #
 # Usage: ./test-sub-02.sh --user-id "test_user"
 #
 # Prerequisites:
-#   - Backend running and accessible at $BRIDGE_API_URL
+#   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)
 #   - globals.cfg sourced with required vars:
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
-#     * WEBHOOK_TOKEN
+#     * WEBHOOK_TOKEN, CREEM_WEBHOOK_SECRET (for simulation)
+#     * PRODUCT_ID_SUB (for payload)
 #   - psql installed and database accessible
 ##############################################################################
 
