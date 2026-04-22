@@ -1,5 +1,7 @@
 # Bridge - Agent Guide
 
+If you're running in Crush, also read the rules from `.\.crush\AGENTS.md`.
+
 ## Project Overview
 
 **Bridge** is a central payment processing service designed to handle subscription lifecycles, payments, and agent micropayments for all Tyde applications. It decouples payment logic from business logic.
