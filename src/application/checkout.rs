@@ -68,7 +68,7 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
     let response = match provider.as_str() {
         "creem" => {
             let creem_config = CreemConfig::from_json(&provider_config.config)?;
-            let creem_client = CreemClient::new(creem_config.clone());
+            let creem_client = CreemClient::new(creem_config.clone())?;
 
             let product_selector = product_type.as_deref().unwrap_or(product_id.as_str());
             let selected_product_id = match product_selector {

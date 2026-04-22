@@ -9,6 +9,8 @@ pub struct CreemConfig {
     pub product_id: String,
     pub offer_id: Option<String>,
     pub otp_id: Option<String>,
+    pub connect_timeout_secs: u64,
+    pub request_timeout_secs: u64,
 }
 
 impl CreemConfig {
@@ -42,12 +44,34 @@ impl CreemConfig {
             .and_then(|v| v.as_str())
             .map(|value| value.to_string());
 
+        let connect_timeout_secs = config
+            .get("connect_timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5);
+        if connect_timeout_secs == 0 {
+            return Err(BridgeError::ConfigError(
+                "Invalid Creem connect_timeout_secs: must be greater than 0".to_string(),
+            ));
+        }
+
+        let request_timeout_secs = config
+            .get("request_timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(25);
+        if request_timeout_secs == 0 {
+            return Err(BridgeError::ConfigError(
+                "Invalid Creem request_timeout_secs: must be greater than 0".to_string(),
+            ));
+        }
+
         Ok(Self {
             api_key,
             api_url,
             product_id,
             offer_id,
             otp_id,
+            connect_timeout_secs,
+            request_timeout_secs,
         })
     }
 

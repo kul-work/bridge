@@ -1,6 +1,7 @@
 use crate::error::BridgeError;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::time::Duration;
 use tracing::{error, info};
 
 use super::config::CreemConfig;
@@ -14,17 +15,20 @@ pub struct CreemClient {
 
 impl CreemClient {
     /// Create new Creem client from config
-    pub fn new(config: CreemConfig) -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            config,
-        }
+    pub fn new(config: CreemConfig) -> Result<Self, BridgeError> {
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(config.connect_timeout_secs))
+            .timeout(Duration::from_secs(config.request_timeout_secs))
+            .build()
+            .map_err(|e| BridgeError::InternalServerError(format!("Failed to build Creem HTTP client: {}", e)))?;
+
+        Ok(Self { http, config })
     }
 
     /// Create from JSON configuration
     pub fn from_json(config_json: &Value) -> Result<Self, BridgeError> {
         let config = CreemConfig::from_json(config_json)?;
-        Ok(Self::new(config))
+        Self::new(config)
     }
 
     /// Create checkout session
