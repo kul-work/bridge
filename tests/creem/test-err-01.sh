@@ -12,7 +12,7 @@
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)
 #   - globals.cfg sourced with required vars:
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
-#     * WEBHOOK_TOKEN, CREEM_WEBHOOK_SECRET (for simulation)
+#     * WEBHOOK_INGRESS_TOKEN, CREEM_WEBHOOK_SECRET (for simulation)
 #     * PRODUCT_ID_SUB (for payload)
 #   - psql installed and database accessible
 ##############################################################################
@@ -64,7 +64,7 @@ SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$CREEM_WEBHOOK_SECR
 # Step 2: Send Webhook
 echo -e "${YELLOW}[2/3] Sending webhook (expecting acceptance or 400 but no crash)${NC}"
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-  "$APP_URL/webhooks/$WEBHOOK_TOKEN/creem" \
+  "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/creem" \
   -H "Content-Type: application/json" \
   -H "creem-signature: $SIGNATURE" \
   -d "$PAYLOAD")

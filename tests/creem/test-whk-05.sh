@@ -98,7 +98,7 @@ echo -e "${GREEN}[OK] Payload + signature prepared${NC}"
 echo ""
 
 echo -e "${YELLOW}[4/6] Sending Creem webhook with creem-signature${NC}"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_TOKEN/creem" \
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/creem" \
   -H "Content-Type: application/json" \
   -H "creem-signature: $SIGNATURE" \
   -d "$PAYLOAD")

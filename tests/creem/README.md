@@ -66,7 +66,7 @@ cd tests/creem
 ## Configuration
 Update `globals.cfg` with your local environment settings:
 - `APP_URL`: Bridge server URL.
-- `WEBHOOK_TOKEN`: Unique token for the app's Creem webhook ingress.
+- `WEBHOOK_INGRESS_TOKEN`: Unique token for the app's Creem webhook ingress.
 - `CREEM_WEBHOOK_SECRET`: The secret for HMAC validation.
 - `BRIDGE_DB_*`: Database connection parameters.
 

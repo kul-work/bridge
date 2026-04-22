@@ -13,7 +13,7 @@
 #   - Backend running and accessible at $BRIDGE_API_URL (via globals.cfg)
 #   - globals.cfg sourced with required vars:
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
-#     * WEBHOOK_TOKEN, CREEM_WEBHOOK_SECRET (for simulation)
+#     * WEBHOOK_INGRESS_TOKEN, CREEM_WEBHOOK_SECRET (for simulation)
 #     * PRODUCT_ID_SUB (for payload)
 #   - psql installed and database accessible
 ##############################################################################
@@ -103,7 +103,7 @@ echo -e "${YELLOW}[3/4] Triggering 3 concurrent webhook deliveries (Race Conditi
 # We use 3 instead of 5 for safety in test environments
 for i in {1..3}; do
   curl -s -o /dev/null -w "Delivery $i: HTTP %{http_code}\n" -X POST \
-    "$APP_URL/webhooks/$WEBHOOK_TOKEN/creem" \
+    "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/creem" \
     -H "Content-Type: application/json" \
     -H "creem-signature: $SIGNATURE" \
     -d "$PAYLOAD" &
