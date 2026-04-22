@@ -34,6 +34,12 @@
     - **Price Step-up**: Manages Korea-specific price consent lifecycle.
     - **Pause Scheduler**: Handles delayed subscription pauses and resumes.
 
+## Required Reading
+
+Before making architectural or behavioral changes, read:
+- `DESIGN.md` — system architecture and design decisions
+- `INVARIANTS.md` — behavioral invariants that must not be violated
+
 ## Code Style Guidelines
 
 - **Language**: Rust (Edition 2021)
