@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use anyhow::Result;
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header, decode_header};
+use jsonwebtoken::{decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -553,149 +553,85 @@ impl GooglePlayClient {
             })
     }
 
-    /// Manually verify JWT signature using JWK components
+    /// Verify JWT signature using JWK components
     fn verify_jwt_with_jwk(token: &str, jwk: &JsonWebKey, skip_rsa: bool) -> Result<PubSubClaims, AppError> {
         use base64::{Engine as _, engine::general_purpose};
-
-        // Split JWT into its three parts
-        let parts: Vec<&str> = token.split('.').collect();
-        if parts.len() != 3 {
-            return Err(AppError::WebhookSignatureVerificationFailed(
-                "Invalid JWT format: expected 3 parts".to_string()
-            ));
-        }
-
-        let header_b64 = parts[0];
-        let payload_b64 = parts[1];
-        let signature_b64 = parts[2];
-
-        // Decode payload
-        let payload_bytes = general_purpose::URL_SAFE_NO_PAD
-            .decode(payload_b64)
-            .map_err(|e| {
-                AppError::WebhookSignatureVerificationFailed(
-                    format!("Failed to decode JWT payload: {}", e)
-                )
-            })?;
-
-        let claims: PubSubClaims = serde_json::from_slice(&payload_bytes)
-            .map_err(|e| {
-                AppError::WebhookSignatureVerificationFailed(
-                    format!("Failed to parse JWT claims: {}", e)
-                )
-            })?;
-
-        // Verify claims
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| AppError::WebhookSignatureVerificationFailed(
-                format!("System time error: {}", e)
-            ))?
-            .as_secs();
-
-        if claims.exp <= now {
-            return Err(AppError::WebhookSignatureVerificationFailed(
-                format!("JWT token expired (exp: {}, now: {})", claims.exp, now)
-            ));
-        }
-
-        if claims.iss != "https://accounts.google.com" {
-            return Err(AppError::WebhookSignatureVerificationFailed(
-                format!("Invalid issuer: {} (expected https://accounts.google.com)", claims.iss)
-            ));
-        }
-
-        // Verify signature using RSA
-        let n_bytes = general_purpose::URL_SAFE_NO_PAD
-            .decode(&jwk.n)
-            .map_err(|e| {
-                AppError::WebhookSignatureVerificationFailed(
-                    format!("Failed to decode JWK modulus: {}", e)
-                )
-            })?;
-
-        let e_bytes = general_purpose::URL_SAFE_NO_PAD
-            .decode(&jwk.e)
-            .map_err(|e| {
-                AppError::WebhookSignatureVerificationFailed(
-                    format!("Failed to decode JWK exponent: {}", e)
-                )
-            })?;
-
-        let signature_bytes = general_purpose::URL_SAFE_NO_PAD
-            .decode(signature_b64)
-            .map_err(|e| {
-                AppError::WebhookSignatureVerificationFailed(
-                    format!("Failed to decode JWT signature: {}", e)
-                )
-            })?;
-
-        // Message to verify is header.payload
-        let message = format!("{}.{}", header_b64, payload_b64);
-
-        // Verify RSA signature using the rsa crate
-        use rsa::RsaPublicKey;
-
-        if signature_bytes.is_empty() {
-            return Err(AppError::WebhookSignatureVerificationFailed(
-                "JWT signature is empty".to_string()
-            ));
-        }
-
-        tracing::debug!("JWT signature verification: n={} bytes, e={} bytes, sig={} bytes", 
-            n_bytes.len(), e_bytes.len(), signature_bytes.len());
-
-        // Convert bytes to BigUint for RSA key construction
-        let n = rsa::BigUint::from_bytes_be(&n_bytes);
-        let e = rsa::BigUint::from_bytes_be(&e_bytes);
-
-        let public_key = RsaPublicKey::new(n, e)
-            .map_err(|e| {
-                let err = format!("Failed to construct RSA public key: {}", e);
-                AppError::WebhookSignatureVerificationFailed(err)
-            })?;
 
         // Skip RSA verification if configured (dev/testing only)
         if skip_rsa {
             tracing::warn!("RSA signature verification SKIPPED (GOOGLE_SKIP_RSA_VERIFICATION=true) - do not use in production!");
+            
+            // Manually decode JWT without signature verification, but still check exp/iss
+            let parts: Vec<&str> = token.split('.').collect();
+            if parts.len() != 3 {
+                return Err(AppError::WebhookSignatureVerificationFailed(
+                    "Invalid JWT format: expected 3 parts".to_string()
+                ));
+            }
+
+            let payload_b64 = parts[1];
+            let payload_bytes = general_purpose::URL_SAFE_NO_PAD
+                .decode(payload_b64)
+                .map_err(|e| {
+                    AppError::WebhookSignatureVerificationFailed(
+                        format!("Failed to decode JWT payload: {}", e)
+                    )
+                })?;
+
+            let claims: PubSubClaims = serde_json::from_slice(&payload_bytes)
+                .map_err(|e| {
+                    AppError::WebhookSignatureVerificationFailed(
+                        format!("Failed to parse JWT claims: {}", e)
+                    )
+                })?;
+
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| AppError::WebhookSignatureVerificationFailed(
+                    format!("System time error: {}", e)
+                ))?
+                .as_secs();
+
+            if claims.exp <= now {
+                return Err(AppError::WebhookSignatureVerificationFailed(
+                    format!("JWT token expired (exp: {}, now: {})", claims.exp, now)
+                ));
+            }
+
+            if claims.iss != "https://accounts.google.com" {
+                return Err(AppError::WebhookSignatureVerificationFailed(
+                    format!("Invalid issuer: {}", claims.iss)
+                ));
+            }
+
             return Ok(claims);
         }
 
-        // RS256 uses PKCS#1 v1.5 padding with SHA256 digest
-        // RS256 standard includes DER-encoded DigestInfo prefix for SHA256
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(message.as_bytes());
-        let hash = hasher.finalize();
-        
-        // Construct DER-encoded DigestInfo for SHA256
-        // SHA256 OID: 2.16.840.1.101.3.4.2.1
-        // DigestInfo = SEQUENCE { 
-        //   SEQUENCE { OID sha256, NULL },
-        //   OCTET STRING (hash)
-        // }
-        let mut digest_info = vec![
-            0x30, 0x31,                            // SEQUENCE, length 49
-            0x30, 0x0d,                            // SEQUENCE, length 13
-            0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, // OID for SHA256
-            0x05, 0x00,                            // NULL
-            0x04, 0x20,                            // OCTET STRING, length 32
-        ];
-        digest_info.extend_from_slice(hash.as_ref());
-        
-        // Verify with the DER-prefixed digest
-        public_key.verify(rsa::Pkcs1v15Sign::new_unprefixed(), digest_info.as_slice(), &signature_bytes)
+        // Production path: verify signature with jsonwebtoken + check audience separately
+        let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
             .map_err(|e| {
-                let err = format!("RSA signature verification failed: {}", e);
-                AppError::WebhookSignatureVerificationFailed(err)
+                AppError::WebhookSignatureVerificationFailed(
+                    format!("Failed to construct RSA decoding key: {}", e)
+                )
+            })?;
+
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_issuer(&["https://accounts.google.com"]);
+        validation.validate_exp = true;
+
+        let verified = decode::<PubSubClaims>(token, &decoding_key, &validation)
+            .map_err(|e| {
+                AppError::WebhookSignatureVerificationFailed(
+                    format!("JWT signature verification failed: {}", e)
+                )
             })?;
 
         tracing::info!(
             "JWT verified: issuer={}, exp={}, aud={}",
-            claims.iss, claims.exp, claims.aud
+            verified.claims.iss, verified.claims.exp, verified.claims.aud
         );
 
-        Ok(claims)
+        Ok(verified.claims)
     }
 
     /// Verify Google Pub/Sub message authentication header.

@@ -1,0 +1,7 @@
+[advisories]
+ignore = [
+    # `rsa` currently has no fixed version for RUSTSEC-2023-0071.
+    # Bridge uses RSA only for signature operations (JWT signing/verification),
+    # not PKCS#1 v1.5 private-key decryption that the advisory targets.
+    "RUSTSEC-2023-0071",
+]
