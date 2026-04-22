@@ -38,8 +38,10 @@ tests/creem/
 | **SUB-03** | Renewal | Verifies period extension on renewal webhooks. |
 | **SUB-06** | Scheduled Cancel | Verifies `auto_renewing=false` and Grace Period access. |
 | **WHK-01** | Valid Signature | Verifies HMAC-SHA256 signature acceptance. |
+| **WHK-02** | Invalid Signature Rejection | Verifies that invalid signatures are rejected and DB state unchanged. Also checks verify_webhook_signature config. |
 | **WHK-03** | Idempotency | Ensures duplicate webhooks don't create duplicate records. |
 | **WHK-05** | Normalization | Maps provider-specific payloads to canonical Bridge states. |
+| **WHK-06** | Verification Mode Override | Tests X-Webhook-Verification-Mode header bypass (requires MOCK_EXTERNAL_APIS=true). |
 | **NET-02** | Race Conditions | Tests concurrent deliveries of the same event. |
 
 ## Usage
@@ -69,6 +71,14 @@ Update `globals.cfg` with your local environment settings:
 - `WEBHOOK_INGRESS_TOKEN`: Unique token for the app's Creem webhook ingress.
 - `CREEM_WEBHOOK_SECRET`: The secret for HMAC validation.
 - `BRIDGE_DB_*`: Database connection parameters.
+
+### Signature Verification Control
+Creem webhook signature verification can be controlled at multiple levels:
+1. **DB config**: `verify_webhook_signature` in `pay.provider_configs.config` (defaults to `true`)
+2. **Header override**: `X-Webhook-Verification-Mode: off/strict` — only works when `MOCK_EXTERNAL_APIS=true`
+3. **Production**: Header override is ignored; only DB config applies
+
+To run tests with signature bypass (local dev), set `MOCK_EXTERNAL_APIS=true` in the server's `.env`.
 
 ## Design Note
 These tests simulate **Creem Webhooks** and **API calls** to verify Bridge's internal logic:

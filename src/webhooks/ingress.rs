@@ -76,14 +76,22 @@ pub async fn handle_google_play(
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
-    // Allow header override for testing (X-Webhook-Verification-Mode: off)
-    let verify_signature = if let Some(mode) = headers.get("X-Webhook-Verification-Mode").and_then(|h| h.to_str().ok()) {
-        match mode.to_lowercase().as_str() {
-            "off" => false,
-            "strict" => true,
-            _ => verify_signature,
-        }
+    // Only allow header override in test/mock mode (MOCK_EXTERNAL_APIS=true)
+    let verify_signature = if std::env::var("MOCK_EXTERNAL_APIS").as_deref() == Ok("true") {
+        // Priority 1: Request header override (X-Webhook-Verification-Mode: strict/off) - test mode only
+        headers
+            .get("X-Webhook-Verification-Mode")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_lowercase())
+            .map(|mode| match mode.as_str() {
+                "strict" => true,
+                "off" => false,
+                _ => verify_signature,
+            })
+            // Priority 2: DB config value
+            .unwrap_or(verify_signature)
     } else {
+        // Production: always use DB config, ignore headers
         verify_signature
     };
 
@@ -238,26 +246,58 @@ pub async fn handle_creem(
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
+    let provider_config = database
+        .as_ref()
+        .get_provider_config(app.id, "creem")
+        .await?;
+
+    let verify_signature = provider_config
+        .config
+        .get("verify_webhook_signature")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    // Only allow header override in test/mock mode (MOCK_EXTERNAL_APIS=true)
+    let verify_signature = if std::env::var("MOCK_EXTERNAL_APIS").as_deref() == Ok("true") {
+        // Priority 1: Request header override (X-Webhook-Verification-Mode: strict/off) - test mode only
+        headers
+            .get("X-Webhook-Verification-Mode")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_lowercase())
+            .map(|mode| match mode.as_str() {
+                "strict" => true,
+                "off" => false,
+                _ => verify_signature,
+            })
+            // Priority 2: DB config value
+            .unwrap_or(verify_signature)
+    } else {
+        // Production: always use DB config, ignore headers
+        verify_signature
+    };
+
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
 
-    let webhook_secret = get_provider_webhook_secret(database.as_ref(), app.id, "creem").await?;
-    let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
-        .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
+    if verify_signature {
+        let webhook_secret = get_provider_webhook_secret(database.as_ref(), app.id, "creem").await?;
+        let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
+            .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
 
-    mac.update(body.as_bytes());
-    let computed_sig = hex::encode(mac.finalize().into_bytes());
+        mac.update(body.as_bytes());
+        let computed_sig = hex::encode(mac.finalize().into_bytes());
 
-    let provided_sig = extract_header_value(&headers, &CREEM_SIGNATURE_HEADERS)
-        .ok_or_else(|| BridgeError::WebhookError("Missing Webhook-Signature header".to_string()))?;
+        let provided_sig = extract_header_value(&headers, &CREEM_SIGNATURE_HEADERS)
+            .ok_or_else(|| BridgeError::WebhookError("Missing Webhook-Signature header".to_string()))?;
 
-    if !constant_time_compare(provided_sig.as_bytes(), computed_sig.as_bytes()) {
-        error!("Creem webhook signature verification failed");
-        return Err(BridgeError::WebhookError("Invalid signature".to_string()));
+        if !constant_time_compare(provided_sig.as_bytes(), computed_sig.as_bytes()) {
+            error!("Creem webhook signature verification failed");
+            return Err(BridgeError::WebhookError("Invalid signature".to_string()));
+        }
+
+        info!("Creem webhook signature verified");
     }
-
-    info!("Creem webhook signature verified");
 
     let payload: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
         error!("Failed to parse Creem webhook JSON: {}", e);

@@ -62,8 +62,21 @@ echo -e "${YELLOW}========================================${NC}"
 echo "WHK-01: Valid Signature Acceptance"
 echo -e "${YELLOW}========================================${NC}"
 
+# Step 1b: Verify verify_webhook_signature config is enabled
+echo -e "${YELLOW}[1b/5] Verifying verify_webhook_signature config is enabled${NC}"
+VERIFY_SIG=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -t -A -c "SELECT COALESCE((config->>'verify_webhook_signature')::boolean, true)::text FROM pay.provider_configs WHERE app_id = '$BRIDGE_APP_ID' AND provider = 'creem' LIMIT 1;" 2>/dev/null || echo "true")
+VERIFY_SIG=$(echo "$VERIFY_SIG" | tr -d '[:space:]')
+if [[ "$VERIFY_SIG" == "true" || "$VERIFY_SIG" == "t" ]]; then
+    echo -e "${GREEN}✓ verify_webhook_signature=true — signature checks are enforced${NC}"
+else
+    echo -e "${RED}✗ verify_webhook_signature=$VERIFY_SIG — signature checks are NOT enforced${NC}"
+    echo -e "${YELLOW}  Set verify_webhook_signature=true in pay.provider_configs for the test app${NC}"
+    exit 1
+fi
+
 # Step 2: Cleanup and setup state
-echo -e "${YELLOW}[2/4] Cleaning up old data from Bridge DB${NC}"
+echo -e "${YELLOW}[2/5] Cleaning up old data from Bridge DB${NC}"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' OR subscription_id = '$SUBSCRIPTION_ID';" > /dev/null 2>&1 || true
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
@@ -73,7 +86,7 @@ psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_
 echo -e "${GREEN}✓ Cleaned${NC}"
 
 # Step 3: Trigger Webhook with VALID signature
-echo -e "${YELLOW}[3/4] Sending subscription.active webhook with VALID signature${NC}"
+echo -e "${YELLOW}[3/5] Sending subscription.active webhook with VALID signature${NC}"
 EVENT_ID="whk-01-$(date +%s)"
 PERIOD_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+30 days" 2>/dev/null || date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -115,7 +128,7 @@ else
 fi
 
 # Step 4: Verify DB
-echo -e "${YELLOW}[4/4] Verifying database state${NC}"
+echo -e "${YELLOW}[4/5] Verifying database state${NC}"
 sleep 3 # process time
 
 SUBS_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \

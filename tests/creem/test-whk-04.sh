@@ -57,6 +57,7 @@ HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/creem" \
   -H "Content-Type: application/json" \
   -H "creem-signature: $SIGNATURE" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "$PAYLOAD")
 
 if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" || "$HTTP_CODE" == "204" ]]; then

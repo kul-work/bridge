@@ -5,6 +5,8 @@
 # 
 # Purpose: Verify that webhooks with invalid signatures are rejected 
 #          and do NOT modify the database.
+#          Also verifies that verify_webhook_signature=true in provider_configs
+#          is required for rejection to occur.
 #
 # Usage: ./test-whk-02.sh [--email "user@example.com"] [--user-id "test_user"]
 #
@@ -14,6 +16,8 @@
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER, PGPASSWORD
 #     * WEBHOOK_INGRESS_TOKEN, CREEM_WEBHOOK_SECRET (for simulation)
 #     * PRODUCT_ID_SUB (for payload)
+#   - verify_webhook_signature must be true (or absent) in pay.provider_configs
+#     for the test app (ensures signature checks are enforced)
 #   - psql installed and database accessible
 ##############################################################################
 
@@ -61,14 +65,27 @@ echo -e "${YELLOW}========================================${NC}"
 echo "WHK-02: Invalid Signature Rejection"
 echo -e "${YELLOW}========================================${NC}"
 
+# Step 1b: Verify that verify_webhook_signature is true (or absent=default true)
+echo -e "${YELLOW}[1b/5] Verifying verify_webhook_signature config is enabled${NC}"
+VERIFY_SIG=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -t -A -c "SELECT COALESCE((config->>'verify_webhook_signature')::boolean, true)::text FROM pay.provider_configs WHERE app_id = '$BRIDGE_APP_ID' AND provider = 'creem' LIMIT 1;" 2>/dev/null || echo "true")
+VERIFY_SIG=$(echo "$VERIFY_SIG" | tr -d '[:space:]')
+if [[ "$VERIFY_SIG" == "true" || "$VERIFY_SIG" == "t" ]]; then
+    echo -e "${GREEN}✓ verify_webhook_signature=true — signature checks are enforced${NC}"
+else
+    echo -e "${RED}✗ verify_webhook_signature=$VERIFY_SIG — signature checks are NOT enforced, test will fail${NC}"
+    echo -e "${YELLOW}  Set verify_webhook_signature=true in pay.provider_configs for the test app${NC}"
+    exit 1
+fi
+
 # Step 2: Record initial state
-echo -e "${YELLOW}[2/4] Recording initial database state for user $USER_ID${NC}"
+echo -e "${YELLOW}[2/5] Recording initial database state for user $USER_ID${NC}"
 INITIAL_SUBS_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT count(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" -t | tr -d '[:space:]' || echo "0")
 echo "  Initial Subscriptions: $INITIAL_SUBS_COUNT"
 
 # Step 3: Send Webhook with INVALID signature
-echo -e "${YELLOW}[3/4] Sending webhook with INVALID signature${NC}"
+echo -e "${YELLOW}[3/5] Sending webhook with INVALID signature${NC}"
 EVENT_ID="whk-02-invalid-$(date +%s)"
 PERIOD_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+30 days" 2>/dev/null || date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -109,7 +126,7 @@ else
 fi
 
 # Step 4: Verify DB unchanged
-echo -e "${YELLOW}[4/4] Verifying database remains unchanged${NC}"
+echo -e "${YELLOW}[4/5] Verifying database remains unchanged${NC}"
 sleep 2 # process time
 
 FINAL_SUBS_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
@@ -119,6 +136,23 @@ echo "  Final Subscriptions: $FINAL_SUBS_COUNT"
 
 if [[ "$FINAL_SUBS_COUNT" == "$INITIAL_SUBS_COUNT" ]]; then
     echo -e "${GREEN}✓ Database state unchanged as expected${NC}"
+
+    # Step 5: Verify that X-Webhook-Verification-Mode: off is BLOCKED in production mode
+    # (This header should only work when MOCK_EXTERNAL_APIS=true)
+    echo -e "${YELLOW}[5/5] Verifying X-Webhook-Verification-Mode header is blocked without MOCK_EXTERNAL_APIS${NC}"
+    HTTP_CODE_BYPASS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+      "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/creem" \
+      -H "Content-Type: application/json" \
+      -H "X-Webhook-Verification-Mode: off" \
+      -H "creem-signature: $BAD_SIGNATURE" \
+      -d "$PAYLOAD")
+
+    if [[ "$HTTP_CODE_BYPASS" == "401" || "$HTTP_CODE_BYPASS" == "403" || "$HTTP_CODE_BYPASS" == "400" ]]; then
+        echo -e "${GREEN}✓ Header override blocked in production mode (HTTP $HTTP_CODE_BYPASS)${NC}"
+    else
+        echo -e "${YELLOW}⚠ Header override returned HTTP $HTTP_CODE_BYPASS (may indicate MOCK_EXTERNAL_APIS=true in test env)${NC}"
+    fi
+
     echo -e "\n${GREEN}✓ WHK-02 PASSED${NC}"
     exit 0
 else

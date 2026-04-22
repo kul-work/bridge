@@ -93,6 +93,7 @@ Depending on checkout mode, also needed:
 - `otp_id` (if `product_type=otp`)
 
 Optional:
+- `verify_webhook_signature` (defaults to true behavior when absent)
 - `api_url` (default fallback: `https://api.creem.com`)
 
 ```sql
@@ -106,7 +107,8 @@ VALUES (
     "product_id":"premium_monthly",
     "offer_id":"offer_123",
     "otp_id":"otp_456",
-    "webhook_secret":"whsec_xxx"
+    "webhook_secret":"whsec_xxx",
+    "verify_webhook_signature":true
   }'::jsonb,
   true
 );

@@ -45,7 +45,8 @@ Examples:
     "product_id": "premium_monthly",
     "offer_id": "offer_123",
     "otp_id": "otp_456",
-    "webhook_secret": "whsec_xxxxx"
+    "webhook_secret": "whsec_xxxxx",
+    "verify_webhook_signature": true
   }
 
   Apple (future):

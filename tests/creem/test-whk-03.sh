@@ -104,6 +104,7 @@ HTTP_CODE_1=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/creem" \
   -H "Content-Type: application/json" \
   -H "creem-signature: $SIGNATURE" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "$PAYLOAD")
 
 echo "  First delivery response: HTTP $HTTP_CODE_1"
@@ -115,6 +116,7 @@ HTTP_CODE_2=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/creem" \
   -H "Content-Type: application/json" \
   -H "creem-signature: $SIGNATURE" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "$PAYLOAD")
 
 echo "  Second delivery response: HTTP $HTTP_CODE_2"

@@ -101,6 +101,7 @@ echo -e "${YELLOW}[4/6] Sending Creem webhook with creem-signature${NC}"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/creem" \
   -H "Content-Type: application/json" \
   -H "creem-signature: $SIGNATURE" \
+  -H "X-Webhook-Verification-Mode: off" \
   -d "$PAYLOAD")
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 

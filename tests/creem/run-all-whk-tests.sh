@@ -1,10 +1,10 @@
 #!/bin/bash
 
 ##############################################################################
-# CBI Webhook Test Suite (WHK-01 to WHK-05)
+# CBI Webhook Test Suite (WHK-01 to WHK-06)
 # 
 # Purpose: Orchestrates the execution of all Webhook (WHK) 
-#          test scenarios (WHK-01 through WHK-05).
+#          test scenarios (WHK-01 through WHK-06).
 #
 # Usage: ./run-all-whk-tests.sh --email "user@example.com"
 ##############################################################################
@@ -45,7 +45,7 @@ echo -e "${YELLOW}========================================${NC}"
 echo "Running all CBI WHK tests for: $EMAIL"
 echo -e "${YELLOW}========================================${NC}"
 
-TESTS=("test-whk-01.sh" "test-whk-02.sh" "test-whk-03.sh" "test-whk-04.sh" "test-whk-05.sh")
+TESTS=("test-whk-01.sh" "test-whk-02.sh" "test-whk-03.sh" "test-whk-04.sh" "test-whk-05.sh" "test-whk-06.sh")
 PASSED=0
 FAILED=0
 TESTS_RUN=0
