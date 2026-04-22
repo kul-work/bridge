@@ -23,12 +23,6 @@ Scope: Creem checkout, webhook ingress, normalization/processing, and related DB
   - `src/services/creem/client.rs:173`
   - `src/services/creem/client.rs:210`
 
-5. **Dependency-level vulnerabilities affect the Creem outbound TLS path.**
-- `cargo audit` reported:
-  - `RUSTSEC-2026-0098` (`rustls-webpki`)
-  - `RUSTSEC-2026-0099` (`rustls-webpki`)
-- These are in the `reqwest` TLS dependency chain used for Creem API calls.
-- Suggested direction: upgrade to `rustls-webpki >= 0.103.12` via compatible dependency updates.
 
 ## Audit Notes
 
