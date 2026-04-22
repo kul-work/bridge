@@ -5,14 +5,6 @@ Scope: Creem checkout, webhook ingress, normalization/processing, and related DB
 
 ## Findings (ordered by severity)
 
-1. **Cross-provider identity resolution can mis-attribute Creem events to the wrong user (integrity risk).**
-- In the Creem path, `subscription_id` and `purchase_token` lookups are not provider-scoped, so collisions across providers can bind a Creem webhook to another provider’s user record.
-- References:
-  - `src/webhooks/processor.rs:374`
-  - `src/db/subscriptions.rs:986`
-  - `src/db/subscriptions.rs:1006`
-  - `src/db/payments.rs:192`
-
 2. **Webhook route token is logged in plaintext.**
 - The Creem webhook endpoint token is written to logs, reducing endpoint secrecy if logs are exposed.
 - Reference:
