@@ -36,3 +36,25 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 2. Use `detect_changes` for code review.
 3. Use `get_affected_flows` to understand impact.
 4. Use `query_graph` pattern="tests_for" to check coverage.
+
+<!-- codesight MCP tools -->
+# Project Context
+
+This is a rust project using axum.
+
+The API has 26 routes. See .codesight/routes.md for the full route map with methods, paths, and tags.
+The database has 12 models. See .codesight/schema.md for the full schema with fields, types, and relations.
+Middleware includes: custom, auth.
+
+High-impact files (most imported, changes here affect many other files):
+- src/config.rs (imported by 1 files)
+- src/application.rs (imported by 1 files)
+- src/error.rs (imported by 1 files)
+- src/db.rs (imported by 1 files)
+- src/handlers.rs (imported by 1 files)
+- src/ports.rs (imported by 1 files)
+- src/services.rs (imported by 1 files)
+- src/webhooks.rs (imported by 1 files)
+
+Read .codesight/wiki/index.md for orientation (WHERE things live). Then read actual source files before implementing. Wiki articles are navigation aids, not implementation guides.
+Read .codesight/CODESIGHT.md for the complete AI context map including all routes, schema, components, libraries, config, middleware, and dependency graph.
