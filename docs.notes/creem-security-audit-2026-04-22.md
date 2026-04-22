@@ -14,16 +14,6 @@ The Creem flow in Bridge has **strong foundational security** (HMAC verification
 
 ## Findings
 
-### 🔶 Medium: Webhook signature verification lacks test-mode bypass for Creem
-
-**Location:** `c:/share/tyde/bridge/src/webhooks/ingress.rs:221-260`
-
-Unlike Google Play (`handle_google_play`), the Creem handler **does not support an `X-Webhook-Verification-Mode: off` header override** for testing. While this is stricter, it means local/integration testing against real Creem sandbox accounts requires the actual secret — increasing secret exposure in CI/test environments.
-
-**Recommendation:** Document this restriction or add a scoped test-mode toggle consistent with Google Play's pattern.
-
----
-
 ### 🔶 Medium: Metadata-based user resolution is last-resort and trust-dependent
 
 **Location:** `c:/share/tyde/bridge/src/webhooks/processor.rs:419-422`
@@ -88,15 +78,3 @@ This leaks **length information** via timing. While the header is hex-encoded (p
 
 **Recommendation:** Add a lightweight email format/length validation step.
 
----
-
-## Actionable Summary
-
-| Priority | Fix | Location |
-|----------|-----|----------|
-| Medium | Add `X-Webhook-Verification-Mode` handling for Creem (or document why it's absent) | `ingress.rs` |
-| Medium | Validate metadata `user_id` against a known whitelist/history if possible | `processor.rs` |
-| Low | Tighten `adopt_stale_payment` window from 24h to ~5m or make configurable | `db/payments.rs` |
-| Low | Harden `constant_time_compare` to avoid length early-exit | `ingress.rs` |
-| Low | Validate email format before Creem checkout creation | `checkout.rs` |
-| Low | Add heuristic fallback logging for `checkout.completed` normalization | `normalize.rs` |
