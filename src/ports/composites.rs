@@ -93,21 +93,97 @@ pub trait WebhookProcessingLookupRepository:
     + SubscriptionLookupRepository
     + PurchaseOwnerLookupRepository
     + WebhookProviderLookupRepository
-    + PaymentStatusLookupRepository
     + Send
     + Sync
 {
+    async fn get_subscription_by_sub_id_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        subscription_id: &str,
+    ) -> Result<Option<crate::ports::types::SubscriptionLookupSnapshot>, crate::error::BridgeError>;
+
+    async fn get_subscription_by_sub_id_and_user_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        subscription_id: &str,
+        external_user_id: &str,
+    ) -> Result<Option<crate::ports::types::SubscriptionLookupSnapshot>, crate::error::BridgeError>;
+
+    async fn get_subscription_by_purchase_token_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        purchase_token: &str,
+    ) -> Result<Option<crate::ports::types::SubscriptionLookupSnapshot>, crate::error::BridgeError>;
+
+    async fn get_payment_status_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        provider_transaction_id: &str,
+    ) -> Result<Option<String>, crate::error::BridgeError>;
 }
 
 #[async_trait::async_trait]
 impl WebhookProcessingLookupRepository for crate::db::Database {
+    async fn get_subscription_by_sub_id_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        subscription_id: &str,
+    ) -> Result<Option<crate::ports::types::SubscriptionLookupSnapshot>, crate::error::BridgeError> {
+        crate::db::subscriptions::get_subscription_by_sub_id_for_provider(self.pool(), app_id, provider, subscription_id)
+            .await
+            .map(|subscription| subscription.map(crate::ports::helpers::map_subscription_lookup_snapshot))
+    }
+
+    async fn get_subscription_by_sub_id_and_user_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        subscription_id: &str,
+        external_user_id: &str,
+    ) -> Result<Option<crate::ports::types::SubscriptionLookupSnapshot>, crate::error::BridgeError> {
+        crate::db::subscriptions::get_subscription_by_sub_id_and_user_for_provider(
+            self.pool(),
+            app_id,
+            provider,
+            subscription_id,
+            external_user_id,
+        )
+        .await
+        .map(|subscription| subscription.map(crate::ports::helpers::map_subscription_lookup_snapshot))
+    }
+
+    async fn get_subscription_by_purchase_token_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        purchase_token: &str,
+    ) -> Result<Option<crate::ports::types::SubscriptionLookupSnapshot>, crate::error::BridgeError> {
+        crate::db::subscriptions::get_subscription_by_purchase_token_for_provider(self.pool(), app_id, provider, purchase_token)
+            .await
+            .map(|subscription| subscription.map(crate::ports::helpers::map_subscription_lookup_snapshot))
+    }
+
+    async fn get_payment_status_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        provider_transaction_id: &str,
+    ) -> Result<Option<String>, crate::error::BridgeError> {
+        crate::db::payments::get_payment_status_for_provider(self.pool(), app_id, provider, provider_transaction_id).await
+    }
 }
 
 #[async_trait::async_trait]
 pub trait WebhookProcessingMutationRepository: WebhookSuppressionRepository + Send + Sync {
-    async fn update_payment_status(
+    async fn update_payment_status_for_provider(
         &self,
         app_id: Uuid,
+        provider: &str,
         provider_transaction_id: &str,
         new_status: &str,
     ) -> Result<(), crate::error::BridgeError>;
@@ -116,6 +192,7 @@ pub trait WebhookProcessingMutationRepository: WebhookSuppressionRepository + Se
         &self,
         app_id: Uuid,
         external_user_id: &str,
+        provider: &str,
         subscription_id: &str,
         event_time_ms: i64,
         transition: crate::ports::types::SubscriptionWebhookTransition,

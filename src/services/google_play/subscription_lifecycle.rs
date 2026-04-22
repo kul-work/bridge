@@ -61,7 +61,7 @@ pub async fn handle_subscription_revoked<
         .as_deref()
         .or(webhook.purchase_token.as_deref())
     {
-        if repo.get_payment_status(app_id, token).await?.as_deref() == Some("refunded") {
+        if repo.get_payment_status_for_provider(app_id, &webhook.provider, token).await?.as_deref() == Some("refunded") {
             return Ok(None);
         }
     }
@@ -76,6 +76,7 @@ pub async fn handle_subscription_revoked<
         .apply_subscription_transition(
             app_id,
             external_user_id,
+            &webhook.provider,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::Revoked {
@@ -112,7 +113,7 @@ pub async fn handle_subscription_resumed<
     };
 
     let Some(subscription) = repo
-        .get_subscription_by_sub_id_and_user(app_id, subscription_id, external_user_id)
+        .get_subscription_by_sub_id_and_user_for_provider(app_id, &webhook.provider, subscription_id, external_user_id)
         .await?
     else {
         return Ok(None);
@@ -131,6 +132,7 @@ pub async fn handle_subscription_resumed<
         .apply_subscription_transition(
             app_id,
             external_user_id,
+            &webhook.provider,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::Resumed {
@@ -175,6 +177,7 @@ pub async fn handle_subscription_cancelled_with_context<
         .apply_subscription_transition(
             app_id,
             external_user_id,
+            &webhook.provider,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::Cancelled {
@@ -216,6 +219,7 @@ pub async fn handle_subscription_cancellation_scheduled<
         .apply_subscription_transition(
             app_id,
             external_user_id,
+            &webhook.provider,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::CancellationScheduled {
@@ -261,6 +265,7 @@ pub async fn handle_price_step_up_consent_required<
         .apply_subscription_transition(
             app_id,
             external_user_id,
+            &webhook.provider,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::PriceStepUp {
@@ -295,6 +300,7 @@ pub async fn handle_subscription_pending_purchase_cancelled<
         .apply_subscription_transition(
             app_id,
             external_user_id,
+            &webhook.provider,
             subscription_id,
             timestamp_epoch_ms,
             SubscriptionWebhookTransition::PendingPurchaseCancelled,

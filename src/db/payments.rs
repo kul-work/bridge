@@ -93,16 +93,18 @@ pub async fn record_payment_tx(
     Ok(())
 }
 
-pub async fn get_payment_status(
+pub async fn get_payment_status_for_provider(
     pool: &sqlx::PgPool,
     app_id: Uuid,
+    provider: &str,
     provider_transaction_id: &str,
 ) -> Result<Option<String>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT status FROM pay.payments WHERE app_id = $1 AND provider_transaction_id = $2"
+        "SELECT status FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3"
     )
     .bind(app_id)
+    .bind(provider)
     .bind(provider_transaction_id)
     .fetch_optional(&mut *tx)
     .await
@@ -115,18 +117,20 @@ pub async fn get_payment_status(
     Ok(row.map(|r| r.0))
 }
 
-pub async fn update_payment_status(
+pub async fn update_payment_status_for_provider(
     pool: &sqlx::PgPool,
     app_id: Uuid,
+    provider: &str,
     provider_transaction_id: &str,
     new_status: &str,
 ) -> Result<(), crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     sqlx::query(
-        "UPDATE pay.payments SET status = $1, webhook_received_at = NOW() WHERE app_id = $2 AND provider_transaction_id = $3"
+        "UPDATE pay.payments SET status = $1, webhook_received_at = NOW() WHERE app_id = $2 AND provider = $3 AND provider_transaction_id = $4"
     )
     .bind(new_status)
     .bind(app_id)
+    .bind(provider)
     .bind(provider_transaction_id)
     .execute(&mut *tx)
     .await
@@ -192,13 +196,15 @@ pub async fn mark_payment_acknowledged(
 pub async fn lookup_user_by_purchase_token_payment(
     pool: &sqlx::PgPool,
     app_id: Uuid,
+    provider: &str,
     purchase_token: &str,
 ) -> Result<Option<String>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT external_user_id FROM pay.payments WHERE app_id = $1 AND provider_transaction_id = $2 LIMIT 1"
+        "SELECT external_user_id FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3 LIMIT 1"
     )
     .bind(app_id)
+    .bind(provider)
     .bind(purchase_token)
     .fetch_optional(&mut *tx)
     .await

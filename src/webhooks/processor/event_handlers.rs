@@ -141,6 +141,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 let updated = repo.apply_subscription_transition(
                     ctx.app_id,
                     user_id,
+                    ctx.provider,
                     sub_id,
                     ctx.timestamp_epoch_ms,
                     SubscriptionWebhookTransition::Pending,
@@ -210,6 +211,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 let updated = repo.apply_subscription_transition(
                     ctx.app_id,
                     user_id,
+                    ctx.provider,
                     &sub_id,
                     ctx.timestamp_epoch_ms,
                     SubscriptionWebhookTransition::GracePeriod {
@@ -259,6 +261,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 let updated = repo.apply_subscription_transition(
                     ctx.app_id,
                     user_id,
+                    ctx.provider,
                     sub_id,
                     ctx.timestamp_epoch_ms,
                     SubscriptionWebhookTransition::OnHold,
@@ -283,11 +286,12 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
         "subscription.paused" => {
             if let Some(user_id) = ctx.external_user_id.as_deref() {
                 let sub_id = ctx.fields.subscription_id.clone().unwrap_or_default();
-                if let Ok(Some(sub)) = repo.get_subscription_by_sub_id_and_user(ctx.app_id, &sub_id, user_id).await {
+                if let Ok(Some(sub)) = repo.get_subscription_by_sub_id_and_user_for_provider(ctx.app_id, ctx.provider, &sub_id, user_id).await {
                     if sub.status == "active" || sub.status == "trial" {
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
                             user_id,
+                            ctx.provider,
                             &sub_id,
                             ctx.timestamp_epoch_ms,
                             SubscriptionWebhookTransition::Paused,
@@ -354,10 +358,11 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
         "subscription.expired" => {
             if let Some(user_id) = ctx.external_user_id.as_deref() {
                 if let Some(purchase_token) = ctx.fields.purchase_token.as_deref() {
-                    if let Some(sub) = repo.get_subscription_by_purchase_token(ctx.app_id, purchase_token).await? {
+                    if let Some(sub) = repo.get_subscription_by_purchase_token_for_provider(ctx.app_id, ctx.provider, purchase_token).await? {
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
                             user_id,
+                            ctx.provider,
                             &sub.subscription_id,
                             ctx.timestamp_epoch_ms,
                             SubscriptionWebhookTransition::Expired,
@@ -376,6 +381,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
                             user_id,
+                            ctx.provider,
                             &sub_id,
                             ctx.timestamp_epoch_ms,
                             SubscriptionWebhookTransition::Expired,
@@ -398,6 +404,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     let updated = repo.apply_subscription_transition(
                         ctx.app_id,
                         user_id,
+                        ctx.provider,
                         &sub_id,
                         ctx.timestamp_epoch_ms,
                         SubscriptionWebhookTransition::Expired,
@@ -524,6 +531,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
                             user_id,
+                            ctx.provider,
                             sub_id,
                             ctx.timestamp_epoch_ms,
                             SubscriptionWebhookTransition::PauseScheduled {
@@ -557,6 +565,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
                             user_id,
+                            ctx.provider,
                             sub_id,
                             ctx.timestamp_epoch_ms,
                             SubscriptionWebhookTransition::Deferred {
@@ -681,7 +690,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     }));
                 }
 
-                if repo.get_subscription_by_sub_id_and_user(ctx.app_id, sub_id, user_id).await?.is_none() {
+                if repo.get_subscription_by_sub_id_and_user_for_provider(ctx.app_id, ctx.provider, sub_id, user_id).await?.is_none() {
                     warn!(
                         "Skipping order.failed subscription update {}: subscription {} not found for user {}",
                         ctx.webhook.provider_webhook_id,
@@ -699,6 +708,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     .apply_subscription_transition(
                         ctx.app_id,
                         user_id,
+                        ctx.provider,
                         sub_id,
                         ctx.timestamp_epoch_ms,
                         SubscriptionWebhookTransition::PaymentFailed,
@@ -763,14 +773,15 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
         "payment.refunded" => {
             if let Some(_user_id) = ctx.external_user_id.as_deref() {
                 if let Some(token) = ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()) {
-                    let existing = repo.get_payment_status(ctx.app_id, token).await?;
+                    let existing = repo.get_payment_status_for_provider(ctx.app_id, ctx.provider, token).await?;
                     if existing.as_deref() != Some("refunded") {
-                        repo.update_payment_status(ctx.app_id, token, "refunded").await?;
+                        repo.update_payment_status_for_provider(ctx.app_id, ctx.provider, token, "refunded").await?;
                     }
-                    if let Some(sub) = repo.get_subscription_by_purchase_token(ctx.app_id, token).await? {
+                    if let Some(sub) = repo.get_subscription_by_purchase_token_for_provider(ctx.app_id, ctx.provider, token).await? {
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
                             _user_id,
+                            ctx.provider,
                             &sub.subscription_id,
                             ctx.timestamp_epoch_ms,
                             SubscriptionWebhookTransition::Revoked {
@@ -790,6 +801,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     let updated = repo.apply_subscription_transition(
                         ctx.app_id,
                         _user_id,
+                        ctx.provider,
                         sub_id,
                         ctx.timestamp_epoch_ms,
                         SubscriptionWebhookTransition::Revoked {
@@ -818,9 +830,9 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
             if let Some(_user_id) = ctx.external_user_id.as_deref() {
                 // For Creem OTP: checkout_id in the payload maps to purchase_token
                 if let Some(token) = ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()) {
-                    let existing = repo.get_payment_status(ctx.app_id, token).await?;
-                    if existing.as_deref() != Some("partially_refunded") {
-                        repo.update_payment_status(ctx.app_id, token, "partially_refunded").await?;
+                    let existing = repo.get_payment_status_for_provider(ctx.app_id, ctx.provider, token).await?;
+                    if !matches!(existing.as_deref(), Some("partially_refunded") | Some("refunded")) {
+                        repo.update_payment_status_for_provider(ctx.app_id, ctx.provider, token, "partially_refunded").await?;
                     }
                 }
             }

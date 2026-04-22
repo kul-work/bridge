@@ -14,7 +14,7 @@ pub use agent::{AgentReadRepository, AgentRepository};
 pub use api_key::ApiKeyRepository;
 pub use app::{AppLookupRepository, ProviderConfigLookupRepository, AppConfigRepository};
 pub use checkout::CheckoutRepository;
-pub use payment::{PaymentReadRepository, PaymentAcknowledgementRepository, PaymentStatusLookupRepository, PaymentRepository};
+pub use payment::{PaymentReadRepository, PaymentAcknowledgementRepository, PaymentRepository};
 pub use scheduler::SchedulerRepository;
 pub use subscription::{SubscriptionReadRepository, SubscriptionWriteRepository, SubscriptionLookupRepository, GooglePlayAccountLookupRepository, PurchaseOwnerLookupRepository, SubscriptionRepository};
 pub use user::UserRepository;

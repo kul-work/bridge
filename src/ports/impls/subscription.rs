@@ -229,25 +229,28 @@ impl PurchaseOwnerLookupRepository for db::Database {
     async fn lookup_user_by_subscription_id(
         &self,
         app_id: Uuid,
+        provider: &str,
         subscription_id: &str,
     ) -> Result<Option<String>, BridgeError> {
-        db::subscriptions::lookup_user_by_subscription_id(self.pool(), app_id, subscription_id).await
+        db::subscriptions::lookup_user_by_subscription_id(self.pool(), app_id, provider, subscription_id).await
     }
 
     async fn lookup_user_by_purchase_token(
         &self,
         app_id: Uuid,
+        provider: &str,
         purchase_token: &str,
     ) -> Result<Option<String>, BridgeError> {
-        db::subscriptions::lookup_user_by_purchase_token(self.pool(), app_id, purchase_token).await
+        db::subscriptions::lookup_user_by_purchase_token(self.pool(), app_id, provider, purchase_token).await
     }
 
     async fn lookup_user_by_purchase_token_payment(
         &self,
         app_id: Uuid,
+        provider: &str,
         purchase_token: &str,
     ) -> Result<Option<String>, BridgeError> {
-        db::payments::lookup_user_by_purchase_token_payment(self.pool(), app_id, purchase_token).await
+        db::payments::lookup_user_by_purchase_token_payment(self.pool(), app_id, provider, purchase_token).await
     }
 }
 

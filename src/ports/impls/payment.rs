@@ -9,7 +9,6 @@ use crate::{
     ports::helpers::{map_verify_purchase_subscription, with_transaction_impl},
     ports::traits::{
         PaymentAcknowledgementRepository, PaymentReadRepository, PaymentRepository,
-        PaymentStatusLookupRepository,
     },
     ports::types::TransactionOutcome,
 };
@@ -84,17 +83,6 @@ impl PaymentAcknowledgementRepository for db::Database {
             provider_transaction_id,
         )
         .await
-    }
-}
-
-#[async_trait]
-impl PaymentStatusLookupRepository for db::Database {
-    async fn get_payment_status(
-        &self,
-        app_id: Uuid,
-        provider_transaction_id: &str,
-    ) -> Result<Option<String>, BridgeError> {
-        db::payments::get_payment_status(self.pool(), app_id, provider_transaction_id).await
     }
 }
 

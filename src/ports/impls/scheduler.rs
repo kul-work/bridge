@@ -96,19 +96,21 @@ impl SchedulerRepository for db::Database {
 
 #[async_trait]
 impl WebhookProcessingMutationRepository for db::Database {
-    async fn update_payment_status(
+    async fn update_payment_status_for_provider(
         &self,
         app_id: Uuid,
+        provider: &str,
         provider_transaction_id: &str,
         new_status: &str,
     ) -> Result<(), BridgeError> {
-        db::payments::update_payment_status(self.pool(), app_id, provider_transaction_id, new_status).await
+        db::payments::update_payment_status_for_provider(self.pool(), app_id, provider, provider_transaction_id, new_status).await
     }
 
     async fn apply_subscription_transition(
         &self,
         app_id: Uuid,
         external_user_id: &str,
+        provider: &str,
         subscription_id: &str,
         event_time_ms: i64,
         transition: SubscriptionWebhookTransition,
@@ -117,6 +119,7 @@ impl WebhookProcessingMutationRepository for db::Database {
             self.pool(),
             app_id,
             external_user_id,
+            provider,
             subscription_id,
             event_time_ms,
             transition,

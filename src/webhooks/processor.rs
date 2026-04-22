@@ -272,7 +272,7 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
         tracing::info!("MOCK_EXTERNAL_APIS: Skipping Google Play API enrichment in webhook processing");
 
         if webhook.event_type == "SUBSCRIPTION_RENEWED" && fields.current_period_end.is_none() {
-            if let Ok(Some(subscription)) = repo.get_subscription_by_purchase_token(app_id, purchase_token).await {
+            if let Ok(Some(subscription)) = repo.get_subscription_by_purchase_token_for_provider(app_id, &webhook.provider, purchase_token).await {
                 // Mirror the mock verify-purchase flow: renewals advance the existing mock period by 30 days.
                 fields.current_period_end = Some(
                     mock_google_play_renewal_period_end(subscription.current_period_end).to_rfc3339(),
@@ -285,7 +285,7 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
         if webhook.event_type == "SUBSCRIPTION_RESTARTED" {
             fields.auto_renewing = Some(true);
             if fields.current_period_end.is_none() {
-                if let Ok(Some(subscription)) = repo.get_subscription_by_purchase_token(app_id, purchase_token).await {
+                if let Ok(Some(subscription)) = repo.get_subscription_by_purchase_token_for_provider(app_id, &webhook.provider, purchase_token).await {
                     fields.current_period_end = Some(
                         mock_google_play_renewal_period_end(subscription.current_period_end).to_rfc3339(),
                     );
@@ -361,10 +361,10 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     // purchase token which uniquely identifies the user's subscription.
     if webhook.provider == "google_play" {
         if let Some(ref token) = webhook.purchase_token {
-            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token(app_id, token).await {
+            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token(app_id, &webhook.provider, token).await {
                 return Some(user);
             }
-            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token_payment(app_id, token).await {
+            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token_payment(app_id, &webhook.provider, token).await {
                 return Some(user);
             }
         }
@@ -373,7 +373,7 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     // 1. subscription_id lookup
     if webhook.provider != "google_play" {
         if let Some(ref sub_id) = webhook.subscription_id {
-            if let Ok(Some(user)) = repo.lookup_user_by_subscription_id(app_id, sub_id).await {
+            if let Ok(Some(user)) = repo.lookup_user_by_subscription_id(app_id, &webhook.provider, sub_id).await {
                 return Some(user);
             }
         }
@@ -382,10 +382,10 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     // 2. purchase_token lookup (subscriptions first, then payments)
     if webhook.provider != "google_play" {
         if let Some(ref token) = webhook.purchase_token {
-            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token(app_id, token).await {
+            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token(app_id, &webhook.provider, token).await {
                 return Some(user);
             }
-            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token_payment(app_id, token).await {
+            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token_payment(app_id, &webhook.provider, token).await {
                 return Some(user);
             }
         }
@@ -475,9 +475,9 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
     let canonical_subscription = if let Some(ref sub_id) = fields.subscription_id {
-        repo.get_subscription_by_sub_id(app_id, sub_id).await?
+        repo.get_subscription_by_sub_id_for_provider(app_id, &webhook.provider, sub_id).await?
     } else if let Some(ref token) = fields.purchase_token {
-        repo.get_subscription_by_purchase_token(app_id, token).await?
+        repo.get_subscription_by_purchase_token_for_provider(app_id, &webhook.provider, token).await?
     } else {
         None
     };

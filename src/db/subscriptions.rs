@@ -65,6 +65,7 @@ pub async fn apply_webhook_transition(
     pool: &PgPool,
     app_id: Uuid,
     external_user_id: &str,
+    provider: &str,
     subscription_id: &str,
     event_time_ms: i64,
     transition: SubscriptionWebhookTransition,
@@ -79,12 +80,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND last_event_time < $1
+                 WHERE app_id = $2 AND external_user_id = $3 AND provider = $4 AND subscription_id = $5 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -102,13 +104,14 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND last_event_time < $2
+                 WHERE app_id = $3 AND external_user_id = $4 AND provider = $5 AND subscription_id = $6 AND last_event_time < $2
                  RETURNING *",
             )
             .bind(grace_period_end)
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -127,13 +130,14 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND last_event_time < $2
+                 WHERE app_id = $3 AND external_user_id = $4 AND provider = $5 AND subscription_id = $6 AND last_event_time < $2
                  RETURNING *",
             )
             .bind(revocation_reason)
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -148,12 +152,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND last_event_time < $1
+                 WHERE app_id = $2 AND external_user_id = $3 AND provider = $4 AND subscription_id = $5 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -169,12 +174,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND last_event_time < $1
+                 WHERE app_id = $2 AND external_user_id = $3 AND provider = $4 AND subscription_id = $5 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -195,13 +201,14 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND last_event_time < $2
+                 WHERE app_id = $3 AND external_user_id = $4 AND provider = $5 AND subscription_id = $6 AND last_event_time < $2
                  RETURNING *",
             )
             .bind(current_period_end)
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -222,7 +229,7 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $3,
                      updated_at = NOW()
-                 WHERE app_id = $4 AND external_user_id = $5 AND subscription_id = $6 AND last_event_time < $3
+                 WHERE app_id = $4 AND external_user_id = $5 AND provider = $6 AND subscription_id = $7 AND last_event_time < $3
                  RETURNING *",
             )
             .bind(google_cancellation_context)
@@ -230,6 +237,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -244,12 +252,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND last_event_time < $1
+                 WHERE app_id = $2 AND external_user_id = $3 AND provider = $4 AND subscription_id = $5 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -272,7 +281,7 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $4,
                      updated_at = NOW()
-                 WHERE app_id = $5 AND external_user_id = $6 AND subscription_id = $7 AND last_event_time < $4
+                 WHERE app_id = $5 AND external_user_id = $6 AND provider = $7 AND subscription_id = $8 AND last_event_time < $4
                  RETURNING *",
             )
             .bind(current_period_end)
@@ -281,6 +290,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -293,12 +303,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4
+                 WHERE app_id = $2 AND external_user_id = $3 AND provider = $4 AND subscription_id = $5
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -315,12 +326,13 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND external_user_id = $3 AND subscription_id = $4 AND last_event_time < $1
+                 WHERE app_id = $2 AND external_user_id = $3 AND provider = $4 AND subscription_id = $5 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -338,7 +350,7 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $3,
                      updated_at = NOW()
-                 WHERE app_id = $4 AND external_user_id = $5 AND subscription_id = $6 AND last_event_time < $3
+                 WHERE app_id = $4 AND external_user_id = $5 AND provider = $6 AND subscription_id = $7 AND last_event_time < $3
                  RETURNING *",
             )
             .bind(google_new_price_cents)
@@ -346,6 +358,7 @@ pub async fn apply_webhook_transition(
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -360,13 +373,14 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND last_event_time < $2
+                 WHERE app_id = $3 AND external_user_id = $4 AND provider = $5 AND subscription_id = $6 AND last_event_time < $2
                  RETURNING *",
             )
             .bind(google_pause_scheduled_at)
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -381,13 +395,14 @@ pub async fn apply_webhook_transition(
                      version = version + 1,
                      last_event_time = $2,
                      updated_at = NOW()
-                 WHERE app_id = $3 AND external_user_id = $4 AND subscription_id = $5 AND last_event_time < $2
+                 WHERE app_id = $3 AND external_user_id = $4 AND provider = $5 AND subscription_id = $6 AND last_event_time < $2
                  RETURNING *",
             )
             .bind(google_deferred_until)
             .bind(event_time_ms)
             .bind(app_id)
             .bind(external_user_id)
+            .bind(provider)
             .bind(subscription_id)
             .fetch_optional(&mut *tx)
             .await
@@ -986,13 +1001,15 @@ pub async fn decline_price_step_up(
 pub async fn lookup_user_by_subscription_id(
     pool: &PgPool,
     app_id: Uuid,
+    provider: &str,
     subscription_id: &str,
 ) -> Result<Option<String>, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT external_user_id FROM pay.subscriptions WHERE app_id = $1 AND subscription_id = $2 LIMIT 1"
+        "SELECT external_user_id FROM pay.subscriptions WHERE app_id = $1 AND provider = $2 AND subscription_id = $3 LIMIT 1"
     )
     .bind(app_id)
+    .bind(provider)
     .bind(subscription_id)
     .fetch_optional(&mut *tx)
     .await
@@ -1006,13 +1023,15 @@ pub async fn lookup_user_by_subscription_id(
 pub async fn lookup_user_by_purchase_token(
     pool: &PgPool,
     app_id: Uuid,
+    provider: &str,
     purchase_token: &str,
 ) -> Result<Option<String>, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT external_user_id FROM pay.subscriptions WHERE app_id = $1 AND purchase_token = $2 LIMIT 1"
+        "SELECT external_user_id FROM pay.subscriptions WHERE app_id = $1 AND provider = $2 AND purchase_token = $3 LIMIT 1"
     )
     .bind(app_id)
+    .bind(provider)
     .bind(purchase_token)
     .fetch_optional(&mut *tx)
     .await
@@ -1065,6 +1084,30 @@ pub async fn get_subscription_by_sub_id_and_user(
     Ok(subscription)
 }
 
+pub async fn get_subscription_by_sub_id_and_user_for_provider(
+    pool: &PgPool,
+    app_id: Uuid,
+    provider: &str,
+    subscription_id: &str,
+    external_user_id: &str,
+) -> Result<Option<Subscription>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
+        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND provider = $2 AND subscription_id = $3 AND external_user_id = $4"
+    )
+    .bind(app_id)
+    .bind(provider)
+    .bind(subscription_id)
+    .bind(external_user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
+}
+
 pub async fn get_subscription_by_sub_id(
     pool: &PgPool,
     app_id: Uuid,
@@ -1085,6 +1128,28 @@ pub async fn get_subscription_by_sub_id(
     Ok(subscription)
 }
 
+pub async fn get_subscription_by_sub_id_for_provider(
+    pool: &PgPool,
+    app_id: Uuid,
+    provider: &str,
+    subscription_id: &str,
+) -> Result<Option<Subscription>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
+        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND provider = $2 AND subscription_id = $3"
+    )
+    .bind(app_id)
+    .bind(provider)
+    .bind(subscription_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
+}
+
 pub async fn get_subscription_by_purchase_token(
     pool: &PgPool,
     app_id: Uuid,
@@ -1095,6 +1160,28 @@ pub async fn get_subscription_by_purchase_token(
         "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND purchase_token = $2"
     )
     .bind(app_id)
+    .bind(purchase_token)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
+}
+
+pub async fn get_subscription_by_purchase_token_for_provider(
+    pool: &PgPool,
+    app_id: Uuid,
+    provider: &str,
+    purchase_token: &str,
+) -> Result<Option<Subscription>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subscription = sqlx::query_as::<_, Subscription>(
+        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND provider = $2 AND purchase_token = $3"
+    )
+    .bind(app_id)
+    .bind(provider)
     .bind(purchase_token)
     .fetch_optional(&mut *tx)
     .await

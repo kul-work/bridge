@@ -73,7 +73,7 @@ pub async fn handle_otp_cancelled<
         .or(fields.provider_transaction_id.as_deref())
         .unwrap_or("");
 
-    let existing = repo.get_payment_status(app_id, token).await?;
+    let existing = repo.get_payment_status_for_provider(app_id, &webhook.provider, token).await?;
     if matches!(existing.as_deref(), Some("refunded") | Some("cancelled")) {
         return Ok(None);
     }

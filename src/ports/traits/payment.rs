@@ -50,16 +50,7 @@ pub trait PaymentAcknowledgementRepository: Send + Sync {
 }
 
 #[async_trait]
-pub trait PaymentStatusLookupRepository: Send + Sync {
-    async fn get_payment_status(
-        &self,
-        app_id: Uuid,
-        provider_transaction_id: &str,
-    ) -> Result<Option<String>, BridgeError>;
-}
-
-#[async_trait]
 pub trait PaymentRepository:
-    PaymentReadRepository + PaymentAcknowledgementRepository + PaymentStatusLookupRepository + Send + Sync
+    PaymentReadRepository + PaymentAcknowledgementRepository + Send + Sync
 {
 }
