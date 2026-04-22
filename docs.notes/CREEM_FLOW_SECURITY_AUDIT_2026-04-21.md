@@ -10,10 +10,6 @@ Scope: Creem checkout, webhook ingress, normalization/processing, and related DB
 - Reference:
   - `src/webhooks/ingress.rs:229`
 
-3. **Outbound Creem HTTP client has no explicit timeout.**
-- `reqwest::Client::new()` is used without timeout configuration, which can allow slow/hanging upstream requests to consume worker capacity.
-- Reference:
-  - `src/services/creem/client.rs:19`
 
 4. **Creem API error bodies are logged directly.**
 - Provider response bodies are logged on failures; these may contain sensitive operational or customer data.
