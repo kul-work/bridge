@@ -14,7 +14,7 @@ The Creem flow in Bridge has **strong foundational security** (HMAC verification
 
 ## Findings
 
-### 🔶 Medium: Metadata-based user resolution is last-resort and trust-dependent
+### 🔶 Metadata-based user resolution is last-resort and trust-dependent
 
 **Location:** `c:/share/tyde/bridge/src/webhooks/processor.rs:419-422`
 
