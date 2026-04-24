@@ -2,6 +2,8 @@ pub mod app_context;
 pub mod checkout_helpers;
 pub mod checkout;
 pub mod checkout_types;
+#[cfg(test)]
+mod checkout_tests;
 pub mod verify_purchase;
 pub mod verify_purchase_provider;
 pub mod subscription_actions;

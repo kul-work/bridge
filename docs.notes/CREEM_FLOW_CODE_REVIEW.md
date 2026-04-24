@@ -44,15 +44,3 @@ Relevant code:
 Impact: bad client input can leak into the external provider call and cause inconsistent behavior between Creem and Bridge.
 
 Recommendation: validate `mode` immediately after reading it and before any provider call.
-
-### Medium: Creem checkout ignores most requested product IDs when choosing the provider product
-
-For Creem, `product_selector` is derived from `product_type.unwrap_or(product_id)`, but unless the selector is exactly `"offer"` or `"otp"`, Bridge sends `creem_config.product_id` to Creem. The requested API `product_id` is only placed in metadata.
-
-Relevant code:
-
-- `src/application/checkout.rs`: `product_selector` and `selected_product_id` logic
-
-Impact: apps with multiple Creem products can request one product while Bridge creates a checkout for the configured default product.
-
-Recommendation: either map requested Bridge product IDs to Creem product IDs explicitly in provider config, or reject unsupported product IDs instead of silently falling back to the default.

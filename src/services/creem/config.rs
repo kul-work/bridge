@@ -6,7 +6,6 @@ use serde_json::Value;
 pub struct CreemConfig {
     pub api_key: String,
     pub api_url: String,
-    pub product_id: String,
     pub offer_id: Option<String>,
     pub otp_id: Option<String>,
     pub connect_timeout_secs: u64,
@@ -26,12 +25,6 @@ impl CreemConfig {
             .get("api_url")
             .and_then(|v| v.as_str())
             .unwrap_or("https://api.creem.com")
-            .to_string();
-
-        let product_id = config
-            .get("product_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| BridgeError::ConfigError("Missing Creem product_id".to_string()))?
             .to_string();
 
         let offer_id = config
@@ -67,7 +60,6 @@ impl CreemConfig {
         Ok(Self {
             api_key,
             api_url,
-            product_id,
             offer_id,
             otp_id,
             connect_timeout_secs,
@@ -88,28 +80,24 @@ mod tests {
     #[test]
     fn parses_optional_offer_and_otp_ids() {
         let config = serde_json::json!({
-            "api_key": "sk_test_123",
-            "product_id": "prod_default"
+            "api_key": "sk_test_123"
         });
 
         let parsed = CreemConfig::from_json(&config).expect("config should parse");
-        assert_eq!(parsed.product_id, "prod_default");
         assert_eq!(parsed.offer_id, None);
         assert_eq!(parsed.otp_id, None);
     }
 
     #[test]
-    fn product_id_stays_required() {
+    fn supports_offer_and_otp_ids_without_default_product_id() {
         let config = serde_json::json!({
             "api_key": "sk_test_123",
             "offer_id": "offer_monthly",
             "otp_id": "otp_lifetime"
         });
 
-        let err = CreemConfig::from_json(&config).expect_err("missing product_id should fail");
-        match err {
-            BridgeError::ConfigError(message) => assert_eq!(message, "Missing Creem product_id"),
-            other => panic!("unexpected error: {:?}", other),
-        }
+        let parsed = CreemConfig::from_json(&config).expect("config should parse");
+        assert_eq!(parsed.offer_id.as_deref(), Some("offer_monthly"));
+        assert_eq!(parsed.otp_id.as_deref(), Some("otp_lifetime"));
     }
 }
