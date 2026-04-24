@@ -1,7 +1,7 @@
 use crate::db::database::set_local_app_id;
 use crate::error::BridgeError;
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, FromRow};
+use sqlx::{FromRow, PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
@@ -1062,26 +1062,119 @@ pub async fn lookup_subscription_id_by_purchase_token(
     Ok(row.map(|r| r.0))
 }
 
+enum SubscriptionFilter<'a> {
+    SubscriptionId {
+        subscription_id: &'a str,
+    },
+    SubscriptionIdForProvider {
+        provider: &'a str,
+        subscription_id: &'a str,
+    },
+    SubscriptionIdAndUser {
+        subscription_id: &'a str,
+        external_user_id: &'a str,
+    },
+    SubscriptionIdAndUserForProvider {
+        provider: &'a str,
+        subscription_id: &'a str,
+        external_user_id: &'a str,
+    },
+    PurchaseToken {
+        purchase_token: &'a str,
+    },
+    PurchaseTokenForProvider {
+        provider: &'a str,
+        purchase_token: &'a str,
+    },
+}
+
+async fn find_subscription(
+    pool: &PgPool,
+    app_id: Uuid,
+    filter: SubscriptionFilter<'_>,
+) -> Result<Option<Subscription>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let mut query = QueryBuilder::<Postgres>::new(
+        "SELECT * FROM pay.subscriptions WHERE app_id = "
+    );
+    query.push_bind(app_id);
+
+    match filter {
+        SubscriptionFilter::SubscriptionId { subscription_id } => {
+            query.push(" AND subscription_id = ");
+            query.push_bind(subscription_id);
+        }
+        SubscriptionFilter::SubscriptionIdForProvider {
+            provider,
+            subscription_id,
+        } => {
+            query.push(" AND provider = ");
+            query.push_bind(provider);
+            query.push(" AND subscription_id = ");
+            query.push_bind(subscription_id);
+        }
+        SubscriptionFilter::SubscriptionIdAndUser {
+            subscription_id,
+            external_user_id,
+        } => {
+            query.push(" AND subscription_id = ");
+            query.push_bind(subscription_id);
+            query.push(" AND external_user_id = ");
+            query.push_bind(external_user_id);
+        }
+        SubscriptionFilter::SubscriptionIdAndUserForProvider {
+            provider,
+            subscription_id,
+            external_user_id,
+        } => {
+            query.push(" AND provider = ");
+            query.push_bind(provider);
+            query.push(" AND subscription_id = ");
+            query.push_bind(subscription_id);
+            query.push(" AND external_user_id = ");
+            query.push_bind(external_user_id);
+        }
+        SubscriptionFilter::PurchaseToken { purchase_token } => {
+            query.push(" AND purchase_token = ");
+            query.push_bind(purchase_token);
+        }
+        SubscriptionFilter::PurchaseTokenForProvider {
+            provider,
+            purchase_token,
+        } => {
+            query.push(" AND provider = ");
+            query.push_bind(provider);
+            query.push(" AND purchase_token = ");
+            query.push_bind(purchase_token);
+        }
+    }
+
+    let subscription = query
+        .build_query_as::<Subscription>()
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
+}
+
 pub async fn get_subscription_by_sub_id_and_user(
     pool: &PgPool,
     app_id: Uuid,
     subscription_id: &str,
     external_user_id: &str,
 ) -> Result<Option<Subscription>, BridgeError> {
-    let mut tx = begin_app_tx(pool, app_id).await?;
-    let subscription = sqlx::query_as::<_, Subscription>(
-        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND subscription_id = $2 AND external_user_id = $3"
+    find_subscription(
+        pool,
+        app_id,
+        SubscriptionFilter::SubscriptionIdAndUser {
+            subscription_id,
+            external_user_id,
+        },
     )
-    .bind(app_id)
-    .bind(subscription_id)
-    .bind(external_user_id)
-    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    Ok(subscription)
 }
 
 pub async fn get_subscription_by_sub_id_and_user_for_provider(
@@ -1091,21 +1184,16 @@ pub async fn get_subscription_by_sub_id_and_user_for_provider(
     subscription_id: &str,
     external_user_id: &str,
 ) -> Result<Option<Subscription>, BridgeError> {
-    let mut tx = begin_app_tx(pool, app_id).await?;
-    let subscription = sqlx::query_as::<_, Subscription>(
-        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND provider = $2 AND subscription_id = $3 AND external_user_id = $4"
+    find_subscription(
+        pool,
+        app_id,
+        SubscriptionFilter::SubscriptionIdAndUserForProvider {
+            provider,
+            subscription_id,
+            external_user_id,
+        },
     )
-    .bind(app_id)
-    .bind(provider)
-    .bind(subscription_id)
-    .bind(external_user_id)
-    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    Ok(subscription)
 }
 
 pub async fn get_subscription_by_sub_id(
@@ -1113,19 +1201,12 @@ pub async fn get_subscription_by_sub_id(
     app_id: Uuid,
     subscription_id: &str,
 ) -> Result<Option<Subscription>, BridgeError> {
-    let mut tx = begin_app_tx(pool, app_id).await?;
-    let subscription = sqlx::query_as::<_, Subscription>(
-        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND subscription_id = $2"
+    find_subscription(
+        pool,
+        app_id,
+        SubscriptionFilter::SubscriptionId { subscription_id },
     )
-    .bind(app_id)
-    .bind(subscription_id)
-    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    Ok(subscription)
 }
 
 pub async fn get_subscription_by_sub_id_for_provider(
@@ -1134,20 +1215,15 @@ pub async fn get_subscription_by_sub_id_for_provider(
     provider: &str,
     subscription_id: &str,
 ) -> Result<Option<Subscription>, BridgeError> {
-    let mut tx = begin_app_tx(pool, app_id).await?;
-    let subscription = sqlx::query_as::<_, Subscription>(
-        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND provider = $2 AND subscription_id = $3"
+    find_subscription(
+        pool,
+        app_id,
+        SubscriptionFilter::SubscriptionIdForProvider {
+            provider,
+            subscription_id,
+        },
     )
-    .bind(app_id)
-    .bind(provider)
-    .bind(subscription_id)
-    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    Ok(subscription)
 }
 
 pub async fn get_subscription_by_purchase_token(
@@ -1155,19 +1231,12 @@ pub async fn get_subscription_by_purchase_token(
     app_id: Uuid,
     purchase_token: &str,
 ) -> Result<Option<Subscription>, BridgeError> {
-    let mut tx = begin_app_tx(pool, app_id).await?;
-    let subscription = sqlx::query_as::<_, Subscription>(
-        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND purchase_token = $2"
+    find_subscription(
+        pool,
+        app_id,
+        SubscriptionFilter::PurchaseToken { purchase_token },
     )
-    .bind(app_id)
-    .bind(purchase_token)
-    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    Ok(subscription)
 }
 
 pub async fn get_subscription_by_purchase_token_for_provider(
@@ -1176,20 +1245,15 @@ pub async fn get_subscription_by_purchase_token_for_provider(
     provider: &str,
     purchase_token: &str,
 ) -> Result<Option<Subscription>, BridgeError> {
-    let mut tx = begin_app_tx(pool, app_id).await?;
-    let subscription = sqlx::query_as::<_, Subscription>(
-        "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND provider = $2 AND purchase_token = $3"
+    find_subscription(
+        pool,
+        app_id,
+        SubscriptionFilter::PurchaseTokenForProvider {
+            provider,
+            purchase_token,
+        },
     )
-    .bind(app_id)
-    .bind(provider)
-    .bind(purchase_token)
-    .fetch_optional(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    Ok(subscription)
 }
 
 pub async fn update_subscription_status(
