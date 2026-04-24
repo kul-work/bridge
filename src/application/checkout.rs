@@ -5,6 +5,7 @@ use crate::application::checkout_helpers::{
     coinbase_amount_from_config, compute_request_fingerprint,
     extract_coinbase_checkout_id, extract_coinbase_checkout_url,
     normalize_provider_name, normalize_required_field, resolve_checkout_redirect_urls,
+    validate_email_format,
 };
 use crate::application::checkout_types::{CheckoutRequest, CheckoutResponse};
 use crate::ports::CheckoutHandlerRepository;
@@ -21,6 +22,7 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
 
     let external_user_id = normalize_required_field(&payload.external_user_id, "external_user_id")?;
     let email = normalize_required_field(&payload.email, "email")?;
+    validate_email_format(&email)?;
     let provider = normalize_provider_name(&normalize_required_field(&payload.provider, "provider")?);
     let product_id = normalize_required_field(&payload.product_id, "product_id")?;
     let product_type = payload

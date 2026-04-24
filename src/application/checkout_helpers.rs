@@ -80,6 +80,65 @@ pub(crate) fn compute_request_fingerprint(
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// Maximum total email length per RFC 5321.
+const EMAIL_MAX_LENGTH: usize = 254;
+/// Maximum local-part length per RFC 5321.
+const EMAIL_LOCAL_MAX_LENGTH: usize = 64;
+
+/// Lightweight email format and length validation.
+/// Prevents malformed addresses and header-injection characters from
+/// reaching payment providers.
+pub(crate) fn validate_email_format(email: &str) -> Result<(), BridgeError> {
+    if email.len() > EMAIL_MAX_LENGTH {
+        return Err(BridgeError::ValidationError(format!(
+            "email exceeds maximum length of {} characters",
+            EMAIL_MAX_LENGTH
+        )));
+    }
+
+    if email.chars().any(|c| c.is_control()) {
+        return Err(BridgeError::ValidationError(
+            "email contains invalid characters".to_string(),
+        ));
+    }
+
+    let at_count = email.matches('@').count();
+    if at_count != 1 {
+        return Err(BridgeError::ValidationError(
+            "email must contain exactly one '@'".to_string(),
+        ));
+    }
+
+    let (local, domain) = email.split_once('@').unwrap();
+
+    if local.is_empty() {
+        return Err(BridgeError::ValidationError(
+            "email local part before '@' is empty".to_string(),
+        ));
+    }
+
+    if local.len() > EMAIL_LOCAL_MAX_LENGTH {
+        return Err(BridgeError::ValidationError(format!(
+            "email local part exceeds maximum length of {} characters",
+            EMAIL_LOCAL_MAX_LENGTH
+        )));
+    }
+
+    if domain.is_empty() {
+        return Err(BridgeError::ValidationError(
+            "email domain after '@' is empty".to_string(),
+        ));
+    }
+
+    if !domain.contains('.') {
+        return Err(BridgeError::ValidationError(
+            "email domain must contain at least one '.'".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 pub(crate) fn normalize_required_field(
     value: &str,
     field_name: &str,
@@ -146,4 +205,69 @@ pub(crate) fn extract_coinbase_checkout_id(data: &serde_json::Value) -> Option<&
     data.pointer("/data/id")
         .and_then(|value| value.as_str())
         .or_else(|| data.get("id").and_then(|value| value.as_str()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_email_accepts_valid() {
+        assert!(validate_email_format("user@example.com").is_ok());
+        assert!(validate_email_format("a@b.co").is_ok());
+        assert!(validate_email_format("user+tag@domain.org").is_ok());
+    }
+
+    #[test]
+    fn validate_email_rejects_missing_at() {
+        let err = validate_email_format("userexample.com").unwrap_err();
+        assert!(matches!(err, BridgeError::ValidationError(msg) if msg.contains("'@'")));
+    }
+
+    #[test]
+    fn validate_email_rejects_multiple_at() {
+        let err = validate_email_format("a@@b.com").unwrap_err();
+        assert!(matches!(err, BridgeError::ValidationError(msg) if msg.contains("'@'")));
+    }
+
+    #[test]
+    fn validate_email_rejects_empty_local() {
+        let err = validate_email_format("@domain.com").unwrap_err();
+        assert!(matches!(err, BridgeError::ValidationError(msg) if msg.contains("local part")));
+    }
+
+    #[test]
+    fn validate_email_rejects_empty_domain() {
+        let err = validate_email_format("user@").unwrap_err();
+        assert!(matches!(err, BridgeError::ValidationError(msg) if msg.contains("domain")));
+    }
+
+    #[test]
+    fn validate_email_rejects_domain_without_dot() {
+        let err = validate_email_format("user@localhost").unwrap_err();
+        assert!(matches!(err, BridgeError::ValidationError(msg) if msg.contains("'.'")));
+    }
+
+    #[test]
+    fn validate_email_rejects_control_characters() {
+        let err = validate_email_format("user\n@example.com").unwrap_err();
+        assert!(matches!(err, BridgeError::ValidationError(msg) if msg.contains("invalid characters")));
+    }
+
+    #[test]
+    fn validate_email_rejects_excessive_length() {
+        let long_local = "a".repeat(65);
+        let email = format!("{}@b.com", long_local);
+        let err = validate_email_format(&email).unwrap_err();
+        assert!(matches!(err, BridgeError::ValidationError(msg) if msg.contains("local part")));
+    }
+
+    #[test]
+    fn validate_email_rejects_total_length_exceeding_254() {
+        let local = "a".repeat(64);
+        let domain = "b".repeat(191); // 64 + 1(@) + 191 = 256
+        let email = format!("{}@{}.com", local, domain);
+        let err = validate_email_format(&email).unwrap_err();
+        assert!(matches!(err, BridgeError::ValidationError(msg) if msg.contains("maximum length")));
+    }
 }

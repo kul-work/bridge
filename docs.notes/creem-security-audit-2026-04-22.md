@@ -24,15 +24,3 @@ The "Creem orphan guard" at line 424-431 correctly suppresses the webhook if met
 
 **Recommendation:** Consider adding a `verify_metadata_signature` or checksum if Creem supports signing nested metadata separately.
 
----
-
-
-
-### 🟡 Low: Creem checkout does not validate `email` format before forwarding
-
-**Location:** `c:/share/tyde/bridge/src/application/checkout.rs:22-23`
-
-`email` is normalized (trimmed) but not validated against an RFC-compliant format or length limit before being passed to Creem. Malformed emails could cause provider-side failures or be used for header-injection if Creem's API is ever vulnerable.
-
-**Recommendation:** Add a lightweight email format/length validation step.
-
