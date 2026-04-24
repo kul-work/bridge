@@ -79,6 +79,8 @@ pub(super) fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "SUBSCRIPTION_DEFERRED" => "subscription.deferred".to_string(),
             "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED" => "subscription.pause_scheduled".to_string(),
             "SUBSCRIPTION_RENEWAL_PENDING" => "subscription.pending".to_string(),
+            "SUBSCRIPTION_ITEMS_CHANGED" => "subscription.items_changed".to_string(),
+            "SUBSCRIPTION_CANCELLATION_SCHEDULED" => "subscription.cancellation_scheduled".to_string(),
             "SUBSCRIPTION_PRICE_CHANGE_CONFIRMED" => "subscription.price_changed".to_string(),
             "SUBSCRIPTION_PRICE_CHANGE_UPDATED" => "subscription.price_change_updated".to_string(),
             "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED" => "subscription.price_step_up".to_string(),

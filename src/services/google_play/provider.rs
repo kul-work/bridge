@@ -591,6 +591,7 @@ impl GooglePlayProvider {
             18 => "subscription.cancellation_scheduled".to_string(),    // Unimplemented - SUBSCRIPTION_CANCELLATION_SCHEDULED
             19 => "subscription.price_change_updated".to_string(),      // SUBSCRIPTION_PRICE_CHANGE_UPDATED
             20 => "subscription.pending_purchase_canceled".to_string(), // SUBSCRIPTION_PENDING_PURCHASE_CANCELED
+            21 => "subscription.pending".to_string(),                   // SUBSCRIPTION_RENEWAL_PENDING
             // Price step-up consent (Korea-specific regulatory requirement)
             22 => "subscription.price_step_up_consent_updated".to_string(), // SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED
             _ => format!(

@@ -480,6 +480,8 @@ fn extract_google_event_type(payload: &serde_json::Value) -> String {
             11 => "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED",
             12 => "SUBSCRIPTION_REVOKED",
             13 => "SUBSCRIPTION_EXPIRED",
+            17 => "SUBSCRIPTION_ITEMS_CHANGED",
+            18 => "SUBSCRIPTION_CANCELLATION_SCHEDULED",
             19 => "SUBSCRIPTION_PRICE_CHANGE_UPDATED",
             20 => "SUBSCRIPTION_PENDING_PURCHASE_CANCELED",
             21 => "SUBSCRIPTION_RENEWAL_PENDING",

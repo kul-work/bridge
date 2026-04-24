@@ -2,19 +2,6 @@
 
 This document outlines areas in the Bridge codebase where code is duplicated or follows highly repetitive patterns that could be consolidated.
 
-## 2. Webhook Event Normalization Redundancy
-
-**Locations**: 
-- `src/webhooks/processor/normalize.rs`
-- `src/services/google_play/provider.rs`
-
-### Mapping Duplication
-- `normalize_event_type` in `normalize.rs` maps provider strings to canonical Bridge events.
-- `map_subscription_notification_type_to_event` in `provider.rs` maps Google Play notification integers to similar strings.
-
-### Issue
-Mapping logic is fragmented. If a new status is added, it must be updated in both the provider implementation and the normalization middleware, leading to potential "ghost" statuses if one is missed.
-
 ## 3. Google Play Lifecycle Boilerplate
 
 **Location**: `src/services/google_play/subscription_lifecycle.rs`

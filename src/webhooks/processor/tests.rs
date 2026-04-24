@@ -19,6 +19,10 @@ fn test_normalize_google_play_events() {
         normalize_event_type("google_play", "SUBSCRIPTION_ON_HOLD"),
         "subscription.on_hold"
     );
+    assert_eq!(
+        normalize_event_type("google_play", "SUBSCRIPTION_CANCELLATION_SCHEDULED"),
+        "subscription.cancellation_scheduled"
+    );
 }
 
 #[test]
