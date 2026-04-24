@@ -2,29 +2,6 @@
 
 This document outlines areas in the Bridge codebase where code is duplicated or follows highly repetitive patterns that could be consolidated.
 
-## 1. Database Query Repetition
-
-**Location**: `src/db/subscriptions.rs`
-
-### Repetitive Getters
-The following functions are almost identical, differing only in the `WHERE` clause and parameters:
-- `get_subscription_by_sub_id_and_user`
-- `get_subscription_by_sub_id_and_user_for_provider`
-- `get_subscription_by_sub_id`
-- `get_subscription_by_sub_id_for_provider`
-- `get_subscription_by_purchase_token`
-- `get_subscription_by_purchase_token_for_provider`
-
-### Boilerplate Pattern
-Each function repeats the following sequence:
-1. `begin_app_tx`
-2. `sqlx::query_as` with a specific `WHERE` clause.
-3. `map_err(|e| BridgeError::DbError(e.to_string()))`
-4. `tx.commit()`
-
-> [!TIP]
-> **Recommendation**: Implement a generic `find_subscription(pool, app_id, filter: SubscriptionFilter)` helper that dynamically builds the query or uses a shared internal method.
-
 ## 2. Webhook Event Normalization Redundancy
 
 **Locations**: 
