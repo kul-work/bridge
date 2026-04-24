@@ -26,22 +26,6 @@ The "Creem orphan guard" at line 424-431 correctly suppresses the webhook if met
 
 ---
 
-### 🟡 Low: `adopt_stale_payment` time window is generous
-
-**Location:** `c:/share/tyde/bridge/src/db/payments.rs:322-349`
-
-The `adopt_stale_payment` query matches records up to **24 hours old**:
-
-```sql
-AND created_at > NOW() - INTERVAL '24 hours'
-```
-
-This is a business-logic workaround for Creem's `order.created` -> `subscription.active` latency. A malicious or replayed webhook within that window could potentially adopt stale payments for a different subscription if other controls fail.
-
-**Recommendation:** Tighten the interval to the observed maximum Creem latency (e.g., 5 minutes) or make it configurable per app.
-
----
-
 ### 🟡 Low: `checkout.completed` normalizes to `subscription.created` via heuristics
 
 **Location:** `c:/share/tyde/bridge/src/webhooks/processor/normalize.rs:6-44`
