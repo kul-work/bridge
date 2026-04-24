@@ -26,15 +26,6 @@ The "Creem orphan guard" at line 424-431 correctly suppresses the webhook if met
 
 ---
 
-### 🟡 Low: `checkout.completed` normalizes to `subscription.created` via heuristics
-
-**Location:** `c:/share/tyde/bridge/src/webhooks/processor/normalize.rs:6-44`
-
-The `checkout.completed` event type is mapped based on payload heuristics (`billing_type`, presence of `/subscription/id`, etc.). If Creem ever sends a malformed or unexpected payload, the wrong canonical event could fire, causing incorrect status updates.
-
-**Recommendation:** Add explicit validation/assertions for `billing_type` presence and log a warning when falling back to structural heuristics.
-
----
 
 ### 🟡 Low: `constant_time_compare` has a minor early-exit on length mismatch
 
