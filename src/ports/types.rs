@@ -15,6 +15,13 @@ pub struct SubscriptionLookupSnapshot {
 }
 
 #[derive(Debug, Clone)]
+pub struct UserSubscriptionCancellationSnapshot {
+    pub subscription_id: String,
+    pub provider: String,
+    pub purchase_token: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub enum SubscriptionWebhookTransition {
     Pending,
     GracePeriod {

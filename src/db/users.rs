@@ -1,9 +1,35 @@
 use crate::db::database::set_local_app_id;
 use crate::error::BridgeError;
+use crate::ports::UserSubscriptionCancellationSnapshot;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-pub async fn anonymize_user(
+pub async fn list_user_subscriptions_to_cancel(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+) -> Result<Vec<UserSubscriptionCancellationSnapshot>, BridgeError> {
+    sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT subscription_id, provider, purchase_token FROM pay.subscriptions
+         WHERE app_id = $1 AND external_user_id = $2 AND status IN ('active', 'trial', 'past_due')"
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map(|rows| {
+        rows.into_iter()
+            .map(|(subscription_id, provider, purchase_token)| UserSubscriptionCancellationSnapshot {
+                subscription_id,
+                provider,
+                purchase_token,
+            })
+            .collect()
+    })
+}
+
+pub async fn anonymize_user_records(
     pool: &PgPool,
     app_id: Uuid,
     external_user_id: &str,
@@ -21,42 +47,6 @@ pub async fn anonymize_user(
 
     let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
     set_local_app_id(&mut tx, app_id).await?;
-
-    // Fetch active subscriptions BEFORE cancelling them via provider APIs
-    let active_subs: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT subscription_id, provider, purchase_token FROM pay.subscriptions
-         WHERE app_id = $1 AND external_user_id = $2 AND status IN ('active', 'trial', 'past_due')"
-    )
-    .bind(app_id)
-    .bind(external_user_id)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
-
-    // Cancel each subscription at the provider level
-    for (subscription_id, provider, purchase_token) in active_subs {
-        // Attempt provider cancellation, but don't fail the entire operation if one fails
-        // (user data should still be anonymized even if a provider cancellation fails)
-        if let Err(e) = cancel_subscription_at_provider(
-            pool,
-            app_id,
-            &provider,
-            &subscription_id,
-            purchase_token.as_deref(),
-        )
-        .await
-        {
-            // Log the error but continue with other subscriptions and DB updates
-            tracing::warn!(
-                app_id = %app_id,
-                external_user_id = external_user_id,
-                subscription_id = subscription_id,
-                provider = provider,
-                error = %e,
-                "Failed to cancel subscription at provider during user anonymization"
-            );
-        }
-    }
 
     let sub_count = sqlx::query(
         r#"
@@ -85,14 +75,13 @@ pub async fn anonymize_user(
     let pay_count = sqlx::query(
         r#"
         UPDATE pay.payments
-        SET external_user_id = $4
+        SET external_user_id = $3
         WHERE app_id = $1
           AND external_user_id = $2
         "#,
     )
     .bind(app_id)
     .bind(external_user_id)
-    .bind(reason_val)
     .bind(&anon_id)
     .execute(&mut *tx)
     .await
@@ -102,7 +91,7 @@ pub async fn anonymize_user(
     let _ = sqlx::query(
         r#"
         UPDATE pay.fraud_prevention
-        SET external_user_id = $4,
+        SET external_user_id = $3,
             is_anonymized = true,
             anonymized_at = NOW(),
             should_purge_at = NOW() + INTERVAL '90 days',
@@ -113,7 +102,6 @@ pub async fn anonymize_user(
     )
     .bind(app_id)
     .bind(external_user_id)
-    .bind(reason_val)
     .bind(&anon_id)
     .execute(&mut *tx)
     .await
@@ -130,75 +118,5 @@ pub async fn cleanup_purged_fraud_prevention(pool: &PgPool) -> Result<(), Bridge
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    Ok(())
-}
-
-/// Helper function to cancel a subscription at the provider level via API
-/// Logs errors but doesn't fail the anonymization operation
-async fn cancel_subscription_at_provider(
-    pool: &PgPool,
-    app_id: Uuid,
-    provider: &str,
-    subscription_id: &str,
-    purchase_token: Option<&str>,
-) -> Result<(), BridgeError> {
-    match provider {
-        "creem" => {
-            // Get Creem config and call cancel API
-            if let Ok(config) = crate::db::provider_configs::get_provider_config(pool, app_id, "creem").await {
-                if let Ok(creem_config) = serde_json::from_value::<serde_json::Value>(config.config) {
-                    let creem_client = crate::services::creem::client::CreemClient::from_json(&creem_config)?;
-                    creem_client.cancel_subscription(subscription_id, None).await?;
-                }
-            }
-        }
-        "google_play" => {
-            // Get Google Play config and cancel if we have purchase token
-            if let Some(token) = purchase_token {
-                if let Ok(config) = crate::db::provider_configs::get_provider_config(pool, app_id, "google_play").await {
-                    if let Ok(gp_config) = serde_json::from_value::<serde_json::Value>(config.config) {
-                        cancel_google_play_subscription(subscription_id, token, &gp_config).await?;
-                    }
-                }
-            }
-        }
-        "coinbase" => {
-            // Coinbase subscriptions are managed via webhooks, no direct API cancellation
-            tracing::info!("Coinbase subscription {} - no direct API cancellation needed", subscription_id);
-        }
-        _ => {
-            tracing::warn!("Unknown provider: {}, skipping provider cancellation", provider);
-        }
-    }
-
-    Ok(())
-}
-
-async fn cancel_google_play_subscription(
-    subscription_id: &str,
-    purchase_token: &str,
-    config: &serde_json::Value,
-) -> Result<(), BridgeError> {
-    let package_name = config.get("package_name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| BridgeError::ConfigError("Missing Google Play package_name".to_string()))?;
-
-    let sa_path = config.get("service_account_json")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| BridgeError::ConfigError("Missing Google Play service_account_json path".to_string()))?;
-
-    let sa_path_owned = sa_path.to_string();
-    let client = tokio::task::spawn_blocking(move || {
-        crate::services::google_play::client::GooglePlayClient::new(&sa_path_owned)
-    })
-    .await
-    .map_err(|e| BridgeError::ProviderError(format!("Failed to spawn blocking task: {}", e)))?
-    .map_err(|e| BridgeError::ConfigError(format!("Failed to init Google Play client: {}", e)))?;
-
-    client.cancel_subscription(package_name, subscription_id, purchase_token)
-        .await
-        .map_err(|e| BridgeError::ProviderError(format!("Google Play cancel failed: {}", e)))?;
-
-    tracing::info!("Google Play subscription {} cancelled", subscription_id);
     Ok(())
 }

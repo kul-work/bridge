@@ -6,13 +6,14 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::application;
+use crate::application::users::AnonymizeUserInput;
 use crate::config::DATA_EXPORT_LIMIT;
 use crate::db::{payments::Payment, subscriptions::Subscription};
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::ports::{
-    AgentReadRepository, PaymentReadRepository, SubscriptionReadRepository, UserRepository,
-    WebhookReadRepository,
+    AgentReadRepository, PaymentReadRepository, SubscriptionReadRepository, WebhookReadRepository,
 };
 use crate::state::AppState;
 
@@ -28,20 +29,25 @@ pub async fn anonymize(
     Json(request): Json<AnonymizeRequest>,
 ) -> Result<Json<serde_json::Value>, BridgeError> {
     let database = state.database();
-    let (subscriptions_cancelled, payments_anonymized, new_anonymous_id) = database
-        .as_ref()
-        .anonymize_user(auth.app_id, &external_user_id, request.reason.as_deref())
-        .await?;
+    let result = application::users::anonymize_user(
+        database.as_ref(),
+        AnonymizeUserInput {
+            app_id: auth.app_id,
+            external_user_id: &external_user_id,
+            reason: request.reason.as_deref(),
+        },
+    )
+    .await?;
 
-    if subscriptions_cancelled == 0 && payments_anonymized == 0 {
+    if result.subscriptions_cancelled == 0 && result.payments_anonymized == 0 {
         return Err(BridgeError::ValidationError("User not found".to_string()));
     }
 
     Ok(Json(json!({
         "anonymized": true,
-        "subscriptions_cancelled": subscriptions_cancelled,
-        "payments_anonymized": payments_anonymized,
-        "new_anonymous_id": new_anonymous_id
+        "subscriptions_cancelled": result.subscriptions_cancelled,
+        "payments_anonymized": result.payments_anonymized,
+        "new_anonymous_id": result.new_anonymous_id
     })))
 }
 
