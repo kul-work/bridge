@@ -74,6 +74,15 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting Bridge v{}", env!("CARGO_PKG_VERSION"));
     info!("Environment: {}", config.environment);
 
+    // Log configuration
+    if config.mock_external_apis {
+        tracing::info!("⚠️ MOCK_EXTERNAL_APIS is ENABLED - Verification checks disabled");
+    }
+    let email_provider = std::env::var("EMAIL_PROVIDER").unwrap_or_else(|_| "mock".to_string());
+    if email_provider == "mock" {
+        tracing::info!("⚠️ EMAIL_PROVIDER is 'mock' - Emails will not be sent");
+    }
+
     let _email_service = services::email::init_email_service(&config)?;
 
     // Initialize database
