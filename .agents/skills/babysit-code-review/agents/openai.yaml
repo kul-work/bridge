@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Code Review Babysitter"
+  short_description: "Watch a local diff, local checks, and local review findings"
+  default_prompt: "Babysit the current local code review: monitor the current diff, rerun the supplied local verification commands, surface unresolved local review findings before check failures, and keep looping until the change is review-clean or a real blocker needs user help. Prefer the watcher's --watch mode when the user asks to keep monitoring. For non-trivial changes, fold code-fit-evaluator reject output into the review loop instead of declaring success on green checks alone."
