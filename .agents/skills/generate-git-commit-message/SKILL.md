@@ -127,10 +127,13 @@ When invoked, the agent MUST:
    
    The body MUST use simple bullet point items (markdown-style with `- ` prefix), one per line.
 
-4. **Return ONLY the message text** (nothing else)
+4. **Return ONLY raw commit-message text** (nothing else)
    - No explanations
    - No instructions
    - No analysis output
+   - No surrounding markdown list item, blockquote, or indentation
+   - The first character of the response must be the commit type, for example `REFACTOR`
+   - Body bullets must start at column 1 as `- ` with no leading spaces
    - Just the commit message ready to use
 
 ## Example Requests
