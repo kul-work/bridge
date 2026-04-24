@@ -2,16 +2,6 @@
 
 This document outlines areas in the Bridge codebase where code is duplicated or follows highly repetitive patterns that could be consolidated.
 
-## 3. Google Play Lifecycle Boilerplate
-
-**Location**: `src/services/google_play/subscription_lifecycle.rs`
-
-### Repetitive Handlers
-Handlers like `handle_subscription_revoked`, `handle_subscription_resumed`, and `handle_subscription_cancelled_with_context` share ~80% of their code:
-- Extracting `subscription_id` from fields/webhook.
-- Calling `repo.apply_subscription_transition`.
-- Mapping the result to a `GooglePlayLifecycleOutcome` with boilerplate `callback_event_type` overrides.
-
 ## 4. Decentralized Hashing & Anonymization
 
 **Locations**:
