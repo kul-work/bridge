@@ -35,11 +35,35 @@ fn subscription_id_for_event<'a>(
         .or(webhook.subscription_id.as_deref())
 }
 
-fn outcome_with_subscription(subscription: WebhookSubscriptionSnapshot) -> GooglePlayLifecycleOutcome {
-    GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription),
-        ..Default::default()
-    }
+async fn apply_transition_with_outcome<
+    R: WebhookProcessingMutationRepository + ?Sized,
+>(
+    repo: &R,
+    app_id: Uuid,
+    external_user_id: &str,
+    provider: &str,
+    subscription_id: &str,
+    timestamp_epoch_ms: i64,
+    transition: SubscriptionWebhookTransition,
+    mut outcome: GooglePlayLifecycleOutcome,
+) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
+    let updated = repo
+        .apply_subscription_transition(
+            app_id,
+            external_user_id,
+            provider,
+            subscription_id,
+            timestamp_epoch_ms,
+            transition,
+        )
+        .await?;
+
+    let Some(subscription) = updated else {
+        return Ok(None);
+    };
+
+    outcome.canonical_subscription = Some(subscription.into());
+    Ok(Some(outcome))
 }
 
 pub async fn handle_subscription_revoked<
@@ -72,30 +96,24 @@ pub async fn handle_subscription_revoked<
         .or_else(|| fields.google_cancellation_context.clone())
         .unwrap_or_else(|| "unknown".to_string());
 
-    let updated = repo
-        .apply_subscription_transition(
-            app_id,
-            external_user_id,
-            &webhook.provider,
-            subscription_id,
-            timestamp_epoch_ms,
-            SubscriptionWebhookTransition::Revoked {
-                revocation_reason: Some(revocation_reason.clone()),
-            },
-        )
-        .await?;
-
-    let Some(subscription) = updated else {
-        return Ok(None);
-    };
-
-    Ok(Some(GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription.into()),
-        callback_event_type: Some("subscription.revoked".to_string()),
-        callback_status_override: Some("revoked".to_string()),
-        callback_revocation_reason_override: Some(revocation_reason),
-        callback_cancellation_mode_override: None,
-    }))
+    apply_transition_with_outcome(
+        repo,
+        app_id,
+        external_user_id,
+        &webhook.provider,
+        subscription_id,
+        timestamp_epoch_ms,
+        SubscriptionWebhookTransition::Revoked {
+            revocation_reason: Some(revocation_reason.clone()),
+        },
+        GooglePlayLifecycleOutcome {
+            callback_event_type: Some("subscription.revoked".to_string()),
+            callback_status_override: Some("revoked".to_string()),
+            callback_revocation_reason_override: Some(revocation_reason),
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 pub async fn handle_subscription_resumed<
@@ -128,30 +146,23 @@ pub async fn handle_subscription_resumed<
         .as_deref()
         .and_then(parse_rfc3339_utc);
 
-    let updated = repo
-        .apply_subscription_transition(
-            app_id,
-            external_user_id,
-            &webhook.provider,
-            subscription_id,
-            timestamp_epoch_ms,
-            SubscriptionWebhookTransition::Resumed {
-                current_period_end: period_end,
-            },
-        )
-        .await?;
-
-    let Some(subscription) = updated else {
-        return Ok(None);
-    };
-
-    Ok(Some(GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription.into()),
-        callback_event_type: Some("subscription.resumed".to_string()),
-        callback_status_override: Some("active".to_string()),
-        callback_revocation_reason_override: None,
-        callback_cancellation_mode_override: None,
-    }))
+    apply_transition_with_outcome(
+        repo,
+        app_id,
+        external_user_id,
+        &webhook.provider,
+        subscription_id,
+        timestamp_epoch_ms,
+        SubscriptionWebhookTransition::Resumed {
+            current_period_end: period_end,
+        },
+        GooglePlayLifecycleOutcome {
+            callback_event_type: Some("subscription.resumed".to_string()),
+            callback_status_override: Some("active".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 pub async fn handle_subscription_cancelled_with_context<
@@ -173,32 +184,25 @@ pub async fn handle_subscription_cancelled_with_context<
         .as_deref()
         .and_then(parse_rfc3339_utc);
 
-    let updated = repo
-        .apply_subscription_transition(
-            app_id,
-            external_user_id,
-            &webhook.provider,
-            subscription_id,
-            timestamp_epoch_ms,
-            SubscriptionWebhookTransition::Cancelled {
-                current_period_end: cancel_period_end,
-                google_cancellation_context: fields.google_cancellation_context.clone(),
-                google_cancellation_feedback: fields.google_cancellation_feedback.clone(),
-            },
-        )
-        .await?;
-
-    let Some(subscription) = updated else {
-        return Ok(None);
-    };
-
-    Ok(Some(GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription.into()),
-        callback_event_type: Some("subscription.cancelled".to_string()),
-        callback_status_override: Some("cancelled".to_string()),
-        callback_revocation_reason_override: None,
-        callback_cancellation_mode_override: None,
-    }))
+    apply_transition_with_outcome(
+        repo,
+        app_id,
+        external_user_id,
+        &webhook.provider,
+        subscription_id,
+        timestamp_epoch_ms,
+        SubscriptionWebhookTransition::Cancelled {
+            current_period_end: cancel_period_end,
+            google_cancellation_context: fields.google_cancellation_context.clone(),
+            google_cancellation_feedback: fields.google_cancellation_feedback.clone(),
+        },
+        GooglePlayLifecycleOutcome {
+            callback_event_type: Some("subscription.cancelled".to_string()),
+            callback_status_override: Some("cancelled".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 pub async fn handle_subscription_cancellation_scheduled<
@@ -215,31 +219,25 @@ pub async fn handle_subscription_cancellation_scheduled<
         return Ok(None);
     };
 
-    let updated = repo
-        .apply_subscription_transition(
-            app_id,
-            external_user_id,
-            &webhook.provider,
-            subscription_id,
-            timestamp_epoch_ms,
-            SubscriptionWebhookTransition::CancellationScheduled {
-                google_cancellation_context: fields.google_cancellation_context.clone(),
-                google_cancellation_feedback: fields.google_cancellation_feedback.clone(),
-            },
-        )
-        .await?;
-
-    let Some(subscription) = updated else {
-        return Ok(None);
-    };
-
-    Ok(Some(GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription.into()),
-        callback_event_type: Some("subscription.cancelled".to_string()),
-        callback_status_override: Some("cancelled".to_string()),
-        callback_revocation_reason_override: None,
-        callback_cancellation_mode_override: Some("scheduled".to_string()),
-    }))
+    apply_transition_with_outcome(
+        repo,
+        app_id,
+        external_user_id,
+        &webhook.provider,
+        subscription_id,
+        timestamp_epoch_ms,
+        SubscriptionWebhookTransition::CancellationScheduled {
+            google_cancellation_context: fields.google_cancellation_context.clone(),
+            google_cancellation_feedback: fields.google_cancellation_feedback.clone(),
+        },
+        GooglePlayLifecycleOutcome {
+            callback_event_type: Some("subscription.cancelled".to_string()),
+            callback_status_override: Some("cancelled".to_string()),
+            callback_cancellation_mode_override: Some("scheduled".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 pub async fn handle_price_step_up_consent_required<
@@ -261,25 +259,20 @@ pub async fn handle_price_step_up_consent_required<
         .as_deref()
         .and_then(parse_rfc3339_utc);
 
-    let updated = repo
-        .apply_subscription_transition(
-            app_id,
-            external_user_id,
-            &webhook.provider,
-            subscription_id,
-            timestamp_epoch_ms,
-            SubscriptionWebhookTransition::PriceStepUp {
-                google_new_price_cents: fields.google_new_price_cents,
-                google_price_step_up_consent_deadline: deadline,
-            },
-        )
-        .await?;
-
-    let Some(subscription) = updated else {
-        return Ok(None);
-    };
-
-    Ok(Some(outcome_with_subscription(subscription.into())))
+    apply_transition_with_outcome(
+        repo,
+        app_id,
+        external_user_id,
+        &webhook.provider,
+        subscription_id,
+        timestamp_epoch_ms,
+        SubscriptionWebhookTransition::PriceStepUp {
+            google_new_price_cents: fields.google_new_price_cents,
+            google_price_step_up_consent_deadline: deadline,
+        },
+        GooglePlayLifecycleOutcome::default(),
+    )
+    .await
 }
 
 pub async fn handle_subscription_pending_purchase_cancelled<
@@ -296,26 +289,19 @@ pub async fn handle_subscription_pending_purchase_cancelled<
         return Ok(None);
     };
 
-    let updated = repo
-        .apply_subscription_transition(
-            app_id,
-            external_user_id,
-            &webhook.provider,
-            subscription_id,
-            timestamp_epoch_ms,
-            SubscriptionWebhookTransition::PendingPurchaseCancelled,
-        )
-        .await?;
-
-    let Some(subscription) = updated else {
-        return Ok(None);
-    };
-
-    Ok(Some(GooglePlayLifecycleOutcome {
-        canonical_subscription: Some(subscription.into()),
-        callback_event_type: Some("subscription.cancelled".to_string()),
-        callback_status_override: Some("cancelled".to_string()),
-        callback_revocation_reason_override: None,
-        callback_cancellation_mode_override: None,
-    }))
+    apply_transition_with_outcome(
+        repo,
+        app_id,
+        external_user_id,
+        &webhook.provider,
+        subscription_id,
+        timestamp_epoch_ms,
+        SubscriptionWebhookTransition::PendingPurchaseCancelled,
+        GooglePlayLifecycleOutcome {
+            callback_event_type: Some("subscription.cancelled".to_string()),
+            callback_status_override: Some("cancelled".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
 }
