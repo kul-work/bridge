@@ -534,13 +534,15 @@ async fn get_provider_webhook_secret<R: WebhookIngressRepository + ?Sized>(
 }
 
 fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut result = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
+    let mut result = a.len() ^ b.len();
+    let max_len = a.len().max(b.len());
+
+    for i in 0..max_len {
+        let x = a.get(i).copied().unwrap_or(0) as usize;
+        let y = b.get(i).copied().unwrap_or(0) as usize;
         result |= x ^ y;
     }
+
     result == 0
 }
 
@@ -558,7 +560,7 @@ fn extract_header_value<'a>(headers: &'a HeaderMap, names: &[&str]) -> Option<&'
 mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
-    use super::{extract_header_value, CREEM_SIGNATURE_HEADERS};
+    use super::{extract_header_value, CREEM_SIGNATURE_HEADERS};    
 
     #[test]
     fn prefers_creem_signature_over_all_others() {

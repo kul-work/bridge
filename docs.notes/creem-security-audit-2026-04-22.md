@@ -27,23 +27,6 @@ The "Creem orphan guard" at line 424-431 correctly suppresses the webhook if met
 ---
 
 
-### 🟡 Low: `constant_time_compare` has a minor early-exit on length mismatch
-
-**Location:** `c:/share/tyde/bridge/src/webhooks/ingress.rs:496-505`
-
-The current implementation:
-
-```rust
-if a.len() != b.len() {
-    return false;
-}
-```
-
-This leaks **length information** via timing. While the header is hex-encoded (predictable length), a fully constant-time comparison should avoid this branch.
-
-**Recommendation:** Use a fixed-length comparison or a crate like `subtle` that handles this securely.
-
----
 
 ### 🟡 Low: Creem checkout does not validate `email` format before forwarding
 
