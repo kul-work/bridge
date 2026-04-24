@@ -213,6 +213,7 @@ impl WebhookProcessingTransactionRepository for db::Database {
         let event_time_ms = request.event_time_ms;
         let payment = request.payment.map(OwnedWebhookPaymentRecord::from);
         let adopt_stale_payment = request.adopt_stale_payment;
+        let stale_payment_window_secs = request.stale_payment_window_secs;
 
         let pool = self.pool();
         crate::ports::helpers::with_transaction_impl(pool, app_id, move |tx| {
@@ -258,6 +259,7 @@ impl WebhookProcessingTransactionRepository for db::Database {
                         app_id,
                         &external_user_id,
                         &subscription_id,
+                        stale_payment_window_secs,
                     )
                     .await;
                 }

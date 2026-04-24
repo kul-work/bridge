@@ -330,10 +330,12 @@ pub async fn adopt_stale_payment(
     app_id: Uuid,
     external_user_id: &str,
     subscription_id: &str,
+    stale_payment_window_secs: i64,
 ) -> Result<(), crate::error::BridgeError> {
     // Merge old records with mismatched transaction IDs for this user/subscription
     // that are currently 'pending' or 'failed' but should be part of this subscription.
     // This is specific to Creem's behavior described in §13.
+    let interval = format!("{} seconds", stale_payment_window_secs);
     sqlx::query(
         "UPDATE pay.payments 
          SET subscription_id = $1, status = 'success'
@@ -342,11 +344,12 @@ pub async fn adopt_stale_payment(
            AND provider = 'creem' 
            AND subscription_id IS NULL 
            AND status IN ('pending', 'failed')
-           AND created_at > NOW() - INTERVAL '24 hours'"
+           AND created_at > NOW() - $4::interval"
     )
     .bind(subscription_id)
     .bind(app_id)
     .bind(external_user_id)
+    .bind(&interval)
     .execute(&mut **tx)
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;

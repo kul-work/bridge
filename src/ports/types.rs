@@ -79,6 +79,7 @@ pub struct WebhookSubscriptionCommitRequest<'a> {
     pub event_time_ms: i64,
     pub payment: Option<WebhookPaymentRecordRequest<'a>>,
     pub adopt_stale_payment: bool,
+    pub stale_payment_window_secs: i64,
 }
 
 #[derive(Debug, Clone)]

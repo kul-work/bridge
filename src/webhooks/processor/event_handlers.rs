@@ -82,6 +82,18 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
             let sub_id_fallback = ctx.webhook.subscription_id.clone().unwrap_or_default();
             let sub_id_str = ctx.fields.subscription_id.as_deref().unwrap_or(&sub_id_fallback);
 
+            let (adopt_stale_payment, stale_payment_window_secs) = if ctx.provider == "creem" {
+                let window_secs = repo
+                    .get_provider_config(ctx.app_id, "creem")
+                    .await
+                    .ok()
+                    .and_then(|cfg| cfg.config.get("stale_payment_window_secs").and_then(|v| v.as_i64()))
+                    .unwrap_or(86400);
+                (true, window_secs)
+            } else {
+                (false, 86400)
+            };
+
             let subscription = repo
                 .commit_webhook_subscription(WebhookSubscriptionCommitRequest {
                     app_id: ctx.app_id,
@@ -106,7 +118,8 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         amount_cents: ctx.fields.amount_cents.unwrap_or(0),
                         status: "success",
                     }),
-                    adopt_stale_payment: ctx.provider == "creem",
+                    adopt_stale_payment,
+                    stale_payment_window_secs,
                 })
                 .await?;
 
@@ -184,6 +197,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     event_time_ms: ctx.timestamp_epoch_ms,
                     payment: None,
                     adopt_stale_payment: false,
+                    stale_payment_window_secs: 86400,
                 })
                 .await?;
 
@@ -485,6 +499,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         event_time_ms: ctx.timestamp_epoch_ms,
                         payment: None,
                         adopt_stale_payment: false,
+                        stale_payment_window_secs: 86400,
                     })
                     .await?;
 
