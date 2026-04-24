@@ -27,7 +27,19 @@ pub(super) fn normalize_event_type_with_payload(
                 return "purchase.one_time".to_string();
             }
 
+            if let Some(bt) = billing_type {
+                tracing::warn!(
+                    billing_type = bt,
+                    "creem checkout.completed: unrecognized billing_type, falling back to structural heuristics"
+                );
+            } else {
+                tracing::warn!(
+                    "creem checkout.completed: billing_type absent in payload, falling back to structural heuristics"
+                );
+            }
+
             if object.pointer("/subscription/id").and_then(|v| v.as_str()).is_some() {
+                tracing::warn!("creem checkout.completed: classified as subscription.created via /subscription/id heuristic");
                 return "subscription.created".to_string();
             }
 
@@ -35,8 +47,13 @@ pub(super) fn normalize_event_type_with_payload(
                 || object.get("order_id").and_then(|v| v.as_str()).is_some()
                 || object.pointer("/order/id").and_then(|v| v.as_str()).is_some()
             {
+                tracing::warn!("creem checkout.completed: classified as purchase.one_time via order id heuristic");
                 return "purchase.one_time".to_string();
             }
+
+            tracing::warn!("creem checkout.completed: no billing_type or structural heuristics matched, producing non-canonical event type");
+        } else {
+            tracing::warn!("creem checkout.completed: payload missing, cannot determine canonical event type");
         }
     }
 
