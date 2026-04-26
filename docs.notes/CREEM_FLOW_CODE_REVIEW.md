@@ -6,20 +6,6 @@ Scope: current `main` branch review of the Creem checkout, webhook ingress, webh
 
 ## Findings
 
-### High: Creem webhooks can be acknowledged and then permanently stranded
-
-`handle_creem` inserts a `pay.webhook_provider` row, spawns processing in the background, and immediately returns `204`. If `process_webhook` fails before a `webhook_delivery` row is created, the error is only logged. A later Creem retry with the same event ID hits the duplicate path and returns `204` without retrying processing.
-
-Relevant code:
-
-- `src/webhooks/ingress.rs`: `spawn_process_and_forward_webhook`
-- `src/webhooks/ingress.rs`: `handle_creem` duplicate path after `create_webhook_provider`
-- `src/webhooks/scheduler.rs`: retry worker only retries pending `webhook_delivery` rows
-
-Impact: a valid paid webhook can be stored but never mutate Bridge state and never forward to the app. Creem will believe delivery succeeded because Bridge already returned a 2xx response.
-
-Recommendation: process synchronously before returning 2xx, or make duplicate/unprocessed provider rows resumable. At minimum, duplicates with `processed = false` should re-enter processing instead of returning success immediately.
-
 ### Medium: short or malformed Creem webhook tokens can panic before validation
 
 `handle_creem` logs `&token[..8]` before parsing the token as a UUID. A request such as `/webhooks/a/creem` can panic from slicing a short string instead of returning `404`.

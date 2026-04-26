@@ -47,6 +47,8 @@ pub trait WebhookForwardRepository:
 {
     async fn get_webhook_delivery(&self, id: Uuid) -> Result<WebhookDelivery, BridgeError>;
 
+    async fn webhook_delivery_exists(&self, webhook_provider_id: Uuid) -> Result<bool, BridgeError>;
+
     async fn update_webhook_delivery_attempt(
         &self,
         delivery_id: Uuid,

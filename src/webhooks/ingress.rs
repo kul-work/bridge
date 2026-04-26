@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::{
     db::Database,
     error::BridgeError,
-    ports::{ProviderConfigLookupRepository, WebhookWriteRepository},
+    ports::{ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository, WebhookWriteRepository},
     ports::composites::WebhookIngressRepository,
     state::AppState,
 };
@@ -43,6 +43,89 @@ fn spawn_process_and_forward_webhook(
             Err(e) => error!("{} webhook processing failed {}: {}", provider_name, event_id, e),
         }
     });
+}
+
+fn spawn_forward_existing_webhook(
+    database: Arc<Database>,
+    app_id: Uuid,
+    webhook_id: Uuid,
+    provider_name: &'static str,
+    event_id: String,
+) {
+    tokio::spawn(async move {
+        match crate::webhooks::processor::build_canonical_payload(database.as_ref(), webhook_id, app_id).await {
+            Ok(Some(canonical)) => {
+                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
+                    database.as_ref(),
+                    app_id,
+                    webhook_id,
+                    canonical,
+                )
+                .await
+                {
+                    error!("Failed to resume forwarding for {}: {}", event_id, e);
+                } else {
+                    info!("{} webhook forwarding resumed: {}", provider_name, event_id);
+                }
+            }
+            Ok(None) => info!("{} webhook suppressed while resuming: {}", provider_name, event_id),
+            Err(e) => error!("{} webhook payload rebuild failed {}: {}", provider_name, event_id, e),
+        }
+    });
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DuplicateWebhookAction {
+    Ignore,
+    ResumeProcessing,
+    ResumeForwarding,
+}
+
+fn duplicate_webhook_action(
+    processed: bool,
+    suppressed: bool,
+    has_delivery: bool,
+) -> DuplicateWebhookAction {
+    if suppressed {
+        return DuplicateWebhookAction::Ignore;
+    }
+
+    if !processed {
+        return DuplicateWebhookAction::ResumeProcessing;
+    }
+
+    if !has_delivery {
+        return DuplicateWebhookAction::ResumeForwarding;
+    }
+
+    DuplicateWebhookAction::Ignore
+}
+
+async fn handle_duplicate_webhook(
+    database: Arc<Database>,
+    app_id: Uuid,
+    webhook_id: Uuid,
+    provider_name: &'static str,
+    event_id: &str,
+) -> Result<(), BridgeError> {
+    let webhook = database.as_ref().get_webhook_provider(webhook_id).await?;
+    let has_delivery = database.as_ref().webhook_delivery_exists(webhook_id).await?;
+
+    match duplicate_webhook_action(webhook.processed, webhook.suppressed, has_delivery) {
+        DuplicateWebhookAction::ResumeProcessing => {
+            info!("Duplicate {} webhook retrying stored unprocessed event: {}", provider_name, event_id);
+            spawn_process_and_forward_webhook(database, app_id, webhook_id, provider_name, event_id.to_string());
+        }
+        DuplicateWebhookAction::ResumeForwarding => {
+            info!("Duplicate {} webhook retrying stored undelivered event: {}", provider_name, event_id);
+            spawn_forward_existing_webhook(database, app_id, webhook_id, provider_name, event_id.to_string());
+        }
+        DuplicateWebhookAction::Ignore => {
+            info!("Duplicate {} webhook already recovered: {}", provider_name, event_id);
+        }
+    }
+
+    Ok(())
 }
 
 /// Handle Google Play webhook
@@ -214,10 +297,7 @@ pub async fn handle_google_play(
         .await?;
 
     if !is_new {
-        info!(
-            "Duplicate Google Play webhook received (already processed): {}",
-            event_id
-        );
+        handle_duplicate_webhook(database, app.id, webhook_id, "Google Play", event_id).await?;
         return Ok(StatusCode::NO_CONTENT);
     }
 
@@ -349,7 +429,7 @@ pub async fn handle_creem(
         .await?;
 
     if !is_new {
-        info!("Duplicate Creem webhook received (already processed): {}", event_id);
+        handle_duplicate_webhook(database, app.id, webhook_id, "Creem", event_id).await?;
         return Ok(StatusCode::NO_CONTENT);
     }
 
@@ -433,10 +513,7 @@ pub async fn handle_coinbase(
         .await?;
 
     if !is_new {
-        info!(
-            "Duplicate Coinbase webhook received (already processed): {}",
-            event_id
-        );
+        handle_duplicate_webhook(database, app.id, webhook_id, "Coinbase", event_id).await?;
         return Ok(StatusCode::NO_CONTENT);
     }
 
@@ -562,7 +639,7 @@ fn extract_header_value<'a>(headers: &'a HeaderMap, names: &[&str]) -> Option<&'
 mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
-    use super::{extract_header_value, CREEM_SIGNATURE_HEADERS};    
+    use super::{duplicate_webhook_action, extract_header_value, DuplicateWebhookAction, CREEM_SIGNATURE_HEADERS};    
 
     #[test]
     fn prefers_creem_signature_over_all_others() {
@@ -605,5 +682,37 @@ mod tests {
         let headers = HeaderMap::new();
 
         assert_eq!(extract_header_value(&headers, &CREEM_SIGNATURE_HEADERS), None);
+    }
+
+    #[test]
+    fn duplicate_unprocessed_webhook_resumes_processing() {
+        assert_eq!(
+            duplicate_webhook_action(false, false, false),
+            DuplicateWebhookAction::ResumeProcessing
+        );
+    }
+
+    #[test]
+    fn duplicate_processed_webhook_without_delivery_resumes_forwarding() {
+        assert_eq!(
+            duplicate_webhook_action(true, false, false),
+            DuplicateWebhookAction::ResumeForwarding
+        );
+    }
+
+    #[test]
+    fn duplicate_suppressed_webhook_is_ignored() {
+        assert_eq!(
+            duplicate_webhook_action(false, true, false),
+            DuplicateWebhookAction::Ignore
+        );
+    }
+
+    #[test]
+    fn duplicate_processed_webhook_with_delivery_is_ignored() {
+        assert_eq!(
+            duplicate_webhook_action(true, false, true),
+            DuplicateWebhookAction::Ignore
+        );
     }
 }

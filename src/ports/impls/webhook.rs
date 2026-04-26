@@ -77,6 +77,10 @@ impl WebhookForwardRepository for db::Database {
         db::webhooks::get_webhook_delivery(self.pool(), id).await
     }
 
+    async fn webhook_delivery_exists(&self, webhook_provider_id: Uuid) -> Result<bool, BridgeError> {
+        db::webhooks::webhook_delivery_exists(self.pool(), webhook_provider_id).await
+    }
+
     async fn update_webhook_delivery_attempt(
         &self,
         delivery_id: Uuid,
@@ -106,6 +110,7 @@ impl WebhookProviderLookupRepository for db::Database {
             subscription_id: webhook.subscription_id,
             purchase_token: webhook.purchase_token,
             payload: webhook.payload,
+            processed: webhook.processed,
             timestamp_epoch_ms: webhook.timestamp_epoch_ms,
             suppressed: webhook.suppressed,
             suppressed_reason: webhook.suppressed_reason,

@@ -141,6 +141,23 @@ pub async fn get_webhook_delivery(pool: &PgPool, id: Uuid) -> Result<WebhookDeli
     .ok_or_else(|| BridgeError::ValidationError("Webhook delivery not found".to_string()))
 }
 
+pub async fn webhook_delivery_exists(
+    pool: &PgPool,
+    webhook_provider_id: Uuid,
+) -> Result<bool, BridgeError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1
+             FROM pay.webhook_delivery
+             WHERE webhook_provider_id = $1
+         )"
+    )
+    .bind(webhook_provider_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
 pub async fn list_pending_webhook_deliveries(
     pool: &PgPool,
     app_id: Uuid,

@@ -106,6 +106,7 @@ pub struct WebhookProviderSnapshot {
     pub subscription_id: Option<String>,
     pub purchase_token: Option<String>,
     pub payload: serde_json::Value,
+    pub processed: bool,
     pub timestamp_epoch_ms: Option<i64>,
     pub suppressed: bool,
     pub suppressed_reason: Option<String>,
