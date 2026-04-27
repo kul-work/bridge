@@ -240,7 +240,7 @@ pub async fn handle_creem(
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
 
-    info!("Received Creem webhook with token: {}", token_uuid);
+    info!("Received Creem webhook with token: {}...", &token_uuid.to_string()[..8]);
 
     let app = match database.as_ref().get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
