@@ -234,12 +234,13 @@ pub async fn handle_creem(
     body: String,
 ) -> Result<StatusCode, BridgeError> {
     let database = state.database();
-    info!("Received Creem webhook with token: {}...", &token[..8]);
 
     let token_uuid = match Uuid::parse_str(&token) {
         Ok(token_uuid) => token_uuid,
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
+
+    info!("Received Creem webhook with token: {}...", &token_uuid.to_string()[..8]);
 
     let app = match database.as_ref().get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
