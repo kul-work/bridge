@@ -40,6 +40,12 @@ pub async fn cancel_subscription<R: SubscriptionActionsHandlerRepository + ?Size
     let provider = query.provider.trim().to_ascii_lowercase();
     let mode = request.mode.as_deref().unwrap_or("scheduled");
 
+    if mode != "scheduled" && mode != "immediate" {
+        return Err(BridgeError::ValidationError(
+            "mode must be either 'scheduled' or 'immediate'".to_string(),
+        ));
+    }
+
     let sub = repo
         .get_subscription(
             app_id,
@@ -71,14 +77,11 @@ pub async fn cancel_subscription<R: SubscriptionActionsHandlerRepository + ?Size
     )
     .await?;
 
+    // mode already validated above; exhaustive match kept for safety
     let updated_sub = match mode {
         "scheduled" => repo.cancel_subscription_scheduled(app_id, sub.id).await?,
         "immediate" => repo.cancel_subscription_immediate(app_id, sub.id).await?,
-        _ => {
-            return Err(BridgeError::ValidationError(
-                "mode must be either 'scheduled' or 'immediate'".to_string(),
-            ))
-        }
+        _ => unreachable!("mode validated earlier"),
     };
 
     let callback_sub = SubscriptionCallbackData {
