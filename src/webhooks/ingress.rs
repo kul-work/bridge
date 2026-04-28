@@ -267,6 +267,8 @@ pub async fn handle_google_play(
         if let Some(purchase_token) = purchase_token.as_deref() {
             if let Ok(Some(sub_id)) = crate::db::subscriptions::lookup_subscription_id_by_purchase_token(database.pool(), app.id, purchase_token).await {
                 Some(sub_id)
+            } else if let Ok(Some(product_id)) = crate::db::payments::lookup_product_id_by_purchase_token_payment(database.pool(), app.id, "google_play", purchase_token).await {
+                Some(product_id)
             } else {
                 subscription_id
             }

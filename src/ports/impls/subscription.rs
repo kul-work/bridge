@@ -252,6 +252,15 @@ impl PurchaseOwnerLookupRepository for db::Database {
     ) -> Result<Option<String>, BridgeError> {
         db::payments::lookup_user_by_purchase_token_payment(self.pool(), app_id, provider, purchase_token).await
     }
+
+    async fn lookup_product_id_by_purchase_token_payment(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        purchase_token: &str,
+    ) -> Result<Option<String>, BridgeError> {
+        db::payments::lookup_product_id_by_purchase_token_payment(self.pool(), app_id, provider, purchase_token).await
+    }
 }
 
 #[async_trait]

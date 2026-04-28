@@ -153,6 +153,13 @@ pub trait PurchaseOwnerLookupRepository: Send + Sync {
         provider: &str,
         purchase_token: &str,
     ) -> Result<Option<String>, BridgeError>;
+
+    async fn lookup_product_id_by_purchase_token_payment(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        purchase_token: &str,
+    ) -> Result<Option<String>, BridgeError>;
 }
 
 #[async_trait]

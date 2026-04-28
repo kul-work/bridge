@@ -351,6 +351,27 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     Ok(fields)
 }
 
+async fn fill_payment_product_id<R: WebhookProcessingRepository>(
+    repo: &R,
+    app_id: Uuid,
+    webhook: &WebhookProviderSnapshot,
+    fields: &mut WebhookFields,
+) -> Result<(), BridgeError> {
+    if fields.product_id.is_some() {
+        return Ok(());
+    }
+
+    let Some(purchase_token) = fields.purchase_token.as_deref().or(webhook.purchase_token.as_deref()) else {
+        return Ok(());
+    };
+
+    fields.product_id = repo
+        .lookup_product_id_by_purchase_token_payment(app_id, &webhook.provider, purchase_token)
+        .await?;
+
+    Ok(())
+}
+
 /// Resolve external_user_id via lookup cascade.
 async fn resolve_user<R: WebhookProcessingRepository>(
     repo: &R,
@@ -463,6 +484,7 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
     if webhook.provider == "google_play" {
         fields = enrich_google_play_fields(repo, app_id, &webhook, fields).await?;
     }
+    fill_payment_product_id(repo, app_id, &webhook, &mut fields).await?;
     let canonical_event = normalize_event_type_with_payload(
         &webhook.provider,
         &webhook.event_type,
@@ -634,6 +656,7 @@ pub async fn process_webhook(
     if webhook.provider == "google_play" {
         fields = enrich_google_play_fields(repo, app_id, &webhook, fields).await?;
     }
+    fill_payment_product_id(repo, app_id, &webhook, &mut fields).await?;
     let provider = webhook.provider.clone();
     let webhook_provider_webhook_id = webhook.provider_webhook_id.clone();
     let webhook_subscription_id = webhook.subscription_id.clone();
