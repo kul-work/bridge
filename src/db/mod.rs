@@ -6,6 +6,5 @@ pub mod payments;
 pub mod provider_configs;
 pub mod webhooks;
 pub mod users;
-pub mod agent;
 pub mod checkout_idempotency;
 pub use database::Database;

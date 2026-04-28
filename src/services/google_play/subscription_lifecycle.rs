@@ -35,6 +35,7 @@ fn subscription_id_for_event<'a>(
         .or(webhook.subscription_id.as_deref())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn apply_transition_with_outcome<
     R: WebhookProcessingMutationRepository + ?Sized,
 >(

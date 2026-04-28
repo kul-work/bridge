@@ -1,5 +1,4 @@
 pub mod admin;
-pub mod agent;
 pub mod api_key;
 pub mod app;
 pub mod checkout;
@@ -10,7 +9,7 @@ pub mod user;
 pub mod webhook;
 
 pub use admin::AdminRepository;
-pub use agent::{AgentReadRepository, AgentRepository};
+
 pub use api_key::ApiKeyRepository;
 pub use app::{AppLookupRepository, ProviderConfigLookupRepository, AppConfigRepository};
 pub use checkout::CheckoutRepository;

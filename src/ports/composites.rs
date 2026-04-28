@@ -206,14 +206,6 @@ pub trait WebhookProcessingMutationRepository: WebhookSuppressionRepository + Se
         last_event_time: i64,
     ) -> Result<(), crate::error::BridgeError>;
 
-    async fn apply_topup_if_new(
-        &self,
-        app_id: Uuid,
-        external_user_id: &str,
-        amount_cents: i32,
-        charge_id: &str,
-    ) -> Result<bool, crate::error::BridgeError>;
-
     async fn mark_webhook_processed(&self, webhook_id: Uuid) -> Result<(), crate::error::BridgeError>;
 }
 

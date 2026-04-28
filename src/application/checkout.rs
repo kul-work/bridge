@@ -2,9 +2,8 @@ use uuid::Uuid;
 
 use crate::error::BridgeError;
 use crate::application::checkout_helpers::{
-    coinbase_amount_from_config, compute_request_fingerprint,
-    extract_coinbase_checkout_id, extract_coinbase_checkout_url,
-    normalize_provider_name, normalize_required_field, resolve_checkout_redirect_urls,
+    compute_request_fingerprint, normalize_provider_name,
+    normalize_required_field, resolve_checkout_redirect_urls,
     validate_email_format,
 };
 use crate::application::checkout_types::{CheckoutRequest, CheckoutResponse};
@@ -165,92 +164,6 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
                 provider: provider.clone(),
                 redirect_url: None,
                 mobile_checkout_data: Some(mobile_checkout_data),
-            }
-        }
-        "coinbase" => {
-            if let Some(checkout_url) = provider_config
-                .config
-                .get("checkout_url")
-                .or_else(|| provider_config.config.get("hosted_url"))
-                .and_then(|value| value.as_str())
-            {
-                CheckoutResponse {
-                    checkout_id,
-                    provider: provider.clone(),
-                    redirect_url: Some(checkout_url.to_string()),
-                    mobile_checkout_data: None,
-                }
-            } else {
-                let api_key = provider_config
-                    .config
-                    .get("api_key")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| BridgeError::ConfigError("Missing Coinbase api_key".to_string()))?;
-                let api_url = provider_config
-                    .config
-                    .get("api_url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("https://api.commerce.coinbase.com");
-                let amount = coinbase_amount_from_config(&provider_config.config)?;
-                let currency = provider_config
-                    .config
-                    .get("currency")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("USDC");
-
-                let coinbase_payload = serde_json::json!({
-                    "name": product_id,
-                    "description": format!("Checkout for {}", product_id),
-                    "pricing_type": "fixed_price",
-                    "local_price": {
-                        "amount": amount,
-                        "currency": currency,
-                    },
-                    "redirect_url": checkout_urls.success_url,
-                    "cancel_url": checkout_urls.cancel_url,
-                    "metadata": {
-                        "user_id": external_user_id,
-                        "external_user_id": external_user_id,
-                        "product_id": product_id,
-                        "provider": provider,
-                    }
-                });
-
-                let client = reqwest::Client::new();
-                let coinbase_response = client
-                    .post(format!("{}/charges", api_url.trim_end_matches('/')))
-                    .header("X-CC-Api-Key", api_key)
-                    .header("X-CC-Version", "2018-03-22")
-                    .header("Content-Type", "application/json")
-                    .json(&coinbase_payload)
-                    .send()
-                    .await
-                    .map_err(|e| BridgeError::ProviderError(format!("Coinbase checkout failed: {}", e)))?;
-
-                if !coinbase_response.status().is_success() {
-                    let status = coinbase_response.status();
-                    let body = coinbase_response.text().await.unwrap_or_default();
-                    return Err(BridgeError::ProviderError(format!(
-                        "Coinbase checkout failed: {} - {}",
-                        status, body
-                    )));
-                }
-
-                let data: serde_json::Value = coinbase_response
-                    .json()
-                    .await
-                    .map_err(|e| BridgeError::ProviderError(format!("Invalid Coinbase response: {}", e)))?;
-
-                let redirect_url = extract_coinbase_checkout_url(&data)
-                    .ok_or_else(|| BridgeError::ProviderError("Missing Coinbase hosted_url".to_string()))?;
-                let session_id = extract_coinbase_checkout_id(&data).unwrap_or(checkout_id.as_str());
-
-                CheckoutResponse {
-                    checkout_id: session_id.to_string(),
-                    provider: provider.clone(),
-                    redirect_url: Some(redirect_url.to_string()),
-                    mobile_checkout_data: None,
-                }
             }
         }
         _ => {

@@ -1,4 +1,3 @@
-use crate::application::checkout_helpers::parse_cents;
 use crate::ports::WebhookProviderSnapshot;
 
 use super::normalize::normalize_event_type_with_payload;
@@ -193,27 +192,6 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                 google_price_step_up_consent_deadline: None,
             }
         }
-        "coinbase" => WebhookFields {
-            subscription_id: None,
-            purchase_token: None,
-            amount_cents: p.pointer("/event/data/pricing/local/amount")
-                .and_then(|v| v.as_str())
-                .and_then(parse_cents),
-            auto_renewing: None,
-            current_period_end: None,
-            provider_transaction_id: p.pointer("/event/data/id")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            provider_customer_id: None,
-            product_id: p.pointer("/event/data/metadata/product_id")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            cancel_reason: None,
-            status: None,
-            google_subscription_state: None,
-            google_cancellation_context: None,
-            google_cancellation_feedback: None,
-            google_new_price_cents: None,
-            google_price_step_up_consent_deadline: None,
-        },
         _ => WebhookFields {
             subscription_id: None,
             purchase_token: None,

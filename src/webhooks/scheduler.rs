@@ -517,7 +517,6 @@ async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::error::
     info!("Starting data retention cleanup");
 
     SchedulerRepository::cleanup_old_webhook_provider(database.as_ref()).await?;
-    SchedulerRepository::cleanup_expired_agent_tokens(database.as_ref()).await?;
     SchedulerRepository::cleanup_purged_fraud_prevention(database.as_ref()).await?;
 
     info!("Data retention cleanup completed");

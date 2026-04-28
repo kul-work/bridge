@@ -13,7 +13,7 @@ use crate::db::{payments::Payment, subscriptions::Subscription};
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::ports::{
-    AgentReadRepository, PaymentReadRepository, SubscriptionReadRepository, WebhookReadRepository,
+    PaymentReadRepository, SubscriptionReadRepository, WebhookReadRepository,
 };
 use crate::state::AppState;
 
@@ -61,34 +61,6 @@ pub async fn data_export(
         collect_all_subscriptions(database.as_ref(), auth.app_id, &external_user_id).await?;
     let payments = collect_all_payments(database.as_ref(), auth.app_id, &external_user_id).await?;
 
-    let agent_credits = database
-        .as_ref()
-        .get_agent_credit(auth.app_id, &external_user_id)
-        .await?
-        .map(|c| {
-            json!({
-                "balance_cents": c.balance_cents,
-                "lifetime_spent_cents": c.lifetime_spent_cents,
-                "updated_at": c.updated_at
-            })
-        });
-
-    let agent_transactions = database
-        .as_ref()
-        .list_agent_transactions(auth.app_id, &external_user_id)
-        .await?
-        .into_iter()
-        .map(|t| {
-            json!({
-                "request_type": t.request_type,
-                "amount_cents": t.amount_cents,
-                "charge_id": t.charge_id,
-                "status": t.status,
-                "created_at": t.created_at
-            })
-        })
-        .collect::<Vec<_>>();
-
     let sub_ids: Vec<String> = subscriptions.iter().map(|s| s.subscription_id.clone()).collect();
     let tokens: Vec<String> = payments.iter().map(|p| p.provider_transaction_id.clone()).collect();
 
@@ -112,8 +84,6 @@ pub async fn data_export(
         "export_date": Utc::now(),
         "subscriptions": subscriptions,
         "payments": payments,
-        "agent_credits": agent_credits,
-        "agent_transactions": agent_transactions,
         "webhook_records": webhook_records
     })))
 }

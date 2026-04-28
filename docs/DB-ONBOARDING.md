@@ -42,7 +42,7 @@ VALUES (
   '{{STRONG_RANDOM_CALLBACK_SECRET}}',
   'https://myapp.example.com',
   120,
-  '{"checkout":20,"verify_purchase":20,"subscription_queries":100,"subscription_mutations":10,"payment_history":100,"purchase_registration":20,"agent":60}'::jsonb,
+  '{"checkout":20,"verify_purchase":20,"subscription_queries":100,"subscription_mutations":10,"payment_history":100,"purchase_registration":20}'::jsonb,
   true
 )
 RETURNING id, slug, webhook_ingress_token;
@@ -55,7 +55,7 @@ COMMIT;
 ## 2) Create provider config rows in `pay.provider_configs`
 
 One row per `(app_id, provider)`:
-- `provider` must match exactly: `google_play`, `creem`, `coinbase`
+- `provider` must match exactly: `google_play`, `creem`
 - `enabled` should be `true` for runtime use
 
 ### Google Play
@@ -114,25 +114,6 @@ VALUES (
 );
 ```
 
-### Coinbase
-
-Required:
-- `api_key`
-- `webhook_secret`
-
-```sql
-INSERT INTO pay.provider_configs (app_id, provider, config, enabled)
-VALUES (
-  '{{APP_ID}}'::uuid,
-  'coinbase',
-  '{
-    "api_key":"cb_xxx",
-    "webhook_secret":"cb_whsec_xxx"
-  }'::jsonb,
-  true
-);
-```
-
 ## 3) Create API key row in `pay.api_keys`
 
 Bridge auth logic expects:
@@ -169,7 +150,6 @@ Use this route shape:
 Examples:
 - `/webhooks/{token}/google_play`
 - `/webhooks/{token}/creem`
-- `/webhooks/{token}/coinbase`
 
 ## 5) DB validation checks
 

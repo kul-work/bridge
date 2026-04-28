@@ -26,20 +26,6 @@ CREATE INDEX idx_webhook_provider_unprocessed
     ON webhook_provider(app_id, created_at)
     WHERE processed = false;
 
--- Agent credits: Active agents with balance
-CREATE INDEX idx_agent_credits_balance
-    ON agent_credits(app_id, balance_cents)
-    WHERE balance_cents > 0;
-
--- Agent transactions: By type and status for analytics
-CREATE INDEX idx_agent_transactions_by_type_status
-    ON agent_transactions(request_type, status, created_at DESC);
-
--- Agent payment tokens: Unused tokens for cleanup
-CREATE INDEX idx_agent_payment_tokens_cleanup
-    ON agent_payment_tokens(expires_at)
-    WHERE used = FALSE;
-
 -- Fraud prevention: Lookup by provider ID for restore purchases
 CREATE INDEX idx_fraud_prevention_provider_lookup
     ON fraud_prevention(app_id, provider, provider_obfuscated_account_id)

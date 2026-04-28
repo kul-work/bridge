@@ -53,14 +53,6 @@ async fn cancel_subscription_at_provider<R>(
 ) where
     R: ProviderConfigLookupRepository + ?Sized,
 {
-    if subscription.provider == "coinbase" {
-        tracing::info!(
-            subscription_id = subscription.subscription_id,
-            "Coinbase subscription has no direct API cancellation"
-        );
-        return;
-    }
-
     if subscription.provider == "google_play" && subscription.purchase_token.is_none() {
         tracing::warn!(
             app_id = %app_id,
@@ -164,8 +156,8 @@ mod tests {
         let repo = FakeRepo {
             subscriptions: vec![
                 UserSubscriptionCancellationSnapshot {
-                    subscription_id: "coinbase-sub".to_string(),
-                    provider: "coinbase".to_string(),
+                    subscription_id: "legacy-sub".to_string(),
+                    provider: "legacy".to_string(),
                     purchase_token: None,
                 },
                 UserSubscriptionCancellationSnapshot {
@@ -200,7 +192,7 @@ mod tests {
         assert!(*repo.anonymized.lock().unwrap());
         assert_eq!(
             *repo.provider_config_requests.lock().unwrap(),
-            vec!["unsupported".to_string()]
+            vec!["legacy".to_string(), "unsupported".to_string()]
         );
     }
 }

@@ -121,10 +121,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/purchase/register", axum::routing::post(handlers::payments::register_purchase))
         .route("/users/:external_user_id/anonymize", axum::routing::post(handlers::users::anonymize))
         .route("/users/:external_user_id/data-export", axum::routing::get(handlers::users::data_export))
-        .route("/agent/balance", axum::routing::get(handlers::agent::balance))
-        .route("/agent/token", axum::routing::post(handlers::agent::token))
-        .route("/agent/charge", axum::routing::post(handlers::agent::charge))
-        .route("/agent/topup", axum::routing::post(handlers::agent::topup))
+        
         .layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
             middleware::rate_limit::api_rate_limit_middleware,

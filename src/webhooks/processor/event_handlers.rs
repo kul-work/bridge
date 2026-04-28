@@ -663,19 +663,6 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
             }))
         }
 
-        "payment.failed" if ctx.webhook.provider == "coinbase" => {
-            let charge_id = ctx.fields.provider_transaction_id.as_deref()
-                .or(ctx.webhook.subscription_id.as_deref())
-                .unwrap_or(&ctx.webhook.provider_webhook_id);
-            info!("Coinbase charge failed: charge_id={}", charge_id);
-
-            Ok(EventHandling::Handled(EventEffects {
-                callback_event_type: Some("payment.failed".to_string()),
-                callback_status_override: Some("failed".to_string()),
-                ..Default::default()
-            }))
-        }
-
         "payment.failed" => {
             if let Some(user_id) = ctx.external_user_id.as_deref() {
                 let sub_id = ctx.fields.subscription_id.as_deref()
@@ -895,58 +882,9 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
     }
 }
 
-async fn handle_coinbase_charge<R: WebhookProcessingRepository + ?Sized>(
-    repo: &R,
-    ctx: &EventContext<'_>,
-) -> Result<EventHandling, BridgeError> {
-    let charge_id = ctx.fields.provider_transaction_id.clone()
-        .or_else(|| ctx.webhook.subscription_id.clone())
-        .unwrap_or_else(|| ctx.webhook.provider_webhook_id.clone());
-    let external_user_id = ctx.webhook.payload.pointer("/event/data/metadata/external_user_id")
-        .and_then(|v| v.as_str())
-        .or_else(|| ctx.webhook.payload.pointer("/event/data/metadata/user_id").and_then(|v| v.as_str()))
-        .map(|s| s.to_string());
-    let amount_cents = ctx.fields.amount_cents
-        .or_else(|| {
-            ctx.webhook.payload.pointer("/event/data/metadata/amount_cents")
-                .and_then(|v| v.as_i64())
-                .map(|v| v as i32)
-        })
-        .unwrap_or(0);
-
-    if amount_cents <= 0 {
-        info!("Coinbase charge {} skipped: non-positive amount {}", charge_id, amount_cents);
-    } else if let Some(user_id) = external_user_id {
-        let inserted = repo.apply_topup_if_new(
-            ctx.app_id,
-            &user_id,
-            amount_cents,
-            &charge_id,
-        ).await?;
-
-        if inserted {
-            info!("Coinbase topup applied: charge_id={}, user={}, amount_cents={}", charge_id, user_id, amount_cents);
-        } else {
-            info!("Coinbase topup already applied (idempotent): charge_id={}", charge_id);
-        }
-    } else {
-        info!("Coinbase charge {} skipped: missing metadata external_user_id/user_id", charge_id);
-    }
-
-    Ok(EventHandling::Handled(EventEffects::default()))
-}
-
 pub(super) async fn handle_provider_event<R: WebhookProcessingRepository + ?Sized>(
-    repo: &R,
-    ctx: &EventContext<'_>,
+    _repo: &R,
+    _ctx: &EventContext<'_>,
 ) -> Result<EventHandling, BridgeError> {
-    match ctx.canonical_event {
-        "charge.confirmed" if ctx.webhook.provider == "coinbase" => {
-            handle_coinbase_charge(repo, ctx).await
-        }
-        "payment.succeeded" if ctx.webhook.provider == "coinbase" => {
-            handle_coinbase_charge(repo, ctx).await
-        }
-        _ => Ok(EventHandling::NotHandled),
-    }
+    Ok(EventHandling::NotHandled)
 }

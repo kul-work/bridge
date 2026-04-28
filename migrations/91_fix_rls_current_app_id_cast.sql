@@ -61,27 +61,6 @@ CREATE POLICY tenant_isolation_provider_configs ON pay.provider_configs
     USING (app_id = current_app_id())
     WITH CHECK (app_id = current_app_id());
 
-DROP POLICY IF EXISTS tenant_isolation_agent_credits ON pay.agent_credits;
-CREATE POLICY tenant_isolation_agent_credits ON pay.agent_credits
-    FOR ALL
-    TO bridge_app
-    USING (app_id = current_app_id())
-    WITH CHECK (app_id = current_app_id());
-
-DROP POLICY IF EXISTS tenant_isolation_agent_transactions ON pay.agent_transactions;
-CREATE POLICY tenant_isolation_agent_transactions ON pay.agent_transactions
-    FOR ALL
-    TO bridge_app
-    USING (app_id = current_app_id())
-    WITH CHECK (app_id = current_app_id());
-
-DROP POLICY IF EXISTS tenant_isolation_agent_payment_tokens ON pay.agent_payment_tokens;
-CREATE POLICY tenant_isolation_agent_payment_tokens ON pay.agent_payment_tokens
-    FOR ALL
-    TO bridge_app
-    USING (app_id = current_app_id())
-    WITH CHECK (app_id = current_app_id());
-
 DROP POLICY IF EXISTS tenant_isolation_fraud_prevention ON pay.fraud_prevention;
 CREATE POLICY tenant_isolation_fraud_prevention ON pay.fraud_prevention
     FOR ALL

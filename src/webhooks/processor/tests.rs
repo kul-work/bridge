@@ -257,14 +257,6 @@ fn test_creem_metadata_user_id_from_checkout_path() {
 }
 
 #[test]
-fn test_normalize_coinbase_special_events() {
-    assert_eq!(
-        normalize_event_type("coinbase", "charge:failed"),
-        "charge.failed"
-    );
-}
-
-#[test]
 fn test_normalize_status() {
     assert_eq!(normalize_status(Some("Trialing")), "trial");
     assert_eq!(normalize_status(Some(" PAID ")), "active");
@@ -317,11 +309,11 @@ fn test_extract_metadata_user_id_supports_nested_paths() {
         "event": {
             "data": {
                 "metadata": {
-                    "external_user_id": "coinbase-user"
+                    "external_user_id": "nested-user"
                 }
             }
         }
     });
 
-    assert_eq!(extract_metadata_user_id(&payload).as_deref(), Some("coinbase-user"));
+    assert_eq!(extract_metadata_user_id(&payload).as_deref(), Some("nested-user"));
 }

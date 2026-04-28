@@ -27,9 +27,6 @@ ALTER TABLE pay.payments              ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay.webhook_provider      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay.webhook_delivery      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay.provider_configs      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pay.agent_credits         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pay.agent_transactions    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pay.agent_payment_tokens  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay.fraud_prevention      ENABLE ROW LEVEL SECURITY;
 
 -- apps table is the registry itself — no tenant scoping needed.
@@ -79,27 +76,6 @@ CREATE POLICY tenant_isolation_webhook_delivery ON pay.webhook_delivery
 
 -- provider_configs
 CREATE POLICY tenant_isolation_provider_configs ON pay.provider_configs
-    FOR ALL
-    TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
-
--- agent_credits
-CREATE POLICY tenant_isolation_agent_credits ON pay.agent_credits
-    FOR ALL
-    TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
-
--- agent_transactions
-CREATE POLICY tenant_isolation_agent_transactions ON pay.agent_transactions
-    FOR ALL
-    TO bridge_app
-    USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
-    WITH CHECK (app_id = current_setting('bridge.current_app_id', true)::uuid);
-
--- agent_payment_tokens
-CREATE POLICY tenant_isolation_agent_payment_tokens ON pay.agent_payment_tokens
     FOR ALL
     TO bridge_app
     USING (app_id = current_setting('bridge.current_app_id', true)::uuid)
@@ -268,11 +244,5 @@ COMMENT ON POLICY tenant_isolation_webhook_delivery ON pay.webhook_delivery IS
     'RLS: restrict webhook_delivery access to current app_id session variable.';
 COMMENT ON POLICY tenant_isolation_provider_configs ON pay.provider_configs IS
     'RLS: restrict provider_configs access to current app_id session variable.';
-COMMENT ON POLICY tenant_isolation_agent_credits ON pay.agent_credits IS
-    'RLS: restrict agent_credits access to current app_id session variable.';
-COMMENT ON POLICY tenant_isolation_agent_transactions ON pay.agent_transactions IS
-    'RLS: restrict agent_transactions access to current app_id session variable.';
-COMMENT ON POLICY tenant_isolation_agent_payment_tokens ON pay.agent_payment_tokens IS
-    'RLS: restrict agent_payment_tokens access to current app_id session variable.';
 COMMENT ON POLICY tenant_isolation_fraud_prevention ON pay.fraud_prevention IS
     'RLS: restrict fraud_prevention access to current app_id session variable.';

@@ -4,20 +4,20 @@ If you're running in Crush, also read the rules from `.\.crush\AGENTS.md`.
 
 ## Project Overview
 
-**Bridge** is a central payment processing service designed to handle subscription lifecycles, payments, and agent micropayments for all Tyde applications. It decouples payment logic from business logic.
+**Bridge** is a central payment processing service designed to handle subscription lifecycles and payments for all Tyde applications. It decouples payment logic from business logic.
 
 **Tech Stack:**
 - **Backend**: Rust + Axum + Tokio
 - **Database**: PostgreSQL (SQLx)
-- **API Support**: Multi-provider registry (Google Play, Creem, Coinbase)
+- **API Support**: Multi-provider registry (Google Play, Creem)
 - **Security**: Double-ended HMAC validation on callbacks, provider signature checking.
 
 ## Architecture & Code Organization
 
 **Backend Structure:**
 - `src/main.rs` - Server entrypoint (Axum setup)
-- `src/handlers/` - HTTP endpoint handlers (checkout, verification, subscriptions, agent, admin)
-- `src/services/` - Provider integration (creem, google_play, coinbase) and core logic (payment, email)
+- `src/handlers/` - HTTP endpoint handlers (checkout, verification, subscriptions, admin)
+- `src/services/` - Provider integration (creem, google_play) and core logic (payment, email)
 - `src/webhooks/` - Webhook ingress routing and status processing
 - `src/db/` - Database modules (queries separated by domain)
 - `src/middleware/` - Auth, Rate limiting, and tracing layers
