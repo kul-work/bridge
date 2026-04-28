@@ -122,11 +122,6 @@ pub(super) fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "subscription.price_step_up_consent_updated" => "subscription.price_step_up".to_string(),
             _ => event_type.to_string(),
         },
-        "coinbase" => match event_type {
-            "charge:confirmed" => "charge.confirmed".to_string(),
-            "charge:failed" => "charge.failed".to_string(),
-            _ => event_type.to_string(),
-        },
         _ => event_type.to_string(),
     }
 }

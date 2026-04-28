@@ -625,23 +625,6 @@ pub async fn process_webhook(
         Some(&webhook.payload),
     );
 
-    if webhook.provider == "coinbase" && canonical_event == "charge.failed" {
-        let fields = extract_webhook_fields(&webhook);
-        let charge_id = fields.provider_transaction_id
-            .as_deref()
-            .or(webhook.subscription_id.as_deref())
-            .unwrap_or(&webhook.provider_webhook_id);
-        let email = webhook.payload.pointer("/event/data/metadata/email")
-            .and_then(|value| value.as_str())
-            .unwrap_or("unknown");
-
-        warn!("Coinbase charge failed: charge_id={}, email={}", charge_id, email);
-
-        repo.mark_webhook_processed(webhook_provider_id).await?;
-
-        return Ok(None);
-    }
-
     let external_user_id = resolve_user(repo, app_id, &webhook).await;
     if !ensure_resolved_user(repo, webhook_provider_id, &webhook, &external_user_id).await? {
         return Ok(None);

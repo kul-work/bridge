@@ -144,23 +144,6 @@ impl WebhookProcessingMutationRepository for db::Database {
         .await
     }
 
-    async fn apply_topup_if_new(
-        &self,
-        app_id: Uuid,
-        external_user_id: &str,
-        amount_cents: i32,
-        charge_id: &str,
-    ) -> Result<bool, BridgeError> {
-        db::agent::apply_topup_if_new(
-            self.pool(),
-            app_id,
-            external_user_id,
-            amount_cents,
-            charge_id,
-        )
-        .await
-    }
-
     async fn mark_webhook_processed(&self, webhook_id: Uuid) -> Result<(), BridgeError> {
         db::webhooks::mark_webhook_processed(self.pool(), webhook_id).await
     }
