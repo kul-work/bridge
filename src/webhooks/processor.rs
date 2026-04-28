@@ -68,7 +68,7 @@ async fn suppress_unresolved_webhook<R: WebhookProcessingRepository>(
     webhook_provider_id: Uuid,
     webhook: &WebhookProviderSnapshot,
 ) -> Result<(), BridgeError> {
-    error!(
+    warn!(
         "Webhook {} discarded: unable to resolve external_user_id (provider={}, event={})",
         webhook.provider_webhook_id,
         webhook.provider,
