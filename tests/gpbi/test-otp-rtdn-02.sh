@@ -38,8 +38,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="otp-rtdn-02-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
+REPORT_FILE="otp-rtdn-02-report.json"
 WEBHOOK_WAIT_ATTEMPTS=10
 WEBHOOK_WAIT_SECONDS=1
 
@@ -96,9 +100,20 @@ echo -e "${YELLOW}========================================${NC}"
 echo "OTP-RTDN-02: Webhook Refund Completed"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
-# Step 1: External User ID
-USER_ID="test_otp_user_01"
+# Step 1: External User ID (read from OTP-01 report if available)
+if [[ -f "$OTP_01_REPORT" ]]; then
+    REPORT_USER_ID=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('user_id', ''))" "$OTP_01_REPORT" 2>/dev/null || echo "")
+    if [[ -n "$REPORT_USER_ID" ]]; then
+        USER_ID="$REPORT_USER_ID"
+    else
+        USER_ID="test_otp_user_01"
+    fi
+else
+    USER_ID="test_otp_user_01"
+fi
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 
 if [[ -z "$PURCHASE_TOKEN" && -f "$OTP_01_REPORT" ]]; then
@@ -166,8 +181,8 @@ echo -e "${YELLOW}[3/6] Sending ONE_TIME_PRODUCT_CANCELED webhook (refund notifi
 echo ""
 
 # Generate current timestamp in milliseconds
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="webhook-refund-$(date +%s)-$RANDOM"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="webhook-otp-rtdn-02-$TEST_RUN_ID"
 
 echo "Webhook details:"
 echo "  Message ID: $MESSAGE_ID"
@@ -185,7 +200,7 @@ NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "voidedPurchaseNotification": {
     "purchaseToken": "$PURCHASE_TOKEN",
     "orderId": "GPA.1111-2222-3333-44444",
@@ -340,11 +355,14 @@ if [[ "$STATUS_REVOKED" != "true" ]] || [[ "$PAYMENT_REFUNDED" != "true" ]] || [
 fi
 
 # Generate JSON report
-cat > otp-rtdn-02-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "OTP-RTDN-02",
   "test_name": "Webhook Refund Completed",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "product_id": "$PRODUCT_ID",
@@ -373,8 +391,8 @@ else
 fi
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: otp-rtdn-02-report.json"
-cat otp-rtdn-02-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" != "pass" ]]; then

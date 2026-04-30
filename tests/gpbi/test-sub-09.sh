@@ -36,7 +36,9 @@ NC='\033[0m' # No Color
 
 # Test configuration
 TIMESTAMP=$(date +%s)
-DUMMY_TOKEN="test-sub-09-token-$TIMESTAMP"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="sub-09-${TIMESTAMP}-$$"
+DUMMY_TOKEN="test-sub-09-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 ORDER_ID="GPA.1234-5678-9012-SUB09"
 REPORT_FILE="sub-09-report.json"
@@ -44,6 +46,8 @@ REPORT_FILE="sub-09-report.json"
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-09: Bridge Subscription Revoked (Refund)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: External User ID
@@ -74,7 +78,7 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-sub-09-setup\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-reg-09-$(date +%s)\"
+    \"transaction_id\": \"$TEST_RUN_ID\"
   }")
 
 # Verify purchase
@@ -117,7 +121,7 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
-      \"message_id\": \"test-webhook-09-$(date +%s)\",
+      \"message_id\": \"test-webhook-09-$TEST_RUN_ID\",
       \"attributes\": {}
     }
   }" > /dev/null
@@ -154,11 +158,14 @@ fi
 echo ""
 
 # Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-09",
   "test_name": "Bridge Subscription Revoked (Refund)",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,
   "verify_http_code": $VERIFY_HTTP_CODE,

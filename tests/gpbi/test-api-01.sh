@@ -34,8 +34,11 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Test configuration
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_api_01_user_$RUN_ID}"
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="api-01-${TIMESTAMP}-$$"
+REPORT_FILE="api-01-report.json"
+USER_ID="${USER_ID:-test_api_01_user_$TEST_RUN_ID}"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -51,6 +54,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "API-01: Rate Limit Headers"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -100,11 +105,14 @@ fi
 TEST_STATUS="pass"
 
 # Step 4: Report
-cat > api-01-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "API-01",
   "test_name": "Rate Limit Headers",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "results": {
@@ -117,7 +125,7 @@ cat > api-01-report.json <<EOF
 EOF
 
 echo -e "${GREEN}✓ API-01 Test PASSED${NC}"
-cat api-01-report.json
+cat "$REPORT_FILE"
 echo ""
 
 exit 0

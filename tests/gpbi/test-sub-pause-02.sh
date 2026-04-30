@@ -36,13 +36,17 @@ NC='\033[0m' # No Color
 
 # Test configuration
 TIMESTAMP=$(date +%s)
-DUMMY_TOKEN="test-sub-pause-02-$TIMESTAMP"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="sub-pause-02-${TIMESTAMP}-$$"
+DUMMY_TOKEN="test-sub-pause-02-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 REPORT_FILE="sub-pause-02-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-PAUSE-02: Pause Takes Effect"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: External User ID
@@ -97,7 +101,7 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
-      \"message_id\": \"test-webhook-pause-02-$(date +%s)\",
+      \"message_id\": \"test-webhook-pause-02-$TEST_RUN_ID\",
       \"attributes\": {}
     }
   }" > /dev/null
@@ -121,11 +125,14 @@ fi
 echo ""
 
 # Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-PAUSE-02",
   "test_name": "Pause Takes Effect (Auto-Transition)",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
   "product_id": "$PRODUCT_ID",

@@ -37,13 +37,17 @@ NC='\033[0m' # No Color
 
 # Test configuration
 TIMESTAMP=$(date +%s)
-DUMMY_TOKEN="resubscribe-linking-required-$TIMESTAMP"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="sub-19b-${TIMESTAMP}-$$"
+DUMMY_TOKEN="resubscribe-linking-required-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 REPORT_FILE="sub-19b-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-19B: LinkingRequired Response"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: External User IDs
@@ -75,7 +79,7 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-sub-19b-u1\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-reg-19b-u1-$TIMESTAMP\"
+    \"transaction_id\": \"$TEST_RUN_ID\"
   }")
 
 # Verify
@@ -108,7 +112,7 @@ curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
     \"reason\": \"test-sub-19b-u2\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-reg-19b-u2-$TIMESTAMP\"
+    \"transaction_id\": \"$TEST_RUN_ID-u2\"
   }" > /dev/null 2>&1 || true
 
 # Verify (expecting LinkingRequired)
@@ -153,7 +157,8 @@ else
 {
   "test_id": "SUB-19B",
   "test_name": "LinkingRequired Response (Different Account Verification)",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
   "status": "fail",
   "user1_id": "$USER1_ID",
   "user2_id": "$USER2_ID",
@@ -168,11 +173,14 @@ fi
 echo ""
 
 # Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-19B",
   "test_name": "LinkingRequired Response (Different Account Verification)",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user1_id": "$USER1_ID",
   "user2_id": "$USER2_ID",

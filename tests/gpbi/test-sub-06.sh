@@ -36,14 +36,18 @@ NC='\033[0m' # No Color
 
 # Test configuration
 TIMESTAMP=$(date +%s)
-OLD_TOKEN="test-sub-06-old-token-$TIMESTAMP"
-NEW_TOKEN="test-sub-06-new-token-$TIMESTAMP"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="sub-06-${TIMESTAMP}-$$"
+OLD_TOKEN="test-sub-06-old-token-$TEST_RUN_ID"
+NEW_TOKEN="test-sub-06-new-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 REPORT_FILE="sub-06-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-06: Re-subscription (After Expiry)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: External User ID
@@ -85,7 +89,7 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-resub-06\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-reg-resub-06-$(date +%s)\"
+    \"transaction_id\": \"$TEST_RUN_ID\"
   }")
 
 # Verify purchase with NEW token
@@ -121,11 +125,14 @@ fi
 echo ""
 
 # Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-06",
   "test_name": "Re-subscription (After Expiry)",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,
   "verify_http_code": $VERIFY_HTTP_CODE,

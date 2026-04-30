@@ -35,7 +35,12 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="otp-03-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_OTP"
+REPORT_FILE="otp-03-report.json"
+USER_ID="${USER_ID:-test_otp_user_03_$TEST_RUN_ID}"
 
 # Defaults
 DB_URL="$BRIDGE_DB_URL"
@@ -58,9 +63,10 @@ echo -e "${YELLOW}========================================${NC}"
 echo "OTP-03: User Cancellation Test"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: External User ID
-USER_ID="test_otp_user_03"
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
@@ -154,11 +160,14 @@ echo -e "${GREEN}✓ User can immediately attempt purchase again${NC}"
 echo ""
 
 # Generate JSON report
-cat > otp-03-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "OTP-03",
   "test_name": "User Cancellation",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
   "product_id": "$PRODUCT_ID",
@@ -177,8 +186,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "${GREEN}✓ OTP-03 Test PASSED${NC}"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: otp-03-report.json"
-cat otp-03-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 exit 0

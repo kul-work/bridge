@@ -38,10 +38,14 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="log-03-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_log_03_user_$RUN_ID}"
+REPORT_FILE="log-03-report.json"
+USER_ID="${USER_ID:-test_log_03_user_$TEST_RUN_ID}"
+DUMMY_TOKEN="test-log-03-token-$TEST_RUN_ID"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -56,6 +60,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "LOG-03: ACK Failure & Retry Logging"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -74,13 +80,8 @@ echo ""
 # Step 2: Clean up and prepare
 echo -e "${YELLOW}[2/6] Preparing test environment${NC}"
 
-PURCHASE_TOKEN="test-log-03-ack-$(date +%s)"
-
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" 2>/dev/null
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" 2>/dev/null
-
 echo -e "${GREEN}✓ Cleanup complete${NC}"
-echo -e "${BLUE}Purchase token: $PURCHASE_TOKEN${NC}"
+echo -e "${BLUE}Purchase token: $DUMMY_TOKEN${NC}"
 echo ""
 
 # Step 2.5: Register purchase (Bridge requirement)
@@ -95,7 +96,7 @@ REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/
     \"reason\": \"test-log-03-setup\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-log-03-reg-$RUN_ID\"
+    \"transaction_id\": \"test-log-03-reg-$TEST_RUN_ID\"
   }")
 
 if [[ "$REGISTER_HTTP" == "200" ]]; then
@@ -131,7 +132,7 @@ VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
     \"provider\": \"$PROVIDER\",
     \"external_user_id\": \"$USER_ID\",
     \"subscription_id\": \"$PRODUCT_ID\",
-    \"purchase_token\": \"$PURCHASE_TOKEN\",
+    \"purchase_token\": \"$DUMMY_TOKEN\",
     \"product_type\": \"subscription\"
   }")
 
@@ -150,13 +151,13 @@ echo ""
 # Step 4: Verify subscription exists and check acknowledged_at
 echo -e "${YELLOW}[4/6] Verifying subscription and ACK status (DB Validation)${NC}"
 
-SUB_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null || echo "")
+SUB_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t 2>/dev/null || echo "")
 
 if [[ ! -z "$SUB_DATA" ]] && [[ "$SUB_DATA" != *"(0 rows)"* ]]; then
     SUB_STATUS=$(echo "$SUB_DATA" | awk -F '|' '{print $1}' | tr -d ' ')
     
     # Fetch acknowledged_at from PAYMENTS table
-    ACK_AT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+    ACK_AT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$DUMMY_TOKEN';" -t 2>/dev/null | tr -d ' ')
 
     echo "Subscription status: $SUB_STATUS"
     echo "Acknowledged at: $ACK_AT"
@@ -214,7 +215,7 @@ echo ""
 echo -e "${YELLOW}[6/6] Cleanup and Summary${NC}"
 echo ""
 
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" 2>/dev/null
 echo -e "${GREEN}✓ Cleaned up test data${NC}"
 echo ""
 
@@ -228,14 +229,17 @@ else
 fi
 
 # Generate JSON report
-cat > log-03-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "LOG-03",
   "test_name": "ACK Failure & Retry Logging",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
-  "purchase_token": "$PURCHASE_TOKEN",
+  "purchase_token": "$DUMMY_TOKEN",
   "results": {
     "purchase_success": $PURCHASE_OK,
     "verify_http_code": $VERIFY_HTTP,
@@ -260,8 +264,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: log-03-report.json"
-cat log-03-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" != "pass" ]]; then

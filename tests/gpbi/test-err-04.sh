@@ -39,10 +39,15 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="err-04-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_err_04_user_$RUN_ID}"
+REPORT_FILE="err-04-report.json"
+USER_ID="${USER_ID:-test_err_04_user_$TEST_RUN_ID}"
+DUMMY_TOKEN="test-err-04-token-$TEST_RUN_ID"
+WEBHOOK_ID="webhook-err-04-$TEST_RUN_ID"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -58,6 +63,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "ERR-04: Revoked/Refunded Purchase Token"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -76,7 +83,7 @@ echo ""
 # Step 2: Setup - create an active subscription first
 echo -e "${YELLOW}[2/6] Setting up active subscription${NC}"
 
-PURCHASE_TOKEN="test-err-04-revoke-$(date +%s)"
+PURCHASE_TOKEN="test-err-04-token-$TEST_RUN_ID"
 
 # Clean up and create subscription
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
@@ -102,9 +109,8 @@ EXISTING_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT
 echo "Debug: Found subscription: $EXISTING_SUB"
 echo ""
 
-sleep 1  # Ensure webhook timestamp > subscription last_event_time (stale-event suppression uses strict <)
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="err-04-revoke-$(date +%s)"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="webhook-err-04-$TEST_RUN_ID"
 
 echo "Webhook details:"
 echo "  Message ID: $MESSAGE_ID"
@@ -117,7 +123,7 @@ NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 12,
@@ -221,11 +227,14 @@ else
 fi
 
 # Generate JSON report
-cat > err-04-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "ERR-04",
   "test_name": "Revoked/Refunded Purchase Token",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
@@ -245,8 +254,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: err-04-report.json"
-cat err-04-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

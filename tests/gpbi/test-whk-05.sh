@@ -34,11 +34,15 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="whk-05-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 APP_ID="$BRIDGE_APP_ID"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_whk_05_user_$RUN_ID}"
+REPORT_FILE="whk-05-report.json"
+USER_ID="${USER_ID:-test_whk_05_user_$TEST_RUN_ID}"
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 DB_URL="${BRIDGE_DB_URL}"
 
@@ -50,6 +54,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-05: Refund Idempotency Verification"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 echo -e "${YELLOW}[1/4] Preparing generated user_id for this run${NC}"
@@ -66,10 +72,10 @@ echo ""
 
 echo -e "${YELLOW}[2/4] Setting up payment and subscription fixtures${NC}"
 
-PURCHASE_TOKEN="test-refund-idem-$(date +%s)"
+PURCHASE_TOKEN="test-whk-05-token-$TEST_RUN_ID"
 
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.webhook_provider WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND purchase_token LIKE 'test-refund-idem%';" 2>/dev/null
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND provider_transaction_id LIKE 'test-refund-idem%';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.webhook_provider WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND purchase_token LIKE 'test-whk-05%';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND provider_transaction_id LIKE 'test-whk-05%';" 2>/dev/null
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" 2>/dev/null
 
 INSERT_PAYMENT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.payments (app_id, external_user_id, provider, provider_transaction_id, subscription_id, status, amount_cents) VALUES ('$APP_ID', '$USER_ID', '$PROVIDER', '$PURCHASE_TOKEN', '$PRODUCT_ID', 'success', 1000) ON CONFLICT (app_id, provider, provider_transaction_id) DO UPDATE SET external_user_id = EXCLUDED.external_user_id, subscription_id = EXCLUDED.subscription_id, status = EXCLUDED.status, amount_cents = EXCLUDED.amount_cents;" 2>&1)
@@ -108,7 +114,7 @@ NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 
 echo -e "${YELLOW}[3/4] Sending first refund webhook${NC}"
 
-MESSAGE_ID_1="msg-refund-1-$(date +%s)"
+MESSAGE_ID_1="msg-whk-05-refund-1-$TEST_RUN_ID"
 RESPONSE_1=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
@@ -133,7 +139,7 @@ echo ""
 
 echo -e "${YELLOW}[4/4] Sending second refund webhook with a different message_id${NC}"
 
-MESSAGE_ID_2="msg-refund-2-$(date +%s)"
+MESSAGE_ID_2="msg-whk-05-refund-2-$TEST_RUN_ID"
 RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
@@ -166,11 +172,15 @@ else
     TEST_RESULT_MSG="${RED}[FAIL] WHK-05 Test FAILED${NC}"
 fi
 
-cat > whk-05-report.json <<EOF
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "WHK-05",
   "test_name": "Refund Idempotency Verification",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
@@ -192,8 +202,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: whk-05-report.json"
-cat whk-05-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

@@ -41,11 +41,14 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="whk-01d-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 APP_ID="$BRIDGE_APP_ID"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_whk_01d_user_$RUN_ID}"
+REPORT_FILE="whk-01d-report.json"
+USER_ID="${USER_ID:-test_whk_01d_user_$TEST_RUN_ID}"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -61,6 +64,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-01D: Audience Validation Disabled (Dev Mode)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -83,7 +88,7 @@ SUB_EXISTS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -
 
 if [[ -z "$SUB_EXISTS" ]] || [[ "$SUB_EXISTS" == *"(0 rows)"* ]]; then
     echo -e "${YELLOW}⚠ No subscription found, creating test record...${NC}"
-    DUMMY_TOKEN="test-subscription-whk-01d-$(date +%s)"
+    DUMMY_TOKEN="test-subscription-whk-01d-$TEST_RUN_ID"
     psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$APP_ID', '$USER_ID', '$PRODUCT_ID', 'active', '$DUMMY_TOKEN', '$PROVIDER', true, NOW(), NOW()) ON CONFLICT (app_id, external_user_id, subscription_id, provider) DO UPDATE SET status = 'active', purchase_token = EXCLUDED.purchase_token, auto_renewing = EXCLUDED.auto_renewing, updated_at = NOW();" > /dev/null
     echo -e "${GREEN}✓ Created test subscription record${NC}"
     PURCHASE_TOKEN="$DUMMY_TOKEN"
@@ -105,8 +110,8 @@ echo ""
 echo -e "${YELLOW}[4/6] Sending webhook with incorrect/any audience claim${NC}"
 echo ""
 
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="whk-01d-dev-mode-$(date +%s)"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="whk-01d-dev-mode-$TEST_RUN_ID"
 WRONG_AUDIENCE="https://random-domain.com/wrong-audience"
 
 echo "Webhook details:"
@@ -122,7 +127,7 @@ NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 2,
@@ -216,11 +221,15 @@ else
 fi
 
 # Generate JSON report
-cat > whk-01d-report.json <<EOF
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "WHK-01D",
   "test_name": "Audience Validation Disabled (Dev Mode)",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "message_id": "$MESSAGE_ID",
@@ -241,8 +250,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: whk-01d-report.json"
-cat whk-01d-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

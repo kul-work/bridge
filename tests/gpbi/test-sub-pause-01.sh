@@ -36,13 +36,17 @@ NC='\033[0m' # No Color
 
 # Test configuration
 TIMESTAMP=$(date +%s)
-DUMMY_TOKEN="test-sub-pause-01-$TIMESTAMP"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="sub-pause-01-${TIMESTAMP}-$$"
+DUMMY_TOKEN="test-sub-pause-01-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 REPORT_FILE="sub-pause-01-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-PAUSE-01: Schedule Pause (Type 11)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: External User ID
@@ -73,7 +77,7 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-pause-scheduled-setup-01\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-reg-pause-01-$(date +%s)\"
+    \"transaction_id\": \"$TEST_RUN_ID\"
   }")
 
 # Verify purchase
@@ -120,7 +124,7 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
-      \"message_id\": \"test-webhook-pause-01-$(date +%s)\",
+      \"message_id\": \"test-webhook-pause-01-$TEST_RUN_ID\",
       \"attributes\": {}
     }
   }" > /dev/null
@@ -144,11 +148,14 @@ fi
 echo ""
 
 # Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-PAUSE-01",
   "test_name": "Schedule Pause (Type 11 webhook)",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
   "product_id": "$PRODUCT_ID",
