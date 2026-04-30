@@ -27,15 +27,22 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-whk-05-${TIMESTAMP}-$$"
+REPORT_FILE="test-whk-05-report.json"
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-05: Creem checkout.completed ingress + normalization"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 APP_ID="${BRIDGE_APP_ID}"
 
-RUN_ID="$(date +%s)-$RANDOM"
+RUN_ID="$TEST_RUN_ID"
 EVENT_ID="evt_creem_e2e_${RUN_ID}"
 EXTERNAL_USER_ID="test_creem_user_${RUN_ID}"
 SUBSCRIPTION_ID="sub_creem_e2e_${RUN_ID}"
@@ -158,4 +165,28 @@ fi
 echo -e "${GREEN}[OK] external_user_id resolved and recurring checkout normalized into active subscription${NC}"
 echo ""
 
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "WHK-05",
+  "test_name": "Creem Checkout.Completed Ingress + Normalization",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "pass",
+  "user_id": "$EXTERNAL_USER_ID",
+  "subscription_id": "$SUBSCRIPTION_ID",
+  "results": {
+    "webhook_accepted": true,
+    "webhook_persisted": true,
+    "subscription_normalized": true
+  }
+}
+EOF
+
 echo -e "${GREEN}[PASS] WHK-05 passed${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
+echo ""
+exit 0

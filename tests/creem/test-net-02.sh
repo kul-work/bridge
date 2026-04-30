@@ -30,9 +30,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
-EMAIL="creem_net_user_$TIMESTAMP@example.com"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-net-02-${TIMESTAMP}-$$"
+REPORT_FILE="test-net-02-report.json"
+EMAIL="creem_net_user_${TEST_RUN_ID}@example.com"
 USER_ID=""
 
 # Parse arguments
@@ -54,13 +57,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "NET-02: Concurrent Deliveries (Race Condition)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 2: Cleanup and prepare payload
 echo -e "${YELLOW}[2/4] Preparing payload and cleaning state for user $USER_ID${NC}"
@@ -69,7 +75,7 @@ psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.webhook_provider WHERE provider = 'creem' AND provider_webhook_id LIKE 'net-02%';" > /dev/null 2>&1 || true
 
-EVENT_ID="net-02-race-$(date +%s)"
+EVENT_ID="net-02-race-$TEST_RUN_ID"
 PERIOD_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+30 days" 2>/dev/null || date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ")
 
 PAYLOAD=$(cat <<EOF
@@ -130,12 +136,41 @@ WEBHOOK_LOG_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_D
 echo "  Subscription records created: $SUBS_COUNT"
 echo "  Webhook log entries: $WEBHOOK_LOG_COUNT"
 
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+OVERALL_STATUS="fail"
 if [[ "$SUBS_COUNT" == "1" && "$WEBHOOK_LOG_COUNT" == "1" ]]; then
+    OVERALL_STATUS="pass"
+fi
+
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "NET-02",
+  "test_name": "Concurrent Deliveries (Race Condition)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "$OVERALL_STATUS",
+  "user_id": "$USER_ID",
+  "results": {
+    "subscription_count": $SUBS_COUNT,
+    "webhook_log_count": $WEBHOOK_LOG_COUNT
+  }
+}
+EOF
+
+if [[ "$OVERALL_STATUS" == "pass" ]]; then
     echo -e "\n${GREEN}✓ Race condition handled correctly. No duplicates created.${NC}"
     echo -e "${GREEN}✓ NET-02 PASSED${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 0
 else
     echo -e "\n${RED}✗ DUPLICATION DETECTED! Race condition handling FAILED.${NC}"
     echo "  Expected 1 record, found $SUBS_COUNT subscriptions and $WEBHOOK_LOG_COUNT webhook logs."
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 1
 fi

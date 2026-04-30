@@ -29,9 +29,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
-EMAIL="creem_user_$TIMESTAMP@example.com"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-sub-13-${TIMESTAMP}-$$"
+REPORT_FILE="test-sub-13-report.json"
+EMAIL="creem_user_${TEST_RUN_ID}@example.com"
 USER_ID=""
 
 # Parse arguments
@@ -53,13 +56,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-13: Payment Recovery from Past Due"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: Ensure past_due subscription exists
 echo -e "${YELLOW}[1/4] Checking for existing past_due subscription${NC}"
@@ -80,7 +86,7 @@ echo -e "${GREEN}✓ Ready (Status: $STATUS_VAL)${NC}"
 
 # Step 2: Trigger Recovery Webhook (subscription.paid)
 echo -e "${YELLOW}[2/4] Sending subscription.paid webhook for recovery${NC}"
-EVENT_ID="evt_sub_13_$(date +%s)"
+EVENT_ID="evt_sub_13_$TEST_RUN_ID"
 NEW_EXPIRY=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+30 days" 2>/dev/null || date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ")
 
 PAYLOAD=$(cat <<EOF
@@ -138,13 +144,27 @@ else
     exit 1
 fi
 
-# Step 4: Report
-cat > test-sub-13-report.json <<EOF
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-13",
+  "test_name": "Status Sync after Provider Recovery (Webhook)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
-  "db_status": "$STATUS"
+  "db_status": "$STATUS",
+  "results": {
+    "webhook_accepted": true,
+    "status_recovered_to_active": true
+  }
 }
 EOF
+
 echo -e "${GREEN}✓ SUB-13 PASSED${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
+echo ""
+exit 0

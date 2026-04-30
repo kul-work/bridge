@@ -29,9 +29,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
-EMAIL="creem_otp_user_$TIMESTAMP@example.com"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-otp-04-${TIMESTAMP}-$$"
+REPORT_FILE="test-otp-04-report.json"
+EMAIL="creem_otp_user_${TEST_RUN_ID}@example.com"
 USER_ID=""
 
 # Parse arguments
@@ -53,13 +56,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-04: Partially Refunded (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: Ensure existing payment exists (from OTP-01)
 echo -e "${YELLOW}[1/4] Checking for existing payment to partially refund${NC}"
@@ -82,14 +88,14 @@ echo -e "${GREEN}✓ Targeted Checkout: $CHECKOUT_ID${NC}"
 
 # Step 2: Trigger Webhook
 echo -e "${YELLOW}[2/4] Sending payment.partially_refunded webhook to Bridge${NC}"
-EVENT_ID="evt_part_refund_04_$(date +%s)"
+EVENT_ID="evt_part_refund_04_$TEST_RUN_ID"
 PAYLOAD=$(cat <<EOF
 {
   "id": "$EVENT_ID",
   "eventType": "payment.partially_refunded",
   "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "object": {
-    "id": "pref_$(date +%s)",
+    "id": "pref_$TEST_RUN_ID",
     "checkout_id": "$CHECKOUT_ID",
     "customer": {
       "email": "$EMAIL",
@@ -135,15 +141,29 @@ else
     exit 1
 fi
 
-# Step 4: Report
-cat > test-otp-04-report.json <<EOF
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "OTP-04",
+  "test_name": "Partially Refunded One-Time Purchase (Webhook)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
   "checkout_id": "$CHECKOUT_ID",
   "http_code": $HTTP_CODE,
-  "db_status": "$STATUS"
+  "db_status": "$STATUS",
+  "results": {
+    "webhook_accepted": true,
+    "payment_partially_refunded": true
+  }
 }
 EOF
+
 echo -e "${GREEN}✓ OTP-04 PASSED${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
+echo ""
+exit 0

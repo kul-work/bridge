@@ -29,9 +29,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
-EMAIL="creem_user_$TIMESTAMP@example.com"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-sub-06-${TIMESTAMP}-$$"
+REPORT_FILE="test-sub-06-report.json"
+EMAIL="creem_user_${TEST_RUN_ID}@example.com"
 USER_ID=""
 
 # Parse arguments
@@ -53,13 +56,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-06: Scheduled Cancellation (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: Ensure active subscription exists
 echo -e "${YELLOW}[1/4] Checking for existing active subscription${NC}"
@@ -75,7 +81,7 @@ echo -e "${GREEN}✓ Ready${NC}"
 
 # Step 2: Trigger scheduled_cancel Webhook
 echo -e "${YELLOW}[2/4] Sending subscription.scheduled_cancel webhook${NC}"
-EVENT_ID="evt_sub_06_$(date +%s)"
+EVENT_ID="evt_sub_06_$TEST_RUN_ID"
 
 PAYLOAD=$(cat <<EOF
 {
@@ -140,14 +146,29 @@ else
     exit 1
 fi
 
-# Step 4: Report
-cat > test-sub-06-report.json <<EOF
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-06",
+  "test_name": "Scheduled Cancellation (Webhook)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
   "db_status": "$STATUS",
-  "auto_renewing": "$AUTO_RENEW"
+  "auto_renewing": "$AUTO_RENEW",
+  "results": {
+    "webhook_accepted": true,
+    "status_remains_active": true,
+    "auto_renew_disabled": true
+  }
 }
 EOF
+
 echo -e "${GREEN}✓ SUB-06 PASSED${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
+echo ""
+exit 0

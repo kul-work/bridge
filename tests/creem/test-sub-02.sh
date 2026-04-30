@@ -29,9 +29,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
-EMAIL="creem_user_$TIMESTAMP@example.com"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-sub-02-${TIMESTAMP}-$$"
+REPORT_FILE="test-sub-02-report.json"
+EMAIL="creem_user_${TEST_RUN_ID}@example.com"
 USER_ID=""
 
 # Parse arguments
@@ -53,13 +56,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-02: Subscription Renewal (Webhook)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: Ensure existing subscription exists
 echo -e "${YELLOW}[1/4] Checking for existing active subscription${NC}"
@@ -79,7 +85,7 @@ echo -e "${GREEN}✓ Current Expiry: $OLD_EXPIRY${NC}"
 
 # Step 2: Trigger Renewal Webhook
 echo -e "${YELLOW}[2/4] Sending renewal subscription.active webhook${NC}"
-EVENT_ID="evt_sub_02_$(date +%s)"
+EVENT_ID="evt_sub_02_$TEST_RUN_ID"
 # Set new expiry 60 days out (renewal)
 NEW_EXPIRY=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+60 days" 2>/dev/null || date -u -v+60d +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -136,14 +142,28 @@ else
     exit 1
 fi
 
-# Step 4: Report
-cat > test-sub-02-report.json <<EOF
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-02",
+  "test_name": "Subscription Renewal (Webhook)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
   "old_expiry": "$OLD_EXPIRY",
-  "new_expiry": "$UPDATED_EXPIRY"
+  "new_expiry": "$UPDATED_EXPIRY",
+  "results": {
+    "webhook_accepted": true,
+    "expiry_updated": true
+  }
 }
 EOF
+
 echo -e "${GREEN}✓ SUB-02 PASSED${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
+echo ""
+exit 0

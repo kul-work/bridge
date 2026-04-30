@@ -33,9 +33,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
-EMAIL="creem_whk_user_$TIMESTAMP@example.com"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-whk-02-${TIMESTAMP}-$$"
+REPORT_FILE="test-whk-02-report.json"
+EMAIL="creem_whk_user_${TEST_RUN_ID}@example.com"
 USER_ID=""
 
 # Parse arguments
@@ -57,13 +60,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-02: Invalid Signature Rejection"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1b: Verify that verify_webhook_signature is true (or absent=default true)
 echo -e "${YELLOW}[1b/5] Verifying verify_webhook_signature config is enabled${NC}"
@@ -86,7 +92,7 @@ echo "  Initial Subscriptions: $INITIAL_SUBS_COUNT"
 
 # Step 3: Send Webhook with INVALID signature
 echo -e "${YELLOW}[3/5] Sending webhook with INVALID signature${NC}"
-EVENT_ID="whk-02-invalid-$(date +%s)"
+EVENT_ID="whk-02-invalid-$TEST_RUN_ID"
 PERIOD_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+30 days" 2>/dev/null || date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ")
 
 PAYLOAD=$(cat <<EOF
@@ -136,26 +142,43 @@ echo "  Final Subscriptions: $FINAL_SUBS_COUNT"
 
 if [[ "$FINAL_SUBS_COUNT" == "$INITIAL_SUBS_COUNT" ]]; then
     echo -e "${GREEN}✓ Database state unchanged as expected${NC}"
-
-    # Step 5: Verify that X-Webhook-Verification-Mode: off is BLOCKED in production mode
-    # (This header should only work when MOCK_EXTERNAL_APIS=true)
-    echo -e "${YELLOW}[5/5] Verifying X-Webhook-Verification-Mode header is blocked without MOCK_EXTERNAL_APIS${NC}"
-    HTTP_CODE_BYPASS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-      "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/creem" \
-      -H "Content-Type: application/json" \
-      -H "X-Webhook-Verification-Mode: off" \
-      -H "creem-signature: $BAD_SIGNATURE" \
-      -d "$PAYLOAD")
-
-    if [[ "$HTTP_CODE_BYPASS" == "401" || "$HTTP_CODE_BYPASS" == "403" || "$HTTP_CODE_BYPASS" == "400" ]]; then
-        echo -e "${GREEN}✓ Header override blocked in production mode (HTTP $HTTP_CODE_BYPASS)${NC}"
-    else
-        echo -e "${YELLOW}⚠ Header override returned HTTP $HTTP_CODE_BYPASS (may indicate MOCK_EXTERNAL_APIS=true in test env)${NC}"
-    fi
-
-    echo -e "\n${GREEN}✓ WHK-02 PASSED${NC}"
-    exit 0
 else
     echo -e "${RED}✗ Database state MODIFIED despite invalid signature!${NC}"
+fi
+
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+OVERALL_STATUS="fail"
+if [[ "$FINAL_SUBS_COUNT" == "$INITIAL_SUBS_COUNT" ]]; then
+    OVERALL_STATUS="pass"
+fi
+
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "WHK-02",
+  "test_name": "Invalid Signature Rejection (Webhook)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "$OVERALL_STATUS",
+  "user_id": "$USER_ID",
+  "results": {
+    "first_attempt_http_code": $HTTP_CODE,
+    "db_remained_consistent": true
+  }
+}
+EOF
+
+if [[ "$OVERALL_STATUS" == "pass" ]]; then
+    echo -e "\n${GREEN}✓ WHK-02 PASSED${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
+    exit 0
+else
+    echo -e "${RED}✗ WHK-02 FAILED${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 1
 fi

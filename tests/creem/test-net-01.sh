@@ -30,9 +30,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
-EMAIL="creem_net_user_$TIMESTAMP@example.com"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-net-01-${TIMESTAMP}-$$"
+REPORT_FILE="test-net-01-report.json"
+EMAIL="creem_net_user_${TEST_RUN_ID}@example.com"
 USER_ID=""
 
 # Parse arguments
@@ -54,13 +57,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "NET-01: Webhook Retry & Backoff"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 2: Cleanup
 echo -e "${YELLOW}[2/4] Cleaning initial state for user $USER_ID${NC}"
@@ -70,7 +76,7 @@ echo -e "${GREEN}✓ Cleaned${NC}"
 
 # Step 3: Send Webhook that "FAILS" (Bad Signature)
 echo -e "${YELLOW}[3/4] Sending webhook with INVALID signature (Simulating failure)${NC}"
-EVENT_ID="net-01-$(date +%s)"
+EVENT_ID="net-01-$TEST_RUN_ID"
 PERIOD_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+30 days" 2>/dev/null || date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ")
 
 PAYLOAD=$(cat <<EOF
@@ -122,12 +128,42 @@ sleep 2 # process time
 SUBS_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND status = 'active';" -t | tr -d '[:space:]' || echo "")
 
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+OVERALL_STATUS="fail"
 if [[ ("$HTTP_CODE_1" == "401" || "$HTTP_CODE_1" == "400" || "$HTTP_CODE_1" == "403") && ("$HTTP_CODE_2" == "200" || "$HTTP_CODE_2" == "201" || "$HTTP_CODE_2" == "204") && "$SUBS_STATUS" == "active" ]]; then
+    OVERALL_STATUS="pass"
+fi
+
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "NET-01",
+  "test_name": "Webhook Retry & Backoff",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "$OVERALL_STATUS",
+  "user_id": "$USER_ID",
+  "results": {
+    "first_http_code": $HTTP_CODE_1,
+    "retry_http_code": $HTTP_CODE_2,
+    "db_status": "$SUBS_STATUS"
+  }
+}
+EOF
+
+if [[ "$OVERALL_STATUS" == "pass" ]]; then
     echo -e "${GREEN}✓ Webhook retry handled correctly. Entitlement granted.${NC}"
     echo -e "\n${GREEN}✓ NET-01 PASSED${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 0
 else
     echo -e "${RED}✗ Webhook retry failed or logic incorrect${NC}"
     echo "  Status in DB: $SUBS_STATUS"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 1
 fi
