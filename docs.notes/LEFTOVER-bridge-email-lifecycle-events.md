@@ -45,59 +45,87 @@ This means adding `send_email_*()` calls alone is not enough, especially for Goo
 - `bridge`: send lifecycle/payment emails
 - `hiha`: store app-local UX flags and surface them in app responses/callback handling
 
-## Required Work
+## Recommended Architecture (Option 1)
 
-### 1. Add Bridge-side user contact storage
+Bridge **fetches user email from HiHa on-demand** via a new internal HiHa endpoint, using the **existing webhook callback HMAC-SHA256 signature mechanism** for security. Email is used in-memory only for sending; no persistent storage in Bridge.
 
-Create a tenant-scoped table keyed by:
+### 1. Create HiHa Internal Email-Lookup Endpoint
 
-- `app_id`
-- `external_user_id`
+**Endpoint:** `POST /internal/bridge/email-lookup`
 
-Suggested minimum fields:
+**Request:**
+```json
+{
+  "clerk_id": "user_123"
+}
+```
 
-- `email`
-- `created_at`
-- `updated_at`
+**Response (200 OK):**
+```json
+{
+  "email": "user@example.com"
+}
+```
 
-Optional:
+**Error Responses:**
+- `400` — bad request / missing `clerk_id`
+- `401` — signature verification failed
+- `404` — user not found
+- `409` — user exists but no usable email
+- `5xx` — transient error (Clerk API unavailable, etc.)
 
-- `last_seen_at`
-- `source` (`checkout`, `verify_purchase`, etc.)
+**Security:**
+- Verify `X-Pay-Signature: sha256=<hmac>` header using `webhook_callback_secret` (same as webhook callbacks)
+- Raw request body signed with HMAC-SHA256
+- No new auth scheme; reuse existing trusted mechanism
 
-### 2. Populate contact email from app-originated requests
+**Implementation:**
+- Add handler in `hiha/src/handlers/` (similar to `handle_bridge_callback`)
+- DB-first lookup: query `hiha.users.email` by `clerk_id`
+- Optional Clerk fallback: if missing/null, query Clerk admin API and cache result
+- Return `404` if no email available after fallback
 
-At minimum:
+### 2. Bridge: Call Email-Lookup Endpoint on Webhook
 
-- `checkout` already receives user email and should upsert it
+In lifecycle webhook handlers (`payment.failed`, `subscription.price_step_up`, `subscription.deferred`):
 
-Also review:
+1. Receive webhook event with `external_user_id` (= `clerk_id`)
+2. Call HiHa email-lookup endpoint: `POST https://<hiha-url>/internal/bridge/email-lookup`
+   - Sign request body with `WEBHOOK_CALLBACK_SECRET`
+   - Add `X-Pay-Signature: sha256=<hmac>` header
+3. If successful (`200`), extract `email` from response
+4. Send lifecycle email using existing `send_email_*()` helpers
+5. Discard email after send attempt (no storage)
 
-- verify/register flows that already know email
+**Error Handling:**
+- `404` / `409`: skip email send, log warning (non-retryable)
+- `401`: skip send, log warning (re-attempt only after config fix)
+- `5xx` / timeout: **optional** short retry with backoff (HiHa temporarily unavailable)
+  - Decision: should this fail the webhook, queue for retry, or just skip?
+  - Recommended: skip with warning (email is nice-to-have, not critical)
 
-### 3. Expose DB lookup for lifecycle handlers
+### 3. Remove Email from Bridge Logs
 
-Add repository/DB methods to resolve email by:
+Update `src/services/email.rs` to not log recipient email:
 
-- `app_id`
-- `external_user_id`
+**Before:**
+```rust
+info!("Sending email via Clerk to: {}", to);
+info!("Sending email via Resend to: {}", to);
+```
 
-### 4. Send emails in webhook/lifecycle handling
+**After:**
+```rust
+info!("Sending lifecycle email");
+```
 
-Restore old-HiHa-equivalent behavior for:
+Do not include email in tracing spans, metrics, or error messages.
 
-- `payment.failed`
-- `subscription.price_step_up`
-- `subscription.deferred`
+### 4. Keep Behavior Provider-Aware
 
-Use the existing helpers in:
-
-- `src/services/google_play/notifications.rs`
-
-### 5. Keep behavior provider-aware
-
-- Google Play: likely fully supported once user email is stored locally
-- Creem: may also have payload email, but do not rely on webhook payload as the canonical long-term source
+- Google Play: webhook payload lacks email → Bridge fetches from HiHa
+- Creem: webhook payload may include email → Bridge fetches from HiHa anyway (canonical source)
+- All providers now use the same lookup path (consistency)
 
 ## Acceptance Criteria
 
