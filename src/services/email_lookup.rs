@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use hmac::{Hmac, Mac};
 use reqwest::{Client, StatusCode, Url};
 use serde::Deserialize;
@@ -13,6 +15,8 @@ use crate::{
 struct EmailLookupResponse {
     email: String,
 }
+
+const EMAIL_LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
 
 fn email_lookup_url(callback_url: &str) -> Result<Url, BridgeError> {
     let mut url = Url::parse(callback_url)
@@ -38,14 +42,23 @@ pub async fn lookup_user_email(
     let body = serde_json::json!({ "clerk_id": external_user_id }).to_string();
     let signature = sign_body(&app.webhook_callback_secret, &body)?;
 
-    let response = Client::new()
+    let request = Client::new()
         .post(url)
         .header("Content-Type", "application/json")
         .header("X-Pay-Signature", signature)
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| BridgeError::InternalServerError(format!("Email lookup request failed: {}", e)))?;
+        .body(body);
+
+    let response = match tokio::time::timeout(EMAIL_LOOKUP_TIMEOUT, request.send()).await {
+        Ok(Ok(response)) => response,
+        Ok(Err(e)) => {
+            warn!("Skipping lifecycle email: email lookup request failed: {}", e);
+            return Ok(None);
+        }
+        Err(_) => {
+            warn!("Skipping lifecycle email: email lookup timed out");
+            return Ok(None);
+        }
+    };
 
     match response.status() {
         StatusCode::OK => {
@@ -67,7 +80,8 @@ pub async fn lookup_user_email(
             Ok(None)
         }
         status if status.is_server_error() => {
-            Err(BridgeError::InternalServerError(format!("Email lookup transient failure: {}", status)))
+            warn!("Skipping lifecycle email: email lookup transient failure: {}", status);
+            Ok(None)
         }
         status => {
             warn!("Skipping lifecycle email: email lookup returned {}", status);
