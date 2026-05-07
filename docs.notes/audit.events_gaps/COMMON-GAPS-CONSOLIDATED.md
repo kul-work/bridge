@@ -3,8 +3,8 @@
 **Summary**: This document distills the three prior audits into five common gaps affecting Bridge and HiHa, with implementation strategies for each.
 
 **Reconfirmation note (2026-05-07)**:
-- Gap 2 is partially stale. Bridge now calls lifecycle emails for `payment.failed`, `subscription.price_step_up`, and `subscription.deferred`, and resolves emails through an app callback lookup rather than a Bridge `email_contacts` table.
-- Gap 5 is partially stale. Bridge already exposes subscription acknowledge and price-step-up accept/decline routes, and some lifecycle email dispatch is wired. Missing Bridge email coverage remains for `subscription.paused`, `subscription.resumed`, and `payment.refunded`.
+- Gap 2 is partially stale. Bridge now calls lifecycle emails for `payment.failed`, `subscription.price_step_up`, and `subscription.deferred`.
+- Gap 5 is partially stale. Bridge routes for acknowledge and price-step-up are implemented. Missing Bridge email coverage remains for `subscription.paused`, `subscription.resumed`, and `payment.refunded`.
 
 ---
 
@@ -134,6 +134,8 @@ async fn register_email_contact(
 **Verify**: HiHa integration test; confirm emails registered successfully in Bridge.
 
 ---
+
+## Gap 3: HiHa Subscription Cache & Callback Persistence
 
 **Reconfirmed status**: Not reconfirmed from this Bridge repo. Requires inspection of the HiHa repo.
 
@@ -359,6 +361,8 @@ async fn get_subscription_status(
 
 ---
 
+## Gap 4: Canonical Callback Payload is Incomplete
+
 **Reconfirmed status**: Confirmed.
 
 ### Finding
@@ -461,13 +465,12 @@ Payload expansion makes callback ingestion complete.
 **Reconfirmed status**: Partially stale. Bridge has some email dispatch and action routes, but coverage is still incomplete.
 
 ### Finding
-Six event types have partial or missing email behavior:
-- `payment.failed`: DB mutation and Bridge email dispatch exist; Bridge subscription acknowledge route exists.
-- `subscription.price_step_up`: Scheduler and Bridge email dispatch exist; Bridge accept/decline routes exist.
-- `subscription.deferred`: DB mutation and Bridge email dispatch exist.
-- `subscription.paused`: DB mutation exists; Bridge email dispatch was not found.
-- `subscription.resumed`: DB mutation exists; Bridge email dispatch was not found.
-- `payment.refunded` (OTP): Revoke handled; Bridge email dispatch was not found.
+The following event types still lack Bridge-level email dispatch:
+- `subscription.paused`: DB mutation exists; Bridge email dispatch is missing.
+- `subscription.resumed`: DB mutation exists; Bridge email dispatch is missing.
+- `payment.refunded` (OTP): Revoke handled; Bridge email dispatch is missing.
+
+**Resolved**: `payment.failed`, `subscription.price_step_up`, and `subscription.deferred` already have email dispatch wired. Bridge acknowledge/accept/decline routes are implemented.
 
 HiHa acknowledge/accept/decline UX routes were not reconfirmed from this repo.
 
@@ -481,49 +484,31 @@ HiHa acknowledge/accept/decline UX routes were not reconfirmed from this repo.
 #### Step 1: Bridge - Activate notifications for remaining lifecycle events
 **File**: `src/webhooks/processor/event_handlers.rs`
 
-For remaining uncovered event handlers, add conditional email dispatch after DB mutation. Current Bridge already dispatches `payment.failed`, `subscription.price_step_up`, and `subscription.deferred`.
+For remaining uncovered event handlers, add conditional email dispatch after DB mutation.
 
 ```rust
-// Example pattern
-async fn handle_payment_failed(state: &AppState, event: &CanonicalWebhookPayload) -> Result<Effects> {
-    // Existing DB mutation
-    sqlx::query!("UPDATE subscriptions SET ... WHERE id = $1", &event.subscription_id)
-        .execute(&state.db)
-        .await?;
+// Example for subscription.paused
+async fn handle_subscription_paused(state: &AppState, event: &CanonicalWebhookPayload) -> Result<Effects> {
+    // ... existing DB mutation ...
     
-    // NEW: Send email if state changed to failure
+    // NEW: Send email
     if let Some(email) = resolve_user_email(&state.db, &event.app_id, &event.external_user_id).await? {
-        send_email_payment_failed(&state.email_client, &email, event).await?;
+        send_email_paused(&state.email_client, &email, event).await?;
     }
     
     Ok(Effects { /* ... */ })
 }
-
-// Apply similar coverage for:
-// - handle_subscription_paused
-// - handle_subscription_resumed
-// - handle_payment_refunded (OTP context)
 ```
 
-Use webhook idempotency to suppress duplicates:
+Use webhook idempotency to suppress duplicate sends:
 ```rust
-// Query webhook_log to detect state change
-let previous_event = sqlx::query!(
-    "SELECT status FROM webhook_log WHERE subscription_id = $1 AND event_type = $2 
-     ORDER BY received_at DESC LIMIT 1",
-    &event.subscription_id,
-    "payment.failed"
-)
-.fetch_optional(&state.db)
-.await?;
-
-if previous_event.is_none() {
-    // Only send email on first occurrence
-    send_email_payment_failed(...).await?;
+// Only send if status *changed to* paused, not on retry of same event
+if previous_status != "paused" && new_status == "paused" {
+    send_email_paused(...).await?;
 }
 ```
 
-**Verify**: Test each handler; confirm email fires once per transition.
+**Verify**: Test `paused`, `resumed`, and `refunded` handlers; confirm email fires once per transition.
 
 #### Step 2: HiHa - Add payment-failure acknowledge endpoint
 **Status**: Not reconfirmed. Bridge already has `POST /api/v1/subscriptions/{subscription_id}/acknowledge`.
@@ -597,43 +582,32 @@ async fn decline_price_step_up(
 #### Step 4: Email templates & client setup
 **File**: `src/services/email_client.rs` or extend `google_play/notifications.rs`
 
-Ensure all email functions exist and take correct parameters:
+Ensure missing email functions exist:
 ```rust
-pub async fn send_email_payment_failed(
+pub async fn send_email_paused(
     client: &EmailClient,
     recipient: &str,
     event: &CanonicalWebhookPayload,
 ) -> Result<()> {
-    let subject = "Your payment failed";
-    let body = format!("We couldn't process your payment for {}. ...", event.app_name);
+    let subject = "Your subscription is paused";
+    let body = format!("Your subscription for {} has been paused. ...", event.app_name);
     client.send(recipient, &subject, &body).await
 }
 
-pub async fn send_email_price_step_up(
+pub async fn send_email_refunded(
     client: &EmailClient,
     recipient: &str,
     event: &CanonicalWebhookPayload,
 ) -> Result<()> {
-    let new_price = event.new_price_cents.unwrap_or(0) as f64 / 100.0;
-    let subject = "Subscription price update";
-    let body = format!("Your subscription price is increasing to ${}. ...", new_price);
+    let subject = "Refund processed";
+    let body = format!("We have processed a refund for your purchase of {}. ...", event.app_name);
     client.send(recipient, &subject, &body).await
 }
-
-pub async fn send_email_deferred(
-    client: &EmailClient,
-    recipient: &str,
-    event: &CanonicalWebhookPayload,
-) -> Result<()> {
-    let subject = "Your subscription renewal is deferred";
-    let body = "Your subscription renewal has been postponed. ...";
-    client.send(recipient, &subject, &body).await
-}
-
-// etc.
 ```
 
-**Verify**: Unit test with mock client; confirm all templates are called with correct arguments.
+**Note**: For `subscription.resumed`, use the existing `send_email_restarted` function.
+
+**Verify**: Unit test with mock client; confirm new templates are called with correct arguments.
 
 ---
 
@@ -641,16 +615,18 @@ pub async fn send_email_deferred(
 
 | Gap | Bridge | HiHa | Status |
 |---|---|---|---|
-| **1. API Mismatch / Thin List Schema** | Expand list response | Parse array, update handler | Confirmed Bridge issue |
-| **2. Email Delivery** | Partially wired via callback email lookup | Ensure lookup endpoint exists | Partially stale |
-| **3. Lifecycle Email Gaps** | Add remaining paused/resumed/refunded email coverage | Add/verify UX routes | Partially stale |
+| **1. API Mismatch** | Expand list response | Parse array, update handler | Confirmed Bridge issue |
+| **2. Email Delivery** | Wired via callback email lookup | Ensure lookup endpoint exists | Partially resolved |
+| **3. HiHa Cache** | N/A | Implement cache table | Not reconfirmed |
+| **4. Payload Expansion** | Expand canonical payload | Consume new fields | Confirmed Bridge issue |
+| **5. Lifecycle Email Gaps** | Add remaining paused/resumed/refunded email coverage | Add/verify UX routes | Partially stale |
 
 ---
 
 ## Implementation Order
 
-- **Gap 5** (Remaining lifecycle emails) - Add Bridge email coverage for `subscription.paused`, `subscription.resumed`, and `payment.refunded`; verify HiHa UX routes.
-- **Gap 2** (Email contact policy) - Decide whether callback-based email lookup is sufficient or whether Bridge should own contact storage. This is no longer a prerequisite for Gap 5 unless product chooses Bridge-owned email contacts.
+- **Gap 5** (Remaining lifecycle emails) - Add Bridge email coverage for `subscription.paused`, `subscription.resumed`, and `payment.refunded`.
+- **Gap 4** (Payload expansion) - Expand `CanonicalWebhookPayload` to include Google lifecycle fields.
 
 ---
 
