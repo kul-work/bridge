@@ -44,73 +44,7 @@ Gap types:
 - Missing tests.
 - Docs/spec drift.
 
-### 2. Tyde HiHa status endpoint consumes the wrong Bridge response shape
-
-Old locations:
-- `C:\share\hiha\src\handlers\payments\subscription.rs`
-- `C:\share\hiha\src\handlers\payments\verify_purchase_helpers.rs:174`
-
-New expected owner:
-- HiHa should surface app UX state from a local callback cache, or correctly consume Bridge's list/detail APIs.
-
-Current Tyde locations:
-- `C:\share\tyde\hiha\src\handlers\content.rs:56`
-- `C:\share\tyde\hiha\src\services\bridge_client.rs:66`
-- `C:\share\tyde\bridge\src\handlers\subscriptions.rs:69`
-- `C:\share\tyde\bridge\src\handlers\subscriptions.rs:186`
-
-Missing behavior:
-- HiHa calls Bridge `GET /api/v1/subscriptions` and expects top-level fields like `subscription_id`, `subscription_status`, `revoked_at`, `google_requires_price_step_up_consent`, and `google_pause_scheduled_at`.
-- Bridge list response returns `{ subscriptions: [...] }` with only list-level fields: `id`, `subscription_id`, `provider`, `status`, `current_period_end`, `auto_renewing`, `payment_failure_notification`.
-- Bridge full detail fields exist on `GET /api/v1/subscriptions/:subscription_id`, but HiHa does not call that endpoint.
-
-Impact:
-- Most UX fields in `SubscriptionStatusResponse` are likely always `None`.
-- Frontend cannot reliably show price-step-up, pause, revoked, grace, deferred, or payment failure details.
-
-Gap types:
-- Missing HiHa local cache/state update.
-- Incorrect API consumption.
-- Docs/spec drift.
-- Missing tests.
-
-### 3. User-facing lifecycle emails were not ported into Bridge or HiHa
-
-Old locations:
-- `C:\share\hiha\src\webhooks\events\payment.rs:102`
-- `C:\share\hiha\src\services\google_play\subscription_lifecycle.rs:126`
-- `C:\share\hiha\src\services\google_play\subscription_lifecycle.rs:273`
-- `C:\share\hiha\src\services\google_play\subscription_lifecycle.rs:355`
-- `C:\share\hiha\src\services\google_play\subscription_lifecycle.rs:414`
-- `C:\share\hiha\src\services\google_play\subscription_lifecycle.rs:468`
-- `C:\share\hiha\src\services\google_play\subscription_lifecycle.rs:661`
-- `C:\share\hiha\src\services\google_play\product_lifecycle.rs:137`
-
-New expected owner:
-- Bridge should own provider lifecycle email only if it has a deliberate pass-through recipient/contact model.
-- Otherwise Bridge should forward lifecycle intent and HiHa should send app-specific user emails.
-
-Current Tyde locations:
-- `C:\share\tyde\bridge\src\webhooks\processor.rs:169`
-- `C:\share\tyde\bridge\src\webhooks\scheduler.rs:180`
-- `C:\share\tyde\bridge\src\services\google_play\notifications.rs`
-- `C:\share\tyde\hiha\src\services\email.rs`
-
-Missing behavior:
-- Bridge has Google Play notification helper functions, but current webhook/lifecycle handlers do not call them for user lifecycle emails.
-- Bridge sends dispute and reconciliation admin alerts only.
-- Tyde HiHa has no lifecycle email sends from callback processing.
-
-Impact:
-- Users no longer receive old lifecycle emails for payment failure, revocation/refund, cancellation, price step-up, deferred renewal, pause, resume, or OTP refund.
-
-Gap types:
-- Missing email side effect.
-- Missing notification audit flow.
-- Docs/spec drift.
-- Missing tests.
-
-### 4. `payment.failed` is only partially ported
+### 2. payment.failed is only partially ported
 
 Old locations:
 - `C:\share\hiha\src\webhooks\events\payment.rs:63`
@@ -128,8 +62,7 @@ Current Tyde locations:
 - `C:\share\tyde\hiha\src\main.rs:147`
 
 Missing behavior:
-- Bridge records failed payment and sets `subscriptions.payment_failure_notification = true`.
-- HiHa logs the callback but does not create notification audit rows, send email, or store a local UX flag.
+- HiHa logs the callback but does not create notification audit rows or store a local UX flag.
 - Tyde HiHa does not register old `POST /api/v1/notifications/payment-failure/acknowledge`.
 
 Impact:
@@ -137,10 +70,10 @@ Impact:
 - Users cannot acknowledge/clear payment-failure UX in HiHa.
 
 Gap types:
-- Missing email side effect.
 - Missing HiHa local cache/state update.
 - Missing endpoint/acknowledgment flow.
 - Missing tests.
+
 
 ### 5. `subscription.deferred` mutates Bridge but is not forwarded with useful HiHa-consumable state
 
@@ -158,17 +91,14 @@ Current Tyde locations:
 - `C:\share\tyde\hiha\src\handlers\webhooks.rs:226`
 
 Missing behavior:
-- Bridge updates `google_deferred_until`, but the event handler returns default effects and does not explicitly set callback event/status or canonical subscription data.
 - HiHa callback payload struct has no `google_deferred_until` field.
-- No user email.
+- HiHa lacks local storage for the deferred timestamp.
 
 Impact:
-- Bridge state may be correct, but HiHa cannot show deferred renewal date or update local status/cache.
+- Bridge state is correct and forwarded, but HiHa cannot show deferred renewal date or update local status/cache.
 
 Gap types:
-- Missing forwarded callback field.
 - Missing HiHa local cache/state update.
-- Missing email side effect.
 - Missing tests.
 
 ### 6. `subscription.price_step_up` is partial
@@ -191,21 +121,17 @@ Current Tyde locations:
 - `C:\share\tyde\hiha\src\main.rs:147`
 
 Missing behavior:
-- Bridge stores price-step-up consent fields and has expiry worker.
 - HiHa only logs the callback; it does not persist consent-required state locally.
 - HiHa callback payload omits `new_price_cents` and consent deadline.
 - No Tyde HiHa price-step-up accept/decline routes are registered.
-- Old user email for price-step-up is not sent.
 
 Impact:
 - Users may not see that consent is required or be able to act from HiHa.
 - Consent expiry may cancel users without an app-visible action path.
 
 Gap types:
-- Missing forwarded callback field.
 - Missing HiHa local cache/state update.
 - Missing endpoint/acknowledgment flow.
-- Missing email side effect.
 - Missing tests.
 
 ### 7. OTP refund/revoke flow is inconsistent
@@ -229,16 +155,11 @@ Current Tyde locations:
 Missing behavior:
 - HiHa grants/revokes on `purchase.one_time` with statuses `completed`, `cancelled`, or `refunded`.
 - Generic `payment.refunded` in HiHa always maps to subscription inactive, not OTP-specific lifetime revoke semantics.
-- Correct behavior depends on Bridge emitting `purchase.one_time` for OTP refund/cancel rather than generic `payment.refunded`.
-- No OTP refund/revoke user email.
 
 Impact:
 - OTP lifetime premium revocation can be missed if refund classification is generic.
-- Users lose old refund notification email.
 
 Gap types:
-- Missing/ambiguous forwarded callback event classification.
-- Missing email side effect.
 - Missing tests.
 
 ### 8. Reconciliation drift is Bridge-owned but HiHa does not apply or surface drift fields
@@ -258,15 +179,13 @@ Current Tyde locations:
 - `C:\share\tyde\hiha\src\handlers\webhooks.rs:14`
 
 Missing behavior:
-- Bridge emits `reconciliation.drift_detected` with `previous_status`, `corrected_status`, and `reconciliation_source`.
 - HiHa callback payload struct omits those fields and has no event-specific handling for `reconciliation.drift_detected`.
 
 Impact:
-- Bridge correction is recorded in Bridge, but HiHa local/app state and UX do not reflect drift details.
+- Bridge correction is recorded and forwarded, but HiHa local/app state and UX do not reflect drift details.
 
 Gap types:
 - Missing HiHa local cache/state update.
-- Missing forwarded callback field consumption.
 - Missing tests.
 
 ## Event Checklist
@@ -322,7 +241,5 @@ Both, split by concern:
 ## Open Questions / Assumptions
 
 - I treated `C:\share\tyde\hiha\docs\BEHAVIORAL_SPEC.md` as intended design. The implementation lacks the documented `subscription_cache` table, so this looks accidental rather than an intentional drop.
-- Bridge docs describe lifecycle email purpose, and Bridge contains email helper functions, but current code only sends admin alerts. It is unclear whether user-facing lifecycle emails were intentionally dropped for PII minimization or simply not wired.
 - HiHa currently falls back to Bridge for premium checks in guards. That contradicts the HiHa agent guide statement that premium should be updated via Bridge callbacks and not polled for subscription status.
-- If Bridge is expected to own user-facing emails, it needs a deliberate recipient/contact model. If not, callback payloads need to carry enough event intent for HiHa to send app-owned notifications.
 
