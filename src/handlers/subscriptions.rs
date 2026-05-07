@@ -37,6 +37,19 @@ pub struct SubscriptionDetail {
     pub current_period_end: Option<String>,
     pub auto_renewing: Option<bool>,
     pub payment_failure_notification: bool,
+    pub payment_state: Option<i32>,
+    pub cancel_reason: Option<i32>,
+    pub provider_customer_id: Option<String>,
+    pub cancellation_initiated_at: Option<String>,
+    pub revocation_reason: Option<String>,
+    pub revoked_at: Option<String>,
+    pub google_requires_price_step_up_consent: Option<bool>,
+    pub google_price_step_up_consent_deadline: Option<String>,
+    pub google_new_price_cents: Option<i32>,
+    pub google_pause_scheduled_at: Option<String>,
+    pub google_paused_at: Option<String>,
+    pub google_deferred_until: Option<String>,
+    pub last_event_time: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,6 +71,7 @@ pub struct SubscriptionDetailFull {
     pub google_new_price_cents: Option<i32>,
     pub google_pause_scheduled_at: Option<String>,
     pub google_paused_at: Option<String>,
+    pub google_deferred_until: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,6 +123,19 @@ pub async fn list_subscriptions(
             current_period_end: s.current_period_end.map(|d| d.to_rfc3339()),
             auto_renewing: s.auto_renewing,
             payment_failure_notification: s.payment_failure_notification,
+            payment_state: s.payment_state,
+            cancel_reason: s.cancel_reason,
+            provider_customer_id: s.provider_customer_id.clone(),
+            cancellation_initiated_at: s.cancellation_initiated_at.map(|d| d.to_rfc3339()),
+            revocation_reason: s.revocation_reason.clone(),
+            revoked_at: s.revoked_at.map(|d| d.to_rfc3339()),
+            google_requires_price_step_up_consent: s.google_requires_price_step_up_consent,
+            google_price_step_up_consent_deadline: s.google_price_step_up_consent_deadline.map(|d| d.to_rfc3339()),
+            google_new_price_cents: s.google_new_price_cents,
+            google_pause_scheduled_at: s.google_pause_scheduled_at.map(|d| d.to_rfc3339()),
+            google_paused_at: s.google_paused_at.map(|d| d.to_rfc3339()),
+            google_deferred_until: s.google_deferred_until.map(|d| d.to_rfc3339()),
+            last_event_time: Some(s.last_event_time),
         })
         .collect();
 
@@ -220,6 +247,7 @@ pub async fn get_subscription(
         google_new_price_cents: sub.google_new_price_cents,
         google_pause_scheduled_at: sub.google_pause_scheduled_at.map(|d| d.to_rfc3339()),
         google_paused_at: sub.google_paused_at.map(|d| d.to_rfc3339()),
+        google_deferred_until: sub.google_deferred_until.map(|d| d.to_rfc3339()),
     };
 
     Ok((StatusCode::OK, Json(detail)))

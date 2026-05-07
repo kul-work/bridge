@@ -3,97 +3,8 @@
 **Summary**: This document distills the three prior audits into five common gaps affecting Bridge and HiHa, with implementation strategies for each.
 
 **Reconfirmation note (2026-05-07)**:
-- Gap 1 is stale as a HiHa-breaking bug. Current HiHa calls Bridge's dedicated `/api/v1/users/{external_user_id}/subscription-status` snapshot endpoint and deserializes the full snapshot shape. The remaining confirmed Bridge issue is narrower: `GET /api/v1/subscriptions` still returns a wrapped list with thin list items, so consumers of that list endpoint do not receive the full lifecycle fields.
 - Gap 2 is partially stale. Bridge now calls lifecycle emails for `payment.failed`, `subscription.price_step_up`, and `subscription.deferred`, and resolves emails through an app callback lookup rather than a Bridge `email_contacts` table.
 - Gap 5 is partially stale. Bridge already exposes subscription acknowledge and price-step-up accept/decline routes, and some lifecycle email dispatch is wired. Missing Bridge email coverage remains for `subscription.paused`, `subscription.resumed`, and `payment.refunded`.
-
----
-
-## Gap 1: Bridge List Schema Still Thin; HiHa Parsing Bug Is Stale
-
-**Reconfirmed status (2026-05-07 code dive)**: Partially stale. The HiHa-breaking parsing mismatch is no longer present in current code. Bridge's raw list endpoint still has a thin list-item schema.
-
-### Finding
-The original finding said HiHa called Bridge `GET /api/v1/subscriptions` and expected a flat single-subscription object with UX fields like `google_requires_price_step_up_consent`, `google_pause_scheduled_at`, `payment_failure_notification`, etc. That is stale.
-
-Current HiHa code calls Bridge's dedicated snapshot endpoint:
-- Bridge route: `GET /api/v1/users/{external_user_id}/subscription-status`
-- HiHa client: `src/services/bridge_client.rs`
-- HiHa handler: `src/handlers/content.rs`
-
-The Bridge snapshot response includes the lifecycle fields HiHa needs:
-- `payment_failure_notification`
-- `revoked_at`
-- `revocation_reason`
-- `google_requires_price_step_up_consent`
-- `google_new_price_cents`
-- `google_price_step_up_consent_deadline`
-- `google_pause_scheduled_at`
-- `google_deferred_until`
-- `last_event_time`
-
-HiHa deserializes this typed snapshot directly and forwards those fields in `SubscriptionStatusResponse`.
-
-The remaining confirmed issue is limited to Bridge's raw list endpoint. Bridge `GET /api/v1/subscriptions` still returns:
-- `subscriptions: Vec<SubscriptionDetail>`
-- `pagination: PaginationMeta`
-
-The list endpoint's `SubscriptionDetail` currently includes only:
-- `id`
-- `subscription_id`
-- `provider`
-- `status`
-- `current_period_end`
-- `auto_renewing`
-- `payment_failure_notification`
-
-The single-subscription endpoint uses `SubscriptionDetailFull` and does expose more Google and revocation fields, and the newer snapshot endpoint exposes the fields needed by HiHa. The raw list endpoint does not.
-
-### Impact
-- Current HiHa subscription-status UX is not blocked by this gap.
-- Any consumer using Bridge `GET /api/v1/subscriptions` cannot get full lifecycle state from list results alone.
-- Bridge API consistency is still weaker than ideal because list, detail, and snapshot endpoints expose different subscription field sets.
-
-### Code Implementation Strategy
-
-#### Step 1: Optional Bridge Cleanup - Expand SubscriptionDetail list response
-**File**: `src/handlers/subscriptions.rs`
-
-Only needed if the list endpoint is intended to expose full lifecycle status. In `ListSubscriptionsResponse`, either:
-- **Option A**: Expand `SubscriptionDetail` to include the lifecycle fields already available from `SubscriptionDetailFull` and `SubscriptionStatusSnapshot`:
-  ```rust
-  #[derive(Serialize)]
-  pub struct SubscriptionDetail {
-      pub id: String,
-      pub subscription_id: String,
-      pub provider: String,
-      pub status: String,
-      pub current_period_end: Option<i64>,
-      pub auto_renewing: bool,
-      pub payment_failure_notification: bool,
-      // Add these:
-      pub google_requires_price_step_up_consent: Option<bool>,
-      pub google_price_step_up_consent_deadline: Option<i64>,
-      pub google_new_price_cents: Option<i32>,
-      pub google_pause_scheduled_at: Option<i64>,
-      pub google_deferred_until: Option<i64>,
-      pub revoked_at: Option<i64>,
-      pub revocation_reason: Option<String>,
-  }
-  ```
-- **Option B**: Introduce a `SubscriptionSummary` wrapper containing the intended list fields and return it from the list endpoint.
-
-**Verify**: Run `cargo build` and confirm list endpoint schema includes new fields.
-
-#### Step 2: No HiHa Parsing Fix Required For Current Flow
-**Files checked**:
-- `hiha/src/services/bridge_client.rs`
-- `hiha/src/handlers/content.rs`
-- `hiha/src/handlers/types.rs`
-
-Current HiHa already consumes the snapshot endpoint and forwards the relevant lifecycle fields. Do not apply the old recommendation to parse `subscriptions[0]` unless HiHa intentionally switches back to Bridge's list endpoint.
-
-**Verify**: Build both repos. For API behavior, mock or call Bridge `/api/v1/users/{external_user_id}/subscription-status` and confirm HiHa `/api/v1/subscription-status` forwards the lifecycle fields.
 
 ---
 
@@ -738,9 +649,8 @@ pub async fn send_email_deferred(
 
 ## Implementation Order
 
-2. **Gap 1** (API schema / thin list schema) - Expand Bridge list response or update HiHa to consume the list/detail APIs correctly. This unblocks subscription status UX while cache work is in progress.
-4. **Gap 5** (Remaining lifecycle emails) - Add Bridge email coverage for `subscription.paused`, `subscription.resumed`, and `payment.refunded`; verify HiHa UX routes.
-5. **Gap 2** (Email contact policy) - Decide whether callback-based email lookup is sufficient or whether Bridge should own contact storage. This is no longer a prerequisite for Gap 5 unless product chooses Bridge-owned email contacts.
+- **Gap 5** (Remaining lifecycle emails) - Add Bridge email coverage for `subscription.paused`, `subscription.resumed`, and `payment.refunded`; verify HiHa UX routes.
+- **Gap 2** (Email contact policy) - Decide whether callback-based email lookup is sufficient or whether Bridge should own contact storage. This is no longer a prerequisite for Gap 5 unless product chooses Bridge-owned email contacts.
 
 ---
 
