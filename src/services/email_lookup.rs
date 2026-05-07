@@ -51,12 +51,15 @@ pub async fn lookup_user_email(
     let response = match tokio::time::timeout(EMAIL_LOOKUP_TIMEOUT, request.send()).await {
         Ok(Ok(response)) => response,
         Ok(Err(e)) => {
-            warn!("Skipping lifecycle email: email lookup request failed: {}", e);
-            return Ok(None);
+            return Err(BridgeError::InternalServerError(format!(
+                "Email lookup request failed: {}",
+                e
+            )));
         }
         Err(_) => {
-            warn!("Skipping lifecycle email: email lookup timed out");
-            return Ok(None);
+            return Err(BridgeError::InternalServerError(
+                "Email lookup timed out".to_string(),
+            ));
         }
     };
 
@@ -80,8 +83,10 @@ pub async fn lookup_user_email(
             Ok(None)
         }
         status if status.is_server_error() => {
-            warn!("Skipping lifecycle email: email lookup transient failure: {}", status);
-            Ok(None)
+            Err(BridgeError::InternalServerError(format!(
+                "Email lookup transient failure: {}",
+                status
+            )))
         }
         status => {
             warn!("Skipping lifecycle email: email lookup returned {}", status);

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::{
     application::app_context::AppSnapshot,
     error::BridgeError,
@@ -8,13 +10,15 @@ use crate::{
     },
     services::google_play::subscription_lifecycle::GooglePlayLifecycleOutcome,
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::{
     normalize_status, parse_rfc3339_utc, send_dispute_admin_alert_email,
     status_to_canonical_event, WebhookFields,
 };
+
+const LIFECYCLE_EMAIL_LOOKUP_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) struct EventContext<'a> {
     pub(super) app: &'a AppSnapshot,
@@ -69,17 +73,40 @@ fn effects_from_google_lifecycle_outcome(outcome: GooglePlayLifecycleOutcome) ->
 async fn lookup_lifecycle_email(ctx: &EventContext<'_>, event_type: &str) -> Option<String> {
     let user_id = ctx.external_user_id.as_deref()?;
 
-    match crate::services::email_lookup::lookup_user_email(ctx.app, user_id).await {
+    match lookup_lifecycle_email_once(ctx, user_id).await {
         Ok(email) => email,
-        Err(e) => {
+        Err(first_error) => {
             warn!(
-                "Skipping lifecycle email for event {}: {}",
+                "Lifecycle email lookup failed for event {}; retrying once: {}",
                 event_type,
-                e
+                first_error
             );
-            None
+            tokio::time::sleep(LIFECYCLE_EMAIL_LOOKUP_RETRY_DELAY).await;
+
+            match lookup_lifecycle_email_once(ctx, user_id).await {
+                Ok(email) => email,
+                Err(second_error) => {
+                    error!(
+                        "Skipping lifecycle email after lookup retry failed: app_id={}, provider={}, event_type={}, provider_webhook_id={}, external_user_id={}, error={}",
+                        ctx.app_id,
+                        ctx.provider,
+                        event_type,
+                        ctx.webhook.provider_webhook_id,
+                        user_id,
+                        second_error
+                    );
+                    None
+                }
+            }
         }
     }
+}
+
+async fn lookup_lifecycle_email_once(
+    ctx: &EventContext<'_>,
+    user_id: &str,
+) -> Result<Option<String>, BridgeError> {
+    crate::services::email_lookup::lookup_user_email(ctx.app, user_id).await
 }
 
 async fn send_price_step_up_email(ctx: &EventContext<'_>, subscription_id: &str) {
