@@ -7,6 +7,6 @@ pub mod models;
 // pub mod provider;
 // pub mod validation;
 // pub mod trace;
-// pub mod notifications;
+pub mod notifications;
 pub mod product_lifecycle;
 pub mod subscription_lifecycle;

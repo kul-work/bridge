@@ -66,6 +66,88 @@ fn effects_from_google_lifecycle_outcome(outcome: GooglePlayLifecycleOutcome) ->
     }
 }
 
+async fn lookup_lifecycle_email(ctx: &EventContext<'_>, event_type: &str) -> Option<String> {
+    let user_id = ctx.external_user_id.as_deref()?;
+
+    match crate::services::email_lookup::lookup_user_email(ctx.app, user_id).await {
+        Ok(email) => email,
+        Err(e) => {
+            warn!(
+                "Skipping lifecycle email for event {}: {}",
+                event_type,
+                e
+            );
+            None
+        }
+    }
+}
+
+async fn send_price_step_up_email(ctx: &EventContext<'_>, subscription_id: &str) {
+    let Some(email) = lookup_lifecycle_email(ctx, "subscription.price_step_up").await else {
+        return;
+    };
+    let Some(new_price_cents) = ctx.fields.google_new_price_cents else {
+        warn!("Skipping price step-up email: missing new price");
+        return;
+    };
+    let Some(deadline) = ctx.fields.google_price_step_up_consent_deadline.as_deref().and_then(parse_rfc3339_utc) else {
+        warn!("Skipping price step-up email: missing consent deadline");
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_price_step_up(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+        new_price_cents,
+        deadline,
+    ).await {
+        warn!("Failed to send price step-up lifecycle email: {}", e);
+    }
+}
+
+async fn send_deferred_email(
+    ctx: &EventContext<'_>,
+    subscription_id: &str,
+    deferred_until: chrono::DateTime<chrono::Utc>,
+) {
+    let Some(email) = lookup_lifecycle_email(ctx, "subscription.deferred").await else {
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_deferred(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+        deferred_until,
+    ).await {
+        warn!("Failed to send deferred lifecycle email: {}", e);
+    }
+}
+
+async fn send_payment_failed_email(ctx: &EventContext<'_>, subscription_id: &str) {
+    let Some(email) = lookup_lifecycle_email(ctx, "payment.failed").await else {
+        return;
+    };
+    let Some(app_url) = ctx.app.app_url.as_deref() else {
+        warn!("Skipping payment failed email: app_url is not configured");
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_payment_failed(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+        ctx.provider,
+        app_url,
+    ).await {
+        warn!("Failed to send payment failed lifecycle email: {}", e);
+    }
+}
+
 pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?Sized>(
     repo: &R,
     ctx: &EventContext<'_>,
@@ -529,6 +611,12 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     ctx.timestamp_epoch_ms,
                 ).await?;
 
+                if outcome.is_some() {
+                    if let Some(sub_id) = ctx.fields.subscription_id.as_deref().or(ctx.webhook.subscription_id.as_deref()) {
+                        send_price_step_up_email(ctx, sub_id).await;
+                    }
+                }
+
                 return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
             }
 
@@ -590,6 +678,8 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
 
                         if updated.is_none() {
                             info!("Skipped stale deferred event for subscription {}", sub_id);
+                        } else {
+                            send_deferred_email(ctx, sub_id, until).await;
                         }
                     }
                 }
@@ -728,6 +818,8 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                         ..Default::default()
                     }));
                 };
+
+                send_payment_failed_email(ctx, sub_id).await;
 
                 return Ok(EventHandling::Handled(EventEffects {
                     callback_event_type: Some("payment.failed".to_string()),
