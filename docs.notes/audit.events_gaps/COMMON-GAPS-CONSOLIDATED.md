@@ -4,7 +4,7 @@
 
 **Reconfirmation note (2026-05-07)**:
 - Gap 2 is partially stale. Bridge now calls lifecycle emails for `payment.failed`, `subscription.price_step_up`, and `subscription.deferred`.
-- Gap 5 is partially stale. Bridge routes for acknowledge and price-step-up are implemented. Missing Bridge email coverage remains for `subscription.paused`, `subscription.resumed`, and `payment.refunded`.
+- Gap 5 is now resolved. Bridge email dispatch is wired for `subscription.paused`, `subscription.resumed`, and `payment.refunded` (in addition to previously wired `payment.failed`, `subscription.price_step_up`, and `subscription.deferred`).
 
 ---
 
@@ -462,17 +462,20 @@ Payload expansion makes callback ingestion complete.
 
 ## Gap 5: Missing Lifecycle Email Consolidation for Granular Events
 
-**Reconfirmed status**: Partially stale. Bridge has some email dispatch and action routes, but coverage is still incomplete.
+**Reconfirmed status**: Resolved. All lifecycle events now have Bridge email dispatch wired.
 
 ### Finding
-The following event types still lack Bridge-level email dispatch:
-- `subscription.paused`: DB mutation exists; Bridge email dispatch is missing.
-- `subscription.resumed`: DB mutation exists; Bridge email dispatch is missing.
-- `payment.refunded` (OTP): Revoke handled; Bridge email dispatch is missing.
+~~The following event types still lack Bridge-level email dispatch:~~
+- ~~`subscription.paused`: DB mutation exists; Bridge email dispatch is missing.~~
+- ~~`subscription.resumed`: DB mutation exists; Bridge email dispatch is missing.~~
+- ~~`payment.refunded` (OTP): Revoke handled; Bridge email dispatch is missing.~~
 
-**Resolved**: `payment.failed`, `subscription.price_step_up`, and `subscription.deferred` already have email dispatch wired. Bridge acknowledge/accept/decline routes are implemented.
+**Resolved (2026-05-07)**: All three remaining events now have email dispatch:
+- `subscription.paused` → `send_email_paused` via `send_paused_email()` helper
+- `subscription.resumed` → `send_email_restarted` via `send_resumed_email()` helper
+- `payment.refunded` → `send_email_refunded` via `send_refunded_email()` helper
 
-HiHa acknowledge/accept/decline UX routes were not reconfirmed from this repo.
+Previously resolved: `payment.failed`, `subscription.price_step_up`, and `subscription.deferred` already had email dispatch wired. Bridge acknowledge/accept/decline routes are implemented.
 
 ### Impact
 - Users unaware of payment issues, consent deadlines, deferrals, or cancellations.

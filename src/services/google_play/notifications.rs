@@ -104,6 +104,32 @@ pub async fn send_email_deferred(
     ).await
 }
 
+/// Send subscription pause notification to user
+pub async fn send_email_paused(
+    email_service: &dyn EmailService,
+    email: &str,
+    subscription_id: &str,
+) -> Result<(), BridgeError> {
+    email_service.send_email(
+        email,
+        "Subscription Paused",
+        &format!("Your subscription {} has been paused. You can resume it at any time from your account settings.", subscription_id),
+    ).await
+}
+
+/// Send subscription refund notification to user
+pub async fn send_email_refunded(
+    email_service: &dyn EmailService,
+    email: &str,
+    subscription_id: &str,
+) -> Result<(), BridgeError> {
+    email_service.send_email(
+        email,
+        "Refund Processed",
+        &format!("A refund has been processed for your subscription {}. Your subscription has been revoked as a result.", subscription_id),
+    ).await
+}
+
 /// Send payment failure notification to user with actionable links
 pub async fn send_email_payment_failed(
     email_service: &dyn EmailService,

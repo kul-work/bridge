@@ -127,6 +127,52 @@ async fn send_deferred_email(
     }
 }
 
+async fn send_paused_email(ctx: &EventContext<'_>, subscription_id: &str) {
+    let Some(email) = lookup_lifecycle_email(ctx, "subscription.paused").await else {
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_paused(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+    ).await {
+        warn!("Failed to send paused lifecycle email: {}", e);
+    }
+}
+
+async fn send_resumed_email(ctx: &EventContext<'_>, subscription_id: &str, current_period_end: chrono::DateTime<chrono::Utc>) {
+    let Some(email) = lookup_lifecycle_email(ctx, "subscription.resumed").await else {
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_restarted(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+        current_period_end,
+    ).await {
+        warn!("Failed to send resumed lifecycle email: {}", e);
+    }
+}
+
+async fn send_refunded_email(ctx: &EventContext<'_>, subscription_id: &str) {
+    let Some(email) = lookup_lifecycle_email(ctx, "payment.refunded").await else {
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_refunded(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+    ).await {
+        warn!("Failed to send refunded lifecycle email: {}", e);
+    }
+}
+
 async fn send_payment_failed_email(ctx: &EventContext<'_>, subscription_id: &str) {
     let Some(email) = lookup_lifecycle_email(ctx, "payment.failed").await else {
         return;
@@ -394,6 +440,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         ).await?;
 
                         if let Some(updated_sub) = updated {
+                            send_paused_email(ctx, &sub_id).await;
                             return Ok(EventHandling::Handled(EventEffects {
                                 callback_event_type: Some("subscription.paused".to_string()),
                                 callback_status_override: Some("paused".to_string()),
@@ -427,6 +474,16 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     ctx.fields,
                     ctx.timestamp_epoch_ms,
                 ).await?;
+
+                if outcome.is_some() {
+                    if let Some(sub_id) = ctx.fields.subscription_id.as_deref().or(ctx.webhook.subscription_id.as_deref()) {
+                        let period_end = outcome.as_ref()
+                            .and_then(|o| o.canonical_subscription.as_ref())
+                            .and_then(|s| s.current_period_end)
+                            .unwrap_or_else(chrono::Utc::now);
+                        send_resumed_email(ctx, sub_id, period_end).await;
+                    }
+                }
 
                 return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
             }
@@ -887,6 +944,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                             },
                         ).await?;
                         if let Some(updated_sub) = updated {
+                            send_refunded_email(ctx, &sub.subscription_id).await;
                             return Ok(EventHandling::Handled(EventEffects {
                                 callback_event_type: Some("payment.refunded".to_string()),
                                 callback_status_override: Some("refunded".to_string()),
@@ -906,11 +964,12 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                             revocation_reason: Some("REFUND".to_string()),
                         },
                     ).await?;
-                    if let Some(updated_sub) = updated {
+                    if let Some(_updated_sub) = updated {
+                        send_refunded_email(ctx, sub_id).await;
                         return Ok(EventHandling::Handled(EventEffects {
                             callback_event_type: Some("payment.refunded".to_string()),
                             callback_status_override: Some("refunded".to_string()),
-                            canonical_subscription: Some(updated_sub.into()),
+                            canonical_subscription: Some(_updated_sub.into()),
                             ..Default::default()
                         }));
                     }
