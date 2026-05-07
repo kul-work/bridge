@@ -1,13 +1,37 @@
 # Consolidated Common Gaps & Implementation Strategies
 
-**Summary**: This document distills the three prior audits into five critical common gaps affecting both Bridge and HiHa, with code implementation strategies for each.
+**Summary**: This document distills the three prior audits into five common gaps affecting Bridge and HiHa, with implementation strategies for each.
+
+**Reconfirmation note (2026-05-07, Bridge repo only)**:
+- Gap 1 is confirmed on Bridge for the list endpoint shape and thin list item schema. HiHa parsing behavior was not reconfirmed from this repo.
+- Gap 2 is partially stale. Bridge now calls lifecycle emails for `payment.failed`, `subscription.price_step_up`, and `subscription.deferred`, and resolves emails through an app callback lookup rather than a Bridge `email_contacts` table.
+- Gap 3 is HiHa-side and was not reconfirmed from this Bridge repo.
+- Gap 4 is confirmed. Bridge callback payloads still omit explicit Google lifecycle fields for price-step-up deadline, pause scheduled time, and deferred-until time.
+- Gap 5 is partially stale. Bridge already exposes subscription acknowledge and price-step-up accept/decline routes, and some lifecycle email dispatch is wired. Missing Bridge email coverage remains for `subscription.paused`, `subscription.resumed`, and `payment.refunded`.
 
 ---
 
-## Gap 1: API Schema Mismatch - HiHa Cannot Parse Bridge Subscription Status
+## Gap 1: API Schema Mismatch / Thin List Schema - HiHa Cannot Parse Full Bridge Subscription Status
+
+**Reconfirmed status**: Confirmed on Bridge for response shape and missing list fields. HiHa root-level parsing was not reconfirmed from this repo.
 
 ### Finding
 HiHa calls Bridge `GET /api/v1/subscriptions` expecting a flat single-subscription object with UX fields like `google_requires_price_step_up_consent`, `google_pause_scheduled_at`, `payment_failure_notification`, etc. Bridge returns `{ subscriptions: [...] }`, a list-response wrapper. HiHa attempts root-level field access on the list wrapper instead of drilling into the array element.
+
+Bridge's current list endpoint still returns:
+- `subscriptions: Vec<SubscriptionDetail>`
+- `pagination: PaginationMeta`
+
+`SubscriptionDetail` currently includes only:
+- `id`
+- `subscription_id`
+- `provider`
+- `status`
+- `current_period_end`
+- `auto_renewing`
+- `payment_failure_notification`
+
+The single-subscription endpoint uses `SubscriptionDetailFull` and does expose more Google and revocation fields, but the list endpoint does not.
 
 ### Impact
 - Premium UX flags (price step-up, pause scheduled, payment failure, deferred renewal) are always `None`.
@@ -91,19 +115,32 @@ pub struct SubscriptionStatusResponse {
 
 ---
 
-## Gap 2: Bridge Lifecycle Emails Not Sent
+## Gap 2: Bridge Lifecycle Emails Partially Wired
+
+**Reconfirmed status**: Partially stale. Bridge now sends some lifecycle emails, but not via the `email_contacts` storage strategy described below.
 
 ### Finding
-Bridge contains `src/services/google_play/notifications.rs` with functions like `send_email_payment_failed`, `send_email_price_step_up`, `send_email_deferred`, etc. These functions are **never called** from the event processor. Emails for `payment.failed`, `subscription.price_step_up`, and `subscription.deferred` remain unsent.
+Bridge contains `src/services/google_play/notifications.rs` with functions like `send_email_payment_failed`, `send_email_price_step_up`, `send_email_deferred`, etc.
 
-### Impact
-- Users never receive notifications of payment failures, price increases, deferred renewals.
-- No actionable alerts; users discover issues only when they can't access premium.
-- Bridge owns email infrastructure but doesn't use it.
+This original finding is no longer fully accurate. Current Bridge code calls:
+- `send_email_payment_failed` for `payment.failed`
+- `send_email_price_step_up` for `subscription.price_step_up`
+- `send_email_deferred` for `subscription.deferred`
+
+Current email lookup is implemented in `src/services/email_lookup.rs`: Bridge calls the tenant app's callback origin at `/internal/bridge/email-lookup`, signs the request with `X-Pay-Signature`, and sends `{ "clerk_id": external_user_id }`. There is no Bridge-owned `email_contacts` table in the current repo.
+
+### Remaining Impact
+- Users may still miss lifecycle notifications if the tenant app does not implement the signed email lookup endpoint.
+- Events without Bridge email dispatch (`subscription.paused`, `subscription.resumed`, `payment.refunded`) still lack direct user notification.
+- Bridge owns email infrastructure, but coverage remains incomplete across all lifecycle events.
+
+The remaining risk is narrower: emails depend on each app implementing the signed email lookup endpoint, and several lifecycle events are still not covered by Bridge email dispatch (see Gap 5).
 
 ### Code Implementation Strategy
 
 #### Step 1: Bridge - Add tenant-scoped email resolution
+**Status**: Superseded by current callback-based lookup unless a product decision is made to store email contacts in Bridge.
+
 **File**: Create `src/services/email_contact.rs` or extend existing contact module
 
 Implement a mapping layer to resolve `app_id + external_user_id -> email`:
@@ -206,6 +243,8 @@ async fn register_email_contact(
 ---
 
 ## Gap 3: HiHa Callback Ingestion Too Thin - Missing Local State Cache
+
+**Reconfirmed status**: Not reconfirmed from this Bridge repo. Requires inspection of the HiHa repo.
 
 ### Finding
 HiHa's `webhook_callbacks` table and handler only persist the event name and premium toggle. Fields like `new_price_cents`, `previous_status`, `google_deferred_until`, `google_pause_scheduled_at`, `revocation_reason`, and `reconciliation` metadata are dropped. HiHa cannot reconstruct old-style subscription cache behavior from callbacks alone.
@@ -431,8 +470,17 @@ async fn get_subscription_status(
 
 ## Gap 4: Bridge Callback Payload Incomplete - Missing Google Lifecycle Fields
 
+**Reconfirmed status**: Confirmed.
+
 ### Finding
 Bridge internally stores `google_price_step_up_consent_deadline`, `google_pause_scheduled_at`, and `google_deferred_until` in the subscription row, but these fields are **not included in the canonical callback payload** sent to HiHa. Without payload expansion, even a stronger HiHa callback handler cannot reconstruct full old-style UX state.
+
+Current `CanonicalWebhookPayload` includes `new_price_cents`, `previous_status`, `corrected_status`, `reconciliation_source`, `revocation_reason`, and `cancellation_mode`, but still lacks:
+- `google_price_step_up_consent_deadline`
+- `google_pause_scheduled_at`
+- `google_deferred_until`
+
+Scheduler-built callbacks also omit these fields.
 
 ### Impact
 - HiHa cannot show full deferred date, pause scheduled date, or price-step-up deadline in UX.
@@ -521,14 +569,18 @@ Payload expansion makes Gap 3's callback ingestion complete.
 
 ## Gap 5: Missing Lifecycle Email Consolidation for Granular Events
 
+**Reconfirmed status**: Partially stale. Bridge has some email dispatch and action routes, but coverage is still incomplete.
+
 ### Finding
 Six event types have partial or missing email behavior:
-- `payment.failed`: DB mutation exists; email + acknowledge endpoint missing.
-- `subscription.price_step_up`: Scheduler exists; email + HiHa accept/decline routes missing.
-- `subscription.deferred`: DB mutation exists; email missing.
-- `subscription.paused`: DB mutation exists; email missing.
-- `subscription.resumed`: DB mutation exists; email missing.
-- `payment.refunded` (OTP): Revoke handled; email missing.
+- `payment.failed`: DB mutation and Bridge email dispatch exist; Bridge subscription acknowledge route exists.
+- `subscription.price_step_up`: Scheduler and Bridge email dispatch exist; Bridge accept/decline routes exist.
+- `subscription.deferred`: DB mutation and Bridge email dispatch exist.
+- `subscription.paused`: DB mutation exists; Bridge email dispatch was not found.
+- `subscription.resumed`: DB mutation exists; Bridge email dispatch was not found.
+- `payment.refunded` (OTP): Revoke handled; Bridge email dispatch was not found.
+
+HiHa acknowledge/accept/decline UX routes were not reconfirmed from this repo.
 
 ### Impact
 - Users unaware of payment issues, consent deadlines, deferrals, or cancellations.
@@ -537,13 +589,13 @@ Six event types have partial or missing email behavior:
 
 ### Code Implementation Strategy
 
-#### Step 1: Bridge - Activate notifications for all lifecycle events
+#### Step 1: Bridge - Activate notifications for remaining lifecycle events
 **File**: `src/webhooks/processor/event_handlers.rs`
 
-For each event handler, add conditional email dispatch after DB mutation:
+For remaining uncovered event handlers, add conditional email dispatch after DB mutation. Current Bridge already dispatches `payment.failed`, `subscription.price_step_up`, and `subscription.deferred`.
 
 ```rust
-// Example: payment.failed
+// Example pattern
 async fn handle_payment_failed(state: &AppState, event: &CanonicalWebhookPayload) -> Result<Effects> {
     // Existing DB mutation
     sqlx::query!("UPDATE subscriptions SET ... WHERE id = $1", &event.subscription_id)
@@ -558,10 +610,9 @@ async fn handle_payment_failed(state: &AppState, event: &CanonicalWebhookPayload
     Ok(Effects { /* ... */ })
 }
 
-// Similar for:
-// - handle_subscription_price_step_up
-// - handle_subscription_deferred
+// Apply similar coverage for:
 // - handle_subscription_paused
+// - handle_subscription_resumed
 // - handle_payment_refunded (OTP context)
 ```
 
@@ -586,6 +637,8 @@ if previous_event.is_none() {
 **Verify**: Test each handler; confirm email fires once per transition.
 
 #### Step 2: HiHa - Add payment-failure acknowledge endpoint
+**Status**: Not reconfirmed. Bridge already has `POST /api/v1/subscriptions/{subscription_id}/acknowledge`.
+
 **File**: `src/handlers/webhooks.rs` or `src/handlers/payments.rs`
 
 ```rust
@@ -609,6 +662,8 @@ async fn acknowledge_payment_failure(
 **Verify**: Test endpoint; confirm cache flag clears.
 
 #### Step 3: HiHa - Add price-step-up accept/decline routes
+**Status**: Not reconfirmed. Bridge already has `POST /api/v1/subscriptions/{subscription_id}/price-step-up/accept` and `/decline`.
+
 **File**: `src/handlers/payments.rs`
 
 ```rust
@@ -697,21 +752,21 @@ pub async fn send_email_deferred(
 
 | Gap | Bridge | HiHa | Status |
 |---|---|---|---|
-| **1. API Mismatch** | Expand list response | Parse array, update handler | Schema fix |
-| **2. Email Delivery** | Wire notifications + email contact table | Register contact endpoint | Requires contact storage |
-| **3. Cache Too Thin** | (done in Gap 4) | Create cache table, expand handler | Requires callback fields |
-| **4. Callback Incomplete** | Expand payload struct + populate | Consume fields (Gap 3) | Schema fix |
-| **5. Lifecycle Email Gaps** | Activate for all events | Add acknowledge/accept/decline routes | Requires Gaps 2 & 4 |
+| **1. API Mismatch / Thin List Schema** | Expand list response | Parse array, update handler | Confirmed Bridge issue |
+| **2. Email Delivery** | Partially wired via callback email lookup | Ensure lookup endpoint exists | Partially stale |
+| **3. Cache Too Thin** | (done in Gap 4) | Create cache table, expand handler | HiHa-side, not reconfirmed |
+| **4. Callback Incomplete** | Expand payload struct + populate | Consume fields (Gap 3) | Confirmed Bridge issue |
+| **5. Lifecycle Email Gaps** | Add remaining paused/resumed/refunded email coverage | Add/verify UX routes | Partially stale |
 
 ---
 
 ## Implementation Order
 
-1. **Gap 1** (API schema) - Unblocks HiHa integration testing.
-2. **Gap 4** (Callback payload) - Enables Gap 3 to consume complete data.
-3. **Gap 3** (Cache layer) - Allows HiHa to read local state; depends on Gap 4.
-4. **Gap 2** (Email contact) - Enables Gap 5 activation; orthogonal to cache.
-5. **Gap 5** (Lifecycle emails) - Final integration; depends on Gaps 2 & 4.
+1. **Gap 4** (Callback payload) - Add missing Google lifecycle fields to Bridge callbacks. This unblocks complete HiHa callback ingestion and cache reconstruction.
+2. **Gap 1** (API schema / thin list schema) - Expand Bridge list response or update HiHa to consume the list/detail APIs correctly. This unblocks subscription status UX while cache work is in progress.
+3. **Gap 3** (HiHa cache layer) - Verify and implement local callback ingestion/cache after Gap 4 payloads are complete.
+4. **Gap 5** (Remaining lifecycle emails) - Add Bridge email coverage for `subscription.paused`, `subscription.resumed`, and `payment.refunded`; verify HiHa UX routes.
+5. **Gap 2** (Email contact policy) - Decide whether callback-based email lookup is sufficient or whether Bridge should own contact storage. This is no longer a prerequisite for Gap 5 unless product chooses Bridge-owned email contacts.
 
 ---
 
@@ -721,4 +776,3 @@ pub async fn send_email_deferred(
 - **Email spam**: Use webhook idempotency to suppress duplicate sends.
 - **Schema migration**: Separate DB migrations per table; can roll back independently.
 - **Fallback**: HiHa can poll Bridge during cache bootstrap; eventually reads from local state only.
-
