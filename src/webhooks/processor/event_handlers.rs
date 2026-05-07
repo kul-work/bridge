@@ -676,10 +676,14 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                             },
                         ).await?;
 
-                        if updated.is_none() {
-                            info!("Skipped stale deferred event for subscription {}", sub_id);
-                        } else {
+                        if let Some(updated_sub) = updated {
                             send_deferred_email(ctx, sub_id, until).await;
+                            return Ok(EventHandling::Handled(EventEffects {
+                                canonical_subscription: Some(updated_sub.into()),
+                                ..Default::default()
+                            }));
+                        } else {
+                            info!("Skipped stale deferred event for subscription {}", sub_id);
                         }
                     }
                 }

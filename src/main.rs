@@ -119,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/subscriptions/:subscription_id/price-step-up/decline", axum::routing::post(handlers::subscriptions_actions::decline_price_step_up))
         .route("/payments", axum::routing::get(handlers::payments::get_payments))
         .route("/purchase/register", axum::routing::post(handlers::payments::register_purchase))
+        .route("/users/:external_user_id/subscription-status", axum::routing::get(handlers::subscriptions::get_subscription_status_snapshot))
         .route("/users/:external_user_id/anonymize", axum::routing::post(handlers::users::anonymize))
         .route("/users/:external_user_id/data-export", axum::routing::get(handlers::users::data_export))
         

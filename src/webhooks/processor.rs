@@ -61,6 +61,13 @@ pub struct CanonicalWebhookPayload {
     pub reconciliation_source: Option<String>,
     pub revocation_reason: Option<String>,
     pub cancellation_mode: Option<String>,
+    pub google_price_step_up_consent_deadline: Option<i64>,
+    pub google_pause_scheduled_at: Option<i64>,
+    pub google_deferred_until: Option<i64>,
+}
+
+fn to_epoch_ms(value: Option<chrono::DateTime<chrono::Utc>>) -> Option<i64> {
+    value.map(|date| date.timestamp_millis())
 }
 
 async fn suppress_unresolved_webhook<R: WebhookProcessingRepository>(
@@ -569,6 +576,15 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         .as_ref()
         .and_then(|sub| sub.revocation_reason.clone())
         .or_else(|| fields.cancel_reason.clone());
+    let google_price_step_up_consent_deadline = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_price_step_up_consent_deadline));
+    let google_pause_scheduled_at = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_pause_scheduled_at));
+    let google_deferred_until = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_deferred_until));
 
     Ok(Some(CanonicalWebhookPayload {
         event_id: format!("{}-{}", webhook.provider, webhook.provider_webhook_id),
@@ -596,6 +612,9 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         } else {
             None
         },
+        google_price_step_up_consent_deadline,
+        google_pause_scheduled_at,
+        google_deferred_until,
     }))
 }
 
@@ -738,6 +757,15 @@ pub async fn process_webhook(
     let canonical_revocation_reason = callback_revocation_reason_override
         .or_else(|| canonical_subscription.as_ref().and_then(|sub| sub.revocation_reason.clone()))
         .or_else(|| fields.cancel_reason.clone());
+    let google_price_step_up_consent_deadline = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_price_step_up_consent_deadline));
+    let google_pause_scheduled_at = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_pause_scheduled_at));
+    let google_deferred_until = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_deferred_until));
     let canonical = CanonicalWebhookPayload {
         event_id: format!("{}-{}", provider, webhook_provider_webhook_id),
         event_type: callback_event_type,
@@ -760,6 +788,9 @@ pub async fn process_webhook(
         reconciliation_source: None,
         revocation_reason: canonical_revocation_reason,
         cancellation_mode: callback_cancellation_mode_override,
+        google_price_step_up_consent_deadline,
+        google_pause_scheduled_at,
+        google_deferred_until,
     };
 
     // Step 6: Mark webhook as processed

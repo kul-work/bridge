@@ -1,5 +1,6 @@
 use crate::config::API_PAGINATION_LIMIT;
 use crate::config::MAX_PAGINATION_LIMIT;
+use crate::application::subscription_status::{self, SubscriptionStatusInput, SubscriptionStatusSnapshot};
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::ports::SubscriptionReadRepository;
@@ -129,6 +130,24 @@ pub async fn list_subscriptions(
             },
         }),
     ))
+}
+
+pub async fn get_subscription_status_snapshot(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AppAuth>,
+    Path(external_user_id): Path<String>,
+) -> Result<(StatusCode, Json<SubscriptionStatusSnapshot>), BridgeError> {
+    let database = state.database();
+    let snapshot = subscription_status::get_subscription_status_snapshot(
+        database.as_ref(),
+        SubscriptionStatusInput {
+            app_id: auth.app_id,
+            external_user_id: &external_user_id,
+        },
+    )
+    .await?;
+
+    Ok((StatusCode::OK, Json(snapshot)))
 }
 
 fn decode_cursor(after: Option<&str>) -> Result<Option<SubscriptionCursor>, BridgeError> {

@@ -143,6 +143,9 @@ pub(crate) async fn forward_verify_purchase_callback<
         reconciliation_source: None,
         revocation_reason: None,
         cancellation_mode: None,
+        google_price_step_up_consent_deadline: None,
+        google_pause_scheduled_at: None,
+        google_deferred_until: None,
     };
 
     crate::webhooks::forwarding::create_and_forward_webhook(

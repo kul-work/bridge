@@ -93,6 +93,9 @@ pub async fn cancel_subscription<R: SubscriptionActionsHandlerRepository + ?Size
         current_period_end: updated_sub.current_period_end,
         status: updated_sub.status.clone(),
         revocation_reason: updated_sub.revocation_reason.clone(),
+        google_price_step_up_consent_deadline: updated_sub.google_price_step_up_consent_deadline,
+        google_pause_scheduled_at: updated_sub.google_pause_scheduled_at,
+        google_deferred_until: updated_sub.google_deferred_until,
     };
 
     if let Err(e) = dispatch_subscription_callback(
@@ -164,6 +167,9 @@ pub async fn resume_subscription<R: SubscriptionActionsHandlerRepository + ?Size
         current_period_end: updated_sub.current_period_end,
         status: updated_sub.status.clone(),
         revocation_reason: updated_sub.revocation_reason.clone(),
+        google_price_step_up_consent_deadline: updated_sub.google_price_step_up_consent_deadline,
+        google_pause_scheduled_at: updated_sub.google_pause_scheduled_at,
+        google_deferred_until: updated_sub.google_deferred_until,
     };
 
     if let Err(e) = dispatch_subscription_callback(
@@ -304,6 +310,9 @@ pub async fn accept_price_step_up<R: SubscriptionActionsHandlerRepository + ?Siz
         current_period_end: updated_sub.current_period_end,
         status: updated_sub.status.clone(),
         revocation_reason: updated_sub.revocation_reason.clone(),
+        google_price_step_up_consent_deadline: updated_sub.google_price_step_up_consent_deadline,
+        google_pause_scheduled_at: updated_sub.google_pause_scheduled_at,
+        google_deferred_until: updated_sub.google_deferred_until,
     };
 
     if let Err(e) = dispatch_subscription_callback(
@@ -369,6 +378,9 @@ struct SubscriptionCallbackData {
     current_period_end: Option<chrono::DateTime<chrono::Utc>>,
     status: String,
     revocation_reason: Option<String>,
+    google_price_step_up_consent_deadline: Option<chrono::DateTime<chrono::Utc>>,
+    google_pause_scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    google_deferred_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 async fn dispatch_subscription_callback<R: SubscriptionActionsHandlerRepository + ?Sized>(
@@ -395,6 +407,9 @@ async fn dispatch_subscription_callback<R: SubscriptionActionsHandlerRepository 
         "provider": sub.provider,
         "mode": cancellation_mode,
         "new_price_cents": new_price_cents,
+        "google_price_step_up_consent_deadline": sub.google_price_step_up_consent_deadline.map(|d| d.timestamp_millis()),
+        "google_pause_scheduled_at": sub.google_pause_scheduled_at.map(|d| d.timestamp_millis()),
+        "google_deferred_until": sub.google_deferred_until.map(|d| d.timestamp_millis()),
     });
 
     let canonical = crate::webhooks::processor::CanonicalWebhookPayload {
@@ -419,6 +434,9 @@ async fn dispatch_subscription_callback<R: SubscriptionActionsHandlerRepository 
         reconciliation_source: None,
         revocation_reason: sub.revocation_reason.clone(),
         cancellation_mode: cancellation_mode.map(str::to_string),
+        google_price_step_up_consent_deadline: sub.google_price_step_up_consent_deadline.map(|d| d.timestamp_millis()),
+        google_pause_scheduled_at: sub.google_pause_scheduled_at.map(|d| d.timestamp_millis()),
+        google_deferred_until: sub.google_deferred_until.map(|d| d.timestamp_millis()),
     };
 
     crate::webhooks::forwarding::create_and_forward_webhook(

@@ -290,6 +290,42 @@ fn test_callback_status_for_pause_lifecycle_events() {
 }
 
 #[test]
+fn test_canonical_payload_serializes_google_lifecycle_fields() {
+    let payload = CanonicalWebhookPayload {
+        event_id: "evt_1".to_string(),
+        event_type: "subscription.pause_scheduled".to_string(),
+        timestamp: "2026-05-07T12:00:00Z".to_string(),
+        timestamp_epoch_ms: 1778155200000,
+        app_slug: "hiha".to_string(),
+        product_id: None,
+        subscription_id: Some("sub_1".to_string()),
+        external_user_id: Some("user_1".to_string()),
+        amount_cents: None,
+        new_price_cents: None,
+        auto_renewing: Some(true),
+        purchase_token: Some("token_1".to_string()),
+        current_period_end: None,
+        status: Some("active".to_string()),
+        provider: "google_play".to_string(),
+        provider_event_id: "provider_evt_1".to_string(),
+        previous_status: None,
+        corrected_status: None,
+        reconciliation_source: None,
+        revocation_reason: None,
+        cancellation_mode: None,
+        google_price_step_up_consent_deadline: Some(1778760000000),
+        google_pause_scheduled_at: Some(1778846400000),
+        google_deferred_until: Some(1781438400000),
+    };
+
+    let value = serde_json::to_value(payload).unwrap();
+
+    assert_eq!(value["google_price_step_up_consent_deadline"], 1778760000000i64);
+    assert_eq!(value["google_pause_scheduled_at"], 1778846400000i64);
+    assert_eq!(value["google_deferred_until"], 1781438400000i64);
+}
+
+#[test]
 fn test_mock_google_play_renewal_period_end_extends_existing_period() {
     let existing = chrono::DateTime::parse_from_rfc3339("2026-05-10T18:44:10Z")
         .unwrap()
