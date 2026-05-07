@@ -5,8 +5,6 @@
 **Reconfirmation note (2026-05-07, Bridge repo only)**:
 - Gap 1 is confirmed on Bridge for the list endpoint shape and thin list item schema. HiHa parsing behavior was not reconfirmed from this repo.
 - Gap 2 is partially stale. Bridge now calls lifecycle emails for `payment.failed`, `subscription.price_step_up`, and `subscription.deferred`, and resolves emails through an app callback lookup rather than a Bridge `email_contacts` table.
-- Gap 3 is HiHa-side and was not reconfirmed from this Bridge repo.
-- Gap 4 is confirmed. Bridge callback payloads still omit explicit Google lifecycle fields for price-step-up deadline, pause scheduled time, and deferred-until time.
 - Gap 5 is partially stale. Bridge already exposes subscription acknowledge and price-step-up accept/decline routes, and some lifecycle email dispatch is wired. Missing Bridge email coverage remains for `subscription.paused`, `subscription.resumed`, and `payment.refunded`.
 
 ---
@@ -242,8 +240,6 @@ async fn register_email_contact(
 
 ---
 
-## Gap 3: HiHa Callback Ingestion Too Thin - Missing Local State Cache
-
 **Reconfirmed status**: Not reconfirmed from this Bridge repo. Requires inspection of the HiHa repo.
 
 ### Finding
@@ -468,8 +464,6 @@ async fn get_subscription_status(
 
 ---
 
-## Gap 4: Bridge Callback Payload Incomplete - Missing Google Lifecycle Fields
-
 **Reconfirmed status**: Confirmed.
 
 ### Finding
@@ -560,8 +554,8 @@ async fn build_canonical_payload(
 
 **Verify**: Unit test with mock subscription; confirm payload includes Google fields when set.
 
-#### Step 3: HiHa - Consume expanded fields (already done in Gap 3)
-Payload expansion makes Gap 3's callback ingestion complete.
+#### Step 3: HiHa - Consume expanded fields
+Payload expansion makes callback ingestion complete.
 
 **Verify**: End-to-end test; confirm HiHa receives and stores all Google fields.
 
@@ -754,17 +748,13 @@ pub async fn send_email_deferred(
 |---|---|---|---|
 | **1. API Mismatch / Thin List Schema** | Expand list response | Parse array, update handler | Confirmed Bridge issue |
 | **2. Email Delivery** | Partially wired via callback email lookup | Ensure lookup endpoint exists | Partially stale |
-| **3. Cache Too Thin** | (done in Gap 4) | Create cache table, expand handler | HiHa-side, not reconfirmed |
-| **4. Callback Incomplete** | Expand payload struct + populate | Consume fields (Gap 3) | Confirmed Bridge issue |
-| **5. Lifecycle Email Gaps** | Add remaining paused/resumed/refunded email coverage | Add/verify UX routes | Partially stale |
+| **3. Lifecycle Email Gaps** | Add remaining paused/resumed/refunded email coverage | Add/verify UX routes | Partially stale |
 
 ---
 
 ## Implementation Order
 
-1. **Gap 4** (Callback payload) - Add missing Google lifecycle fields to Bridge callbacks. This unblocks complete HiHa callback ingestion and cache reconstruction.
 2. **Gap 1** (API schema / thin list schema) - Expand Bridge list response or update HiHa to consume the list/detail APIs correctly. This unblocks subscription status UX while cache work is in progress.
-3. **Gap 3** (HiHa cache layer) - Verify and implement local callback ingestion/cache after Gap 4 payloads are complete.
 4. **Gap 5** (Remaining lifecycle emails) - Add Bridge email coverage for `subscription.paused`, `subscription.resumed`, and `payment.refunded`; verify HiHa UX routes.
 5. **Gap 2** (Email contact policy) - Decide whether callback-based email lookup is sufficient or whether Bridge should own contact storage. This is no longer a prerequisite for Gap 5 unless product chooses Bridge-owned email contacts.
 
