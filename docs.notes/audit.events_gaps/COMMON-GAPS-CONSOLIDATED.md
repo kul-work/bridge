@@ -609,24 +609,7 @@ pub async fn send_email_refunded(
 
 **Verify**: Unit test with mock client; confirm new templates are called with correct arguments.
 
----
 
-## Summary Table
-
-| Gap | Bridge | HiHa | Status |
-|---|---|---|---|
-| **1. API Mismatch** | Expand list response | Parse array, update handler | Confirmed Bridge issue |
-| **2. Email Delivery** | Wired via callback email lookup | Ensure lookup endpoint exists | Partially resolved |
-| **3. HiHa Cache** | N/A | Implement cache table | Not reconfirmed |
-| **4. Payload Expansion** | Expand canonical payload | Consume new fields | Confirmed Bridge issue |
-| **5. Lifecycle Email Gaps** | Add remaining paused/resumed/refunded email coverage | Add/verify UX routes | Partially stale |
-
----
-
-## Implementation Order
-
-- **Gap 5** (Remaining lifecycle emails) - Add Bridge email coverage for `subscription.paused`, `subscription.resumed`, and `payment.refunded`.
-- **Gap 4** (Payload expansion) - Expand `CanonicalWebhookPayload` to include Google lifecycle fields.
 
 ---
 
