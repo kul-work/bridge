@@ -23,6 +23,10 @@ fn test_normalize_google_play_events() {
         normalize_event_type("google_play", "SUBSCRIPTION_CANCELLATION_SCHEDULED"),
         "subscription.cancellation_scheduled"
     );
+    assert_eq!(
+        normalize_event_type("google_play", "ONE_TIME_PRODUCT_REFUNDED"),
+        "purchase.one_time_refunded"
+    );
 }
 
 #[test]
@@ -80,6 +84,41 @@ fn test_normalize_creem_checkout_completed_one_time_to_purchase_one_time() {
     assert_eq!(
         normalize_event_type_with_payload("creem", "checkout.completed", Some(&payload)),
         "purchase.one_time"
+    );
+}
+
+#[test]
+fn test_normalize_creem_refund_created_one_time_to_purchase_one_time_refunded() {
+    let payload = serde_json::json!({
+        "eventType": "refund.created",
+        "object": {
+            "id": "refund_001",
+            "billing_type": "one_time",
+            "order_id": "order_001"
+        }
+    });
+
+    assert_eq!(
+        normalize_event_type_with_payload("creem", "refund.created", Some(&payload)),
+        "purchase.one_time_refunded"
+    );
+}
+
+#[test]
+fn test_normalize_creem_refund_created_subscription_stays_payment_refunded() {
+    let payload = serde_json::json!({
+        "eventType": "refund.created",
+        "object": {
+            "id": "refund_001",
+            "billing_type": "recurring",
+            "subscription_id": "sub_001",
+            "order_id": "order_001"
+        }
+    });
+
+    assert_eq!(
+        normalize_event_type_with_payload("creem", "refund.created", Some(&payload)),
+        "payment.refunded"
     );
 }
 
@@ -232,6 +271,43 @@ fn test_creem_field_extraction_refund_with_amount_fallback() {
     assert_eq!(fields.subscription_id, Some("sub_refunded".to_string()));
     assert_eq!(fields.purchase_token, Some("order_original".to_string()));
     assert_eq!(fields.amount_cents, Some(2999));
+}
+
+#[test]
+fn test_creem_field_extraction_one_time_refund() {
+    let payload = serde_json::json!({
+        "id": "evt_ref_otp_123",
+        "eventType": "refund.created",
+        "createdAt": "2026-04-20T10:00:00Z",
+        "object": {
+            "id": "refund_otp_789",
+            "billing_type": "one_time",
+            "order_id": "order_original",
+            "product_id": "prod_lifetime",
+            "last_transaction": {
+                "amount": 9999
+            }
+        }
+    });
+
+    let webhook = WebhookProviderSnapshot {
+        provider: "creem".to_string(),
+        provider_webhook_id: "wh_otp_refund_789".to_string(),
+        event_type: "refund.created".to_string(),
+        subscription_id: None,
+        purchase_token: None,
+        payload,
+        processed: false,
+        timestamp_epoch_ms: Some(1713607200000),
+        suppressed: false,
+        suppressed_reason: None,
+    };
+
+    let fields = extract_webhook_fields(&webhook);
+    assert_eq!(fields.subscription_id, None);
+    assert_eq!(fields.product_id, Some("prod_lifetime".to_string()));
+    assert_eq!(fields.purchase_token, Some("order_original".to_string()));
+    assert_eq!(fields.amount_cents, Some(9999));
 }
 
 #[test]

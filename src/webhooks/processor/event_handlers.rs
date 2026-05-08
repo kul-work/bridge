@@ -952,6 +952,21 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
             Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)))
         }
 
+        "purchase.one_time_refunded" => {
+            let Some(outcome) = crate::services::google_play::product_lifecycle::handle_otp_refunded(
+                repo,
+                ctx.app_id,
+                ctx.webhook,
+                ctx.fields,
+                ctx.external_user_id.as_deref(),
+                ctx.timestamp_epoch_ms,
+            ).await? else {
+                return Ok(EventHandling::ReturnNone);
+            };
+
+            Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)))
+        }
+
         "payment.refunded" => {
             if let Some(_user_id) = ctx.external_user_id.as_deref() {
                 if let Some(token) = ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()) {

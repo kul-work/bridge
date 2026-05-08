@@ -3,6 +3,27 @@ pub(super) fn normalize_event_type_with_payload(
     event_type: &str,
     payload: Option<&serde_json::Value>,
 ) -> String {
+    if provider == "creem" && event_type == "refund.created" {
+        if let Some(payload) = payload {
+            let object = payload.get("object").unwrap_or(&serde_json::Value::Null);
+            let billing_type = object.get("billing_type")
+                .and_then(|v| v.as_str())
+                .or_else(|| object.get("product")
+                    .and_then(|v| v.get("billing_type"))
+                    .and_then(|v| v.as_str()))
+                .or_else(|| object.get("order")
+                    .and_then(|v| v.get("type"))
+                    .and_then(|v| v.as_str()))
+                .or_else(|| object.get("checkout")
+                    .and_then(|v| v.get("billing_type"))
+                    .and_then(|v| v.as_str()));
+
+            if matches!(billing_type, Some("one_time") | Some("one-time") | Some("otp") | Some("lifetime")) {
+                return "purchase.one_time_refunded".to_string();
+            }
+        }
+    }
+
     if provider == "creem" && event_type == "checkout.completed" {
         if let Some(payload) = payload {
             let object = payload.get("object").unwrap_or(&serde_json::Value::Null);
@@ -86,7 +107,7 @@ pub(super) fn normalize_event_type(provider: &str, event_type: &str) -> String {
             "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED" => "subscription.price_step_up".to_string(),
             "SUBSCRIPTION_PENDING_PURCHASE_CANCELED" => "subscription.pending_purchase_cancelled".to_string(),
             "ONE_TIME_PRODUCT_PURCHASED" => "purchase.one_time".to_string(),
-            "ONE_TIME_PRODUCT_REFUNDED" => "payment.refunded".to_string(),
+            "ONE_TIME_PRODUCT_REFUNDED" => "purchase.one_time_refunded".to_string(),
             "ONE_TIME_PRODUCT_CANCELED" => "purchase.one_time_cancelled".to_string(),
             "VOIDED_PURCHASE" => "payment.refunded".to_string(),
             _ => format!("google_play.{}", event_type),

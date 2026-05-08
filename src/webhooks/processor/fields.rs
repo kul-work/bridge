@@ -115,7 +115,7 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
 
             // Determine subscription_id based on event type
             let subscription_id = match normalized_event_type.as_str() {
-                "purchase.one_time" => None,
+                "purchase.one_time" | "purchase.one_time_refunded" => None,
                 "payment.refunded" => object_subscription_id.clone()
                     .or_else(|| object_product_id.clone())
                     .or_else(|| object_id.clone()),
@@ -154,7 +154,7 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
 
             // Extract purchase_token (checkout_id for OTP, order_id for refunds)
             let purchase_token = match normalized_event_type.as_str() {
-                "purchase.one_time" => object_checkout_id
+                "purchase.one_time" | "purchase.one_time_refunded" => object_checkout_id
                     .or_else(|| object_order_id.clone())
                     .or_else(|| object_id.clone()),
                 "payment.refunded" => object_order_id

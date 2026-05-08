@@ -42,22 +42,16 @@ This document lists only the remaining technical and product gaps that require i
 
 ## 4. OTP Refund/Revoke Classification
 - **Affected Providers**: **All Providers** (Google Play, Creem)
+- **Status**: **Fixed** (2026-05-08)
 - **Context**: HiHa must distinguish between One-Time Purchase (OTP) refunds and subscription refunds to ensure lifetime entitlements are revoked correctly.
 - **Current State**:
     - ✅ HiHa **correctly handles** `purchase.one_time + completed` → grants lifetime premium
     - ✅ HiHa **correctly handles** `purchase.one_time + cancelled|refunded` → revokes premium (via `OneTimePurchaseRevoked` enum)
-    - ❌ **Missing**: OTP refunds arriving as `payment.refunded` events are **misclassified as subscription refunds**
-    - ❌ **Root cause**: Bridge normalizes OTP refunds into `payment.refunded` events:
-        - **Google Play**: `ONE_TIME_PRODUCT_REFUNDED` → `payment.refunded` (not `purchase.one_time + refunded`)
-        - **Creem**: `refund.created` (OTP) → `payment.refunded` (not `purchase.one_time + refunded`)
-        - See `bridge/src/webhooks/processor/normalize.rs` for normalization logic
-- **Classification Gap**:
-    - HiHa currently treats **all** `payment.refunded` events as subscription inactivity
-    - HiHa has **no payload field** to distinguish product type (e.g., `product_type`, `entitlement_kind`)
-    - Result: OTP refunds are revoked correctly (outcome is right, semantics are wrong), but future multi-entitlement scenarios will break
-- **Action** (Recommended by Oracle):
-    - **Option A** (Preferred - Bridge side): Bridge should send OTP refunds as `purchase.one_time + status: refunded` instead of `payment.refunded`. This reuses HiHa's existing `OneTimePurchaseRevoked` logic.
-    - **Option B** (HiHa side): Add explicit `product_type` or `entitlement_kind` field to Bridge's webhook payload so HiHa can classify based on data, not event type.
+    - ✅ Bridge now emits OTP refunds as `purchase.one_time + status: refunded`
+    - ✅ **Google Play**: `ONE_TIME_PRODUCT_REFUNDED` → internal `purchase.one_time_refunded` → callback `purchase.one_time + refunded`
+    - ✅ **Creem**: explicit OTP `refund.created` payloads → internal `purchase.one_time_refunded` → callback `purchase.one_time + refunded`
+    - ✅ **Creem subscriptions**: `refund.created` remains `payment.refunded`
+- **Resolution**: Implemented Bridge-side using HiHa's existing `purchase.one_time + refunded` revoke path. No HiHa payload expansion is needed for this gap.
 
 ---
 
