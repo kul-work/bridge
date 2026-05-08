@@ -356,12 +356,60 @@ pub async fn decline_price_step_up<R: SubscriptionActionsHandlerRepository + ?Si
         ));
     }
 
+    let purchase_token = sub.purchase_token.as_deref().ok_or_else(|| {
+        BridgeError::SubscriptionNotFound(
+            "Google Play purchase token not found for this subscription".to_string(),
+        )
+    })?;
+
+    let provider_config = repo.get_provider_config(app_id, &sub.provider).await?;
+
+    provider_api::cancel_subscription(
+        &sub.provider,
+        &sub.subscription_id,
+        Some(purchase_token),
+        Some("scheduled"),
+        &provider_config.config,
+    )
+    .await?;
+
     let updated_sub = repo.decline_price_step_up(app_id, sub.id).await?;
 
     let cancellation_effective_at = updated_sub
         .current_period_end
         .map(|d| d.to_rfc3339())
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
+    let callback_sub = SubscriptionCallbackData {
+        subscription_id: updated_sub.subscription_id.clone(),
+        external_user_id: updated_sub.external_user_id.clone(),
+        provider: updated_sub.provider.clone(),
+        purchase_token: updated_sub.purchase_token.clone(),
+        auto_renewing: updated_sub.auto_renewing,
+        current_period_end: updated_sub.current_period_end,
+        status: updated_sub.status.clone(),
+        revocation_reason: updated_sub.revocation_reason.clone(),
+        google_price_step_up_consent_deadline: updated_sub.google_price_step_up_consent_deadline,
+        google_pause_scheduled_at: updated_sub.google_pause_scheduled_at,
+        google_deferred_until: updated_sub.google_deferred_until,
+    };
+
+    if let Err(e) = dispatch_subscription_callback(
+        repo,
+        app_id,
+        &callback_sub,
+        "subscription.cancelled",
+        Some("scheduled"),
+        None,
+    )
+    .await
+    {
+        tracing::warn!(
+            "Failed to forward price step-up decline callback for {}: {}",
+            updated_sub.subscription_id,
+            e
+        );
+    }
 
     Ok(PriceStepUpDeclineResponse {
         declined: true,
