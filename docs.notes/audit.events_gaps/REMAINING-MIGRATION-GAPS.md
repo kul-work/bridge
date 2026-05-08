@@ -24,18 +24,21 @@ This document lists only the remaining technical and product gaps that require i
 
 ## 3. Price Step-Up Consent Routes
 - **Affected Providers**: **Google Play Only**
+- **Status**: **Fixed** (2026-05-08)
 - **Context**: This is a Google-specific regulatory flow for price increases. Users must explicitly accept or decline price changes within a deadline.
 - **Current State**:
-    - ✅ HiHa **correctly receives** `subscription.price_step_up` webhook from Bridge
-    - ✅ HiHa **stores consent status** in `subscription_cache`: `google_requires_price_step_up_consent`, `google_price_step_up_consent_deadline`
-    - ✅ Webhook handler (`src/handlers/webhooks.rs`) processes the event and logs it
-    - ❌ **Missing**: User-facing routes to accept/decline are **not registered** in `src/main.rs`
-    - ❌ **Missing**: No calls to Bridge's `resume` (accept) or `cancel` (decline) endpoints from HiHa
+    - HiHa correctly receives `subscription.price_step_up` webhook from Bridge
+    - HiHa stores consent status in `subscription_cache`: `google_requires_price_step_up_consent`, `google_price_step_up_consent_deadline`
+    - Webhook handler (`src/handlers/webhooks.rs`) processes the event and logs it
+    - HiHa registers user-facing accept/decline routes in `src/main.rs`
+    - HiHa delegates accept/decline to Bridge's dedicated price step-up endpoints
+    - Bridge `price-step-up/decline` calls Google Play cancellation before mutating Bridge state
+    - HiHa Frontend opens Google Play subscription management for acceptance and calls HiHa for decline
 - **HiHa Spec Reference**:
-    - `POST /api/v1/subscription/price-step-up/accept` — should call Bridge to resume subscription
-    - `POST /api/v1/subscription/price-step-up/decline` — should call Bridge to cancel subscription
-    - See `BEHAVIORAL_SPEC.md` §15 for expected behavior
-- **Action**: Implement the two routes in HiHa to bridge user consent to Bridge's pause/resume APIs. Decide: call Bridge directly or redirect to Google Play Store UI?
+    - `POST /api/v1/subscription/price-step-up/accept` - opens Google Play consent flow on FE, then confirms/refreshes via HiHa -> Bridge
+    - `POST /api/v1/subscription/price-step-up/decline` - calls HiHa -> Bridge dedicated decline endpoint, which cancels the Google Play subscription
+    - See `BEHAVIORAL_SPEC.md` section 15 for expected behavior
+- **Resolution**: Implemented across Bridge, HiHa backend, and HiHa Frontend. Google Play remains the authority for recording acceptance; Bridge owns provider-side cancellation on decline.
 
 ## 4. OTP Refund/Revoke Classification
 - **Affected Providers**: **All Providers** (Google Play, Creem)
