@@ -16,11 +16,15 @@ This document lists only the remaining technical and product gaps that require i
 
 ## 2. Payment Failure Notification & Acknowledgment
 - **Affected Providers**: **All Providers** (Creem, Google Play)
-- **Context**: Bridge records financial failures for any provider, but the user-facing acknowledgment flow was not ported.
-- **Missing Behavior**:
-    - HiHa logs the callback but does not create notification audit rows or persist a local "failure alert" flag.
-    - Tyde HiHa does not register the old `POST /api/v1/notifications/payment-failure/acknowledge` endpoint.
-- **Action**: Implement local notification storage and the acknowledgment endpoint in HiHa.
+- **Status**: **Fixed** (2026-05-08)
+- **Context**: Bridge records financial failures for any provider and remains the canonical owner of the active `payment_failure_notification` flag.
+- **Current State**:
+    - HiHa registers the user-facing `POST /api/v1/notifications/payment-failure/acknowledge` endpoint
+    - HiHa authenticates the user, rate-limits the request, and delegates canonical clearing to Bridge's `POST /api/v1/subscriptions/:subscription_id/acknowledge`
+    - HiHa creates local `payment_failure` notification audit rows when Bridge forwards `payment.failed`
+    - HiHa notification audit rows have `acknowledged_at` so user acknowledgment is tracked separately from email delivery status
+    - HiHa subscription status returns a user-facing payment failure message when Bridge reports `payment_failure_notification = true`
+- **Resolution**: Implemented in HiHa as an app-facing proxy/audit layer. Bridge remains the source of truth for the active payment failure flag; HiHa's local notification records are audit/UI history only.
 
 ## 3. Price Step-Up Consent Routes
 - **Affected Providers**: **Google Play Only**
