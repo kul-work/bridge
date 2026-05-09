@@ -3,48 +3,6 @@ use sha2::{Digest, Sha256};
 use crate::application::checkout_types::CheckoutRedirectUrls;
 use crate::error::BridgeError;
 
-/// Parse a decimal currency string (e.g. "9.99", "10") into integer cents.
-/// Avoids f64 intermediary to prevent floating-point rounding errors.
-pub(crate) fn parse_cents(s: &str) -> Option<i32> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-
-    let (negative, s) = if s.starts_with('-') {
-        (true, &s[1..])
-    } else {
-        (false, s)
-    };
-
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() > 2 {
-        return None;
-    }
-
-    let whole: i32 = parts[0].parse().ok()?;
-    if whole < 0 {
-        return None;
-    }
-
-    let cents = match parts.get(1) {
-        Some(frac) => {
-            let frac: String = frac.chars().take(2).collect();
-            if frac.is_empty() {
-                0
-            } else if frac.len() == 1 {
-                frac.parse::<i32>().ok()? * 10
-            } else {
-                frac.parse::<i32>().ok()?
-            }
-        }
-        None => 0,
-    };
-
-    let result = whole * 100 + cents;
-    Some(if negative { -result } else { result })
-}
-
 /// Format integer cents as a dollar string (e.g. 999 -> "9.99", 1000 -> "10.00")
 pub(crate) fn format_cents_as_dollars(cents: i32) -> String {
     let abs = cents.unsigned_abs();
