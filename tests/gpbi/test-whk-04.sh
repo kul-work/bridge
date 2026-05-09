@@ -34,11 +34,15 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="whk-04-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 APP_ID="$BRIDGE_APP_ID"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_whk_04_user_$RUN_ID}"
+REPORT_FILE="whk-04-report.json"
+USER_ID="${USER_ID:-test_whk_04_user_$TEST_RUN_ID}"
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 DB_URL="${BRIDGE_DB_URL}"
 
@@ -50,6 +54,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-04: Webhook Without Prior verify_payment Call"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 echo -e "${YELLOW}[1/5] Preparing generated user_id for this run${NC}"
@@ -66,7 +72,7 @@ echo ""
 
 echo -e "${YELLOW}[2/5] Ensuring no subscription record exists for test token${NC}"
 
-UNREGISTERED_TOKEN="unregistered-token-whk-04-$(date +%s)"
+UNREGISTERED_TOKEN="unregistered-token-whk-04-$TEST_RUN_ID"
 
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" 2>/dev/null
 
@@ -88,8 +94,8 @@ echo ""
 echo -e "${YELLOW}[4/5] Sending webhook for unregistered token${NC}"
 echo ""
 
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="whk-04-unregistered-$(date +%s)"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="whk-04-unregistered-$TEST_RUN_ID"
 
 echo "Webhook details:"
 echo "  Message ID: $MESSAGE_ID"
@@ -102,7 +108,7 @@ NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 2,
@@ -189,11 +195,15 @@ else
     TEST_RESULT_MSG="${RED}[FAIL] WHK-04 Test FAILED${NC}"
 fi
 
-cat > whk-04-report.json <<EOF
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "WHK-04",
   "test_name": "Webhook Without Prior verify_payment Call",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "message_id": "$MESSAGE_ID",
@@ -217,8 +227,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: whk-04-report.json"
-cat whk-04-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

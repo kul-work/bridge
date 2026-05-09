@@ -38,10 +38,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="err-01-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_err_01_user_$RUN_ID}"
+REPORT_FILE="err-01-report.json"
+USER_ID="${USER_ID:-test_err_01_user_$TEST_RUN_ID}"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -57,6 +60,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "ERR-01: Invalid Purchase Token Format"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -163,11 +168,14 @@ else
 fi
 
 # Generate JSON report
-cat > err-01-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "ERR-01",
   "test_name": "Invalid Purchase Token Format",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "results": {
@@ -186,8 +194,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: err-01-report.json"
-cat err-01-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

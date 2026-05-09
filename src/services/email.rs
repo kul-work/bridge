@@ -44,10 +44,9 @@ pub struct MockEmailService;
 
 #[async_trait]
 impl EmailService for MockEmailService {
-    async fn send_email(&self, to: &str, subject: &str, body: &str) -> Result<(), BridgeError> {
+    async fn send_email(&self, _to: &str, subject: &str, body: &str) -> Result<(), BridgeError> {
         warn!(
-            "MOCK EMAIL SENT - to: {}, subject: {}, body: {}",
-            to,
+            "MOCK EMAIL SENT - subject: {}, body: {}",
             subject,
             body
         );
@@ -68,7 +67,7 @@ impl ClerkEmailService {
 #[async_trait]
 impl EmailService for ClerkEmailService {
     async fn send_email(&self, to: &str, subject: &str, body: &str) -> Result<(), BridgeError> {
-        info!("Sending email via Clerk to: {}", to);
+        info!("Sending lifecycle email via Clerk");
 
         let payload = serde_json::json!({
             "email_address": to,
@@ -100,7 +99,7 @@ impl ResendEmailService {
 #[async_trait]
 impl EmailService for ResendEmailService {
     async fn send_email(&self, to: &str, subject: &str, body: &str) -> Result<(), BridgeError> {
-        info!("Sending email via Resend to: {}", to);
+        info!("Sending lifecycle email via Resend");
 
         let payload = serde_json::json!({
             "from": self.from_email,
@@ -207,10 +206,9 @@ pub async fn send_email(to: &str, subject: &str, body: &str) -> Result<(), Bridg
 }
 
 #[allow(dead_code)]
-pub fn send_email_mock(to: &str, subject: &str, body: &str) {
+pub fn send_email_mock(_to: &str, subject: &str, body: &str) {
     warn!(
-        "MOCK EMAIL SENT - to: {}, subject: {}, body: {}",
-        to,
+        "MOCK EMAIL SENT - subject: {}, body: {}",
         subject,
         body
     );

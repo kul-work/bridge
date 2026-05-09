@@ -41,10 +41,15 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="net-04-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_net_04_user_$RUN_ID}"
+REPORT_FILE="net-04-report.json"
+USER_ID="${USER_ID:-test_net_04_user_$TEST_RUN_ID}"
+DUMMY_TOKEN="test-net-04-token-$TEST_RUN_ID"
+WEBHOOK_ID="webhook-net-04-$TEST_RUN_ID"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -60,6 +65,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "NET-04: Webhook Arrives While verify_payment In-Flight"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -139,7 +146,7 @@ curl -s -o /dev/null -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
     \"reason\": \"test-net-04-setup\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-reg-04-$(date +%s)\"
+    \"transaction_id\": \"test-reg-04-$TEST_RUN_ID\"
   }"
 
 # verify_payment request (background)
@@ -272,11 +279,14 @@ else
 fi
 
 # Generate JSON report
-cat > net-04-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "NET-04",
   "test_name": "Webhook Arrives While verify_payment In-Flight",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
@@ -300,8 +310,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: net-04-report.json"
-cat net-04-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

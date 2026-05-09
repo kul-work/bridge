@@ -23,6 +23,10 @@ fn test_normalize_google_play_events() {
         normalize_event_type("google_play", "SUBSCRIPTION_CANCELLATION_SCHEDULED"),
         "subscription.cancellation_scheduled"
     );
+    assert_eq!(
+        normalize_event_type("google_play", "ONE_TIME_PRODUCT_REFUNDED"),
+        "purchase.one_time_refunded"
+    );
 }
 
 #[test]
@@ -80,6 +84,41 @@ fn test_normalize_creem_checkout_completed_one_time_to_purchase_one_time() {
     assert_eq!(
         normalize_event_type_with_payload("creem", "checkout.completed", Some(&payload)),
         "purchase.one_time"
+    );
+}
+
+#[test]
+fn test_normalize_creem_refund_created_one_time_to_purchase_one_time_refunded() {
+    let payload = serde_json::json!({
+        "eventType": "refund.created",
+        "object": {
+            "id": "refund_001",
+            "billing_type": "one_time",
+            "order_id": "order_001"
+        }
+    });
+
+    assert_eq!(
+        normalize_event_type_with_payload("creem", "refund.created", Some(&payload)),
+        "purchase.one_time_refunded"
+    );
+}
+
+#[test]
+fn test_normalize_creem_refund_created_subscription_stays_payment_refunded() {
+    let payload = serde_json::json!({
+        "eventType": "refund.created",
+        "object": {
+            "id": "refund_001",
+            "billing_type": "recurring",
+            "subscription_id": "sub_001",
+            "order_id": "order_001"
+        }
+    });
+
+    assert_eq!(
+        normalize_event_type_with_payload("creem", "refund.created", Some(&payload)),
+        "payment.refunded"
     );
 }
 
@@ -235,6 +274,43 @@ fn test_creem_field_extraction_refund_with_amount_fallback() {
 }
 
 #[test]
+fn test_creem_field_extraction_one_time_refund() {
+    let payload = serde_json::json!({
+        "id": "evt_ref_otp_123",
+        "eventType": "refund.created",
+        "createdAt": "2026-04-20T10:00:00Z",
+        "object": {
+            "id": "refund_otp_789",
+            "billing_type": "one_time",
+            "order_id": "order_original",
+            "product_id": "prod_lifetime",
+            "last_transaction": {
+                "amount": 9999
+            }
+        }
+    });
+
+    let webhook = WebhookProviderSnapshot {
+        provider: "creem".to_string(),
+        provider_webhook_id: "wh_otp_refund_789".to_string(),
+        event_type: "refund.created".to_string(),
+        subscription_id: None,
+        purchase_token: None,
+        payload,
+        processed: false,
+        timestamp_epoch_ms: Some(1713607200000),
+        suppressed: false,
+        suppressed_reason: None,
+    };
+
+    let fields = extract_webhook_fields(&webhook);
+    assert_eq!(fields.subscription_id, None);
+    assert_eq!(fields.product_id, Some("prod_lifetime".to_string()));
+    assert_eq!(fields.purchase_token, Some("order_original".to_string()));
+    assert_eq!(fields.amount_cents, Some(9999));
+}
+
+#[test]
 fn test_creem_metadata_user_id_from_checkout_path() {
     let payload = serde_json::json!({
         "id": "evt_123",
@@ -253,14 +329,6 @@ fn test_creem_metadata_user_id_from_checkout_path() {
     assert_eq!(
         extract_metadata_user_id(&payload).as_deref(),
         Some("user_from_checkout")
-    );
-}
-
-#[test]
-fn test_normalize_coinbase_special_events() {
-    assert_eq!(
-        normalize_event_type("coinbase", "charge:failed"),
-        "charge.failed"
     );
 }
 
@@ -298,6 +366,42 @@ fn test_callback_status_for_pause_lifecycle_events() {
 }
 
 #[test]
+fn test_canonical_payload_serializes_google_lifecycle_fields() {
+    let payload = CanonicalWebhookPayload {
+        event_id: "evt_1".to_string(),
+        event_type: "subscription.pause_scheduled".to_string(),
+        timestamp: "2026-05-07T12:00:00Z".to_string(),
+        timestamp_epoch_ms: 1778155200000,
+        app_slug: "hiha".to_string(),
+        product_id: None,
+        subscription_id: Some("sub_1".to_string()),
+        external_user_id: Some("user_1".to_string()),
+        amount_cents: None,
+        new_price_cents: None,
+        auto_renewing: Some(true),
+        purchase_token: Some("token_1".to_string()),
+        current_period_end: None,
+        status: Some("active".to_string()),
+        provider: "google_play".to_string(),
+        provider_event_id: "provider_evt_1".to_string(),
+        previous_status: None,
+        corrected_status: None,
+        reconciliation_source: None,
+        revocation_reason: None,
+        cancellation_mode: None,
+        google_price_step_up_consent_deadline: Some(1778760000000),
+        google_pause_scheduled_at: Some(1778846400000),
+        google_deferred_until: Some(1781438400000),
+    };
+
+    let value = serde_json::to_value(payload).unwrap();
+
+    assert_eq!(value["google_price_step_up_consent_deadline"], 1778760000000i64);
+    assert_eq!(value["google_pause_scheduled_at"], 1778846400000i64);
+    assert_eq!(value["google_deferred_until"], 1781438400000i64);
+}
+
+#[test]
 fn test_mock_google_play_renewal_period_end_extends_existing_period() {
     let existing = chrono::DateTime::parse_from_rfc3339("2026-05-10T18:44:10Z")
         .unwrap()
@@ -317,11 +421,11 @@ fn test_extract_metadata_user_id_supports_nested_paths() {
         "event": {
             "data": {
                 "metadata": {
-                    "external_user_id": "coinbase-user"
+                    "external_user_id": "nested-user"
                 }
             }
         }
     });
 
-    assert_eq!(extract_metadata_user_id(&payload).as_deref(), Some("coinbase-user"));
+    assert_eq!(extract_metadata_user_id(&payload).as_deref(), Some("nested-user"));
 }

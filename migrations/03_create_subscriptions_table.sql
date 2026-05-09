@@ -9,7 +9,7 @@ CREATE TABLE subscriptions (
     
     external_user_id TEXT NOT NULL,             -- opaque, from the app (e.g. clerk_id)
     subscription_id TEXT NOT NULL,
-    provider TEXT NOT NULL,                     -- 'google_play', 'creem', 'apple', 'coinbase'
+    provider TEXT NOT NULL,                     -- 'google_play', 'creem', 'apple'
     
     purchase_token TEXT UNIQUE,                 -- one-token-one-owner: required for restore purchases & fraud prevention
     

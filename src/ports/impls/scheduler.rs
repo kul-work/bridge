@@ -85,10 +85,6 @@ impl SchedulerRepository for db::Database {
         db::webhooks::cleanup_old_webhook_provider(self.pool()).await
     }
 
-    async fn cleanup_expired_agent_tokens(&self) -> Result<(), BridgeError> {
-        db::agent::cleanup_expired_agent_tokens(self.pool()).await
-    }
-
     async fn cleanup_purged_fraud_prevention(&self) -> Result<(), BridgeError> {
         db::users::cleanup_purged_fraud_prevention(self.pool()).await
     }
@@ -140,23 +136,6 @@ impl WebhookProcessingMutationRepository for db::Database {
             external_user_id,
             current_subscription_id,
             last_event_time,
-        )
-        .await
-    }
-
-    async fn apply_topup_if_new(
-        &self,
-        app_id: Uuid,
-        external_user_id: &str,
-        amount_cents: i32,
-        charge_id: &str,
-    ) -> Result<bool, BridgeError> {
-        db::agent::apply_topup_if_new(
-            self.pool(),
-            app_id,
-            external_user_id,
-            amount_cents,
-            charge_id,
         )
         .await
     }

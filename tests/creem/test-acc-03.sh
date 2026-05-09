@@ -30,8 +30,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-acc-03-${TIMESTAMP}-$$"
+REPORT_FILE="test-acc-03-report.json"
 USER_ID=""
 
 # Parse arguments
@@ -53,13 +56,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "ACC-03: Premium Access Revoked for Blocked States"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Function to test access for blocked states
 test_revoked_access() {
@@ -120,20 +126,40 @@ if test_revoked_access "inactive" "past"; then
     INACTIVE_POST_PASS="true"
 fi
 
-# Step 4: Summary and Cleanup
-echo -e "${YELLOW}[4/4] Summary${NC}"
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
-
-echo "Results:"
-echo -e "  expired status:    $([ "$EXPIRED_PASS" == "true" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-echo -e "  paused status:     $([ "$PAUSED_PASS" == "true" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-echo -e "  inactive (post):   $([ "$INACTIVE_POST_PASS" == "true" ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+OVERALL_STATUS="fail"
 if [[ "$EXPIRED_PASS" == "true" && "$PAUSED_PASS" == "true" && "$INACTIVE_POST_PASS" == "true" ]]; then
+    OVERALL_STATUS="pass"
+fi
+
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "ACC-03",
+  "test_name": "Premium Access Revoked for Blocked States",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "$OVERALL_STATUS",
+  "user_id": "$USER_ID",
+  "results": {
+    "expired_pass": $EXPIRED_PASS,
+    "paused_pass": $PAUSED_PASS,
+    "inactive_post_pass": $INACTIVE_POST_PASS
+  }
+}
+EOF
+
+if [[ "$OVERALL_STATUS" == "pass" ]]; then
     echo -e "\n${GREEN}✓ ACC-03 PASSED${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 0
 else
     echo -e "\n${RED}✗ ACC-03 FAILED${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 1
 fi

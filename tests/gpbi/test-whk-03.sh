@@ -36,11 +36,14 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="whk-03-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 APP_ID="$BRIDGE_APP_ID"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_whk_03_user_$RUN_ID}"
+REPORT_FILE="whk-03-report.json"
+USER_ID="${USER_ID:-test_whk_03_user_$TEST_RUN_ID}"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -56,6 +59,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-03: Out-of-Order Webhook Delivery"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -74,7 +79,7 @@ echo ""
 # Step 2: Setup - ensure subscription record exists with active status
 echo -e "${YELLOW}[2/6] Setting up test subscription record${NC}"
 
-PURCHASE_TOKEN="test-whk-03-outoforder-$(date +%s)"
+PURCHASE_TOKEN="test-whk-03-token-$TEST_RUN_ID"
 
 # Clean up any existing test data
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" 2>/dev/null
@@ -98,7 +103,7 @@ echo -e "${YELLOW}[4/6] Sending EXPIRATION webhook (out of order - should arrive
 echo ""
 
 TIMESTAMP_OLD=$(($(date +%s)000 - 60000))  # 1 minute ago
-MESSAGE_ID_EXPIRE="whk-03-expire-$(date +%s)"
+MESSAGE_ID_EXPIRE="whk-03-expire-$TEST_RUN_ID"
 
 echo "Webhook details (Expiration - arrived FIRST but logically should be SECOND):"
 echo "  Message ID: $MESSAGE_ID_EXPIRE"
@@ -153,7 +158,7 @@ echo -e "${YELLOW}[5/6] Sending RENEWAL webhook (out of order - arrived SECOND b
 echo ""
 
 TIMESTAMP_NEW=$(date +%s000)  # Current time
-MESSAGE_ID_RENEW="whk-03-renew-$(date +%s)"
+MESSAGE_ID_RENEW="whk-03-renew-$TEST_RUN_ID"
 
 echo "Webhook details (Renewal - arrived SECOND but logically should be FIRST):"
 echo "  Message ID: $MESSAGE_ID_RENEW"
@@ -246,11 +251,14 @@ else
 fi
 
 # Generate JSON report
-cat > whk-03-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "WHK-03",
   "test_name": "Out-of-Order Webhook Delivery",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
@@ -273,8 +281,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: whk-03-report.json"
-cat whk-03-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

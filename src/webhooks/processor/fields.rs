@@ -1,4 +1,3 @@
-use crate::application::checkout_helpers::parse_cents;
 use crate::ports::WebhookProviderSnapshot;
 
 use super::normalize::normalize_event_type_with_payload;
@@ -116,7 +115,7 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
 
             // Determine subscription_id based on event type
             let subscription_id = match normalized_event_type.as_str() {
-                "purchase.one_time" => None,
+                "purchase.one_time" | "purchase.one_time_refunded" => None,
                 "payment.refunded" => object_subscription_id.clone()
                     .or_else(|| object_product_id.clone())
                     .or_else(|| object_id.clone()),
@@ -155,7 +154,7 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
 
             // Extract purchase_token (checkout_id for OTP, order_id for refunds)
             let purchase_token = match normalized_event_type.as_str() {
-                "purchase.one_time" => object_checkout_id
+                "purchase.one_time" | "purchase.one_time_refunded" => object_checkout_id
                     .or_else(|| object_order_id.clone())
                     .or_else(|| object_id.clone()),
                 "payment.refunded" => object_order_id
@@ -193,27 +192,6 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                 google_price_step_up_consent_deadline: None,
             }
         }
-        "coinbase" => WebhookFields {
-            subscription_id: None,
-            purchase_token: None,
-            amount_cents: p.pointer("/event/data/pricing/local/amount")
-                .and_then(|v| v.as_str())
-                .and_then(parse_cents),
-            auto_renewing: None,
-            current_period_end: None,
-            provider_transaction_id: p.pointer("/event/data/id")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            provider_customer_id: None,
-            product_id: p.pointer("/event/data/metadata/product_id")
-                .and_then(|v| v.as_str()).map(|s| s.to_string()),
-            cancel_reason: None,
-            status: None,
-            google_subscription_state: None,
-            google_cancellation_context: None,
-            google_cancellation_feedback: None,
-            google_new_price_cents: None,
-            google_price_step_up_consent_deadline: None,
-        },
         _ => WebhookFields {
             subscription_id: None,
             purchase_token: None,

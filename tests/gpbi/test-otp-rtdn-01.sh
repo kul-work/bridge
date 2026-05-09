@@ -38,8 +38,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="otp-rtdn-01-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
+REPORT_FILE="otp-rtdn-01-report.json"
 
 # Defaults
 PURCHASE_TOKEN=""
@@ -94,9 +98,20 @@ echo -e "${YELLOW}========================================${NC}"
 echo "OTP-RTDN-01: Webhook Purchase Completed"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
-# Step 1: External User ID
-USER_ID="test_otp_user_01"
+# Step 1: External User ID (read from OTP-01 report if available)
+if [[ -f "$OTP_01_REPORT" ]]; then
+    REPORT_USER_ID=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('user_id', ''))" "$OTP_01_REPORT" 2>/dev/null || echo "")
+    if [[ -n "$REPORT_USER_ID" ]]; then
+        USER_ID="$REPORT_USER_ID"
+    else
+        USER_ID="test_otp_user_01"
+    fi
+else
+    USER_ID="test_otp_user_01"
+fi
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 
 if [[ -z "$PURCHASE_TOKEN" && -f "$OTP_01_REPORT" ]]; then
@@ -160,8 +175,8 @@ echo -e "${YELLOW}[3/5] Sending ONE_TIME_PRODUCT_PURCHASED webhook${NC}"
 echo ""
 
 # Generate current timestamp in milliseconds and MESSAGE_ID once (for idempotency testing)
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="webhook-purchase-rtdn-01-$(date +%s)"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="webhook-otp-rtdn-01-$TEST_RUN_ID"
 
 echo "Webhook details:"
 echo "  Message ID: $MESSAGE_ID"
@@ -179,7 +194,7 @@ NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "oneTimeProductNotification": {
     "version": "1.0",
     "notificationType": 1,
@@ -309,11 +324,14 @@ if [[ "$STATUS_VERIFIED" != "true" ]] || [[ "$IDEMPOTENCY_WORKS" != "true" ]] ||
 fi
 
 # Generate JSON report
-cat > otp-rtdn-01-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "OTP-RTDN-01",
   "test_name": "Webhook Purchase Completed",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "product_id": "$PRODUCT_ID",
@@ -340,8 +358,8 @@ else
 fi
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: otp-rtdn-01-report.json"
-cat otp-rtdn-01-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" != "pass" ]]; then

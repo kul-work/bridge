@@ -30,9 +30,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
-EMAIL="creem_whk_user_$TIMESTAMP@example.com"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-whk-03-${TIMESTAMP}-$$"
+REPORT_FILE="test-whk-03-report.json"
+EMAIL="creem_whk_user_${TEST_RUN_ID}@example.com"
 USER_ID=""
 
 # Parse arguments
@@ -54,13 +57,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-03: Duplicate Delivery (Idempotency)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 2: Cleanup and initial state
 echo -e "${YELLOW}[2/4] Cleaning initial state for user $USER_ID${NC}"
@@ -68,12 +74,13 @@ psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_
   -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
 # Clean up recorded webhooks in pay.webhook_provider
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.webhook_provider WHERE provider = 'creem' AND provider_webhook_id LIKE 'whk-03%';" > /dev/null 2>&1 || true
+  -c "DELETE FROM pay.webhook_provider WHERE provider = 'creem' AND (provider_webhook_id LIKE 'whk-03%' OR subscription_id LIKE 'sub_whk03_%');" > /dev/null 2>&1 || true
 echo -e "${GREEN}✓ Cleaned${NC}"
 
 # Step 3: Send FIRST webhook
 echo -e "${YELLOW}[3/4] Sending FIRST webhook delivery${NC}"
-EVENT_ID="whk-03-$(date +%s)"
+EVENT_ID="whk-03-$TEST_RUN_ID"
+SUBSCRIPTION_ID="sub_whk03_$TEST_RUN_ID"
 PERIOD_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+30 days" 2>/dev/null || date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ")
 
 PAYLOAD=$(cat <<EOF
@@ -128,17 +135,41 @@ SUBS_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT"
 
 echo "  Final subscription count: $SUBS_COUNT"
 
-if [[ "$HTTP_CODE_1" =~ ^20[014]$ ]] && [[ "$HTTP_CODE_2" =~ ^20[014]$ ]]; then
-    echo -e "  ${GREEN}✓ Both deliveries returned success${NC}"
-    if [[ "$SUBS_COUNT" == "1" ]]; then
-        echo -e "  ${GREEN}✓ No duplicate subscription record created (Idempotency PASSED)${NC}"
-        echo -e "\n${GREEN}✓ WHK-03 PASSED${NC}"
-        exit 0
-    else
-        echo -e "  ${RED}✗ Duplicate records created in DB (Idempotency FAILED)${NC}"
-        exit 1
-    fi
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+OVERALL_STATUS="fail"
+if [[ "$HTTP_CODE_1" =~ ^20[014]$ ]] && [[ "$HTTP_CODE_2" =~ ^20[014]$ ]] && [[ "$SUBS_COUNT" == "1" ]]; then
+    OVERALL_STATUS="pass"
+fi
+
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "WHK-03",
+  "test_name": "Duplicate Delivery (Idempotency)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "$OVERALL_STATUS",
+  "user_id": "$USER_ID",
+  "results": {
+    "first_http_code": $HTTP_CODE_1,
+    "second_http_code": $HTTP_CODE_2,
+    "subscription_count": $SUBS_COUNT
+  }
+}
+EOF
+
+if [[ "$OVERALL_STATUS" == "pass" ]]; then
+    echo -e "  ${GREEN}✓ No duplicate subscription record created (Idempotency PASSED)${NC}"
+    echo -e "\n${GREEN}✓ WHK-03 PASSED${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
+    exit 0
 else
-    echo -e "  ${RED}✗ Webhook processing failed (HTTP codes: $HTTP_CODE_1, $HTTP_CODE_2)${NC}"
+    echo -e "  ${RED}✗ Idempotency check failed${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 1
 fi

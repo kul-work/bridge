@@ -1,5 +1,6 @@
 use crate::config::API_PAGINATION_LIMIT;
 use crate::config::MAX_PAGINATION_LIMIT;
+use crate::application::subscription_status::{self, SubscriptionStatusInput, SubscriptionStatusSnapshot};
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::ports::SubscriptionReadRepository;
@@ -36,6 +37,19 @@ pub struct SubscriptionDetail {
     pub current_period_end: Option<String>,
     pub auto_renewing: Option<bool>,
     pub payment_failure_notification: bool,
+    pub payment_state: Option<i32>,
+    pub cancel_reason: Option<i32>,
+    pub provider_customer_id: Option<String>,
+    pub cancellation_initiated_at: Option<String>,
+    pub revocation_reason: Option<String>,
+    pub revoked_at: Option<String>,
+    pub google_requires_price_step_up_consent: Option<bool>,
+    pub google_price_step_up_consent_deadline: Option<String>,
+    pub google_new_price_cents: Option<i32>,
+    pub google_pause_scheduled_at: Option<String>,
+    pub google_paused_at: Option<String>,
+    pub google_deferred_until: Option<String>,
+    pub last_event_time: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,6 +71,7 @@ pub struct SubscriptionDetailFull {
     pub google_new_price_cents: Option<i32>,
     pub google_pause_scheduled_at: Option<String>,
     pub google_paused_at: Option<String>,
+    pub google_deferred_until: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -108,6 +123,19 @@ pub async fn list_subscriptions(
             current_period_end: s.current_period_end.map(|d| d.to_rfc3339()),
             auto_renewing: s.auto_renewing,
             payment_failure_notification: s.payment_failure_notification,
+            payment_state: s.payment_state,
+            cancel_reason: s.cancel_reason,
+            provider_customer_id: s.provider_customer_id.clone(),
+            cancellation_initiated_at: s.cancellation_initiated_at.map(|d| d.to_rfc3339()),
+            revocation_reason: s.revocation_reason.clone(),
+            revoked_at: s.revoked_at.map(|d| d.to_rfc3339()),
+            google_requires_price_step_up_consent: s.google_requires_price_step_up_consent,
+            google_price_step_up_consent_deadline: s.google_price_step_up_consent_deadline.map(|d| d.to_rfc3339()),
+            google_new_price_cents: s.google_new_price_cents,
+            google_pause_scheduled_at: s.google_pause_scheduled_at.map(|d| d.to_rfc3339()),
+            google_paused_at: s.google_paused_at.map(|d| d.to_rfc3339()),
+            google_deferred_until: s.google_deferred_until.map(|d| d.to_rfc3339()),
+            last_event_time: Some(s.last_event_time),
         })
         .collect();
 
@@ -129,6 +157,24 @@ pub async fn list_subscriptions(
             },
         }),
     ))
+}
+
+pub async fn get_subscription_status_snapshot(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AppAuth>,
+    Path(external_user_id): Path<String>,
+) -> Result<(StatusCode, Json<SubscriptionStatusSnapshot>), BridgeError> {
+    let database = state.database();
+    let snapshot = subscription_status::get_subscription_status_snapshot(
+        database.as_ref(),
+        SubscriptionStatusInput {
+            app_id: auth.app_id,
+            external_user_id: &external_user_id,
+        },
+    )
+    .await?;
+
+    Ok((StatusCode::OK, Json(snapshot)))
 }
 
 fn decode_cursor(after: Option<&str>) -> Result<Option<SubscriptionCursor>, BridgeError> {
@@ -201,6 +247,7 @@ pub async fn get_subscription(
         google_new_price_cents: sub.google_new_price_cents,
         google_pause_scheduled_at: sub.google_pause_scheduled_at.map(|d| d.to_rfc3339()),
         google_paused_at: sub.google_paused_at.map(|d| d.to_rfc3339()),
+        google_deferred_until: sub.google_deferred_until.map(|d| d.to_rfc3339()),
     };
 
     Ok((StatusCode::OK, Json(detail)))

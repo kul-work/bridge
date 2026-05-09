@@ -179,7 +179,6 @@ fn default_limit_for_group(group: &str) -> usize {
         "subscription_mutations" => 10,
         "payment_history" => 100,
         "purchase_registration" => 20,
-        "agent" => 60,
         _ => 120,
     }
 }
@@ -193,9 +192,6 @@ fn endpoint_group(method: &Method, path: &str) -> &'static str {
     }
     if path.contains("/purchase/register") || path.contains("/purchases/register") {
         return "purchase_registration";
-    }
-    if path.contains("/agent/") || path.ends_with("/agent") {
-        return "agent";
     }
     if path.contains("/subscriptions") {
         if *method == Method::GET {

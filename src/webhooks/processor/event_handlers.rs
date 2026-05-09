@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::{
     application::app_context::AppSnapshot,
     error::BridgeError,
@@ -8,13 +10,15 @@ use crate::{
     },
     services::google_play::subscription_lifecycle::GooglePlayLifecycleOutcome,
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::{
     normalize_status, parse_rfc3339_utc, send_dispute_admin_alert_email,
     status_to_canonical_event, WebhookFields,
 };
+
+const LIFECYCLE_EMAIL_LOOKUP_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) struct EventContext<'a> {
     pub(super) app: &'a AppSnapshot,
@@ -63,6 +67,157 @@ fn effects_from_google_lifecycle_outcome(outcome: GooglePlayLifecycleOutcome) ->
         callback_cancellation_mode_override: outcome.callback_cancellation_mode_override,
         canonical_subscription: outcome.canonical_subscription,
         should_forward: true,
+    }
+}
+
+async fn lookup_lifecycle_email(ctx: &EventContext<'_>, event_type: &str) -> Option<String> {
+    let user_id = ctx.external_user_id.as_deref()?;
+
+    match lookup_lifecycle_email_once(ctx, user_id).await {
+        Ok(email) => email,
+        Err(first_error) => {
+            warn!(
+                "Lifecycle email lookup failed for event {}; retrying once: {}",
+                event_type,
+                first_error
+            );
+            tokio::time::sleep(LIFECYCLE_EMAIL_LOOKUP_RETRY_DELAY).await;
+
+            match lookup_lifecycle_email_once(ctx, user_id).await {
+                Ok(email) => email,
+                Err(second_error) => {
+                    error!(
+                        "Skipping lifecycle email after lookup retry failed: app_id={}, provider={}, event_type={}, provider_webhook_id={}, external_user_id={}, error={}",
+                        ctx.app_id,
+                        ctx.provider,
+                        event_type,
+                        ctx.webhook.provider_webhook_id,
+                        user_id,
+                        second_error
+                    );
+                    None
+                }
+            }
+        }
+    }
+}
+
+async fn lookup_lifecycle_email_once(
+    ctx: &EventContext<'_>,
+    user_id: &str,
+) -> Result<Option<String>, BridgeError> {
+    crate::services::email_lookup::lookup_user_email(ctx.app, user_id).await
+}
+
+async fn send_price_step_up_email(ctx: &EventContext<'_>, subscription_id: &str) {
+    let Some(email) = lookup_lifecycle_email(ctx, "subscription.price_step_up").await else {
+        return;
+    };
+    let Some(new_price_cents) = ctx.fields.google_new_price_cents else {
+        warn!("Skipping price step-up email: missing new price");
+        return;
+    };
+    let Some(deadline) = ctx.fields.google_price_step_up_consent_deadline.as_deref().and_then(parse_rfc3339_utc) else {
+        warn!("Skipping price step-up email: missing consent deadline");
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_price_step_up(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+        new_price_cents,
+        deadline,
+    ).await {
+        warn!("Failed to send price step-up lifecycle email: {}", e);
+    }
+}
+
+async fn send_deferred_email(
+    ctx: &EventContext<'_>,
+    subscription_id: &str,
+    deferred_until: chrono::DateTime<chrono::Utc>,
+) {
+    let Some(email) = lookup_lifecycle_email(ctx, "subscription.deferred").await else {
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_deferred(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+        deferred_until,
+    ).await {
+        warn!("Failed to send deferred lifecycle email: {}", e);
+    }
+}
+
+async fn send_paused_email(ctx: &EventContext<'_>, subscription_id: &str) {
+    let Some(email) = lookup_lifecycle_email(ctx, "subscription.paused").await else {
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_paused(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+    ).await {
+        warn!("Failed to send paused lifecycle email: {}", e);
+    }
+}
+
+async fn send_resumed_email(ctx: &EventContext<'_>, subscription_id: &str, current_period_end: chrono::DateTime<chrono::Utc>) {
+    let Some(email) = lookup_lifecycle_email(ctx, "subscription.resumed").await else {
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_restarted(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+        current_period_end,
+    ).await {
+        warn!("Failed to send resumed lifecycle email: {}", e);
+    }
+}
+
+async fn send_refunded_email(ctx: &EventContext<'_>, subscription_id: &str) {
+    let Some(email) = lookup_lifecycle_email(ctx, "payment.refunded").await else {
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_refunded(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+    ).await {
+        warn!("Failed to send refunded lifecycle email: {}", e);
+    }
+}
+
+async fn send_payment_failed_email(ctx: &EventContext<'_>, subscription_id: &str) {
+    let Some(email) = lookup_lifecycle_email(ctx, "payment.failed").await else {
+        return;
+    };
+    let Some(app_url) = ctx.app.app_url.as_deref() else {
+        warn!("Skipping payment failed email: app_url is not configured");
+        return;
+    };
+
+    let email_service = crate::services::email::get_email_service();
+    if let Err(e) = crate::services::google_play::notifications::send_email_payment_failed(
+        email_service.as_ref(),
+        &email,
+        subscription_id,
+        ctx.provider,
+        app_url,
+    ).await {
+        warn!("Failed to send payment failed lifecycle email: {}", e);
     }
 }
 
@@ -312,6 +467,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         ).await?;
 
                         if let Some(updated_sub) = updated {
+                            send_paused_email(ctx, &sub_id).await;
                             return Ok(EventHandling::Handled(EventEffects {
                                 callback_event_type: Some("subscription.paused".to_string()),
                                 callback_status_override: Some("paused".to_string()),
@@ -345,6 +501,16 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     ctx.fields,
                     ctx.timestamp_epoch_ms,
                 ).await?;
+
+                if outcome.is_some() {
+                    if let Some(sub_id) = ctx.fields.subscription_id.as_deref().or(ctx.webhook.subscription_id.as_deref()) {
+                        let period_end = outcome.as_ref()
+                            .and_then(|o| o.canonical_subscription.as_ref())
+                            .and_then(|s| s.current_period_end)
+                            .unwrap_or_else(chrono::Utc::now);
+                        send_resumed_email(ctx, sub_id, period_end).await;
+                    }
+                }
 
                 return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
             }
@@ -529,6 +695,12 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     ctx.timestamp_epoch_ms,
                 ).await?;
 
+                if outcome.is_some() {
+                    if let Some(sub_id) = ctx.fields.subscription_id.as_deref().or(ctx.webhook.subscription_id.as_deref()) {
+                        send_price_step_up_email(ctx, sub_id).await;
+                    }
+                }
+
                 return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
             }
 
@@ -588,7 +760,13 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                             },
                         ).await?;
 
-                        if updated.is_none() {
+                        if let Some(updated_sub) = updated {
+                            send_deferred_email(ctx, sub_id, until).await;
+                            return Ok(EventHandling::Handled(EventEffects {
+                                canonical_subscription: Some(updated_sub.into()),
+                                ..Default::default()
+                            }));
+                        } else {
                             info!("Skipped stale deferred event for subscription {}", sub_id);
                         }
                     }
@@ -663,19 +841,6 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
             }))
         }
 
-        "payment.failed" if ctx.webhook.provider == "coinbase" => {
-            let charge_id = ctx.fields.provider_transaction_id.as_deref()
-                .or(ctx.webhook.subscription_id.as_deref())
-                .unwrap_or(&ctx.webhook.provider_webhook_id);
-            info!("Coinbase charge failed: charge_id={}", charge_id);
-
-            Ok(EventHandling::Handled(EventEffects {
-                callback_event_type: Some("payment.failed".to_string()),
-                callback_status_override: Some("failed".to_string()),
-                ..Default::default()
-            }))
-        }
-
         "payment.failed" => {
             if let Some(user_id) = ctx.external_user_id.as_deref() {
                 let sub_id = ctx.fields.subscription_id.as_deref()
@@ -742,6 +907,8 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     }));
                 };
 
+                send_payment_failed_email(ctx, sub_id).await;
+
                 return Ok(EventHandling::Handled(EventEffects {
                     callback_event_type: Some("payment.failed".to_string()),
                     callback_status_override: Some("failed".to_string()),
@@ -785,6 +952,21 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
             Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)))
         }
 
+        "purchase.one_time_refunded" => {
+            let Some(outcome) = crate::services::google_play::product_lifecycle::handle_otp_refunded(
+                repo,
+                ctx.app_id,
+                ctx.webhook,
+                ctx.fields,
+                ctx.external_user_id.as_deref(),
+                ctx.timestamp_epoch_ms,
+            ).await? else {
+                return Ok(EventHandling::ReturnNone);
+            };
+
+            Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)))
+        }
+
         "payment.refunded" => {
             if let Some(_user_id) = ctx.external_user_id.as_deref() {
                 if let Some(token) = ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()) {
@@ -804,6 +986,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                             },
                         ).await?;
                         if let Some(updated_sub) = updated {
+                            send_refunded_email(ctx, &sub.subscription_id).await;
                             return Ok(EventHandling::Handled(EventEffects {
                                 callback_event_type: Some("payment.refunded".to_string()),
                                 callback_status_override: Some("refunded".to_string()),
@@ -823,11 +1006,12 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                             revocation_reason: Some("REFUND".to_string()),
                         },
                     ).await?;
-                    if let Some(updated_sub) = updated {
+                    if let Some(_updated_sub) = updated {
+                        send_refunded_email(ctx, sub_id).await;
                         return Ok(EventHandling::Handled(EventEffects {
                             callback_event_type: Some("payment.refunded".to_string()),
                             callback_status_override: Some("refunded".to_string()),
-                            canonical_subscription: Some(updated_sub.into()),
+                            canonical_subscription: Some(_updated_sub.into()),
                             ..Default::default()
                         }));
                     }
@@ -895,58 +1079,9 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
     }
 }
 
-async fn handle_coinbase_charge<R: WebhookProcessingRepository + ?Sized>(
-    repo: &R,
-    ctx: &EventContext<'_>,
-) -> Result<EventHandling, BridgeError> {
-    let charge_id = ctx.fields.provider_transaction_id.clone()
-        .or_else(|| ctx.webhook.subscription_id.clone())
-        .unwrap_or_else(|| ctx.webhook.provider_webhook_id.clone());
-    let external_user_id = ctx.webhook.payload.pointer("/event/data/metadata/external_user_id")
-        .and_then(|v| v.as_str())
-        .or_else(|| ctx.webhook.payload.pointer("/event/data/metadata/user_id").and_then(|v| v.as_str()))
-        .map(|s| s.to_string());
-    let amount_cents = ctx.fields.amount_cents
-        .or_else(|| {
-            ctx.webhook.payload.pointer("/event/data/metadata/amount_cents")
-                .and_then(|v| v.as_i64())
-                .map(|v| v as i32)
-        })
-        .unwrap_or(0);
-
-    if amount_cents <= 0 {
-        info!("Coinbase charge {} skipped: non-positive amount {}", charge_id, amount_cents);
-    } else if let Some(user_id) = external_user_id {
-        let inserted = repo.apply_topup_if_new(
-            ctx.app_id,
-            &user_id,
-            amount_cents,
-            &charge_id,
-        ).await?;
-
-        if inserted {
-            info!("Coinbase topup applied: charge_id={}, user={}, amount_cents={}", charge_id, user_id, amount_cents);
-        } else {
-            info!("Coinbase topup already applied (idempotent): charge_id={}", charge_id);
-        }
-    } else {
-        info!("Coinbase charge {} skipped: missing metadata external_user_id/user_id", charge_id);
-    }
-
-    Ok(EventHandling::Handled(EventEffects::default()))
-}
-
 pub(super) async fn handle_provider_event<R: WebhookProcessingRepository + ?Sized>(
-    repo: &R,
-    ctx: &EventContext<'_>,
+    _repo: &R,
+    _ctx: &EventContext<'_>,
 ) -> Result<EventHandling, BridgeError> {
-    match ctx.canonical_event {
-        "charge.confirmed" if ctx.webhook.provider == "coinbase" => {
-            handle_coinbase_charge(repo, ctx).await
-        }
-        "payment.succeeded" if ctx.webhook.provider == "coinbase" => {
-            handle_coinbase_charge(repo, ctx).await
-        }
-        _ => Ok(EventHandling::NotHandled),
-    }
+    Ok(EventHandling::NotHandled)
 }

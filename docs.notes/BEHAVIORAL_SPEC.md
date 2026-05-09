@@ -20,7 +20,7 @@ This document captures **every behavioral action** that Bridge must perform. Eac
 
 1. [Startup & Initialization](#1-startup--initialization)
 2. [API Key Authentication](#2-api-key-authentication)
-3. [Rate Limiting](#3-rate-limiting)
+3. [Rate Limit System](#3-rate-limiting)
 4. [Checkout Flow](#4-checkout-flow)
 5. [Purchase Verification Flow (Mobile)](#5-purchase-verification-flow-mobile)
 6. [Purchase Registration (Pre-Purchase)](#6-purchase-registration-pre-purchase)
@@ -56,22 +56,17 @@ This document captures **every behavioral action** that Bridge must perform. Eac
 36. [Google Play-Specific: Price Change Updated (Pending)](#36-google-play-specific-price-change-updated-pending)
 37. [Google Play-Specific: Expired Voided](#37-google-play-specific-expired-voided)
 38. [Webhook Callback Forwarding (Bridge → App)](#38-webhook-callback-forwarding-bridge--app)
-39. [Agent 402 — Balance Query](#39-agent-402--balance-query)
-40. [Agent 402 — Token Creation](#40-agent-402--token-creation)
-41. [Agent 402 — Token Charge (Atomic Reserve)](#41-agent-402--token-charge-atomic-reserve)
-42. [Agent 402 — Charge Confirmed (Coinbase Webhook)](#42-agent-402--charge-confirmed-coinbase-webhook)
-43. [Agent 402 — Charge Failed (Coinbase Webhook)](#43-agent-402--charge-failed-coinbase-webhook)
-44. [User Anonymization (GDPR)](#44-user-anonymization-gdpr)
-45. [Data Export (GDPR)](#45-data-export-gdpr)
-46. [Background Job: Reconciliation](#46-background-job-reconciliation)
-47. [Background Job: Price Step-Up Expiry](#47-background-job-price-step-up-expiry)
-48. [Background Job: Pause Scheduler](#48-background-job-pause-scheduler)
-49. [Background Job: Webhook Log Cleanup](#49-background-job-webhook-log-cleanup)
-50. [Payment Recording (DB Behavior)](#50-payment-recording-db-behavior)
-51. [Webhook Deduplication (DB Behavior)](#51-webhook-deduplication-db-behavior)
-52. [Subscription Store/Activate (DB Behavior)](#52-subscription-storeactivate-db-behavior)
-53. [User Lookup Strategies (Webhook → User Resolution)](#53-user-lookup-strategies-webhook--user-resolution)
-54. [Health Check](#54-health-check)
+39. [User Anonymization (GDPR)](#39-user-anonymization-gdpr)
+40. [Data Export (GDPR)](#40-data-export-gdpr)
+41. [Background Job: Reconciliation](#41-background-job-reconciliation)
+42. [Background Job: Price Step-Up Expiry](#42-background-job-price-step-up-expiry)
+43. [Background Job: Pause Scheduler](#43-background-job-pause-scheduler)
+44. [Background Job: Webhook Log Cleanup](#44-background-job-webhook-log-cleanup)
+45. [Payment Recording (DB Behavior)](#45-payment-recording-db-behavior)
+46. [Webhook Deduplication (DB Behavior)](#46-webhook-deduplication-db-behavior)
+47. [Subscription Store/Activate (DB Behavior)](#47-subscription-storeactivate-db-behavior)
+48. [User Lookup Strategies (Webhook → User Resolution)](#48-user-lookup-strategies-webhook--user-resolution)
+49. [Health Check](#49-health-check)
 
 ---
 
@@ -149,7 +144,6 @@ RETURNING request_count
 | Subscription mutations (cancel/resume) | 10 req/min |
 | Payment history | 100 req/min |
 | Purchase registration | 20 req/min |
-| Agent balance/token/charge | 60 req/min |
 | Overall per API key | 120 req/min |
 
 ### 3.3 Per-IP Rate Limiting (Unauthenticated)
@@ -186,7 +180,7 @@ RETURNING request_count
 5. If `idempotency_key` provided: check cache/DB for existing response. If found → return cached response.
 6. Initialize provider client with the config loaded for this app/provider pair.
 7. Call provider API to create checkout session:
-   - **Web providers** (Creem, Coinbase): provider returns a `redirect_url`.
+   - **Web providers** (Creem): provider returns a `redirect_url`.
    - **Mobile providers** (Google Play, Apple): provider returns `mobile_checkout_data` (SKU details for native SDK).
    - Pass `external_user_id` as metadata (for webhook resolution later).
    - Pass `email` as pass-through to provider API (never stored in Bridge DB).
@@ -369,7 +363,6 @@ RETURNING request_count
 6. Get signature header (provider-specific name):
    - Creem: `Webhook-Signature`
    - Google Play: `Authorization` (JWT Bearer)
-   - Coinbase: `X-CC-Webhook-Signature`
 7. Extract signature value. Missing → `400`.
 8. Call `provider.verify_and_parse_webhook(body, signature, headers)`:
    - Verifies HMAC/JWT/RSA signature using provider-specific secret from `apps` table.
@@ -809,86 +802,7 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
     skip forwarding
 ```
 
----
-
-## 39. Agent 402 — Balance Query
-
-**Endpoint**: `GET /api/v1/agent/balance?external_user_id=agent@email.com`
-
-1. Authenticate → resolve `app_id`.
-2. Check rate limit.
-3. Query `agent_credits` table: `WHERE app_id=$1 AND external_user_id=$2`.
-4. Return `{ "balance_cents": 300, "lifetime_spent_cents": 1200 }`.
-5. If no record → return `{ "balance_cents": 0, "lifetime_spent_cents": 0 }`.
-
----
-
-## 40. Agent 402 — Token Creation
-
-**Endpoint**: `POST /api/v1/agent/token`  
-**Request body**: `{ "external_user_id": "agent@email.com", "endpoint": "story", "amount_cents": 300 }`
-
-1. Authenticate → resolve `app_id`.
-2. Check rate limit.
-3. Validate email format, endpoint support, amount.
-4. Ensure `agent_credits` row exists (UPSERT with 0 balance if new).
-5. Check balance: if negative → `400` (should never happen, safety).
-6. Generate token (UUID), set expiry = now + 10 minutes.
-7. INSERT into `agent_payment_tokens`:
-   ```sql
-   INSERT INTO agent_payment_tokens (id, app_id, email, endpoint, amount_cents, nonce, expires_at)
-   VALUES ($1, $2, $3, $4, $5, $6, $7)
-   ```
-8. Return `{ "token": "uuid", "expires_in_seconds": 600 }`.
-
----
-
-## 41. Agent 402 — Token Charge (Atomic Reserve)
-
-**Endpoint**: `POST /api/v1/agent/charge`  
-**Request body**: `{ "token": "uuid", "external_user_id": "agent@email.com", "endpoint": "story" }`
-
-1. Authenticate → resolve `app_id`.
-2. Check rate limit.
-3. Parse token UUID.
-4. Begin DB transaction.
-5. `SELECT amount_cents FROM agent_payment_tokens WHERE id=$1 AND email=$2 AND endpoint=$3 AND used=FALSE AND expires_at > NOW() FOR UPDATE`:
-   - Not found → `400 "Token is invalid, expired, or already used"`.
-6. `UPDATE agent_credits SET balance_cents = balance_cents - $amount, lifetime_spent_cents = lifetime_spent_cents + $amount WHERE email=$1 AND balance_cents >= $amount`:
-   - `rows_affected=0` → rollback, `400 "Insufficient balance"`.
-7. `UPDATE agent_payment_tokens SET used=TRUE, used_at=NOW() WHERE id=$1`.
-8. `INSERT INTO agent_transactions (email, request_type, amount_cents, status) VALUES ($1, $endpoint, -$amount, 'completed')`.
-9. Commit.
-10. Return `{ "charged": true, "amount_cents": 300 }`.
-
----
-
-## 42. Agent 402 — Charge Confirmed (Coinbase Webhook)
-
-**Event type**: `charge.confirmed`
-
-1. Extract `charge_id` from payload. Missing → `400`.
-2. Extract `email`. Empty → `400`.
-3. Extract `amount_cents`. Missing → `400`.
-4. **Idempotency**: `SELECT COUNT(*) FROM agent_transactions WHERE charge_id=$1 AND status='completed' AND amount_cents > 0`. If > 0 → skip.
-5. Ensure `agent_credits` row exists.
-6. Begin transaction:
-   - `UPDATE agent_credits SET balance_cents = balance_cents + $amount`.
-   - `INSERT INTO agent_transactions (email, request_type, amount_cents, charge_id, status) VALUES ($1, 'topup', $2, $3, 'completed')`.
-7. Commit.
-
----
-
-## 43. Agent 402 — Charge Failed (Coinbase Webhook)
-
-**Event type**: `charge.failed`
-
-1. Log warning with `charge_id` and `email`.
-2. No DB mutation. No user notification.
-
----
-
-## 44. User Anonymization (GDPR)
+## 39. User Anonymization (GDPR)
 
 **Endpoint**: `POST /api/v1/users/:external_user_id/anonymize`
 
@@ -908,7 +822,7 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
 
 ---
 
-## 45. Data Export (GDPR)
+## 40. Data Export (GDPR)
 
 **Endpoint**: `GET /api/v1/users/:external_user_id/data-export`
 
@@ -917,13 +831,14 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
    - `subscriptions` (all statuses)
    - `payments` (all records)
    - `webhook_log` (related entries, if within retention window)
-   - `agent_credits` (if applicable)
-   - `agent_transactions` (if applicable)
+   - `subscriptions` (all statuses)
+   - `payments` (all records)
+   - `webhook_log` (related entries, if within retention window)
 3. Return JSON export of all data.
 
 ---
 
-## 46. Background Job: Reconciliation
+## 41. Background Job: Reconciliation
 
 **Frequency**: Every `RECONCILIATION_INTERVAL_MINUTES` (default 1440 = 24 hours).  
 **Runs for**: Each enabled app with a supported provider config in `pay.provider_configs`.
@@ -943,7 +858,7 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
 
 ---
 
-## 47. Background Job: Price Step-Up Expiry
+## 42. Background Job: Price Step-Up Expiry
 
 **Frequency**: Every 5 minutes (configurable).
 
@@ -953,7 +868,7 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
 
 ---
 
-## 48. Background Job: Pause Scheduler
+## 43. Background Job: Pause Scheduler
 
 **Frequency**: Every 25 minutes (configurable).
 
@@ -970,7 +885,7 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
 
 ---
 
-## 49. Background Job: Webhook Log Cleanup
+## 44. Background Job: Webhook Log Cleanup
 
 **Frequency**: Daily (or configurable).
 
@@ -979,7 +894,7 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
 
 ---
 
-## 50. Payment Recording (DB Behavior)
+## 45. Payment Recording (DB Behavior)
 
 **Atomic UPSERT with fraud detection.**
 
@@ -1001,7 +916,7 @@ WHERE payments.external_user_id = EXCLUDED.external_user_id  -- FRAUD GUARD
 
 ---
 
-## 51. Webhook Deduplication (DB Behavior)
+## 46. Webhook Deduplication (DB Behavior)
 
 ```sql
 INSERT INTO webhook_log (app_id, provider, provider_webhook_id, event_type, payload, subscription_id, purchase_token, processed)
@@ -1015,7 +930,7 @@ ON CONFLICT (provider, provider_webhook_id) DO NOTHING
 
 ---
 
-## 52. Subscription Store/Activate (DB Behavior)
+## 47. Subscription Store/Activate (DB Behavior)
 
 UPSERT to `subscriptions` table:
 
@@ -1042,7 +957,7 @@ DO UPDATE SET
 
 ---
 
-## 53. User Lookup Strategies (Webhook → User Resolution)
+## 48. User Lookup Strategies (Webhook → User Resolution)
 
 When a provider webhook arrives, Bridge resolves `external_user_id` via a cascade of strategies:
 
@@ -1062,7 +977,7 @@ When a provider webhook arrives, Bridge resolves `external_user_id` via a cascad
 
 ---
 
-## 54. Health Check
+## 49. Health Check
 
 **Endpoint**: `GET /health`  
 **No auth. No rate limit.**
@@ -1111,8 +1026,6 @@ Returns:
 | `subscription.price_change_updated` | price_change_updated | (informational) | §36 |
 | `subscription.expired_voided` | expired_voided | (informational) | §37 |
 | `google.test` | test_event (log only) | (none) | — |
-| `charge.confirmed` | charge_confirmed | (agent credit only) | §42 |
-| `charge.failed` | charge_failed | (log only) | §43 |
 | Unknown | log_unknown_event | (none) | — |
 
 ---
@@ -1126,9 +1039,6 @@ Returns:
 | `subscriptions` | UUID | `(app_id, external_user_id, subscription_id, provider)`, `purchase_token` | Subscription lifecycle |
 | `payments` | UUID | `(app_id, provider, provider_transaction_id)` | Payment records |
 | `webhook_log` | UUID | `(provider, provider_webhook_id)`, `(provider, purchase_token, event_type)` | Webhook dedup + audit + forwarding state |
-| `agent_credits` | UUID | `(app_id, external_user_id)` | Agent micropayment balance |
-| `agent_transactions` | UUID | — | Agent credit/debit audit log |
-| `agent_payment_tokens` | UUID | — | Scoped one-time payment tokens |
 
 ---
 

@@ -12,6 +12,9 @@ pub struct SubscriptionLookupSnapshot {
     pub auto_renewing: Option<bool>,
     pub revocation_reason: Option<String>,
     pub last_event_time: i64,
+    pub google_price_step_up_consent_deadline: Option<chrono::DateTime<chrono::Utc>>,
+    pub google_pause_scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub google_deferred_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +99,9 @@ pub struct WebhookSubscriptionSnapshot {
     pub current_period_end: Option<chrono::DateTime<chrono::Utc>>,
     pub auto_renewing: Option<bool>,
     pub revocation_reason: Option<String>,
+    pub google_price_step_up_consent_deadline: Option<chrono::DateTime<chrono::Utc>>,
+    pub google_pause_scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub google_deferred_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone)]

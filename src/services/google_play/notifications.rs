@@ -1,9 +1,11 @@
+#![allow(dead_code)]
+
 /// Google Play notification and email helpers
 use crate::application::checkout_helpers::format_cents_as_dollars;
-use crate::error::AppError;
+use crate::error::BridgeError;
+use crate::services::email::EmailService;
 use chrono::DateTime;
 use chrono::Utc;
-use crate::services::email::EmailService;
 
 /// Send revocation notification to user
 pub async fn send_email_revoked(
@@ -11,7 +13,7 @@ pub async fn send_email_revoked(
     email: &str,
     subscription_id: &str,
     reason: &str,
-) -> Result<(), AppError> {
+) -> Result<(), BridgeError> {
     email_service.send_email(
         email,
         "Subscription Revoked",
@@ -25,7 +27,7 @@ pub async fn send_email_restarted(
     email: &str,
     subscription_id: &str,
     current_period_end: DateTime<Utc>,
-) -> Result<(), AppError> {
+) -> Result<(), BridgeError> {
     email_service.send_email(
         email,
         "Subscription Restarted",
@@ -38,7 +40,7 @@ pub async fn send_email_cancelled(
     email_service: &dyn EmailService,
     email: &str, 
     subscription_id: &str
-) -> Result<(), AppError> {
+) -> Result<(), BridgeError> {
     email_service.send_email(
         email,
         "Subscription Cancelled",
@@ -52,7 +54,7 @@ pub async fn send_email_cancellation_scheduled(
     email: &str,
     subscription_id: &str,
     cancellation_deadline: Option<DateTime<Utc>>,
-) -> Result<(), AppError> {
+) -> Result<(), BridgeError> {
     email_service.send_email(
         email,
         "Subscription Cancellation Scheduled",
@@ -67,7 +69,7 @@ pub async fn send_email_price_step_up(
     subscription_id: &str,
     new_price_cents: i32,
     deadline: DateTime<Utc>,
-) -> Result<(), AppError> {
+) -> Result<(), BridgeError> {
     email_service.send_email(
         email,
         "Subscription Price Increase",
@@ -80,7 +82,7 @@ pub async fn send_email_price_step_up_rejected(
     email_service: &dyn EmailService,
     email: &str,
     subscription_id: &str,
-) -> Result<(), AppError> {
+) -> Result<(), BridgeError> {
     email_service.send_email(
         email,
         "Price Increase Declined",
@@ -94,11 +96,37 @@ pub async fn send_email_deferred(
     email: &str,
     subscription_id: &str,
     deferred_until: DateTime<Utc>,
-) -> Result<(), AppError> {
+) -> Result<(), BridgeError> {
     email_service.send_email(
         email,
         "Subscription Renewal Deferred",
         &format!("Your subscription {} renewal is deferred until {}.", subscription_id, deferred_until),
+    ).await
+}
+
+/// Send subscription pause notification to user
+pub async fn send_email_paused(
+    email_service: &dyn EmailService,
+    email: &str,
+    subscription_id: &str,
+) -> Result<(), BridgeError> {
+    email_service.send_email(
+        email,
+        "Subscription Paused",
+        &format!("Your subscription {} has been paused. You can resume it at any time from your account settings.", subscription_id),
+    ).await
+}
+
+/// Send subscription refund notification to user
+pub async fn send_email_refunded(
+    email_service: &dyn EmailService,
+    email: &str,
+    subscription_id: &str,
+) -> Result<(), BridgeError> {
+    email_service.send_email(
+        email,
+        "Refund Processed",
+        &format!("A refund has been processed for your subscription {}. Your subscription has been revoked as a result.", subscription_id),
     ).await
 }
 
@@ -109,7 +137,7 @@ pub async fn send_email_payment_failed(
     subscription_id: &str,
     provider_name: &str,
     app_url: &str,
-) -> Result<(), AppError> {
+) -> Result<(), BridgeError> {
     
     let provider_display = match provider_name {
         "google_play" => "Google Play",

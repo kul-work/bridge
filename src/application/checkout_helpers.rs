@@ -3,49 +3,7 @@ use sha2::{Digest, Sha256};
 use crate::application::checkout_types::CheckoutRedirectUrls;
 use crate::error::BridgeError;
 
-/// Parse a decimal currency string (e.g. "9.99", "10") into integer cents.
-/// Avoids f64 intermediary to prevent floating-point rounding errors.
-pub(crate) fn parse_cents(s: &str) -> Option<i32> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-
-    let (negative, s) = if s.starts_with('-') {
-        (true, &s[1..])
-    } else {
-        (false, s)
-    };
-
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() > 2 {
-        return None;
-    }
-
-    let whole: i32 = parts[0].parse().ok()?;
-    if whole < 0 {
-        return None;
-    }
-
-    let cents = match parts.get(1) {
-        Some(frac) => {
-            let frac: String = frac.chars().take(2).collect();
-            if frac.is_empty() {
-                0
-            } else if frac.len() == 1 {
-                frac.parse::<i32>().ok()? * 10
-            } else {
-                frac.parse::<i32>().ok()?
-            }
-        }
-        None => 0,
-    };
-
-    let result = whole * 100 + cents;
-    Some(if negative { -result } else { result })
-}
-
-/// Format integer cents as a dollar string (e.g. 999 → "9.99", 1000 → "10.00")
+/// Format integer cents as a dollar string (e.g. 999 -> "9.99", 1000 -> "10.00")
 pub(crate) fn format_cents_as_dollars(cents: i32) -> String {
     let abs = cents.unsigned_abs();
     let dollars = abs / 100;
@@ -167,44 +125,6 @@ pub(crate) fn resolve_checkout_redirect_urls(app_url: Option<&str>) -> CheckoutR
         success_url: base_url.clone(),
         cancel_url: base_url,
     }
-}
-
-pub(crate) fn coinbase_amount_from_config(config: &serde_json::Value) -> Result<String, BridgeError> {
-    if let Some(amount) = config.get("amount").and_then(|value| value.as_str()) {
-        let normalized = amount.trim();
-        if !normalized.is_empty() {
-            return Ok(normalized.to_string());
-        }
-    }
-
-    if let Some(amount_cents) = config.get("amount_cents").and_then(|value| value.as_i64()) {
-        if amount_cents <= 0 {
-            return Err(BridgeError::ConfigError(
-                "Coinbase amount_cents must be positive".to_string(),
-            ));
-        }
-
-        return Ok(format_cents_as_dollars(amount_cents as i32));
-    }
-
-    Err(BridgeError::ConfigError(
-        "Missing Coinbase amount or amount_cents".to_string(),
-    ))
-}
-
-pub(crate) fn extract_coinbase_checkout_url(data: &serde_json::Value) -> Option<&str> {
-    data.pointer("/data/hosted_url")
-        .and_then(|value| value.as_str())
-        .or_else(|| data.pointer("/data/attributes/hosted_url").and_then(|value| value.as_str()))
-        .or_else(|| data.pointer("/data/hostedUrl").and_then(|value| value.as_str()))
-        .or_else(|| data.get("hosted_url").and_then(|value| value.as_str()))
-        .or_else(|| data.get("url").and_then(|value| value.as_str()))
-}
-
-pub(crate) fn extract_coinbase_checkout_id(data: &serde_json::Value) -> Option<&str> {
-    data.pointer("/data/id")
-        .and_then(|value| value.as_str())
-        .or_else(|| data.get("id").and_then(|value| value.as_str()))
 }
 
 #[cfg(test)]

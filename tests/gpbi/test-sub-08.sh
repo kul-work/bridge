@@ -36,13 +36,17 @@ NC='\033[0m' # No Color
 
 # Test configuration
 TIMESTAMP=$(date +%s)
-DUMMY_TOKEN="test-sub-08-token-$TIMESTAMP"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="sub-08-${TIMESTAMP}-$$"
+DUMMY_TOKEN="test-sub-08-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 REPORT_FILE="sub-08-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-08: Account Hold (Payment Failure)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: External User ID
@@ -73,7 +77,7 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-sub-08-setup\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-reg-08-$(date +%s)\"
+    \"transaction_id\": \"$TEST_RUN_ID\"
   }")
 
 # Verify purchase
@@ -116,7 +120,7 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",
-      \"message_id\": \"test-webhook-08-$(date +%s)\",
+      \"message_id\": \"test-webhook-08-$TEST_RUN_ID\",
       \"attributes\": {}
     }
   }" > /dev/null
@@ -140,11 +144,14 @@ fi
 echo ""
 
 # Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-08",
   "test_name": "Account Hold (Payment Failure)",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,
   "verify_http_code": $VERIFY_HTTP_CODE,

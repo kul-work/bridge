@@ -36,16 +36,20 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
-RUN_ID="$(date +%s)-$RANDOM"
-USER_A_ID="test_acc_03_user_a_$RUN_ID"
-USER_B_ID="test_acc_03_user_b_$RUN_ID"
-PURCHASE_TOKEN="test-acc-03-shared-token-$RUN_ID"
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="acc-03-${TIMESTAMP}-$$"
+USER_A_ID="test_acc_03_user_a_$TEST_RUN_ID"
+USER_B_ID="test_acc_03_user_b_$TEST_RUN_ID"
+PURCHASE_TOKEN="test-acc-03-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 REPORT_FILE="acc-03-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "ACC-03: Token Uniqueness & Fraud Prevention"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 echo -e "${GREEN}Testing with generated User IDs: $USER_A_ID (Owner), $USER_B_ID (Competitor)${NC}"
 echo ""
@@ -77,7 +81,7 @@ REGISTER_HTTP_CODE_A=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_A
     \"reason\": \"test-acc-03-user-a\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-acc-03-user-a-$RUN_ID\"
+    \"transaction_id\": \"test-acc-03-user-a-$TEST_RUN_ID\"
   }")
 
 echo "  Register response code: $REGISTER_HTTP_CODE_A"
@@ -211,11 +215,15 @@ else
     TEST_RESULT_MSG="${RED}ACC-03 Test FAILED${NC}"
 fi
 
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "ACC-03",
   "test_name": "Token Uniqueness & Fraud Prevention",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_a_id": "$USER_A_ID",
   "user_b_id": "$USER_B_ID",

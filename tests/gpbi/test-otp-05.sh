@@ -37,8 +37,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="otp-05-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
+REPORT_FILE="otp-05-report.json"
 WEBHOOK_WAIT_ATTEMPTS=10
 WEBHOOK_WAIT_SECONDS=1
 
@@ -69,9 +73,11 @@ echo -e "${YELLOW}========================================${NC}"
 echo "OTP-05: Refund After Purchase Test"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: External User ID
-USER_ID="test_otp_user_05"
+USER_ID="${USER_ID:-test_otp_user_05_$TEST_RUN_ID}"
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
@@ -89,7 +95,7 @@ echo ""
 
 # Step 3: Verify payment record exists with success status
 # Generate unique token for this test run to avoid collisions
-DUMMY_TOKEN="test-inapp-otp-05-$(date +%s)"
+DUMMY_TOKEN="test-inapp-otp-05-$TEST_RUN_ID"
 PURCHASE_TOKEN=$DUMMY_TOKEN
 
 echo -e "${YELLOW}[3/6] Setup: Creating fresh purchase to refund${NC}"
@@ -135,11 +141,11 @@ echo "Sending mock webhook to backend..."
 echo ""
 
 # Generate timestamp and message ID
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="webhook-otp05-refund-$(date +%s)-$RANDOM"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="webhook-otp-05-refund-$TEST_RUN_ID"
 
 # Create DeveloperNotification JSON (the actual notification)  
-NOTIFICATION_JSON="{\"version\":\"1.0\",\"packageName\":\"$PACKAGE_NAME\",\"eventTimeMillis\":\"$TIMESTAMP\",\"voidedPurchaseNotification\":{\"purchaseToken\":\"$PURCHASE_TOKEN\",\"orderId\":\"GPA.1111-2222-3333-44444\",\"productType\":0,\"refundType\":0}}"
+NOTIFICATION_JSON="{\"version\":\"1.0\",\"packageName\":\"$PACKAGE_NAME\",\"eventTimeMillis\":\"$TIMESTAMP_MS\",\"voidedPurchaseNotification\":{\"purchaseToken\":\"$PURCHASE_TOKEN\",\"orderId\":\"GPA.1111-2222-3333-44444\",\"productType\":0,\"refundType\":0}}"
 
 # Base64 encode the notification
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
@@ -282,11 +288,14 @@ fi
 echo ""
 
 # Generate JSON report
-cat > otp-05-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "OTP-05",
   "test_name": "Refund After Purchase",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
   "product_id": "$PRODUCT_ID",
@@ -307,8 +316,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "${GREEN}✓ OTP-05 Test PASSED${NC}"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: otp-05-report.json"
-cat otp-05-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 exit 0

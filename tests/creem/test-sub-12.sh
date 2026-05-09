@@ -29,9 +29,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
-EMAIL="creem_user_$TIMESTAMP@example.com"
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-sub-12-${TIMESTAMP}-$$"
+REPORT_FILE="test-sub-12-report.json"
+EMAIL="creem_user_${TEST_RUN_ID}@example.com"
 USER_ID=""
 
 # Parse arguments
@@ -53,13 +56,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-12: Subscription Payment Refunded"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: Ensure active subscription exists
 echo -e "${YELLOW}[1/4] Checking for existing active subscription${NC}"
@@ -75,9 +81,9 @@ echo -e "${GREEN}✓ Ready${NC}"
 
 # Step 2: Trigger Refund Webhook
 echo -e "${YELLOW}[2/4] Sending refund.created webhook for subscription payment${NC}"
-EVENT_ID="evt_sub_12_$(date +%s)"
-REFUND_ID="ref_sub_12_$(date +%s)"
-CHARGE_ID="ch_sub_12_$(date +%s)"
+EVENT_ID="evt_sub_12_$TEST_RUN_ID"
+REFUND_ID="ref_sub_12_$TEST_RUN_ID"
+CHARGE_ID="ch_sub_12_$TEST_RUN_ID"
 
 # Create a dummy payment to refund in pay.payments
     psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
@@ -133,14 +139,28 @@ else
     exit 1
 fi
 
-# Step 4: Report
-cat > test-sub-12-report.json <<EOF
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "SUB-12",
+  "test_name": "Subscription Payment Refunded (Webhook)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
   "payment_id": "$CHARGE_ID",
-  "refund_id": "$REFUND_ID"
+  "refund_id": "$REFUND_ID",
+  "results": {
+    "webhook_accepted": true,
+    "payment_refunded": true
+  }
 }
 EOF
+
 echo -e "${GREEN}✓ SUB-12 PASSED${NC}"
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
+echo ""
+exit 0

@@ -27,10 +27,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_RUN_ID="sub-25-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 PURCHASE_TOKEN=""
-USER_ID="test_sub_user_25_$(date +%s)"
+USER_ID="test_sub_user_25_$TEST_RUN_ID"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -49,6 +51,9 @@ done
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-25: Webhook Subscription Deferred (Type 9)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: Ensure subscription record exists
 echo -e "${YELLOW}[1/3] Verifying subscription record exists${NC}"
@@ -61,8 +66,8 @@ fi
 
 if [[ -z "$PURCHASE_TOKEN" ]]; then
     # Always generate a unique user/token for each run to bypass deduplication
-    USER_ID="test_sub_user_25_$(date +%s)"
-    PURCHASE_TOKEN="test-sub-setup-25-$(date +%s)-$RANDOM"
+    USER_ID="test_sub_user_25_$TEST_RUN_ID"
+    PURCHASE_TOKEN="test-sub-25-$TEST_RUN_ID"
     echo -e "${YELLOW}creating setup record for user $USER_ID, token: $PURCHASE_TOKEN...${NC}"
     psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
       -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, created_at, updated_at) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW() + INTERVAL '1 month', NOW(), NOW());" > /dev/null
@@ -73,14 +78,14 @@ echo "Purchase Token: $PURCHASE_TOKEN"
 echo ""
 
 # Step 2: Send webhook
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="webhook-sub-deferred-$(date +%s)-$RANDOM"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="webhook-sub-25-$TEST_RUN_ID"
 
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 9,

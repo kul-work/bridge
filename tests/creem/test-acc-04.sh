@@ -30,8 +30,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Defaults
+# Test configuration
 TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-acc-04-${TIMESTAMP}-$$"
+REPORT_FILE="test-acc-04-report.json"
 USER_ID=""
 
 # Parse arguments
@@ -53,13 +56,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$USER_ID" ]]; then
-    # Generate a stable-ish USER_ID from email if not provided
-    USER_ID="creem_$(echo -n "$EMAIL" | md5sum | cut -d' ' -f1 | cut -c1-12)"
+    # Generate a unique USER_ID for this run
+    USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "ACC-04: Premium Access During Past Due (Grace Period)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: User Identity
 echo -e "${YELLOW}[1/4] Using External User ID: $USER_ID${NC}"
@@ -95,15 +101,38 @@ else
     ACC_PASS="false"
 fi
 
-# Step 4: Summary and Cleanup
-echo -e "${YELLOW}[4/4] Summary${NC}"
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
-
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+OVERALL_STATUS="fail"
 if [[ "$ACC_PASS" == "true" ]]; then
+    OVERALL_STATUS="pass"
+fi
+
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "ACC-04",
+  "test_name": "Premium Access During Past Due (Grace Period)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "$OVERALL_STATUS",
+  "user_id": "$USER_ID",
+  "results": {
+    "access_pass": $ACC_PASS
+  }
+}
+EOF
+
+if [[ "$OVERALL_STATUS" == "pass" ]]; then
     echo -e "\n${GREEN}✓ ACC-04 PASSED${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 0
 else
     echo -e "\n${RED}✗ ACC-04 FAILED${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 1
 fi

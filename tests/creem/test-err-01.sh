@@ -29,14 +29,23 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="creem-err-01-${TIMESTAMP}-$$"
+REPORT_FILE="test-err-01-report.json"
+
 echo -e "${YELLOW}========================================${NC}"
 echo "ERR-01: Missing metadata.user_id"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: Prepare payload WITHOUT metadata.user_id
 echo -e "${YELLOW}[1/3] Preparing payload missing metadata.user_id${NC}"
-EVENT_ID="err-01-missing-user-$(date +%s)"
-SUB_ID="sub_err_01_$(date +%s)"
+EVENT_ID="err-01-missing-user-$TEST_RUN_ID"
+SUB_ID="sub_err_01_$TEST_RUN_ID"
 
 PAYLOAD=$(cat <<EOF
 {
@@ -77,11 +86,39 @@ sleep 2
 SUBS_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT count(*) FROM pay.subscriptions WHERE subscription_id = '$SUB_ID';" -t | tr -d '[:space:]' || echo "0")
 
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+OVERALL_STATUS="fail"
 if [[ "$SUBS_COUNT" == "0" ]]; then
+    OVERALL_STATUS="pass"
+fi
+
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "ERR-01",
+  "test_name": "Missing metadata.user_id",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "$OVERALL_STATUS",
+  "results": {
+    "records_created": $SUBS_COUNT,
+    "http_code": $HTTP_CODE
+  }
+}
+EOF
+
+if [[ "$OVERALL_STATUS" == "pass" ]]; then
     echo -e "${GREEN}✓ No orphaned subscription record created.${NC}"
     echo -e "\n${GREEN}✓ ERR-01 PASSED${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 0
 else
     echo -e "${RED}✗ Error handling logic failed: Record found!${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
     exit 1
 fi

@@ -55,7 +55,5 @@ pub trait SchedulerRepository: Send + Sync {
 
     async fn cleanup_old_webhook_provider(&self) -> Result<(), BridgeError>;
 
-    async fn cleanup_expired_agent_tokens(&self) -> Result<(), BridgeError>;
-
     async fn cleanup_purged_fraud_prevention(&self) -> Result<(), BridgeError>;
 }

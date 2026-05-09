@@ -37,9 +37,13 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="otp-02-${TIMESTAMP}-$$"
 DECLINED_TOKEN="test-inapp-declined-card"
 PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
+REPORT_FILE="otp-02-report.json"
 
 # Defaults
 APP_URL="$BRIDGE_API_URL"
@@ -193,11 +197,14 @@ fi
 echo ""
 
 # Generate JSON report
-cat > otp-02-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "OTP-02",
   "test_name": "Declined Payment",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
   "product_id": "$PRODUCT_ID",
@@ -217,8 +224,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "${GREEN}✓ OTP-02 Test PASSED${NC}"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: otp-02-report.json"
-cat otp-02-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 exit 0

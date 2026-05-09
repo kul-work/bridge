@@ -14,8 +14,6 @@
 #   - pay.webhook_delivery
 #   - pay.webhook_provider
 #   - pay.price_step_up_expiry
-#   - pay.agent_credits
-#   - pay.agent_transactions
 #
 # Safety: Only executes on localhost connections (127.0.0.1 or ::1)
 ##############################################################################
@@ -80,8 +78,6 @@ TRUNCATE subscriptions CASCADE;
 TRUNCATE webhook_delivery CASCADE;
 TRUNCATE webhook_provider CASCADE;
 TRUNCATE price_step_up_expiry CASCADE;
-TRUNCATE agent_credits CASCADE;
-TRUNCATE agent_transactions CASCADE;
 
 RAISE NOTICE 'Nuclear cleanup of pay schema completed';
 EOF

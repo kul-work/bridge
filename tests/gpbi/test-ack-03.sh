@@ -39,12 +39,15 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="ack-03-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_ack_03_user_$RUN_ID}"
-DUMMY_TOKEN="test-subscription-sub01-$RUN_ID"  # Dynamic token for this run
-WEBHOOK_ID="test-webhook-ack03-renewal-$RUN_ID"
+REPORT_FILE="ack-03-report.json"
+USER_ID="${USER_ID:-test_ack_03_user_$TEST_RUN_ID}"
+DUMMY_TOKEN="test-ack-03-token-$TEST_RUN_ID"
+WEBHOOK_ID="webhook-ack-03-$TEST_RUN_ID"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -60,6 +63,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "ACK-03: No ACK on Subscription Renewal Test"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Clean up previous test data
@@ -86,7 +91,7 @@ REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/
     \"reason\": \"test-ack-03-setup\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-ack-03-reg-$RUN_ID\"
+    \"transaction_id\": \"test-ack-03-reg-$TEST_RUN_ID\"
   }")
 
 if [[ "$REGISTER_HTTP" == "200" ]]; then
@@ -163,13 +168,13 @@ echo ""
 # Step 6: Simulate renewal webhook (notificationType 2)
 echo -e "${YELLOW}[6/7] Sending subscription.renewed webhook (notificationType 2)${NC}"
 
-TIMESTAMP=$(date +%s000)
+TIMESTAMP_MS=$(date +%s000)
 
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 2,
@@ -286,11 +291,15 @@ elif [[ "$STATUS_CORRECT" != "true" ]]; then
     TEST_STATUS="partial"
 fi
 
-cat > ack-03-report.json <<EOF
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "ACK-03",
   "test_name": "No ACK on Subscription Renewal",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "product_id": "$PRODUCT_ID",
@@ -321,8 +330,8 @@ else
 fi
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: ack-03-report.json"
-cat ack-03-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

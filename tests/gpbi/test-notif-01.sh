@@ -36,13 +36,16 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Config
-RUN_ID="$(date +%s)-$RANDOM"
-DUMMY_TOKEN="test-token-notif01-$RUN_ID"
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="notif-01-${TIMESTAMP}-$$"
+DUMMY_TOKEN="test-notif-01-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
+REPORT_FILE="notif-01-report.json"
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 DB_URL="${BRIDGE_DB_URL}"
-USER_ID="${USER_ID:-test_notif_01_user_$RUN_ID}"
+USER_ID="${USER_ID:-test_notif_01_user_$TEST_RUN_ID}"
 
 # Extract DB password if needed
 if [[ "$DB_URL" == *":"* ]]; then
@@ -53,6 +56,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "NOTIF-01: Payment Failure & Acknowledgment"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # 1. Prepare generated user_id for this run
@@ -76,7 +81,7 @@ curl -s -o /dev/null -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
     \"reason\": \"test-notif-01-setup\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-notif-01-reg-$RUN_ID\"
+    \"transaction_id\": \"test-notif-01-reg-$TEST_RUN_ID\"
   }"
 
 curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
@@ -92,9 +97,9 @@ curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
 
 # 3. Simulate Account Hold (Payment Failure)
 echo -e "${YELLOW}[2/5] Triggering Account Hold (Payment Failure)${NC}"
-WEBHOOK_ID="wh-notif01-hold-$(date +%s)"
-TIMESTAMP=$(date +%s%3N)
-NOTIFICATION_JSON="{\"version\":\"1.0\",\"packageName\":\"$PACKAGE_NAME\",\"eventTimeMillis\":\"$TIMESTAMP\",\"subscriptionNotification\":{\"version\":\"1.0\",\"notificationType\":5,\"purchaseToken\":\"$DUMMY_TOKEN\",\"subscriptionId\":\"$PRODUCT_ID\"}}"
+WEBHOOK_ID="webhook-notif-01-$TEST_RUN_ID"
+TIMESTAMP_MS=$(date +%s%3N)
+NOTIFICATION_JSON="{\"version\":\"1.0\",\"packageName\":\"$PACKAGE_NAME\",\"eventTimeMillis\":\"$TIMESTAMP_MS\",\"subscriptionNotification\":{\"version\":\"1.0\",\"notificationType\":5,\"purchaseToken\":\"$DUMMY_TOKEN\",\"subscriptionId\":\"$PRODUCT_ID\"}}"
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 
 curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
@@ -116,10 +121,12 @@ if [[ "$FLAG" == "true" ]]; then
     echo -e "${GREEN}✓ Notification active${NC}"
 else
     echo -e "${RED}✗ Notification NOT active (Expected true, got $FLAG)${NC}"
-    cat > notif-01-report.json <<EOF
+    cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "NOTIF-01",
   "test_name": "Payment Failure & Acknowledgment",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
   "status": "fail",
   "user_id": "$USER_ID",
   "failure_step": "notification_flag_true",
@@ -143,10 +150,12 @@ if [[ "$SUCCESS" == "true" ]]; then
     echo -e "${GREEN} Acknowledged successfully${NC}"
 else
     echo -e "${RED} Acknowledge failed: $ACK_RESP${NC}"
-    cat > notif-01-report.json <<EOF
+    cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "NOTIF-01",
   "test_name": "Payment Failure & Acknowledgment",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
   "status": "fail",
   "user_id": "$USER_ID",
   "failure_step": "acknowledge",
@@ -167,10 +176,12 @@ if [[ "$FLAG_FINAL" == "false" || "$FLAG_FINAL" == "null" ]]; then
     echo -e "${GREEN} Notification cleared${NC}"
 else
     echo -e "${RED} Notification NOT cleared (Expected false/null, got $FLAG_FINAL)${NC}"
-    cat > notif-01-report.json <<EOF
+    cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "NOTIF-01",
   "test_name": "Payment Failure & Acknowledgment",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
   "status": "fail",
   "user_id": "$USER_ID",
   "failure_step": "notification_flag_false",
@@ -182,10 +193,14 @@ EOF
 fi
 
 # Report
-cat > notif-01-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "NOTIF-01",
   "test_name": "Payment Failure & Acknowledgment",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID"
 }

@@ -2,10 +2,11 @@ use crate::error::BridgeError;
 use crate::ports::{
     AppLookupRepository, WebhookForwardRepository, WebhookWriteRepository,
 };
+use crate::webhooks::processor::CanonicalWebhookPayload;
 use std::time::Duration;
 use uuid::Uuid;
 use reqwest::Client;
-use tracing::{info, warn, error};
+use tracing::{debug, error, info, warn};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use chrono::Utc;
@@ -13,6 +14,8 @@ use chrono::Utc;
 type HmacSha256 = Hmac<Sha256>;
 
 const WEBHOOK_FORWARD_TIMEOUT_SECS: u64 = 10;
+const DIAGNOSTIC_REDACTION: &str = "[redacted]";
+const DIAGNOSTIC_VISIBLE_SUFFIX_LEN: usize = 8;
 
 /// Forward webhook to app callback URL with HMAC signature
 /// Used for future webhook delivery to app callbacks.
@@ -20,7 +23,7 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
     repo: &R,
     app_id: Uuid,
     webhook_delivery_id: Uuid,
-    payload: crate::webhooks::processor::CanonicalWebhookPayload,
+    payload: CanonicalWebhookPayload,
 ) -> Result<(), BridgeError> {
     // Get app details
     let app = repo.get_app(app_id).await?;
@@ -74,6 +77,7 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
     // Serialize payload
     let payload_json = serde_json::to_string(&payload)
         .map_err(|e| BridgeError::WebhookError(format!("Failed to serialize payload: {}", e)))?;
+    let diagnostic_payload_json = serialize_diagnostic_payload(&payload)?;
 
     // Create HMAC signature
     let timestamp = Utc::now().timestamp().to_string();
@@ -113,10 +117,25 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
                 )
                 .await?;
             } else {
-                let error_msg = format!("HTTP {}", status);
+                let response_body = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|e| format!("(failed to read response body: {})", e));
+                let error_msg = format_http_failure(status, &response_body);
                 warn!(
-                    "Failed to forward webhook {} to app {}: {}",
-                    webhook_delivery_id, app_id, error_msg
+                    "Failed to forward webhook {} to app {}: HTTP {}",
+                    webhook_delivery_id,
+                    app_id,
+                    status
+                );
+                debug!(
+                    webhook_delivery_id = %webhook_delivery_id,
+                    app_id = %app_id,
+                    callback_url = %app.webhook_callback_url,
+                    http_status = status,
+                    outbound_payload = %diagnostic_payload_json,
+                    response_body = %response_body,
+                    "Webhook forwarding diagnostics"
                 );
                 repo.update_webhook_delivery_attempt(
                     webhook_delivery_id,
@@ -131,7 +150,17 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
             let error_msg = format!("Request error: {}", e);
             error!(
                 "Failed to forward webhook {} to app {}: {}",
-                webhook_delivery_id, app_id, error_msg
+                webhook_delivery_id,
+                app_id,
+                error_msg
+            );
+            debug!(
+                webhook_delivery_id = %webhook_delivery_id,
+                app_id = %app_id,
+                callback_url = %app.webhook_callback_url,
+                outbound_payload = %diagnostic_payload_json,
+                error = %error_msg,
+                "Webhook forwarding diagnostics"
             );
             repo.update_webhook_delivery_attempt(
                 webhook_delivery_id,
@@ -144,6 +173,36 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
     }
 
     Ok(())
+}
+
+fn serialize_diagnostic_payload(payload: &CanonicalWebhookPayload) -> Result<String, BridgeError> {
+    serde_json::to_string(&scrub_payload_for_diagnostics(payload))
+        .map_err(|e| BridgeError::WebhookError(format!("Failed to serialize diagnostic payload: {}", e)))
+}
+
+fn scrub_payload_for_diagnostics(payload: &CanonicalWebhookPayload) -> CanonicalWebhookPayload {
+    let mut scrubbed = payload.clone();
+    scrubbed.purchase_token = scrubbed.purchase_token.map(|token| redact_with_prefix(&token));
+    scrubbed
+}
+
+fn format_http_failure(status: i32, response_body: &str) -> String {
+    if response_body.trim().is_empty() {
+        format!("HTTP {} with empty response body", status)
+    } else {
+        format!("HTTP {} response body: {}", status, response_body)
+    }
+}
+
+fn redact_with_prefix(value: &str) -> String {
+    let suffix_chars: Vec<char> = value.chars().rev().take(DIAGNOSTIC_VISIBLE_SUFFIX_LEN).collect();
+    let suffix: String = suffix_chars.into_iter().rev().collect();
+
+    if suffix.is_empty() {
+        DIAGNOSTIC_REDACTION.to_string()
+    } else {
+        format!("{}...{}", DIAGNOSTIC_REDACTION, suffix)
+    }
 }
 
 /// Create a webhook delivery and forward it in one step.
@@ -226,5 +285,12 @@ mod tests {
         let sig2 = create_signature(r#"{"event_id":"test"}"#, "secret").unwrap();
         
         assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn redact_with_prefix_keeps_last_eight_chars() {
+        assert_eq!(redact_with_prefix("1234567890abcdef"), "[redacted]...90abcdef");
+        assert_eq!(redact_with_prefix("short"), "[redacted]...short");
+        assert_eq!(redact_with_prefix(""), "[redacted]");
     }
 }

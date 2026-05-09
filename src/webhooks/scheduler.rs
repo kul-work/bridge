@@ -207,6 +207,9 @@ async fn reconcile_app_subscriptions(
                         Some(provider_status),
                         Some(sub.provider.clone()),
                         None,
+                        sub.google_price_step_up_consent_deadline.map(|date| date.timestamp_millis()),
+                        sub.google_pause_scheduled_at.map(|date| date.timestamp_millis()),
+                        sub.google_deferred_until.map(|date| date.timestamp_millis()),
                     )
                     .await
                     {
@@ -312,6 +315,9 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
         let subscription_id = sub.subscription_id.clone();
         let provider = sub.provider.clone();
         let purchase_token = sub.purchase_token.clone();
+        let google_price_step_up_consent_deadline = sub
+            .google_price_step_up_consent_deadline
+            .map(|date| date.timestamp_millis());
         info!("Price step-up expired for subscription {}, auto-cancelling", subscription_id);
 
         if let Ok(config) = database.as_ref().get_provider_config(app_id, &provider).await {
@@ -350,6 +356,9 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
             None,
             None,
             Some("price_step_up_expiry".to_string()),
+            google_price_step_up_consent_deadline,
+            sub.google_pause_scheduled_at.map(|date| date.timestamp_millis()),
+            sub.google_deferred_until.map(|date| date.timestamp_millis()),
         )
         .await
         {
@@ -385,6 +394,9 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
         let subscription_id = sub.subscription_id.clone();
         let provider = sub.provider.clone();
         let purchase_token = sub.purchase_token.clone();
+        let google_pause_scheduled_at = sub
+            .google_pause_scheduled_at
+            .map(|date| date.timestamp_millis());
         info!("Transitioning subscription {} to paused (scheduled pause)", subscription_id);
 
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -409,6 +421,9 @@ async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate
             None,
             None,
             None,
+            sub.google_price_step_up_consent_deadline.map(|date| date.timestamp_millis()),
+            google_pause_scheduled_at,
+            sub.google_deferred_until.map(|date| date.timestamp_millis()),
         )
         .await
         {
@@ -438,6 +453,9 @@ async fn emit_scheduler_callback(
     corrected_status: Option<String>,
     reconciliation_source: Option<String>,
     revocation_reason: Option<String>,
+    google_price_step_up_consent_deadline: Option<i64>,
+    google_pause_scheduled_at: Option<i64>,
+    google_deferred_until: Option<i64>,
 ) -> Result<(), crate::error::BridgeError> {
     let app = repo.get_app(app_id).await?;
     let provider_event_id = format!("scheduler-{}", Uuid::new_v4());
@@ -457,6 +475,9 @@ async fn emit_scheduler_callback(
         "corrected_status": corrected_status,
         "reconciliation_source": reconciliation_source,
         "revocation_reason": revocation_reason,
+        "google_price_step_up_consent_deadline": google_price_step_up_consent_deadline,
+        "google_pause_scheduled_at": google_pause_scheduled_at,
+        "google_deferred_until": google_deferred_until,
     });
 
     let canonical = crate::webhooks::processor::CanonicalWebhookPayload {
@@ -481,6 +502,9 @@ async fn emit_scheduler_callback(
         reconciliation_source,
         revocation_reason,
         cancellation_mode: None,
+        google_price_step_up_consent_deadline,
+        google_pause_scheduled_at,
+        google_deferred_until,
     };
 
     crate::webhooks::forwarding::create_and_forward_webhook(
@@ -517,7 +541,6 @@ async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::error::
     info!("Starting data retention cleanup");
 
     SchedulerRepository::cleanup_old_webhook_provider(database.as_ref()).await?;
-    SchedulerRepository::cleanup_expired_agent_tokens(database.as_ref()).await?;
     SchedulerRepository::cleanup_purged_fraud_prevention(database.as_ref()).await?;
 
     info!("Data retention cleanup completed");

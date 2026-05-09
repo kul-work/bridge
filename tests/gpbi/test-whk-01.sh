@@ -33,24 +33,32 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m' # No Color
 
+# Test configuration
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TIMESTAMP=$(date +%s)
+TEST_RUN_ID="whk-01-${TIMESTAMP}-$$"
+REPORT_FILE="whk-01-report.json"
+
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-01: Bridge Invalid Pub/Sub Signature Rejection"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Send webhook with INVALID/TAMPERED authorization header
 echo -e "${YELLOW}[1/3] Sending webhook with INVALID authorization header${NC}"
 
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="whk-01-invalid-sig-$(date +%s)"
-PURCHASE_TOKEN="test-whk-01-invalid-token"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="whk-01-invalid-sig-$TEST_RUN_ID"
+PURCHASE_TOKEN="test-whk-01-token-$TEST_RUN_ID"
 
 # Create DeveloperNotification JSON
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 4,
@@ -89,8 +97,29 @@ else
     exit 1
 fi
 
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_STATUS="pass"
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "WHK-01",
+  "test_name": "Bridge Invalid Pub/Sub Signature Rejection",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "$TEST_STATUS",
+  "webhook_http_code": "$WEBHOOK_HTTP_CODE",
+  "results": {
+    "rejected_correctly": true
+  }
+}
+EOF
+
 echo -e "${YELLOW}========================================${NC}"
 echo -e "${GREEN}✓ WHK-01 Bridge Test PASSED${NC}"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 exit 0

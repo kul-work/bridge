@@ -27,10 +27,14 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="otp-rtdn-04-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
+REPORT_FILE="otp-rtdn-04-report.json"
 PURCHASE_TOKEN=""
-USER_ID="test_otp_user_01"
+USER_ID="${USER_ID:-test_otp_user_04_$TEST_RUN_ID}"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -49,6 +53,9 @@ done
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-RTDN-04: Webhook OTP Canceled (Type 14)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: Ensure payment record exists
 echo -e "${YELLOW}[1/3] Verifying payment record exists${NC}"
@@ -61,8 +68,7 @@ fi
 
 if [[ -z "$PURCHASE_TOKEN" ]]; then
     # Always generate a unique user/token for each run to bypass deduplication
-    USER_ID="test_otp_user_04_$(date +%s)"
-    PURCHASE_TOKEN="test-otp-setup-04-$(date +%s)-$RANDOM"
+    PURCHASE_TOKEN="test-otp-token-04-$TEST_RUN_ID"
     echo -e "${YELLOW}creating setup record for user $USER_ID, token: $PURCHASE_TOKEN...${NC}"
     psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
       -c "INSERT INTO pay.payments (app_id, external_user_id, product_id, status, provider_transaction_id, provider, amount_cents, created_at) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'success', '$PURCHASE_TOKEN', '$PROVIDER', 999, NOW());" > /dev/null
@@ -73,14 +79,14 @@ echo "Purchase Token: $PURCHASE_TOKEN"
 echo ""
 
 # Step 2: Send webhook
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="webhook-otp-cancel-$(date +%s)-$RANDOM"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="webhook-otp-cancel-$TEST_RUN_ID"
 
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "oneTimeProductNotification": {
     "version": "1.0",
     "notificationType": 14,
@@ -115,8 +121,37 @@ STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$
 
 if [[ "$STATUS" == "cancelled" ]]; then
     echo -e "${GREEN}✓ Success: Status is 'cancelled'${NC}"
-    exit 0
+    TEST_STATUS="pass"
 else
     echo -e "${RED}✗ Failure: Status is '$STATUS', expected 'cancelled'${NC}"
+    TEST_STATUS="fail"
+fi
+
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "OTP-RTDN-04",
+  "test_name": "Webhook OTP Canceled (Type 14)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "$TEST_STATUS",
+  "user_id": "$USER_ID",
+  "purchase_token": "$PURCHASE_TOKEN",
+  "results": {
+    "webhook_processed": true,
+    "final_status": "$STATUS"
+  }
+}
+EOF
+
+echo ""
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
+echo ""
+
+if [[ "$TEST_STATUS" == "fail" ]]; then
     exit 1
 fi
+exit 0

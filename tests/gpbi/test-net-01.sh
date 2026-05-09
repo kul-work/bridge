@@ -39,10 +39,15 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="net-01-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_net_01_user_$RUN_ID}"
+REPORT_FILE="net-01-report.json"
+USER_ID="${USER_ID:-test_net_01_user_$TEST_RUN_ID}"
+DUMMY_TOKEN="test-net-01-token-$TEST_RUN_ID"
+WEBHOOK_ID="webhook-net-01-$TEST_RUN_ID"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -243,11 +248,14 @@ else
 fi
 
 # Generate JSON report
-cat > net-01-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "NET-01",
   "test_name": "Webhook Arrives Before verify_payment",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
@@ -268,8 +276,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: net-01-report.json"
-cat net-01-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

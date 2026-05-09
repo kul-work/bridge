@@ -38,10 +38,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="log-01-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_log_01_user_$RUN_ID}"
+REPORT_FILE="log-01-report.json"
+USER_ID="${USER_ID:-test_log_01_user_$TEST_RUN_ID}"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -56,6 +59,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "LOG-01: Structured Billing Event Logging"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -95,7 +100,7 @@ REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/
     \"reason\": \"test-log-01-setup\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-log-01-reg-$RUN_ID\"
+    \"transaction_id\": \"test-log-01-reg-$TEST_RUN_ID\"
   }")
 
 if [[ "$REGISTER_HTTP" == "200" ]]; then
@@ -338,11 +343,14 @@ else
 fi
 
 # Generate JSON report
-cat > log-01-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "LOG-01",
   "test_name": "Structured Billing Event Logging",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
@@ -373,8 +381,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: log-01-report.json"
-cat log-01-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" != "pass" ]]; then

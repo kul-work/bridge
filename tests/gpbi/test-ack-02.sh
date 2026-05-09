@@ -39,11 +39,14 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="ack-02-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_ack_02_user_$RUN_ID}"
-DUMMY_TOKEN="test-subscription-ack02-fail-$RUN_ID"
+REPORT_FILE="ack-02-report.json"
+USER_ID="${USER_ID:-test_ack_02_user_$TEST_RUN_ID}"
+DUMMY_TOKEN="test-ack-02-token-$TEST_RUN_ID"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -74,6 +77,8 @@ done
 echo -e "${YELLOW}========================================${NC}"
 echo "ACK-02: Subscription ACK Failure & Retry Queue Test"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -109,7 +114,7 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-ack-02\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
-    \"transaction_id\": \"test-ack-02-$RUN_ID\"
+    \"transaction_id\": \"test-ack-02-reg-$TEST_RUN_ID\"
   }")
 
 echo "  Register response code: $REGISTER_HTTP_CODE"
@@ -240,6 +245,7 @@ fi
 echo ""
 
 # Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TEST_STATUS="pass"
 if [[ "$VERIFY_SUCCESS" != "true" ]] || [[ "$ENTITLEMENT_GRANTED" != "true" ]]; then
     TEST_STATUS="fail"
@@ -247,11 +253,13 @@ elif [[ "$ACK_SUCCEEDED" != "true" ]]; then
     TEST_STATUS="partial"
 fi
 
-cat > ack-02-report.json <<EOF
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "ACK-02",
   "test_name": "Subscription ACK Failure & Retry Queue",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "product_id": "$PRODUCT_ID",
@@ -280,8 +288,8 @@ else
 fi
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: ack-02-report.json"
-cat ack-02-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

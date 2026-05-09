@@ -1,5 +1,4 @@
 pub mod admin;
-pub mod agent;
 pub mod api_key;
 pub mod app;
 pub mod checkout;

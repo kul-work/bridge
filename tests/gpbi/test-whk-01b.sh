@@ -39,10 +39,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="whk-01b-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_whk_01b_user_$RUN_ID}"
+REPORT_FILE="whk-01b-report.json"
+USER_ID="${USER_ID:-test_whk_01b_user_$TEST_RUN_ID}"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -58,6 +61,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-01B: Audience Claim Mismatch Rejection"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -87,9 +92,9 @@ echo ""
 echo -e "${YELLOW}[3/5] Sending webhook with WRONG audience claim${NC}"
 echo ""
 
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="whk-01b-audience-mismatch-$(date +%s)"
-PURCHASE_TOKEN="test-whk-01b-audience-token"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="whk-01b-audience-$TEST_RUN_ID"
+PURCHASE_TOKEN="test-whk-01b-token-$TEST_RUN_ID"
 
 # Create a mock JWT with wrong audience (simplified - real JWT would be more complex)
 # The backend should reject this because aud != GOOGLE_PUB_SUB_AUDIENCE
@@ -108,7 +113,7 @@ NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 4,
@@ -213,11 +218,15 @@ else
 fi
 
 # Generate JSON report
-cat > whk-01b-report.json <<EOF
+# Generate JSON report
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "WHK-01B",
   "test_name": "Audience Claim Mismatch Rejection",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "message_id": "$MESSAGE_ID",
@@ -240,8 +249,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: whk-01b-report.json"
-cat whk-01b-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

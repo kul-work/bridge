@@ -267,6 +267,8 @@ pub async fn handle_google_play(
         if let Some(purchase_token) = purchase_token.as_deref() {
             if let Ok(Some(sub_id)) = crate::db::subscriptions::lookup_subscription_id_by_purchase_token(database.pool(), app.id, purchase_token).await {
                 Some(sub_id)
+            } else if let Ok(Some(product_id)) = crate::db::payments::lookup_product_id_by_purchase_token_payment(database.pool(), app.id, "google_play", purchase_token).await {
+                Some(product_id)
             } else {
                 subscription_id
             }
@@ -435,90 +437,6 @@ pub async fn handle_creem(
     }
 
     spawn_process_and_forward_webhook(database, app.id, webhook_id, "Creem", event_id.to_string());
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Handle Coinbase webhook
-pub async fn handle_coinbase(
-    State(state): State<AppState>,
-    Path(token): Path<String>,
-    headers: HeaderMap,
-    body: String,
-) -> Result<StatusCode, BridgeError> {
-    let database = state.database();
-    info!("Received Coinbase webhook with token: {}", token);
-
-    let token_uuid = match Uuid::parse_str(&token) {
-        Ok(token_uuid) => token_uuid,
-        Err(_) => return Ok(StatusCode::NOT_FOUND),
-    };
-
-    let app = match database.as_ref().get_app_by_webhook_token(token_uuid).await {
-        Ok(app) => app,
-        Err(_) => return Ok(StatusCode::NOT_FOUND),
-    };
-
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    type HmacSha256 = Hmac<Sha256>;
-
-    let webhook_secret = get_provider_webhook_secret(database.as_ref(), app.id, "coinbase").await?;
-    let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
-        .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
-
-    mac.update(body.as_bytes());
-    let computed_sig = hex::encode(mac.finalize().into_bytes());
-
-    let provided_sig = headers
-        .get("x-cc-webhook-signature")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    if !constant_time_compare(provided_sig.as_bytes(), computed_sig.as_bytes()) {
-        error!("Coinbase webhook signature verification failed");
-        return Err(BridgeError::WebhookError("Invalid signature".to_string()));
-    }
-
-    info!("Coinbase webhook signature verified");
-
-    let payload: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
-        error!("Failed to parse Coinbase webhook JSON: {}", e);
-        BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
-    })?;
-
-    let event_id = payload["event"]["id"]
-        .as_str()
-        .ok_or_else(|| BridgeError::WebhookError("Missing provider event ID".to_string()))?;
-    let event_type = payload["event"]["type"].as_str().unwrap_or("unknown");
-    let charge_id = payload["event"]["data"]["id"].as_str().map(|s| s.to_string());
-
-    let timestamp_ms = payload["event"]["created_at"].as_str().and_then(|s| {
-        chrono::DateTime::parse_from_rfc3339(s)
-            .ok()
-            .map(|dt| dt.timestamp_millis())
-    });
-
-    let (webhook_id, is_new) = database
-        .as_ref()
-        .create_webhook_provider(
-            app.id,
-            "coinbase",
-            event_id,
-            event_type,
-            charge_id,
-            None,
-            payload.clone(),
-            timestamp_ms,
-        )
-        .await?;
-
-    if !is_new {
-        handle_duplicate_webhook(database, app.id, webhook_id, "Coinbase", event_id).await?;
-        return Ok(StatusCode::NO_CONTENT);
-    }
-
-    spawn_process_and_forward_webhook(database, app.id, webhook_id, "Coinbase", event_id.to_string());
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -37,11 +37,14 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="whk-02-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 APP_ID="$BRIDGE_APP_ID"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_whk_02_user_$RUN_ID}"
+REPORT_FILE="whk-02-report.json"
+USER_ID="${USER_ID:-test_whk_02_user_$TEST_RUN_ID}"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -57,6 +60,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "WHK-02: Duplicate Webhook Delivery (Idempotency)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -75,7 +80,7 @@ echo ""
 # Step 2: Setup - ensure subscription record exists
 echo -e "${YELLOW}[2/7] Setting up test subscription record${NC}"
 
-PURCHASE_TOKEN="test-whk-02-idempotency-$(date +%s)"
+PURCHASE_TOKEN="test-whk-02-token-$TEST_RUN_ID"
 
 # Clean up any existing test data
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" 2>/dev/null
@@ -101,8 +106,8 @@ echo ""
 echo -e "${YELLOW}[4/7] Sending FIRST webhook (subscription renewal)${NC}"
 echo ""
 
-TIMESTAMP=$(date +%s000)
-MESSAGE_ID="whk-02-idempotency-test-$(date +%s)"
+TIMESTAMP_MS=$(date +%s000)
+MESSAGE_ID="whk-02-idempotency-$TEST_RUN_ID"
 
 echo "Webhook details:"
 echo "  Message ID: $MESSAGE_ID (SAME for both deliveries)"
@@ -115,7 +120,7 @@ NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 2,
@@ -254,11 +259,14 @@ else
 fi
 
 # Generate JSON report
-cat > whk-02-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "WHK-02",
   "test_name": "Duplicate Webhook Delivery (Idempotency)",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "message_id": "$MESSAGE_ID",
@@ -282,8 +290,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: whk-02-report.json"
-cat whk-02-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

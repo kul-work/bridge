@@ -217,6 +217,30 @@ pub async fn lookup_user_by_purchase_token_payment(
     Ok(row.map(|r| r.0))
 }
 
+pub async fn lookup_product_id_by_purchase_token_payment(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    provider: &str,
+    purchase_token: &str,
+) -> Result<Option<String>, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT COALESCE(product_id, subscription_id) FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3 AND COALESCE(product_id, subscription_id) IS NOT NULL LIMIT 1"
+    )
+    .bind(app_id)
+    .bind(provider)
+    .bind(purchase_token)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(row.map(|r| r.0))
+}
+
 pub async fn get_user_payments(
     pool: &sqlx::PgPool,
     app_id: Uuid,

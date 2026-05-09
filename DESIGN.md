@@ -24,7 +24,6 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - Subscriptions versioned for optimistic concurrency control
 - Stale event suppression via high-water mark (`last_event_time`)
 - Checkout idempotency via `checkout_idempotency` table
-- Agent topup idempotency via unique index on charge_id
 
 ### Multi-App Design
 - Bridge serves N apps (currently hiha.app, future apps)
@@ -33,7 +32,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - API keys scoped per app
 
 ### Provider Abstraction
-- Unified interface across Google Play (primary), Coinbase, and Creem.
+- Unified interface across Google Play (primary) and Creem.
 - State normalization (each provider's "active" maps to Bridge's `active`).
 - Signature verification required on all provider webhooks.
 - Dynamic provider loading per-app (not startup-based env vars).
@@ -68,10 +67,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - `POST /api/v1/subscriptions/:subscription_id/price-step-up/accept` — accept price increase
 - `POST /api/v1/subscriptions/:subscription_id/price-step-up/decline` — decline price increase
 - `GET /api/v1/payments` — list payment history
-- `GET /api/v1/agent/balance` — check agent credit balance
-- `POST /api/v1/agent/token` — create scoped charge token
-- `POST /api/v1/agent/charge` — atomically deduct credits
-- `POST /api/v1/agent/topup` — manually top up agent balance
+- `POST /api/v1/purchase/register` — register external purchase attempt
 - `POST /api/v1/users/:external_user_id/anonymize` — GDPR account deletion/anonymization
 - `GET /api/v1/users/:external_user_id/data-export` — GDPR data export
 
@@ -111,7 +107,6 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 
 **Supported providers**:
 - **Google Play**: Primary support for subscriptions and one-time purchases.
-- **Coinbase**: Support for crypto payments.
 - **Creem**: Support for standard web payment checkouts.
 
 **Provider credentials**:
@@ -140,9 +135,6 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 | `payments` | Immutable payment records |
 | `webhook_log` | Webhook audit + deduplication (ingress) |
 | `webhook_delivery` | Callback forwarding state + dead letter queue |
-| `agent_credits` | Agent micropayment balances |
-| `agent_transactions` | Agent ledger audit log |
-| `agent_payment_tokens` | Scoped one-time charge tokens |
 
 **Key design decisions**:
 
@@ -153,7 +145,6 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
   - `(provider, purchase_token, event_type)` — catches token+type duplicates from multi-app scenarios
 - **Webhook_delivery**: Tracks callback forwarding state with dead letter queue support. `dead_lettered` flag marks exhausted retries.
 - **Checkout_idempotency**: Prevents duplicate checkout requests via unique constraint on idempotency key.
-- **Agent topup idempotency**: Unique index on `(app_id, charge_id)` where request_type='topup' prevents duplicate charge-based topups.
 - **Concurrency**: Subscriptions use optimistic locking via `version` field. `last_event_time` guards against out-of-order events.
 
 ### 3.5 Background Workers
@@ -266,36 +257,6 @@ Google Play (webhook)
      |
      v
      Update users.is_premium
-```
-
-### 4.3 Agent Micropayment (402 Flow)
-
-```
-App                          Bridge
- |                             |
- +--GET /agent/balance-------->|
- |                             |
- |<---balance_cents (300)------+
- |
- (balance sufficient)
- |
- +--POST /agent/token-------->|
- |  (300 cents, 10 min TTL)   |
- |                             |
- |<---token_id, token_secret--+
- |
- (execute content generation)
- |
- +--POST /agent/charge------->|
- |  (token_id)                 |
- |                             |
- |  [Atomic transaction]       |
- |  - Mark token.used = true   |
- |  - Deduct balance           |
- |  - Return 200               |
- |<---balance_remaining-------+
- |
- (proceed with generation)
 ```
 
 ---

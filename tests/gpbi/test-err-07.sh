@@ -40,9 +40,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="err-07-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
-RUN_ID="$(date +%s)-$RANDOM"
-USER_ID="${USER_ID:-test_err_07_user_$RUN_ID}"
+REPORT_FILE="err-07-report.json"
+USER_ID="${USER_ID:-test_err_07_user_$TEST_RUN_ID}"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
@@ -58,6 +61,8 @@ fi
 echo -e "${YELLOW}========================================${NC}"
 echo "ERR-07: Unknown Notification Type"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Generate a synthetic external_user_id for this run
@@ -98,14 +103,15 @@ ALL_ACKNOWLEDGED="true"
 for TYPE in "${UNKNOWN_TYPES[@]}"; do
     echo -e "${BLUE}Testing notification type: $TYPE (unknown)${NC}"
     
-    MESSAGE_ID="err-07-type-$TYPE-$(date +%s)"
+    MESSAGE_ID="webhook-err-07-$TYPE-$TEST_RUN_ID"
+    TIMESTAMP_MS=$(date +%s000)
     
     # Create notification with unknown type
     NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$TIMESTAMP",
+  "eventTimeMillis": "$TIMESTAMP_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": $TYPE,
@@ -189,11 +195,14 @@ else
 fi
 
 # Generate JSON report
-cat > err-07-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "ERR-07",
   "test_name": "Unknown Notification Type",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
@@ -213,8 +222,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "$TEST_RESULT_MSG"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: err-07-report.json"
-cat err-07-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 if [[ "$TEST_STATUS" == "fail" ]]; then

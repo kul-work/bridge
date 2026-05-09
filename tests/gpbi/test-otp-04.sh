@@ -38,9 +38,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
+TIMESTAMP=$(date +%s)
+TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+TEST_RUN_ID="otp-04-${TIMESTAMP}-$$"
 DUMMY_TOKEN="test-inapp-slow-4567"
 PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
+REPORT_FILE="otp-04-report.json"
 
 # Defaults
 WAIT_FOR_APPROVAL=false
@@ -92,9 +96,11 @@ echo -e "${YELLOW}========================================${NC}"
 echo "OTP-04: Slow Card (Pending State) Test"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
+echo "Test Run ID: $TEST_RUN_ID"
+echo ""
 
 # Step 1: External User ID
-USER_ID="test_otp_user_04"
+USER_ID="${USER_ID:-test_otp_user_04_$TEST_RUN_ID}"
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
@@ -333,11 +339,14 @@ fi
 echo ""
 
 # Generate JSON report
-cat > otp-04-report.json <<EOF
+TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "OTP-04",
   "test_name": "Slow Card (Pending State)",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
   "user_id": "$USER_ID",
   "product_id": "$PRODUCT_ID",
@@ -359,8 +368,8 @@ echo -e "${YELLOW}========================================${NC}"
 echo -e "${GREEN}✓ OTP-04 Test PASSED${NC}"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
-echo "Report saved to: otp-04-report.json"
-cat otp-04-report.json
+echo "Report saved to: $REPORT_FILE"
+cat "$REPORT_FILE"
 echo ""
 
 exit 0

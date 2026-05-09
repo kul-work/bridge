@@ -5,7 +5,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         PAYMENT PROVIDERS                                    │
-│  (Google Play, Coinbase, Creem)                                              │
+│  (Google Play, Creem)                                                         │
 └─────────────────┬───────────────────────────────────────────────────────────┘
                   │ POST /webhooks/{token}/{provider}
                   │ (with signature verification)
@@ -16,7 +16,6 @@
 │  src/webhooks/ingress.rs                                                      │
 │  ├─ handle_google_play()      [Extract token, verify PubSub signature]       │
 │  ├─ handle_creem()             [Extract token, verify HMAC signature]        │
-│  ├─ handle_coinbase()          [Extract token, verify x-cc-webhook-signature]│
 │  │                                                                           │
 │  └─ Returns: 204 No Content (if successful ingestion)                        │
 └─────────────────┬───────────────────────────────────────────────────────────┘
@@ -29,7 +28,7 @@
 │  pay.webhook_provider {                                                      │
 │    id UUID,                        ← internal unique identifier              │
 │    app_id UUID,                    ← linked application                      │
-│    provider TEXT,                  ← 'google_play', 'coinbase', etc          │
+│    provider TEXT,                  ← 'google_play', 'creem', etc             │
 │    provider_webhook_id TEXT,       ← provider's event ID (primary dedup)     │
 │    event_type TEXT,                ← provider-specific raw event type        │
 │    subscription_id, purchase_token,← resolved context identifiers            │

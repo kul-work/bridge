@@ -61,6 +61,13 @@ pub struct CanonicalWebhookPayload {
     pub reconciliation_source: Option<String>,
     pub revocation_reason: Option<String>,
     pub cancellation_mode: Option<String>,
+    pub google_price_step_up_consent_deadline: Option<i64>,
+    pub google_pause_scheduled_at: Option<i64>,
+    pub google_deferred_until: Option<i64>,
+}
+
+fn to_epoch_ms(value: Option<chrono::DateTime<chrono::Utc>>) -> Option<i64> {
+    value.map(|date| date.timestamp_millis())
 }
 
 async fn suppress_unresolved_webhook<R: WebhookProcessingRepository>(
@@ -68,7 +75,7 @@ async fn suppress_unresolved_webhook<R: WebhookProcessingRepository>(
     webhook_provider_id: Uuid,
     webhook: &WebhookProviderSnapshot,
 ) -> Result<(), BridgeError> {
-    error!(
+    warn!(
         "Webhook {} discarded: unable to resolve external_user_id (provider={}, event={})",
         webhook.provider_webhook_id,
         webhook.provider,
@@ -351,6 +358,27 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     Ok(fields)
 }
 
+async fn fill_payment_product_id<R: WebhookProcessingRepository>(
+    repo: &R,
+    app_id: Uuid,
+    webhook: &WebhookProviderSnapshot,
+    fields: &mut WebhookFields,
+) -> Result<(), BridgeError> {
+    if fields.product_id.is_some() {
+        return Ok(());
+    }
+
+    let Some(purchase_token) = fields.purchase_token.as_deref().or(webhook.purchase_token.as_deref()) else {
+        return Ok(());
+    };
+
+    fields.product_id = repo
+        .lookup_product_id_by_purchase_token_payment(app_id, &webhook.provider, purchase_token)
+        .await?;
+
+    Ok(())
+}
+
 /// Resolve external_user_id via lookup cascade.
 async fn resolve_user<R: WebhookProcessingRepository>(
     repo: &R,
@@ -463,6 +491,7 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
     if webhook.provider == "google_play" {
         fields = enrich_google_play_fields(repo, app_id, &webhook, fields).await?;
     }
+    fill_payment_product_id(repo, app_id, &webhook, &mut fields).await?;
     let canonical_event = normalize_event_type_with_payload(
         &webhook.provider,
         &webhook.event_type,
@@ -496,6 +525,7 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         "payment.failed" => "payment.failed".to_string(),
         "purchase.one_time" => "purchase.one_time".to_string(),
         "purchase.one_time_cancelled" => "purchase.one_time".to_string(),
+        "purchase.one_time_refunded" => "purchase.one_time".to_string(),
         "payment.refunded" => "payment.refunded".to_string(),
         "payment.partially_refunded" => "payment.partially_refunded".to_string(),
         "dispute.created" => "dispute.created".to_string(),
@@ -514,6 +544,8 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         "payment.partially_refunded" => Some("partially_refunded".to_string()),
         "purchase.one_time" => Some(if canonical_event == "purchase.one_time_cancelled" {
             "cancelled".to_string()
+        } else if canonical_event == "purchase.one_time_refunded" {
+            "refunded".to_string()
         } else if canonical_event == "purchase.one_time" {
             "completed".to_string()
         } else {
@@ -547,6 +579,15 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         .as_ref()
         .and_then(|sub| sub.revocation_reason.clone())
         .or_else(|| fields.cancel_reason.clone());
+    let google_price_step_up_consent_deadline = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_price_step_up_consent_deadline));
+    let google_pause_scheduled_at = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_pause_scheduled_at));
+    let google_deferred_until = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_deferred_until));
 
     Ok(Some(CanonicalWebhookPayload {
         event_id: format!("{}-{}", webhook.provider, webhook.provider_webhook_id),
@@ -574,6 +615,9 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         } else {
             None
         },
+        google_price_step_up_consent_deadline,
+        google_pause_scheduled_at,
+        google_deferred_until,
     }))
 }
 
@@ -625,23 +669,6 @@ pub async fn process_webhook(
         Some(&webhook.payload),
     );
 
-    if webhook.provider == "coinbase" && canonical_event == "charge.failed" {
-        let fields = extract_webhook_fields(&webhook);
-        let charge_id = fields.provider_transaction_id
-            .as_deref()
-            .or(webhook.subscription_id.as_deref())
-            .unwrap_or(&webhook.provider_webhook_id);
-        let email = webhook.payload.pointer("/event/data/metadata/email")
-            .and_then(|value| value.as_str())
-            .unwrap_or("unknown");
-
-        warn!("Coinbase charge failed: charge_id={}, email={}", charge_id, email);
-
-        repo.mark_webhook_processed(webhook_provider_id).await?;
-
-        return Ok(None);
-    }
-
     let external_user_id = resolve_user(repo, app_id, &webhook).await;
     if !ensure_resolved_user(repo, webhook_provider_id, &webhook, &external_user_id).await? {
         return Ok(None);
@@ -651,6 +678,7 @@ pub async fn process_webhook(
     if webhook.provider == "google_play" {
         fields = enrich_google_play_fields(repo, app_id, &webhook, fields).await?;
     }
+    fill_payment_product_id(repo, app_id, &webhook, &mut fields).await?;
     let provider = webhook.provider.clone();
     let webhook_provider_webhook_id = webhook.provider_webhook_id.clone();
     let webhook_subscription_id = webhook.subscription_id.clone();
@@ -732,6 +760,15 @@ pub async fn process_webhook(
     let canonical_revocation_reason = callback_revocation_reason_override
         .or_else(|| canonical_subscription.as_ref().and_then(|sub| sub.revocation_reason.clone()))
         .or_else(|| fields.cancel_reason.clone());
+    let google_price_step_up_consent_deadline = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_price_step_up_consent_deadline));
+    let google_pause_scheduled_at = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_pause_scheduled_at));
+    let google_deferred_until = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_deferred_until));
     let canonical = CanonicalWebhookPayload {
         event_id: format!("{}-{}", provider, webhook_provider_webhook_id),
         event_type: callback_event_type,
@@ -754,6 +791,9 @@ pub async fn process_webhook(
         reconciliation_source: None,
         revocation_reason: canonical_revocation_reason,
         cancellation_mode: callback_cancellation_mode_override,
+        google_price_step_up_consent_deadline,
+        google_pause_scheduled_at,
+        google_deferred_until,
     };
 
     // Step 6: Mark webhook as processed

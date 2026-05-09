@@ -32,6 +32,9 @@ impl From<Subscription> for WebhookSubscriptionSnapshot {
             current_period_end: subscription.current_period_end,
             auto_renewing: subscription.auto_renewing,
             revocation_reason: subscription.revocation_reason,
+            google_price_step_up_consent_deadline: subscription.google_price_step_up_consent_deadline,
+            google_pause_scheduled_at: subscription.google_pause_scheduled_at,
+            google_deferred_until: subscription.google_deferred_until,
         }
     }
 }
@@ -48,6 +51,9 @@ pub(crate) fn map_subscription_lookup_snapshot(subscription: Subscription) -> Su
         auto_renewing: subscription.auto_renewing,
         revocation_reason: subscription.revocation_reason,
         last_event_time: subscription.last_event_time,
+        google_price_step_up_consent_deadline: subscription.google_price_step_up_consent_deadline,
+        google_pause_scheduled_at: subscription.google_pause_scheduled_at,
+        google_deferred_until: subscription.google_deferred_until,
     }
 }
 

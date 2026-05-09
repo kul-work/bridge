@@ -42,6 +42,8 @@ pub struct Subscription {
     pub google_pause_scheduled_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub google_paused_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub google_deferred_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]

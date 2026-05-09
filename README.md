@@ -1,6 +1,6 @@
 # Bridge — Multi-App Payment Gateway
 
-**Bridge** is a central payment processing service designed to handle subscription lifecycles, payments, and agent micropayments for all Tyde applications. It decouples complex payment logic, provider webhooks, and ledger auditing mechanics from core business applications. 
+**Bridge** is a central payment processing service designed to handle subscription lifecycles and payments for all Tyde applications. It decouples complex payment logic, provider webhooks, and ledger auditing mechanics from core business applications. 
 
 It operates as a private, centralized gateway (e.g., `pay.tydecode.com`) serving approved Tyde application instances (such as **hiha.app**).
 
@@ -9,7 +9,7 @@ It operates as a private, centralized gateway (e.g., `pay.tydecode.com`) serving
 - **Version**: 0.1.2
 - **Backend**: Rust + Axum + Tokio
 - **Database**: PostgreSQL (SQLx)
-- **API Support**: Multi-provider registry (Creem, Google Play, Coinbase)
+- **API Support**: Multi-provider registry (Creem, Google Play)
 - **Security**: Double-ended HMAC validation on callbacks, explicit provider signature cryptographic verification, rate limiting, and API key authentication.
 
 ## Core Principles
@@ -25,7 +25,6 @@ It operates as a private, centralized gateway (e.g., `pay.tydecode.com`) serving
 - **Subscription Lifecycle System**: Source of truth for recurring billing states, including upgrades, downgrades, and linked subscriptions.
 - **Webhook Ingress Handlers**: Safely absorbs provider webhooks with full idempotency checks and event ordering.
 - **Webhook Sub-delivery Forwarding**: Delivers actionable notifications securely to app backends with a 3-strike retry strategy.
-- **Agent Micro-payment Ledgers**: Tracks virtual credits and atomic scoped reservations for automated micro-payment mechanics.
 - **Reconciliation Engine**: Background workers verifying provider status polling drift and self-healing subscription states.
 
 ## Administration
@@ -96,12 +95,6 @@ Backend serves on port `3000` (default).
 - `POST /api/v1/subscriptions/:id/price-step-up/decline` — Decline price changes
 - `GET /api/v1/payments` — Query payment history
 - `POST /api/v1/purchase/register` — Register external/one-time purchases
-
-### Agent & Credits
-- `GET /api/v1/agent/balance` — Check virtual credit balance
-- `POST /api/v1/agent/token` — Scoped micro-payments tokens
-- `POST /api/v1/agent/charge` — Atomically consume funds
-- `POST /api/v1/agent/topup` — Manually add/top-up credits
 
 ### User & Privacy
 - `POST /api/v1/users/:id/anonymize` — GDPR/Privacy anonymization
