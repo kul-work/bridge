@@ -761,9 +761,25 @@ pub async fn upsert_pending_subscription(
     .bind(external_user_id)
     .bind(subscription_id)
     .bind(provider)
-    .fetch_one(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    let subscription = match subscription {
+        Some(sub) => sub,
+        None => {
+            sqlx::query_as::<_, Subscription>(
+                "SELECT * FROM pay.subscriptions WHERE app_id = $1 AND external_user_id = $2 AND subscription_id = $3 AND provider = $4"
+            )
+            .bind(app_id)
+            .bind(external_user_id)
+            .bind(subscription_id)
+            .bind(provider)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
+    };
 
     tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 

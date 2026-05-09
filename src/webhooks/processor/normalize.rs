@@ -166,7 +166,7 @@ pub(super) fn normalize_status(raw_status: Option<&str>) -> String {
 
 pub(super) fn callback_status_for_event(event_type: &str) -> Option<String> {
     match event_type {
-        "subscription.activated" | "subscription.resumed" | "subscription.pause_scheduled" => {
+        "subscription.activated" | "subscription.resumed" | "subscription.pause_scheduled" | "subscription.price_changed" | "subscription.price_change_updated" => {
             Some("active".to_string())
         }
         "subscription.grace_period" => Some("past_due".to_string()),
