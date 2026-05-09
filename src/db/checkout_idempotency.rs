@@ -1,4 +1,7 @@
-use crate::error::BridgeError;
+use crate::{
+    db::database::set_local_app_id,
+    error::BridgeError,
+};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -14,6 +17,12 @@ pub async fn get_cached_checkout(
     app_id: Uuid,
     idempotency_key: &str,
 ) -> Result<Option<CachedCheckout>, BridgeError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    set_local_app_id(&mut tx, app_id).await?;
+
     let row = sqlx::query_as::<_, (String, Value)>(
         "SELECT request_fingerprint, response_payload
          FROM pay.checkout_idempotency
@@ -22,9 +31,13 @@ pub async fn get_cached_checkout(
     )
     .bind(app_id)
     .bind(idempotency_key)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(row.map(|(request_fingerprint, response_payload)| CachedCheckout {
         request_fingerprint,
@@ -39,6 +52,12 @@ pub async fn cache_checkout_response(
     request_fingerprint: &str,
     response_payload: &Value,
 ) -> Result<(), BridgeError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    set_local_app_id(&mut tx, app_id).await?;
+
     sqlx::query(
         "INSERT INTO pay.checkout_idempotency (app_id, idempotency_key, request_fingerprint, response_payload)
          VALUES ($1, $2, $3, $4)
@@ -48,9 +67,13 @@ pub async fn cache_checkout_response(
     .bind(idempotency_key)
     .bind(request_fingerprint)
     .bind(response_payload)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(())
 }
