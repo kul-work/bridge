@@ -29,6 +29,7 @@ This document captures **every behavioral action** that Bridge must perform. Eac
 9. [Subscription Resume](#9-subscription-resume)
 10. [Billing Portal](#10-billing-portal)
 11. [Payment History](#11-payment-history)
+    - [Additional Subscription/User Endpoints](#111-additional-subscriptionuser-endpoints)
 12. [Webhook Ingress (Provider → Bridge)](#12-webhook-ingress-provider--bridge)
 13. [Webhook Processing — Subscription Activation](#13-webhook-processing--subscription-activation)
 14. [Webhook Processing — Subscription Pending](#14-webhook-processing--subscription-pending)
@@ -61,7 +62,7 @@ This document captures **every behavioral action** that Bridge must perform. Eac
 41. [Background Job: Reconciliation](#41-background-job-reconciliation)
 42. [Background Job: Price Step-Up Expiry](#42-background-job-price-step-up-expiry)
 43. [Background Job: Pause Scheduler](#43-background-job-pause-scheduler)
-44. [Background Job: Webhook Log Cleanup](#44-background-job-webhook-log-cleanup)
+44. [Background Job: Webhook Provider Cleanup](#44-background-job-webhook-provider-cleanup)
 45. [Payment Recording (DB Behavior)](#45-payment-recording-db-behavior)
 46. [Webhook Deduplication (DB Behavior)](#46-webhook-deduplication-db-behavior)
 47. [Subscription Store/Activate (DB Behavior)](#47-subscription-storeactivate-db-behavior)
@@ -80,7 +81,7 @@ This document captures **every behavioral action** that Bridge must perform. Eac
 4. Connect to PostgreSQL (Bridge's own database, separate from any app DB).
 5. No provider credentials are loaded at startup; provider config is fetched on demand for the active app/provider pair.
 6. If `enable_background_jobs=true`: start background tasks (webhook retry, reconciliation, price step-up, pause scheduler, webhook log cleanup).
-7. **Provider loading is dynamic, per-app**: Unlike the monolith (which loads providers at startup from env vars), Bridge loads provider credentials from `pay.provider_configs` on each request. Provider instances may be cached per `app_id` with TTL.
+7. **Provider loading is dynamic, per-app**: Unlike the monolith (which loads providers at startup from env vars), Bridge loads provider credentials from `pay.provider_configs` on each request.
 8. Build router:
    - **Public**: `GET /health`
    - **API** (`/api/v1/*`): all endpoints, authenticated via API key
@@ -104,7 +105,7 @@ This document captures **every behavioral action** that Bridge must perform. Eac
 5. Check `api_keys.enabled = true`. Disabled → `401`.
 6. Check `apps.enabled = true` (joined via `app_id`). Disabled → `403 app_disabled`.
 7. Update `api_keys.last_used_at = NOW()`.
-8. Resolve `app_id` from the key. All subsequent operations are scoped to this `app_id`.
+8. Resolve `app_id` and `api_key_id` from the key. All subsequent operations are scoped to this `app_id`.
 
 ---
 
@@ -118,20 +119,11 @@ This document captures **every behavioral action** that Bridge must perform. Eac
 2. Determine effective limit for this endpoint:
    - Check `api_rate_limit_rules` for endpoint-specific override (e.g., `{"checkout": 20, "subscription_queries": 100}`).
    - Fallback to `api_rate_limit_per_minute`.
-3. Atomic UPSERT to rate limit storage (in-memory token bucket or DB-backed):
-
-```sql
-INSERT INTO rate_limits (key, endpoint, request_count, window_reset_at)
-VALUES ($1, $2, 1, NOW())
-ON CONFLICT (key, endpoint) DO UPDATE SET
-  request_count = CASE WHEN rate_limits.window_reset_at < (NOW() - INTERVAL '1 minute') THEN 1
-                       ELSE rate_limits.request_count + 1 END,
-  window_reset_at = CASE WHEN rate_limits.window_reset_at < (NOW() - INTERVAL '1 minute') THEN NOW()
-                         ELSE rate_limits.window_reset_at END
-RETURNING request_count
-```
-
-4. If `request_count > limit` → `429 rate_limit_exceeded`.
+3. Atomic UPSERT to in-memory rate limit store:
+   - Bridge uses a thread-safe `static RateLimitStore` (HashMap + Mutex).
+   - Identifiers are bucketed by `api:{api_key_id}:{group}`.
+   - Window: 60 seconds (fixed).
+4. If `current_usage >= limit` → `429 rate_limit_exceeded`.
 5. Set response headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
 
 ### 3.2 Default Rate Limits Per Endpoint
@@ -214,29 +206,33 @@ RETURNING request_count
 6. Call `provider.verify_token(purchase_token, subscription_id, product_type, external_user_id, Strict)`.
 7. Handle verification result:
    - `LinkingRequired { obfuscated_account_id }` → return `200 { "status": "linking_required", "message": "..." }`.
+     - Also calls `delete_pending_subscription()` to clean up placeholders for the current user.
    - `Success(details)` → continue.
-8. **Record payment** (all purchase types):
-   - `transaction_id` = `purchase_token`.
-   - `status` = `"pending"` if subscription status is Pending, else `"success"`.
-   - `amount_cents` from provider response.
-   - Atomic UPSERT to `payments` table (see [§50](#50-payment-recording-db-behavior)).
-   - If `FraudDetected` (different user owns this payment) AND provider is `google_play` → return `LinkingRequired`.
-9. **If subscription**:
-   - Resolve resubscription linking (Google Play `out_of_app_purchase_context`):
-     - If expired identifiers found → lookup original user by `obfuscated_account_id` → use original `external_user_id`.
-   - Begin DB transaction.
-   - UPSERT to `subscriptions` table (see [§52](#52-subscription-storeactivate-db-behavior)).
-   - Commit.
-   - **Acknowledge with Google Play** (3-day rule):
-     - Check `payments.acknowledged_at` for this `purchase_token`. If NULL:
-       - Call `provider.acknowledge_purchase_idempotent(subscription_id, purchase_token, Subscription, external_user_id)`.
-       - Set `payments.acknowledged_at = NOW()`.
-   - **Forward callback to app**: `subscription.activated` event (see [§38](#38-webhook-callback-forwarding-bridge--app)).
-10. **If OTP** (one-time product):
-    - Record in `payments` table (already done in step 8).
-    - Acknowledge with Google Play (same as step 9).
+8. **Resolved User Identification**:
+   - If Google Play returns `resubscribe_obfuscated_account_id` → lookup original user by this ID.
+   - If not found → return `LinkingRequired` with the resubscribe ID.
+   - If hash of `external_user_id` != `obfuscated_account_id` (from provider) → return `LinkingRequired`.
+9. **Fraud Check (Token Binding)**:
+   - If `purchase_token` already exists in DB for a DIFFERENT user → return `LinkingRequired` (Google Play) or `409 FraudDetected` (others).
+10. **Record payment** (all purchase types):
+    - `transaction_id` = `purchase_token`.
+    - `status` = `"pending"` if subscription status is Pending, else `"success"`.
+    - `amount_cents` from provider response.
+    - Atomic UPSERT to `payments` table (see [§45](#45-payment-recording-db-behavior)).
+11. **If subscription**:
+    - Begin DB transaction.
+    - UPSERT to `subscriptions` table (see [§47](#47-subscription-storeactivate-db-behavior)).
+    - Commit.
+    - **Acknowledge with Google Play** (3-day rule):
+      - Check `payments.acknowledged_at` for this `purchase_token`. If NULL:
+        - Call `provider.acknowledge_purchase_idempotent(subscription_id, purchase_token, Subscription, external_user_id)`.
+        - Set `payments.acknowledged_at = NOW()`.
+    - **Forward callback to app**: `subscription.activated` event (see [§38](#38-webhook-callback-forwarding-bridge--app)).
+12. **If OTP** (one-time product):
+    - Record in `payments` table (already done in step 10).
+    - Acknowledge with Google Play (same as step 11).
     - **Forward callback to app**: `purchase.one_time` event.
-11. Return response:
+13. Return response:
     - `{ "status": "active", "subscription_id": "...", "current_period_end": "...", "auto_renewing": true, "amount_cents": 299, "is_new": true }`.
     - If status is `Pending` → return `200` with `status: "pending"` (app should retry later).
 
@@ -350,6 +346,61 @@ RETURNING request_count
 
 ---
 
+### 11.1 Additional Subscription/User Endpoints
+
+These routed APIs are Bridge-owned behaviors and must be specified alongside the primary flows.
+
+#### Acknowledge Subscription
+
+**Endpoint**: `POST /api/v1/subscriptions/:subscription_id/acknowledge?external_user_id=X&provider=Y`
+
+1. Authenticate -> resolve `app_id`.
+2. Check rate limit (`subscription_mutations`).
+3. Validate `external_user_id`, `provider`, and `subscription_id`.
+4. Load the subscription scoped to `app_id` + `external_user_id` + `subscription_id` + `provider`. Not found -> `404`.
+5. Require a known `purchase_token`. Missing -> `400 bad_request`.
+6. Load provider config from `pay.provider_configs`.
+7. Call provider acknowledgment API idempotently.
+8. Mark the subscription/payment as acknowledged in Bridge DB.
+9. Return acknowledgment status.
+
+#### Price Step-Up Accept
+
+**Endpoint**: `POST /api/v1/subscriptions/:subscription_id/price-step-up/accept?external_user_id=X&provider=google_play`
+
+1. Authenticate -> resolve `app_id`.
+2. Check rate limit (`subscription_mutations`).
+3. Validate subscription belongs to this `app_id` + `external_user_id` + `provider`.
+4. Only supported for Google Play subscriptions.
+5. Clear stored price step-up consent flags/deadline in `subscriptions`.
+6. Forward callback to app: `subscription.price_step_up` or equivalent informational event.
+7. Return updated subscription status.
+
+#### Price Step-Up Decline
+
+**Endpoint**: `POST /api/v1/subscriptions/:subscription_id/price-step-up/decline?external_user_id=X&provider=google_play`
+
+1. Authenticate -> resolve `app_id`.
+2. Check rate limit (`subscription_mutations`).
+3. Validate subscription belongs to this `app_id` + `external_user_id` + `provider`.
+4. Only supported for Google Play subscriptions.
+5. Cancel auto-renew / mark the price step-up as declined according to provider behavior.
+6. Update Bridge DB with the declined/cancelled lifecycle state.
+7. Forward callback to app: `subscription.cancelled` with price step-up decline reason.
+8. Return updated subscription status.
+
+#### Subscription Status Snapshot
+
+**Endpoint**: `GET /api/v1/users/:external_user_id/subscription-status`
+
+1. Authenticate -> resolve `app_id`.
+2. Check rate limit (`subscription_queries`).
+3. Query subscriptions for this `app_id` + `external_user_id`.
+4. Compute app-facing premium/access snapshot from Bridge subscription lifecycle rows.
+5. Return the snapshot without mutating state.
+
+---
+
 ## 12. Webhook Ingress (Provider → Bridge)
 
 **Endpoint**: `POST /webhooks/{token}/:provider`  
@@ -359,20 +410,22 @@ RETURNING request_count
 2. Lookup `apps` table: `WHERE webhook_ingress_token = $1 AND enabled = true`. Not found → `404` (silent, no details).
 3. Resolve `app_id` from the matched row.
 4. Extract `:provider` from URL path (e.g., `google_play`, `creem`).
-5. Load provider credentials from `apps` table for this `app_id` + `provider`.
+5. Load provider credentials from `pay.provider_configs` for this `app_id` + `provider`. Not configured or disabled → `400 provider_not_configured`.
 6. Get signature header (provider-specific name):
    - Creem: `Webhook-Signature`
    - Google Play: `Authorization` (JWT Bearer)
 7. Extract signature value. Missing → `400`.
 8. Call `provider.verify_and_parse_webhook(body, signature, headers)`:
-   - Verifies HMAC/JWT/RSA signature using provider-specific secret from `apps` table.
+   - Verifies HMAC/JWT/RSA signature using provider-specific secret from `pay.provider_configs.config`.
    - Parses payload into normalized `WebhookEvent` struct.
    - On failure → `400` (webhook verification failed).
 9. Get webhook ID: prefer `event.event_id` from payload, fallback to provider header. Missing both → `400`.
 10. Parse raw body as JSON for audit storage.
-11. **Atomic deduplication** (see [§51](#51-webhook-deduplication-db-behavior)):
-    - `INSERT INTO webhook_log (...) ON CONFLICT DO NOTHING`.
-    - If duplicate → return `204 No Content` immediately.
+11. **Atomic deduplication** (see [§46](#46-webhook-deduplication-db-behavior)):
+    - `INSERT INTO webhook_provider (...) ON CONFLICT DO NOTHING`.
+    - If duplicate → check status of existing webhook in `webhook_provider`.
+    - If existing but not processed/delivered → **Resume processing/forwarding** in background.
+    - Return `204 No Content` immediately.
 12. **Return `204 No Content`** to provider immediately.
 13. **Spawn async task** to process webhook event:
     - Route by `event.event_type` to appropriate handler (see §13-§37).
@@ -386,7 +439,7 @@ RETURNING request_count
 
 ### Step 1: Resolve User
 
-Resolve `external_user_id` from the webhook event (see [§53](#53-user-lookup-strategies-webhook--user-resolution)).
+Resolve `external_user_id` from the webhook event (see [§48](#48-user-lookup-strategies-webhook--user-resolution)).
 
 If no user found → log error, return (webhook discarded, provider won't retry since we already returned 204).
 
@@ -405,22 +458,11 @@ If provider supports enrichment (Google Play):
    - Creem: only record if `provider_transaction_id` is present AND `amount_cents > 0` (for `subscription.created`/`subscription.update`). Always record for other event types.
    - Other providers: always record.
 
-3. **Determine transaction_id**:
-   - Creem: use `provider_transaction_id` (from `last_transaction_id`), fallback to `subscription_id`.
-   - Other providers: try existing DB `purchase_token` first, then event `purchase_token`, then `webhook_id`.
+3. **Call `apply_webhook_transition()`** (atomic DB update):
+   - Uses `last_event_time` guard to prevent stale overwrites.
+   - Updates specific fields based on event type (e.g., clearing grace period flags on activation).
 
-4. **Begin DB transaction**.
-
-5. If should record payment:
-   - Creem stale fix: if Creem AND no `provider_transaction_id` → call `adopt_stale_payment()` to merge old records with mismatched transaction IDs.
-   - Call `record_payment_tx(tx, params)` (atomic UPSERT, see [§50](#50-payment-recording-db-behavior)).
-
-6. UPSERT to `subscriptions` table (see [§52](#52-subscription-storeactivate-db-behavior)):
-   - Sets status, `current_period_end`, `purchase_token`, `auto_renewing`, `provider_customer_id`, etc.
-
-7. **Commit transaction**.
-
-8. **Post-commit: Resubscribe/Upgrade linking** (Google Play only):
+4. **Post-commit: Resubscribe/Upgrade linking** (Google Play only):
    - If `purchase_token` present → detect upgrades/downgrades by checking existing active subscriptions for this user.
    - If old active subscription found with different `subscription_id` → mark it as `"replaced"`.
 
@@ -556,7 +598,7 @@ If provider supports enrichment (Google Play):
 
 **Event type**: `subscription.cancelled`
 
-1. Lookup user (see [§53](#53-user-lookup-strategies-webhook--user-resolution)).
+1. Lookup user (see [§48](#48-user-lookup-strategies-webhook--user-resolution)).
 2. Normalize status: `"trialing"→"trial"`, `"paid"/"active"/"completed"→"active"`, `"canceled"→"cancelled"`, etc.
 3. **Google Play**: enrich with Google API (`current_period_end`, `auto_renewing`).
 4. UPSERT subscription with the normalized lifecycle state from the provider event.
@@ -676,7 +718,7 @@ If provider supports enrichment (Google Play):
 
 **Event type**: `subscription.update`
 
-1. Lookup user (see [§53](#53-user-lookup-strategies-webhook--user-resolution)).
+1. Lookup user (see [§48](#48-user-lookup-strategies-webhook--user-resolution)).
 2. Normalize status: `"trialing"→"trial"`, `"paid"/"active"/"completed"→"active"`, `"canceled"→"cancelled"`, etc.
 3. UPSERT subscription with normalized status.
 4. **Forward callback to app**: appropriate event type based on new status.
@@ -717,7 +759,7 @@ If provider supports enrichment (Google Play):
 2. If `current_period_end` missing → enrich from Google API.
 3. Store: `UPDATE subscriptions SET google_pause_scheduled_at=$pause_date`.
 4. Subscription remains `"active"` until pause date.
-5. Background scheduler ([§48](#48-background-job-pause-scheduler)) handles actual transition.
+5. Background scheduler ([§43](#43-background-job-pause-scheduler)) handles actual transition.
 6. **Forward callback to app**: informational event.
 
 ---
@@ -787,18 +829,19 @@ If provider supports enrichment (Google Play):
    - `X-Pay-Timestamp: <unix_epoch>`
    - `X-Pay-Event-Id: <event_id>`
 5. POST to `webhook_callback_url`. Timeout: **10 seconds**.
-6. If `2xx` response → mark as delivered in `webhook_log`.
+6. If `2xx` response → mark as delivered in `webhook_delivery`.
 7. If non-2xx or timeout:
-   - Increment `forward_attempts` in `webhook_log`.
+   - Increment `forward_attempts` in `webhook_delivery`.
+   - Log diagnostic payload (scrubbed/redacted: e.g., `purchase_token` partially masked).
    - **Retry policy**: background job retries up to 3 times (every 5 minutes).
-   - After 3 failures → mark as dead-lettered (visible in admin dashboard).
+   - After 3 failures → mark the `webhook_delivery` row as dead-lettered (visible in admin dashboard).
 
 ### Stale Event Guard (at forward time):
 
 Before every forward attempt, re-check:
 ```
-if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
-    mark suppressed (reason: 'superseded_before_forward')
+if webhook_provider.timestamp_epoch_ms < subscription.last_event_time →
+    mark webhook_provider suppressed (reason: 'superseded_before_forward')
     skip forwarding
 ```
 
@@ -830,10 +873,7 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
 2. Query all Bridge data for this `app_id` + `external_user_id`:
    - `subscriptions` (all statuses)
    - `payments` (all records)
-   - `webhook_log` (related entries, if within retention window)
-   - `subscriptions` (all statuses)
-   - `payments` (all records)
-   - `webhook_log` (related entries, if within retention window)
+   - `webhook_provider` records related by subscription/payment identifiers, if within retention window
 3. Return JSON export of all data.
 
 ---
@@ -851,7 +891,7 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
    - Parse the returned period end / expiry data when available.
    - If the provider status differs from Bridge DB status:
      - Update the subscription to the provider-corrected status.
-     - Insert an audit record in `webhook_log`.
+     - Insert an audit record in `webhook_provider`.
      - **Forward callback to app**: `reconciliation.drift_detected` event with `previous_status` and `corrected_status`.
      - Send admin alert email to Tyde support.
 3. Errors on individual subscriptions are logged but don't fail the whole job.
@@ -875,22 +915,23 @@ if webhook_log.timestamp_epoch_ms < subscription.last_event_time →
 ### Pause Transition Check:
 1. Query: `SELECT * FROM subscriptions WHERE google_pause_scheduled_at <= NOW() AND status != 'paused' LIMIT 100`.
 2. For each:
-   - `pause_subscription(external_user_id, subscription_id, now_millis)` with event-time guard.
+   - `mark_subscription_paused()` in DB.
    - Sets `status='paused'`, `auto_renewing=false`, `google_paused_at=NOW()`.
    - **Forward callback to app**: `subscription.paused` event.
 
 ### Orphaned Pending Cleanup:
-1. `DELETE FROM subscriptions WHERE status='pending' AND purchase_token IS NULL AND created_at < (NOW() - 30 minutes)`.
+1. `DELETE FROM subscriptions WHERE status='pending' AND purchase_token IS NULL AND created_at < (NOW() - INTERVAL '30 minutes')`.
 2. Cleans up `register_purchase` records where user never completed purchase.
 
 ---
 
-## 44. Background Job: Webhook Log Cleanup
+## 44. Background Job: Webhook Provider Cleanup
 
 **Frequency**: Daily (or configurable).
 
-1. `DELETE FROM webhook_log WHERE created_at < NOW() - INTERVAL '90 days'`.
-2. Per data retention policy: raw webhook payloads kept 90 days for debugging/reconciliation.
+1. Delete old `webhook_provider` records older than the configured retention window, default 90 days.
+2. Related `webhook_delivery` records are removed via foreign-key cascade.
+3. Per data retention policy: raw webhook payloads are kept 90 days for debugging/reconciliation.
 
 ---
 
@@ -919,14 +960,16 @@ WHERE payments.external_user_id = EXCLUDED.external_user_id  -- FRAUD GUARD
 ## 46. Webhook Deduplication (DB Behavior)
 
 ```sql
-INSERT INTO webhook_log (app_id, provider, provider_webhook_id, event_type, payload, subscription_id, purchase_token, processed)
-VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-ON CONFLICT (provider, provider_webhook_id) DO NOTHING
+INSERT INTO webhook_provider (app_id, provider, provider_webhook_id, event_type, payload, subscription_id, purchase_token, timestamp_epoch_ms)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT DO NOTHING
 ```
 
-- `rows_affected=0` → duplicate → return `true` (already processed).
-- `rows_affected=1` → new → return `false`.
-- Secondary unique index `(provider, purchase_token, event_type)` catches token+type duplicates.
+- `rows_affected=0` → duplicate/existing webhook. Fetch the existing `webhook_provider` row and decide whether to ignore, resume processing, or resume forwarding.
+- `rows_affected=1` → new webhook. Process it asynchronously and mark `processed=true` only after handler completion.
+- Primary dedupe is app-scoped: `(app_id, provider, provider_webhook_id)`.
+- Secondary unique index `(app_id, provider, purchase_token, event_type)` catches token+type duplicates.
+- Forwarding/retry/dead-letter state is tracked in `webhook_delivery`, not `webhook_provider`.
 
 ---
 
@@ -963,12 +1006,13 @@ When a provider webhook arrives, Bridge resolves `external_user_id` via a cascad
 
 | Priority | Strategy | How | Used When |
 |---|---|---|---|
-| 1 | `subscription_id` | `SELECT external_user_id FROM subscriptions WHERE app_id=$1 AND subscription_id=$2` | Renewal, existing subscription |
+| 1 (Google) | `purchase_token` | `SELECT external_user_id FROM subscriptions WHERE app_id=$1 AND purchase_token=$2` | Preferred for Google Play |
+| 1 (Other) | `subscription_id` | `SELECT external_user_id FROM subscriptions WHERE app_id=$1 AND subscription_id=$2` | Renewal, existing subscription |
 | 2A | `purchase_token` (subscription) | `SELECT external_user_id FROM subscriptions WHERE app_id=$1 AND purchase_token=$2` | New purchase after verify_purchase |
 | 2B | `purchase_token` (payment) | `SELECT external_user_id FROM payments WHERE app_id=$1 AND provider_transaction_id=$2` | OTP webhook linking |
 | 3 | `obfuscated_account_id` (Google Play) | Google API verify_token → extract obfuscated_id → `SELECT external_user_id FROM subscriptions WHERE app_id=$1 AND google_obfuscated_account_id=$2` | Resubscribe/Restore |
-| 4 | `metadata.user_id` | From provider metadata (e.g., Creem `metadata.user_id` set at checkout) | Creem primary binding |
-| 4.5 | Creem orphan guard | If Creem AND strategies 1-4 fail AND no `metadata.user_id` → log error, discard | Prevents accidental linking |
+| 4 | `metadata.user_id` / `external_user_id` | From provider metadata/payload | Primary binding for some providers |
+| 5 | Creem orphan guard | If Creem AND strategies 1-4 fail → log error, discard | Prevents accidental linking |
 | 5 | `customer_email` | Not used in Bridge. Bridge has no user email table. Falls through to discard. | N/A in Bridge |
 
 **If all strategies fail**: webhook is discarded (logged as error). Bridge has already returned 204 to the provider, so no retry impact.
@@ -1020,11 +1064,11 @@ Returns:
 | `refund.created` | refund_created | `payment.refunded` | §30 |
 | `subscription.update` | subscription_updated | (varies by new status) | §31 |
 | `subscription.price_step_up_consent_updated` | price_step_up | `subscription.price_step_up` | §32 |
-| `subscription.deferred` | subscription_deferred | (informational) | §33 |
-| `subscription.pause_scheduled` | pause_scheduled | (informational) | §34 |
-| `subscription.price_changed` | price_changed | (informational) | §35 |
-| `subscription.price_change_updated` | price_change_updated | (informational) | §36 |
-| `subscription.expired_voided` | expired_voided | (informational) | §37 |
+| `subscription.deferred` | subscription_deferred | `subscription.deferred` | §33 |
+| `subscription.pause_scheduled` | pause_scheduled | `subscription.pause_scheduled` | §34 |
+| `subscription.price_changed` | price_changed | `subscription.price_changed` | §35 |
+| `subscription.price_change_updated` | price_change_updated | `subscription.price_change_updated` | §36 |
+| `subscription.expired_voided` | expired_voided | `subscription.expired_voided` | §37 |
 | `google.test` | test_event (log only) | (none) | — |
 | Unknown | log_unknown_event | (none) | — |
 
@@ -1034,11 +1078,13 @@ Returns:
 
 | Table | Primary Key | Unique Constraints | Purpose |
 |---|---|---|---|
-| `apps` | UUID | `slug`, `webhook_ingress_token` | App registry + provider credentials |
+| `apps` | UUID | `slug`, `webhook_ingress_token` | App registry, callback settings, rate limits |
 | `api_keys` | UUID | `(app_id, key_hash)` | API key auth |
-| `subscriptions` | UUID | `(app_id, external_user_id, subscription_id, provider)`, `purchase_token` | Subscription lifecycle |
+| `subscriptions` | UUID | `(app_id, external_user_id, subscription_id, provider)`, `(app_id, purchase_token)` | Subscription lifecycle |
 | `payments` | UUID | `(app_id, provider, provider_transaction_id)` | Payment records |
-| `webhook_log` | UUID | `(provider, provider_webhook_id)`, `(provider, purchase_token, event_type)` | Webhook dedup + audit + forwarding state |
+| `provider_configs` | UUID | `(app_id, provider)` | Per-app provider credentials/settings |
+| `webhook_provider` | UUID | `(app_id, provider, provider_webhook_id)`, `(app_id, provider, purchase_token, event_type)` | Provider webhook dedup + audit |
+| `webhook_delivery` | UUID | `(webhook_provider_id)` | Callback forwarding, retry, and dead-letter state |
 
 ---
 

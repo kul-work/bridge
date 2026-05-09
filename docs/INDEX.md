@@ -8,15 +8,16 @@ Navigate Bridge's architecture, setup, and integration guides.
 
 1. **[README.md](../README.md)** - Project overview, tech stack, quick-start commands
 2. **[CONFIGURATION.md](./CONFIGURATION.md)** - Runtime env vars, DB-backed app/provider config
-3. **[DB-ONBOARDING.md](./DB-ONBOARDING.md)** - Database setup and migrations
+3. **[DB_ONBOARDING.md](./DB_ONBOARDING.md)** - Database setup and migrations
 4. **[DESIGN.md](../DESIGN.md)** - Architectural decisions and component interactions
 5. **[API_CONTRACT.md](./API_CONTRACT.md)** - App-facing API endpoints, payloads, callbacks, and errors
 6. **[WEBHOOK_ARCHITECTURE.md](./WEBHOOK_ARCHITECTURE.md)** - Webhook ingress, processing, and delivery
-7. **Payment Provider Guides** - Provider-specific details (Google Play, Creem)
-
+7. Payment Provider Guides - Provider-specific details (Google Play, Creem)
+8. **[BEHAVIORAL_SPEC.md](./BEHAVIORAL_SPEC.md)** - Detailed procedural flows for every Bridge action
 ---
 
 ## Full Documentation Map
+
 
 ### Core Concepts
 
@@ -25,13 +26,14 @@ Navigate Bridge's architecture, setup, and integration guides.
 | [README.md](../README.md) | Project overview, API snapshot, prerequisites | Everyone |
 | [DESIGN.md](../DESIGN.md) | Architectural principles, component design, database schema | Developers, Architects |
 | [INVARIANTS.md](../INVARIANTS.md) | Behavioral guarantees, constraints, invariant rules | Developers implementing features |
+| [BEHAVIORAL_SPEC.md](./BEHAVIORAL_SPEC.md) | Detailed procedural flows for every Bridge action | Developers, Auditors |
 
 ### Setup & Operations
 
 | Document | Purpose | Audience |
 |----------|---------|----------|
 | [CONFIGURATION.md](./CONFIGURATION.md) | Runtime environment variables, DB-backed app/provider configuration | DevOps, Local setup, Integrators |
-| [DB-ONBOARDING.md](./DB-ONBOARDING.md) | PostgreSQL setup, roles, RLS, migrations | DevOps, Local setup |
+| [DB_ONBOARDING.md](./DB_ONBOARDING.md) | PostgreSQL setup, roles, RLS, migrations | DevOps, Local setup |
 | [db-install-roles-rls.sql](./db-install-roles-rls.sql) | SQL script for database roles and RLS policies | DevOps, Database admins |
 
 ### Webhooks & Integration
@@ -54,13 +56,14 @@ Navigate Bridge's architecture, setup, and integration guides.
 
 ### "How do I...?"
 
-- **Set up Bridge locally?** -> [CONFIGURATION.md](./CONFIGURATION.md) + [DB-ONBOARDING.md](./DB-ONBOARDING.md) + [README.md](../README.md#quickstart)
+- **Set up Bridge locally?** -> [CONFIGURATION.md](./CONFIGURATION.md) + [DB_ONBOARDING.md](./DB_ONBOARDING.md) + [README.md](../README.md#quickstart)
 - **Integrate an app with Bridge?** -> [API_CONTRACT.md](./API_CONTRACT.md)
 - **Understand how webhooks work?** -> [WEBHOOK_ARCHITECTURE.md](./WEBHOOK_ARCHITECTURE.md)
 - **Add a new payment provider?** -> [DESIGN.md (Provider Abstraction)](../DESIGN.md#provider-abstraction) + provider folder
 - **Verify a webhook signature?** -> [google/](./google/) or [creem/](./creem/) docs
 - **Understand subscription state?** -> [DESIGN.md (Subscription Lifecycle)](../DESIGN.md)
 - **Know what Bridge guarantees?** -> [INVARIANTS.md](../INVARIANTS.md)
+- **Need step-by-step logic for a flow?** -> [BEHAVIORAL_SPEC.md](./BEHAVIORAL_SPEC.md)
 
 ---
 
@@ -71,7 +74,7 @@ README.md (overview)
     |
 CONFIGURATION.md (runtime/app config)
     |
-DB-ONBOARDING.md (database setup)
+DB_ONBOARDING.md (database setup)
     |
 DESIGN.md (architecture)
     |-- API_CONTRACT.md (app-facing API)
@@ -80,6 +83,7 @@ DESIGN.md (architecture)
     `-- creem/ (provider specifics)
 
 INVARIANTS.md (cross-cutting constraints)
+BEHAVIORAL_SPEC.md (detailed procedural flows)
 ```
 
 ---
