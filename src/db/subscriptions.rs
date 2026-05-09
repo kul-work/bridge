@@ -651,6 +651,7 @@ pub async fn upsert_subscription_tx(
                          provider_customer_id = $5,
                          google_grace_period_start = CASE WHEN $1 = 'active' THEN NULL ELSE google_grace_period_start END,
                          google_grace_period_end = CASE WHEN $1 = 'active' THEN NULL ELSE google_grace_period_end END,
+                         payment_failure_notification = CASE WHEN $1 = 'active' THEN false ELSE payment_failure_notification END,
                          version = version + 1, last_event_time = $6, updated_at = NOW()
                      WHERE id = $7
                      RETURNING *"
@@ -694,6 +695,7 @@ pub async fn upsert_subscription_tx(
            provider_customer_id = EXCLUDED.provider_customer_id,
            google_grace_period_start = CASE WHEN EXCLUDED.status = 'active' THEN NULL ELSE subscriptions.google_grace_period_start END,
            google_grace_period_end = CASE WHEN EXCLUDED.status = 'active' THEN NULL ELSE subscriptions.google_grace_period_end END,
+           payment_failure_notification = CASE WHEN EXCLUDED.status = 'active' THEN false ELSE subscriptions.payment_failure_notification END,
            version = subscriptions.version + 1,
            last_event_time = EXCLUDED.last_event_time,
            updated_at = NOW()

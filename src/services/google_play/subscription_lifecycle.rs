@@ -233,7 +233,6 @@ pub async fn handle_subscription_cancellation_scheduled<
         },
         GooglePlayLifecycleOutcome {
             callback_event_type: Some("subscription.cancelled".to_string()),
-            callback_status_override: Some("cancelled".to_string()),
             callback_cancellation_mode_override: Some("scheduled".to_string()),
             ..Default::default()
         },
