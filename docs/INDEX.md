@@ -10,8 +10,9 @@ Navigate Bridge's architecture, setup, and integration guides.
 2. **[CONFIGURATION.md](./CONFIGURATION.md)** - Runtime env vars, DB-backed app/provider config
 3. **[DB-ONBOARDING.md](./DB-ONBOARDING.md)** - Database setup and migrations
 4. **[DESIGN.md](../DESIGN.md)** - Architectural decisions and component interactions
-5. **[WEBHOOK_ARCHITECTURE.md](./WEBHOOK_ARCHITECTURE.md)** - Webhook ingress, processing, and delivery
-6. **Payment Provider Guides** - Provider-specific details (Google Play, Creem)
+5. **[API_CONTRACT.md](./API_CONTRACT.md)** - App-facing API endpoints, payloads, callbacks, and errors
+6. **[WEBHOOK_ARCHITECTURE.md](./WEBHOOK_ARCHITECTURE.md)** - Webhook ingress, processing, and delivery
+7. **Payment Provider Guides** - Provider-specific details (Google Play, Creem)
 
 ---
 
@@ -37,6 +38,7 @@ Navigate Bridge's architecture, setup, and integration guides.
 
 | Document | Purpose | Audience |
 |----------|---------|----------|
+| [API_CONTRACT.md](./API_CONTRACT.md) | Implemented app-facing API contract, webhook callback payloads, error format, rate limits | App integrators, Backend developers |
 | [WEBHOOK_ARCHITECTURE.md](./WEBHOOK_ARCHITECTURE.md) | Webhook ingress flow, deduplication, processor logic, callback delivery | Developers, Integration engineers |
 
 ### Payment Providers
@@ -53,6 +55,7 @@ Navigate Bridge's architecture, setup, and integration guides.
 ### "How do I...?"
 
 - **Set up Bridge locally?** -> [CONFIGURATION.md](./CONFIGURATION.md) + [DB-ONBOARDING.md](./DB-ONBOARDING.md) + [README.md](../README.md#quickstart)
+- **Integrate an app with Bridge?** -> [API_CONTRACT.md](./API_CONTRACT.md)
 - **Understand how webhooks work?** -> [WEBHOOK_ARCHITECTURE.md](./WEBHOOK_ARCHITECTURE.md)
 - **Add a new payment provider?** -> [DESIGN.md (Provider Abstraction)](../DESIGN.md#provider-abstraction) + provider folder
 - **Verify a webhook signature?** -> [google/](./google/) or [creem/](./creem/) docs
@@ -71,6 +74,7 @@ CONFIGURATION.md (runtime/app config)
 DB-ONBOARDING.md (database setup)
     |
 DESIGN.md (architecture)
+    |-- API_CONTRACT.md (app-facing API)
     |-- WEBHOOK_ARCHITECTURE.md (webhook details)
     |-- google/ (provider specifics)
     `-- creem/ (provider specifics)
