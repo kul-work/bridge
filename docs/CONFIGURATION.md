@@ -1,0 +1,267 @@
+# Configuration Reference
+
+This page is aligned with runtime config loading in `src/config.rs` plus additional environment reads in startup, admin auth, email, webhook, and Google Play paths.
+
+Bridge configuration is split into two layers:
+
+- **Process environment**: service-level settings for Bridge itself.
+- **Database configuration**: per-app and per-provider settings in `pay.apps`, `pay.provider_configs`, and `pay.api_keys`.
+
+Bridge should not use app-specific provider env vars such as `CREEM_API_KEY` or `GOOGLE_PACKAGE_NAME`. Those belong in `pay.provider_configs` so each Tyde app can have independent payment setup.
+
+## Variables Loaded By `Config::from_env()` (`src/config.rs`)
+
+### Core App
+
+- `DATABASE_URL` (default: `postgresql://localhost/bridge`) - Runtime PostgreSQL connection string.
+- `ADMIN_DATABASE_URL` (default: unset) - Optional elevated PostgreSQL connection string used only to run migrations at startup. When unset, migrations run with `DATABASE_URL`.
+- `SERVER_ADDR` (default: `0.0.0.0`) - Bind address.
+- `PORT` (default: `3000`) - Bind port. Must parse as `u16`.
+- `LOGGING_LEVEL` (default: `info`) - Loaded into `Config`, but current tracing setup is controlled by `RUST_LOG`/default filters.
+- `ENVIRONMENT` (default: `development`) - Used for production safeguards and default tracing filters. `production` and `prod` are treated as production.
+- `MOCK_EXTERNAL_APIS` (default: `false`) - Enables local/test provider mocks and test-only webhook header overrides. Startup fails if this is `true` in production.
+- `ENABLE_BACKGROUND_JOBS` (default: `true`) - Enables webhook retry, reconciliation, price step-up expiry, pause scheduler, and cleanup workers.
+
+Boolean parsing accepts `1`, `true`, `yes`, `on`, `0`, `false`, `no`, and `off`.
+
+## Additional Runtime Env Vars
+
+These are read outside `Config::from_env()`.
+
+### Tracing and Logs (`src/main.rs`)
+
+- `RUST_LOG` (default depends on `ENVIRONMENT`) - Standard `tracing_subscriber::EnvFilter` value. Production default is `bridge=info,axum=info`; non-production default is `bridge=debug,axum=debug`.
+
+Logs are also written to daily files under `logs/server.YYYY-MM-DD.log`.
+
+### Admin Dashboard Auth (`src/middleware/admin_auth.rs`)
+
+Admin routes under `/admin` require a Clerk session JWT for Tyde's internal organization.
+
+- `ADMIN_CLERK_ORG_ID` - Required when `/admin` is used. The active Clerk organization must match this value.
+- `ADMIN_CLERK_FRONTEND_API` (default: unset) - Preferred Clerk issuer for admin JWT validation.
+- `CLERK_FRONTEND_API` (default: unset) - Fallback Clerk issuer when `ADMIN_CLERK_FRONTEND_API` is unset.
+- `CLERK_PUBLISHABLE_KEY` - Used only to derive the Clerk issuer when both issuer URL vars are unset.
+- `ADMIN_CLERK_AUTHORIZED_PARTIES` (default: unset) - Optional comma-separated allowed `azp` origins, for example `http://localhost:3000,https://admin.tyde.app`.
+
+Issuer fallback order is:
+
+1. `ADMIN_CLERK_FRONTEND_API`
+2. `CLERK_FRONTEND_API`
+3. Derived from `CLERK_PUBLISHABLE_KEY`
+
+### Email (`src/main.rs`, `src/services/email.rs`)
+
+- `EMAIL_PROVIDER` (default: `mock`) - Supported values: `mock`, `clerk`, `resend`.
+- `CLERK_SECRET_KEY` - Required in production when `EMAIL_PROVIDER=clerk`.
+- `RESEND_API_KEY` - Required in production when `EMAIL_PROVIDER=resend`.
+- `APP_EMAIL_FROM` (default: `noreply@bridge.local`) - Resend sender address.
+
+For non-production, missing provider credentials fall back to mock email. In production, missing required credentials fail startup.
+
+### Admin Alert Emails (`src/webhooks/processor.rs`, `src/webhooks/scheduler.rs`)
+
+- `ADMIN_ALERT_EMAIL` - Destination for dispute/reconciliation drift alerts.
+- `TYDE_SUPPORT_EMAIL` - Fallback alert destination when `ADMIN_ALERT_EMAIL` is unset.
+
+If neither is set, Bridge logs the alert and skips sending email.
+
+### Google Play Test Fixtures
+
+- `MOCK_GOOGLE_PURCHASE_RESPONSE` - Optional path to a JSON fixture used by Google Play mock verification/enrichment paths when `MOCK_EXTERNAL_APIS=true`.
+
+### Google Webhook Controls
+
+Older docs and `.env.sample` mention these process env vars:
+
+- `GOOGLE_VERIFY_WEBHOOK_SIGNATURE`
+- `GOOGLE_VERIFY_AUDIENCE`
+- `GOOGLE_PUB_SUB_AUDIENCE`
+- `GOOGLE_SKIP_RSA_VERIFICATION`
+
+Current active webhook ingress reads these controls from `pay.provider_configs.config` per app, not from process env. Keep Google provider controls in the DB config described below.
+
+### Legacy Or Sample-Only Env Vars
+
+These appear in older docs or `.env.sample`, but active runtime paths do not currently read them:
+
+- `APP_EMAIL_SUPPORT` - Use `ADMIN_ALERT_EMAIL` or `TYDE_SUPPORT_EMAIL` for alert destinations.
+- `RATE_LIMIT_DISABLE` - Rate limits are currently controlled by app DB settings and in-code defaults.
+- `RATE_LIMIT_CLEANUP_HOURS` - No active cleanup interval reads this env var.
+
+## Database Configuration
+
+Bridge onboarding is DB-driven. See [`DB-ONBOARDING.md`](./DB-ONBOARDING.md) for full SQL examples.
+
+### `pay.apps`
+
+Required fields:
+
+- `slug` - Stable app identifier, for example `hiha`.
+- `display_name` - Human-readable app name, for example `HiHa`.
+- `webhook_callback_url` - App backend endpoint where Bridge forwards canonical payment events.
+- `webhook_callback_secret` - HMAC secret Bridge uses for app callbacks.
+
+Important optional fields:
+
+- `app_url` - Public app URL used for checkout redirects.
+- `api_rate_limit_per_minute` (default: `120`) - Per-API-key default limit.
+- `api_rate_limit_rules` - JSON endpoint overrides.
+- `enabled` (default: `true`) - Must be true for API-key auth and webhook token resolution.
+- `google_package_name`, `apple_bundle_id` - Informational. Google runtime paths use `provider_configs.config.package_name`.
+
+Default endpoint rate limit groups:
+
+- `checkout`: `20`
+- `verify_purchase`: `20`
+- `subscription_queries`: `100`
+- `subscription_mutations`: `10`
+- `payment_history`: `100`
+- `purchase_registration`: `20`
+- `default`: `120`
+
+`api_rate_limit_per_minute` caps the `default` group directly and caps other groups when it is lower than the group limit.
+
+### `pay.provider_configs`
+
+One enabled row is expected per `(app_id, provider)`.
+
+#### Google Play
+
+Provider name: `google_play`
+
+Required `config` keys:
+
+- `package_name` - Android package name, for example `app.hiha`.
+- `service_account_json` - Path to the Google service account JSON file.
+
+Optional `config` keys:
+
+- `verify_webhook_signature` (default behavior: `true`) - Verifies Google Pub/Sub JWT signatures for RTDN webhooks.
+
+The migration comment also documents planned/legacy keys such as `verify_audience` and `pub_sub_audience`. Confirm active code paths before relying on those.
+
+Example:
+
+```json
+{
+  "package_name": "app.hiha",
+  "service_account_json": "C:/secure/hiha-google-play-service-account.json",
+  "verify_webhook_signature": true
+}
+```
+
+#### Creem
+
+Provider name: `creem`
+
+Required `config` keys:
+
+- `api_key` - Creem API key.
+- `webhook_secret` - HMAC secret used to verify Creem webhook payloads.
+
+Optional `config` keys:
+
+- `api_url` (default: `https://api.creem.com`)
+- `offer_id` - Used when checkout request has `product_type=offer`.
+- `otp_id` - Used when checkout request has `product_type=otp`.
+- `verify_webhook_signature` (default behavior: `true`)
+- `connect_timeout_secs` (default: `5`, must be greater than `0`)
+- `request_timeout_secs` (default: `25`, must be greater than `0`)
+
+For normal checkout, Bridge uses the request `product_id`. For `product_type=offer` or `product_type=otp`, it uses `offer_id` or `otp_id` for the provider request while preserving the requested app product in metadata.
+
+Example:
+
+```json
+{
+  "api_key": "creem_live_xxx",
+  "api_url": "https://api.creem.com",
+  "offer_id": "offer_hiha_premium_monthly",
+  "otp_id": "otp_hiha_lifetime",
+  "webhook_secret": "whsec_xxx",
+  "verify_webhook_signature": true
+}
+```
+
+### `pay.api_keys`
+
+App backends call Bridge with:
+
+```http
+Authorization: Bearer sk_app_...
+```
+
+Bridge stores:
+
+- `app_id`
+- `key_prefix` - First 8 characters of the raw key.
+- `key_hash` - bcrypt or argon2 hash of the full raw key.
+- `label`
+- `permissions`
+- `enabled`
+
+The raw API key is never stored.
+
+## Webhook URLs
+
+Provider webhooks use the app's generated `webhook_ingress_token`:
+
+```text
+https://pay.yourdomain.com/webhooks/{webhook_ingress_token}/{provider}
+```
+
+Examples:
+
+- `https://pay.yourdomain.com/webhooks/{token}/google_play`
+- `https://pay.yourdomain.com/webhooks/{token}/creem`
+
+Provider signature verification must remain enabled in production. The token is an obfuscated routing secret, not sufficient authentication by itself.
+
+## HiHa As A Sample App
+
+For HiHa, Bridge should be configured as an app entry, not hard-coded through global provider env vars:
+
+- `pay.apps.slug`: `hiha`
+- `pay.apps.display_name`: `HiHa`
+- `pay.apps.webhook_callback_url`: HiHa backend callback endpoint
+- `pay.apps.app_url`: HiHa public app URL
+- `pay.provider_configs.provider`: `google_play` and/or `creem`
+- HiHa backend receives a Bridge API key and calls Bridge under `/api/v1/*`
+- HiHa Frontend never talks to Bridge directly
+
+Payment status changes flow:
+
+```text
+Provider -> Bridge /webhooks/{token}/{provider} -> HiHa backend callback
+```
+
+## Local Development Baseline
+
+Minimal `.env` for local Bridge:
+
+```env
+ENVIRONMENT=development
+DATABASE_URL=postgresql://user:password@localhost/appgen
+PORT=3000
+ENABLE_BACKGROUND_JOBS=true
+MOCK_EXTERNAL_APIS=false
+EMAIL_PROVIDER=mock
+```
+
+For admin UI locally, also configure Clerk admin auth:
+
+```env
+ADMIN_CLERK_ORG_ID=org_your_internal_tyde_org
+CLERK_FRONTEND_API=https://your-clerk-instance.clerk.accounts.dev
+CLERK_PUBLISHABLE_KEY=pk_test_xxx
+```
+
+For local provider simulation:
+
+```env
+MOCK_EXTERNAL_APIS=true
+MOCK_GOOGLE_PURCHASE_RESPONSE=C:/share/tyde/bridge/scratch/google-purchase-fixture.json
+```
+
+Never run production with `MOCK_EXTERNAL_APIS=true`; startup rejects it.
