@@ -31,7 +31,7 @@ PASSED=0
 FAILED=0
 TESTS_RUN=0
 declare -a RESULTS
-TESTS=("test-net-01.sh" "test-net-02.sh")
+TESTS=("test-net-01.sh" "test-net-02.sh" "test-net-03.sh")
 
 echo "========================================"
 echo "Running Creem NET (Network) Test Suite"

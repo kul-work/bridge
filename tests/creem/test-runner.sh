@@ -139,6 +139,7 @@ run_smoke_tests() {
     echo -e "${YELLOW}Running Smoke Tests (Critical Path Only)...${NC}"
     
     local tests=(
+        "test-net-03.sh|NET-03"
         "test-otp-01.sh|OTP-01"
         "test-sub-01.sh|SUB-01"
         "test-sub-02.sh|SUB-02"

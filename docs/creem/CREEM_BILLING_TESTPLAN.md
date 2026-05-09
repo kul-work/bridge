@@ -75,6 +75,7 @@ This document outlines comprehensive test scenarios for validating the Creem Bil
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **NET-01** | **Webhook Retry & Backoff** | 1. Trigger checkout success.<br>2. Force backend to return HTTP 500 for webhooks temporarily.<br>3. Restore backend to HTTP 200. | - User sees success (via sync redirect if implemented).<br>- Webhook initially fails, then succeeds on Creem retry. | - Creem retries after 30s, 1m, 5m, 1h.<br>- Once backend returns 200, DB updates properly. | Tests robustness of the system against internal backend outages. |
 | **NET-02** | **Concurrent Sync & Webhook** | 1. User lands on `success_url` simultaneously as webhook arrives. | - Only one entitlement granted. | - DB uses transactions/upserts to prevent duplicate rows. | Race condition handling for fulfillment. |
+| **NET-03** | **Bridge-to-App Delivery Verification** | 1. Trigger Creem webhook event.<br>2. Wait for async webhook forwarding.<br>3. Verify `pay.webhook_delivery` record shows success. | - Webhook successfully forwarded to downstream app.<br>- Backend logs 2xx response from app. | - Background worker processes `webhook_queue`.<br>- Calls app callback URL with canonical payload.<br>- Updates `webhook_delivery` table with `forwarded=true`. | **End-to-End Integrity**: Ensures Bridge successfully relays Creem events to the final destination. |
 
 ---
 

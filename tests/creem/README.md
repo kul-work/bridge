@@ -43,6 +43,7 @@ tests/creem/
 | **WHK-05** | Normalization | Maps provider-specific payloads to canonical Bridge states. |
 | **WHK-06** | Verification Mode Override | Tests X-Webhook-Verification-Mode header bypass (requires MOCK_EXTERNAL_APIS=true). |
 | **NET-02** | Race Conditions | Tests concurrent deliveries of the same event. |
+| **NET-03** | Delivery Verification | Verifies Bridge → App callback forwarding success. |
 
 ## Usage
 
