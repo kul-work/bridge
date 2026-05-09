@@ -75,7 +75,7 @@ echo -e "${YELLOW}[2/2] Making Authenticated Request${NC}"
 # Use curl -H "Authorization: Bearer $BRIDGE_API_KEY" -i to include headers in output
 RESPONSE=$(curl -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "x-client-version: 99.99.0" \
-  -s -i -X GET "$BRIDGE_API_URL/api/v1/agent/balance")
+  -s -i -X GET "$BRIDGE_API_URL/api/v1/subscriptions")
 
 # Extract headers
 LIMIT_HEADER=$(echo "$RESPONSE" | grep -i "X-RateLimit-Limit" | cut -d':' -f2 | tr -d ' \r')
