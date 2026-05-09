@@ -41,6 +41,7 @@ tests/gpbi/
 | **SUB-09** | Revocation (Refund) | Verifies status `revoked` and payment `refunded` on voided purchase webhook. |
 | **WHK-01** | Invalid Signature | Verifies rejection of webhooks with bad authorization headers. |
 | **WHK-02** | Duplicate Webhook | Verifies idempotent handling (returns success, but no duplicate record). |
+| **NET-05** | Delivery Verification | Verifies Bridge → App callback forwarding success. |
 
 ## Usage
 

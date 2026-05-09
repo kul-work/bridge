@@ -168,6 +168,17 @@ run_suite() {
 }
 
 run_smoke_tests() {
+    # Run NET-05 (Webhook Delivery Verification)
+    echo "Step 0: NET-05 (Webhook Delivery Verification)"
+    ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST NET-05"
+    if bash test-net-05.sh; then
+        echo -e "${GREEN}✓ NET-05 Passed${NC}"
+    else 
+        echo -e "${RED}✗ NET-05 Failed${NC}"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        FAILED_TEST_CODES="$FAILED_TEST_CODES NET-05"
+    fi
+
     # Run OTP-01 only
     echo "Step 1: OTP-01 (One-Time Purchase)"
     ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST OTP-01"

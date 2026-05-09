@@ -14,6 +14,7 @@
 #   NET-02: verify_payment Call Fails / Network Timeout
 #   NET-03: Webhook Processing Times Out
 #   NET-04: Webhook Arrives While verify_payment In-Flight
+#   NET-05: Bridge-to-App Delivery Verification
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -104,6 +105,9 @@ run_test "NET-03" "test-net-03.sh" "Webhook Processing Times Out"
 
 # NET-04: Webhook Arrives While verify_payment In-Flight
 run_test "NET-04" "test-net-04.sh" "Webhook Arrives While verify_payment In-Flight"
+
+# NET-05: Bridge-to-App Delivery Verification
+run_test "NET-05" "test-net-05.sh" "Bridge-to-App Delivery Verification"
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
