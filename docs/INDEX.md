@@ -11,7 +11,7 @@ Navigate Bridge's architecture, setup, and integration guides.
 3. **[DB-ONBOARDING.md](./DB-ONBOARDING.md)** - Database setup and migrations
 4. **[DESIGN.md](../DESIGN.md)** - Architectural decisions and component interactions
 5. **[WEBHOOK_ARCHITECTURE.md](./WEBHOOK_ARCHITECTURE.md)** - Webhook ingress, processing, and delivery
-6. **Provider Guides** - Provider-specific details (Google Play, Creem)
+6. **Payment Provider Guides** - Provider-specific details (Google Play, Creem)
 
 ---
 
