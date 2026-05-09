@@ -8,11 +8,14 @@ This document lists only the remaining technical and product gaps that require i
 
 ## 1. Reconciliation Drift Handling in HiHa
 - **Affected Providers**: **Google Play** (Primary)
+- **Status**: **Fixed** (2026-05-09)
 - **Context**: Bridge identifies and corrects billing drift (mostly for Google Play due to polling requirements), then forwards `reconciliation.drift_detected`.
-- **Missing Behavior**:
-    - HiHa's webhook handler (`tyde/hiha/src/handlers/webhooks.rs`) lacks an actual state-correction branch for `reconciliation.drift_detected`.
-    - HiHa callback payload structs omit critical corrective fields: `previous_status`, `corrected_status`, and `reconciliation_source`.
-- **Action**: Implement a handler in HiHa to apply correction fields arriving from Bridge.
+- **Current State**:
+    - HiHa parses Bridge's corrective payload fields: `previous_status`, `corrected_status`, and `reconciliation_source`
+    - HiHa applies `corrected_status` for `reconciliation.drift_detected` using the same local premium transitions as normal subscription callbacks
+    - Corrected `active`/`trial` restores premium, `past_due` retains premium, and terminal corrected states revoke local premium access
+    - HiHa logs reconciliation drift details for callback diagnostics without adding dedicated audit columns
+- **Resolution**: Implemented in HiHa's Bridge callback handler and local webhook callback state updater. Bridge remains responsible for detecting and correcting provider drift; HiHa now applies the forwarded corrected state locally.
 
 ## 2. Payment Failure Notification & Acknowledgment
 - **Affected Providers**: **All Providers** (Creem, Google Play)
