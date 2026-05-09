@@ -32,9 +32,9 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - API keys scoped per app
 
 ### Provider Abstraction
-- Unified interface across Google Play (primary) and Creem.
+- Provider interface across Google Play (primary) and Creem.
 - State normalization (each provider's "active" maps to Bridge's `active`).
-- Signature verification required on all provider webhooks.
+- Signature verification on all provider webhooks (configurable per-app via `verify_webhook_signature`).
 - Dynamic provider loading per-app (not startup-based env vars).
 
 ---
@@ -182,9 +182,11 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - Subscription cancellation
 - Price step-up (increase/decline)
 - Payment failure with actionable links
-- Subscription restart
+- Subscription restart / resumed
 - Cancellation scheduled
 - Deferred renewal
+- Subscription paused
+- Subscription refunded
 
 **Configuration**:
 - `EMAIL_PROVIDER` — mock, clerk, or resend

@@ -6,7 +6,6 @@ It operates as a private, centralized gateway (e.g., `pay.tydecode.com`) serving
 
 ### Tech Stack
 
-- **Version**: 0.1.2
 - **Backend**: Rust + Axum + Tokio
 - **Database**: PostgreSQL (SQLx)
 - **API Support**: Multi-provider registry (Creem, Google Play)

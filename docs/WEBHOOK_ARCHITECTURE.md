@@ -16,7 +16,7 @@
 │  src/webhooks/ingress.rs                                                      │
 │  ├─ handle_google_play()      [Extract token, verify PubSub signature]       │
 │  ├─ handle_creem()             [Extract token, verify HMAC signature]        │
-│  │                                                                           │
+│  │  └─ Toggleable via `verify_webhook_signature` per app                     │
 │  └─ Returns: 204 No Content (if successful ingestion)                        │
 └─────────────────┬───────────────────────────────────────────────────────────┘
                   │ (Async) tokio::spawn() 
@@ -54,6 +54,7 @@
 │     ├─ Stale Guard: Compare event.ts < subscription.last_event_time?         │
 │     │  └─ YES: suppress as "stale" → SKIP                                    │
 │     ├─ Normalization: Map provider raw status → Canonical types              │
+│     ├─ Trigger Lifecycle Emails (paused, resumed, refunded, etc.)           │
 │     └─ Create Canonical Payload (serializable for apps)                      │
 │        {                                                                     │
 │          event_id: "google_play-msg_123",                                    │
