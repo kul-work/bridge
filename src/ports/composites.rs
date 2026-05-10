@@ -93,6 +93,7 @@ pub trait WebhookProcessingLookupRepository:
     + SubscriptionLookupRepository
     + PurchaseOwnerLookupRepository
     + WebhookProviderLookupRepository
+    + PaymentReadRepository
     + Send
     + Sync
 {
@@ -118,12 +119,6 @@ pub trait WebhookProcessingLookupRepository:
         purchase_token: &str,
     ) -> Result<Option<crate::ports::types::SubscriptionLookupSnapshot>, crate::error::BridgeError>;
 
-    async fn get_payment_status_for_provider(
-        &self,
-        app_id: Uuid,
-        provider: &str,
-        provider_transaction_id: &str,
-    ) -> Result<Option<String>, crate::error::BridgeError>;
 }
 
 #[async_trait::async_trait]
@@ -168,14 +163,6 @@ impl WebhookProcessingLookupRepository for crate::db::Database {
             .map(|subscription| subscription.map(crate::ports::helpers::map_subscription_lookup_snapshot))
     }
 
-    async fn get_payment_status_for_provider(
-        &self,
-        app_id: Uuid,
-        provider: &str,
-        provider_transaction_id: &str,
-    ) -> Result<Option<String>, crate::error::BridgeError> {
-        crate::db::payments::get_payment_status_for_provider(self.pool(), app_id, provider, provider_transaction_id).await
-    }
 }
 
 #[async_trait::async_trait]

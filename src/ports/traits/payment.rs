@@ -30,6 +30,13 @@ pub trait PaymentReadRepository: Send + Sync {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Payment>, BridgeError>;
+
+    async fn get_payment_status_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        provider_transaction_id: &str,
+    ) -> Result<Option<String>, BridgeError>;
 }
 
 #[async_trait]

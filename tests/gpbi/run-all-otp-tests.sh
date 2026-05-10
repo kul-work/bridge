@@ -5,10 +5,11 @@
 # 
 # Executes complete OTP test suite with proper setup and cleanup.
 #
-# Usage: ./run-all-otp-tests.sh [--purge-reports]
+# Usage: ./run-all-otp-tests.sh [--purge-reports] [--with-polling]
 #
 # Options:
 #   --purge-reports       Delete reports after successful run (default: keep)
+#   --with-polling        Validate OTP-04 wait path by approving it from a second process
 ##############################################################################
 
 set -euo pipefail
@@ -35,6 +36,10 @@ while [[ $# -gt 0 ]]; do
             PURGE_REPORTS=true
             shift
             ;;
+        --with-polling)
+            WITH_POLLING=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -42,9 +47,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo -e "${BLUE}╔════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║  OTP Test Suite Runner (OTP-01 to 05, RTDN-01 to 04)  ║${NC}"
-echo -e "${BLUE}╚════════════════════════════════════════════════╝${NC}"
+echo -e "${BLUE}================================================${NC}"
+echo -e "${BLUE}OTP Test Suite Runner (OTP-01 to 05, RTDN-01 to 04)${NC}"
+echo -e "${BLUE}================================================${NC}"
 echo ""
 echo "Configuration:"
 echo "  User model: fixed external_user_id per OTP script"
@@ -63,9 +68,9 @@ run_test() {
     local test_name=$2
     local extra_args=${3:-""}
     
-    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}-----------------------------------------${NC}"
     echo -e "${YELLOW}Running: $test_name${NC}"
-    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}-----------------------------------------${NC}"
     echo ""
     
     # Derive test ID from filename (e.g., test-otp-01.sh -> OTP-01, test-otp-rtdn-01.sh -> OTP-RTDN-01)
@@ -74,11 +79,83 @@ run_test() {
     TESTS_RUN=$((TESTS_RUN + 1))
     
     if ./"$test_script" $extra_args; then
-        echo -e "${GREEN}✓ $test_name PASSED${NC}"
+        echo -e "${GREEN}PASS: $test_name${NC}"
         PASSED=$((PASSED + 1))
         RESULTS+=("{\"test_id\": \"$test_id\", \"test_name\": \"$test_name\", \"status\": \"pass\"}")
     else
-        echo -e "${RED}✗ $test_name FAILED${NC}"
+        echo -e "${RED}FAIL: $test_name${NC}"
+        FAILED=$((FAILED + 1))
+        RESULTS+=("{\"test_id\": \"$test_id\", \"test_name\": \"$test_name\", \"status\": \"fail\"}")
+    fi
+    echo ""
+}
+
+run_otp04_with_polling() {
+    local test_script="test-otp-04.sh"
+    local test_name="OTP-04: Slow Card (Pending State)"
+    local test_id="OTP-04"
+    local wait_log="otp-04-wait.log"
+    local approve_log="otp-04-approve.log"
+    local wait_pid=""
+    local status=""
+
+    echo -e "${YELLOW}-----------------------------------------${NC}"
+    echo -e "${YELLOW}Running: $test_name (--wait-for-approval + --approve)${NC}"
+    echo -e "${YELLOW}-----------------------------------------${NC}"
+    echo ""
+
+    TESTS_RUN=$((TESTS_RUN + 1))
+    rm -f "$wait_log" "$approve_log"
+
+    ./"$test_script" --wait-for-approval > "$wait_log" 2>&1 &
+    wait_pid=$!
+
+    for _ in {1..30}; do
+        if ! kill -0 "$wait_pid" 2>/dev/null; then
+            echo -e "${RED}FAIL: OTP-04 waiter exited before pending state was ready${NC}"
+            cat "$wait_log"
+            FAILED=$((FAILED + 1))
+            RESULTS+=("{\"test_id\": \"$test_id\", \"test_name\": \"$test_name\", \"status\": \"fail\"}")
+            return
+        fi
+
+        status=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE provider = '$PROVIDER' AND provider_transaction_id = 'test-inapp-slow-4567' AND product_id = '$PRODUCT_ID_OTP' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | xargs)
+        if [[ "$status" == "pending" ]]; then
+            break
+        fi
+        sleep 1
+    done
+
+    if [[ "$status" != "pending" ]]; then
+        echo -e "${RED}FAIL: OTP-04 pending payment was not created in time${NC}"
+        kill "$wait_pid" 2>/dev/null || true
+        wait "$wait_pid" 2>/dev/null || true
+        cat "$wait_log"
+        FAILED=$((FAILED + 1))
+        RESULTS+=("{\"test_id\": \"$test_id\", \"test_name\": \"$test_name\", \"status\": \"fail\"}")
+        return
+    fi
+
+    if ! ./"$test_script" --approve > "$approve_log" 2>&1; then
+        echo -e "${RED}FAIL: OTP-04 approval injection failed${NC}"
+        kill "$wait_pid" 2>/dev/null || true
+        wait "$wait_pid" 2>/dev/null || true
+        cat "$approve_log"
+        FAILED=$((FAILED + 1))
+        RESULTS+=("{\"test_id\": \"$test_id\", \"test_name\": \"$test_name\", \"status\": \"fail\"}")
+        return
+    fi
+
+    if wait "$wait_pid"; then
+        echo -e "${GREEN}PASS: $test_name${NC}"
+        PASSED=$((PASSED + 1))
+        RESULTS+=("{\"test_id\": \"$test_id\", \"test_name\": \"$test_name\", \"status\": \"pass\"}")
+    else
+        echo -e "${RED}FAIL: $test_name${NC}"
+        echo "--- wait log ---"
+        cat "$wait_log"
+        echo "--- approve log ---"
+        cat "$approve_log"
         FAILED=$((FAILED + 1))
         RESULTS+=("{\"test_id\": \"$test_id\", \"test_name\": \"$test_name\", \"status\": \"fail\"}")
     fi
@@ -96,9 +173,9 @@ for script in test-otp-{01..05}.sh test-otp-rtdn-{01..04}.sh; do
     fi
 done
 
-echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${YELLOW}-----------------------------------------${NC}"
 echo -e "${YELLOW}Stateless Tests (No DB Dependencies)${NC}"
-echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${YELLOW}-----------------------------------------${NC}"
 echo ""
 
 # OTP-02: Declined Payment (no DB changes)
@@ -109,16 +186,16 @@ run_test "test-otp-03.sh" "OTP-03: User Cancellation"
 
 # OTP-04: Slow Card (Pending State) - cleans up internally
 if [[ "$WITH_POLLING" == "true" ]]; then
-    run_test "test-otp-04.sh" "OTP-04: Slow Card (Pending State)" "--wait-for-approval"
+    run_otp04_with_polling
 else
     run_test "test-otp-04.sh" "OTP-04: Slow Card (Pending State)"
 fi
 
 
 
-echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${YELLOW}-----------------------------------------${NC}"
 echo -e "${YELLOW}Purchase Tests (With DB Dependencies)${NC}"
-echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${YELLOW}-----------------------------------------${NC}"
 echo ""
 
 # OTP-01: Successful Purchase
@@ -149,9 +226,9 @@ run_test "test-otp-rtdn-04.sh" "OTP-RTDN-04: Webhook OTP Canceled (Type 14)"
 
 # Summary
 echo ""
-echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║         Test Suite Summary             ║${NC}"
-echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Test Suite Summary${NC}"
+echo -e "${BLUE}========================================${NC}"
 echo ""
 echo "Total Tests Run: $TESTS_RUN"
 echo -e "${GREEN}Passed: $PASSED${NC}"

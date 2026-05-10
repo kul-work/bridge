@@ -17,6 +17,15 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
     app_id: Uuid,
     payload: VerifyPurchaseRequest,
 ) -> Result<VerifyPurchaseResponse, BridgeError> {
+    tracing::info!(
+        "verify_purchase: app_id={}, user={}, provider={}, sub_id={}, token={}, type={}",
+        app_id,
+        payload.external_user_id,
+        payload.provider,
+        payload.subscription_id,
+        payload.purchase_token,
+        payload.product_type
+    );
     if payload.external_user_id.is_empty() {
         return Err(BridgeError::ValidationError(
             "external_user_id is required".to_string(),
@@ -166,7 +175,17 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
         None
     };
 
-    let is_new = existing_subscription.is_none();
+    let is_new = if product_type.is_subscription() {
+        existing_subscription.is_none()
+    } else {
+        repo.get_payment_status_for_provider(
+            app_id,
+            &payload.provider,
+            &payload.purchase_token,
+        )
+        .await?
+        .is_none()
+    };
 
     if product_type.is_subscription() {
         if let Some(token_subscription) = repo

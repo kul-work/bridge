@@ -51,6 +51,21 @@ impl PaymentReadRepository for db::Database {
     ) -> Result<Vec<Payment>, BridgeError> {
         db::payments::get_user_payments(self.pool(), app_id, external_user_id, limit, offset).await
     }
+
+    async fn get_payment_status_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        provider_transaction_id: &str,
+    ) -> Result<Option<String>, BridgeError> {
+        db::payments::get_payment_status_for_provider(
+            self.pool(),
+            app_id,
+            provider,
+            provider_transaction_id,
+        )
+        .await
+    }
 }
 
 #[async_trait]

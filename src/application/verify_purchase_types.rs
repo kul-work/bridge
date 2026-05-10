@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::BridgeError;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct VerifyPurchaseRequest {
     pub external_user_id: String,
     pub provider: String,

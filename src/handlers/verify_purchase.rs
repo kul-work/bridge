@@ -18,9 +18,17 @@ pub async fn verify_purchase(
     let response = application::verify_purchase::verify_purchase(
         repo,
         auth.app_id,
-        payload,
+        payload.clone(),
     )
     .await?;
+    let status_code = if payload.provider == "google_play"
+        && (payload.product_type == "one_time" || payload.product_type == "inapp")
+        && response.status == "pending"
+    {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::OK
+    };
 
-    Ok((StatusCode::OK, Json(response)))
+    Ok((status_code, Json(response)))
 }

@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "packageName": "com.hiha.fe",
+  "eventTimeMillis": "1770841573976",
+  "oneTimeProductNotification": {
+    "version": "1.0",
+    "notificationType": 1,
+    "purchaseToken": "<REDACTED_PURCHASE_TOKEN>",
+    "sku": "hiha_one_time"
+  }
+}

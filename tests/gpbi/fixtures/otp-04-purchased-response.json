@@ -1,0 +1,11 @@
+{
+  "purchaseTimeMillis": "1770841511989",
+  "purchaseState": 0,
+  "consumptionState": 0,
+  "developerPayload": "",
+  "orderId": "GPA.<REDACTED>",
+  "purchaseType": 0,
+  "acknowledgementState": 0,
+  "kind": "androidpublisher#productPurchase",
+  "regionCode": "RO"
+}
