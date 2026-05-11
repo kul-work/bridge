@@ -1,0 +1,177 @@
+# Bridge Google Play Test Gap Analysis
+
+**Date**: 2026-05-11
+
+## Scope
+
+This note analyzes the audit findings in this folder against the Google Play HLD/test plan under `docs/google` and the current Bridge GPBI test scripts.
+
+No code changes were made as part of this analysis.
+
+## Summary
+
+The audit findings are valid. Bridge has implementation paths for the app-facing subscription snapshot endpoint and normalized callback fields, but the Google Play shell tests still primarily validate database side effects and list-subscription responses.
+
+The remaining risk is not that the database mutation path is completely untested. The risk is that Bridge can correctly update `pay.subscriptions` while still breaking the app-facing contracts used by HiHa and future Tyde apps.
+
+## Findings
+
+### 1. Snapshot endpoint is effectively untested
+
+The audit asks for direct coverage of:
+
+```text
+GET /api/v1/users/{external_user_id}/subscription-status
+```
+
+Current GPBI access tests still call:
+
+```text
+GET /api/v1/subscriptions?external_user_id=...
+```
+
+and infer access by grepping subscription statuses.
+
+Current examples:
+
+- `tests/gpbi/test-acc-01.sh` calls `/api/v1/subscriptions?external_user_id=...` for allowed states.
+- `tests/gpbi/test-acc-02.sh` calls `/api/v1/subscriptions?external_user_id=...` for blocked states.
+
+This misses the direct snapshot contract implemented by `src/application/subscription_status.rs`, including:
+
+- `is_premium`
+- `payment_failure_notification`
+- `revoked_at`
+- `revocation_reason`
+- `google_new_price_cents`
+- `google_price_step_up_consent_deadline`
+- `google_pause_scheduled_at`
+- `google_deferred_until`
+- `last_event_time`
+
+### 2. Callback payload fields are not end-to-end contract tested
+
+The normalized callback contract includes fields such as:
+
+- `new_price_cents`
+- `revocation_reason`
+- `cancellation_mode`
+- `google_price_step_up_consent_deadline`
+- `google_pause_scheduled_at`
+- `google_deferred_until`
+
+Current coverage includes a Rust serialization unit test for Google lifecycle fields, but that only proves the struct serializes those fields when manually populated.
+
+It does not prove that real webhook scenarios populate the fields, enqueue them, and deliver them to the app callback URL.
+
+The GPBI `NET-05` test verifies `pay.webhook_delivery.forwarded`, `last_http_status`, and `last_error`. It does not validate the callback JSON body received by the app.
+
+### 3. Existing lifecycle tests stop at database validation
+
+Several Google lifecycle tests verify the canonical database row but do not assert the app-facing payloads.
+
+Examples:
+
+- `tests/gpbi/test-sub-09.sh` verifies `status='revoked'` and `revoked_at`, but does not assert snapshot `is_premium=false`, `revocation_reason='REFUND'`, or callback `revocation_reason`.
+- `tests/gpbi/test-sub-pause-01.sh` verifies `google_pause_scheduled_at` in `pay.subscriptions`, but does not assert callback or snapshot `google_pause_scheduled_at`.
+- `tests/gpbi/test-sub-25.sh` verifies `google_deferred_until` in `pay.subscriptions`, but does not assert callback or snapshot `google_deferred_until`.
+
+These tests are useful, but they do not cover the contract boundary that apps consume.
+
+### 4. Google test plan still points testers toward the weaker status check
+
+The Google Play test plan's "API Endpoints for Status Checks" lists:
+
+- `GET /api/v1/subscriptions`
+- `POST /api/v1/verify-purchase`
+- `GET /api/v1/subscriptions/:subscription_id`
+
+It does not list:
+
+```text
+GET /api/v1/users/:external_user_id/subscription-status
+```
+
+That omission likely contributed to the current shell tests using list-subscription responses as the entitlement contract.
+
+## Recommended Test Additions
+
+### 1. Add a dedicated snapshot endpoint test
+
+Add a GPBI test, for example:
+
+```text
+tests/gpbi/test-acc-snapshot.sh
+```
+
+It should insert or create subscriptions for each state, call:
+
+```text
+GET /api/v1/users/$USER_ID/subscription-status
+```
+
+and assert:
+
+- `active` -> `is_premium=true`
+- `trial` -> `is_premium=true`
+- `past_due` -> `is_premium=true`
+- `pending` -> `is_premium=false`
+- `on_hold` -> `is_premium=false`
+- `paused` -> `is_premium=false`
+- `expired` -> `is_premium=false`
+- `revoked` -> `is_premium=false`, with non-null `revoked_at` and `revocation_reason='REFUND'`
+
+It should also assert Google lifecycle fields when present:
+
+- price step-up pending includes `google_new_price_cents` and `google_price_step_up_consent_deadline`
+- pause scheduled includes `google_pause_scheduled_at`
+- deferred includes `google_deferred_until`
+
+### 2. Extend lifecycle tests with snapshot assertions
+
+After existing database assertions, add snapshot checks to these tests:
+
+- `test-sub-09.sh`: assert revoked snapshot fields.
+- `test-sub-pause-01.sh`: assert `is_premium=true` and `google_pause_scheduled_at`.
+- `test-sub-pause-02.sh`: assert `is_premium=false` for paused state.
+- `test-sub-25.sh`: assert `is_premium=true` and `google_deferred_until`.
+- price step-up test: assert `google_new_price_cents` and `google_price_step_up_consent_deadline`.
+
+These checks should call the snapshot endpoint directly, not `/api/v1/subscriptions`.
+
+### 3. Add callback body capture for selected scenarios
+
+Extend the callback delivery tests to validate the actual normalized JSON body received by the app.
+
+Recommended scenarios:
+
+- price step-up callback includes `new_price_cents` and `google_price_step_up_consent_deadline`
+- pause scheduled callback includes `status='active'` and `google_pause_scheduled_at`
+- deferred callback includes `google_deferred_until`
+- revoke/refund callback includes `status='revoked'` and `revocation_reason='REFUND'`
+- cancellation callback includes `status='cancelled'` and `cancellation_mode` for scheduled vs immediate paths
+
+Implementation options:
+
+- Use a lightweight local callback receiver during GPBI tests and assert captured JSON.
+- If testing through HiHa, assert the recorded callback payload in HiHa's callback/audit table.
+- As a lower-value fallback, assert the outbound payload in Bridge delivery diagnostics only when a deterministic capture path is unavailable.
+
+### 4. Update the Google Play test plan
+
+Update `docs/google/GOOGLE_PLAY_BILLING_TESTPLAN.md` so the status-check endpoint list includes:
+
+```text
+GET /api/v1/users/:external_user_id/subscription-status
+```
+
+The test plan should make clear that `/api/v1/subscriptions` is a subscription listing API, while `/api/v1/users/:external_user_id/subscription-status` is the app-facing entitlement snapshot contract.
+
+## Suggested Priority
+
+1. Snapshot endpoint state matrix.
+2. Snapshot lifecycle-field checks in existing Google lifecycle tests.
+3. Callback body capture for revoke, pause scheduled, deferred, and price step-up.
+4. Test plan documentation update.
+
+This order closes the app-facing entitlement risk first, then expands coverage to the callback contract.
