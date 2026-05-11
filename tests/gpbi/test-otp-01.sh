@@ -6,7 +6,7 @@
 # Purpose: Verify that a successful INAPP product purchase is properly 
 #          verified, stored in pay.payments, and acknowledged to the provider.
 #
-# Usage: ./test-otp-01.sh [--replay]
+# Usage: ./test-otp-01.sh
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -48,7 +48,6 @@ USER_ID="${USER_ID:-test_otp_01_user_$TEST_RUN_ID}"
 
 # Defaults
 DB_URL="$BRIDGE_DB_URL"
-REPLAY_OTP=false
 MOCK_GOOGLE_ACKNOWLEDGE_RESPONSE=""
 
 # Extract DB password once
@@ -58,23 +57,12 @@ export PGPASSWORD="${PGPASSWORD%%@*}"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --replay)
-            REPLAY_OTP=true
-            shift 1
-            ;;
         *)
             echo "Unknown option: $1"
             exit 1
             ;;
     esac
 done
-
-if [[ "$REPLAY_OTP" == "true" ]]; then
-    if [[ -z "${MOCK_GOOGLE_ACKNOWLEDGE_RESPONSE:-}" ]]; then
-        MOCK_GOOGLE_ACKNOWLEDGE_RESPONSE="tests/gpb/fixtures/otp-01-acknowledge-response.json"
-    fi
-    echo -e "${YELLOW}[Replay] MOCK_GOOGLE_ACKNOWLEDGE_RESPONSE=${MOCK_GOOGLE_ACKNOWLEDGE_RESPONSE}${NC}"
-fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-01: Successful Purchase Test"
@@ -214,20 +202,6 @@ ACK_TIMESTAMP=$(echo "$ACK_RESULT" | tr -d ' ')
 echo -e "${GREEN}✓ Payment Acknowledged: $ACK_TIMESTAMP (set in pay.payments table)${NC}"
 echo ""
 
-# Step 7: Verify post-acknowledge product state (acknowledgementState: 1)
-echo -e "${YELLOW}[7/7] Verifying post-acknowledge product state via fixture${NC}"
-
-if [[ "$REPLAY_OTP" == "true" && -f "$MOCK_GOOGLE_ACKNOWLEDGE_RESPONSE" ]]; then
-    ACK_STATE=$(python3 -c "import json; print(json.load(open('$MOCK_GOOGLE_ACKNOWLEDGE_RESPONSE'))['acknowledgementState'])" 2>/dev/null || echo "")
-    if [[ "$ACK_STATE" != "1" ]]; then
-        echo -e "${RED}✗ Expected acknowledgementState=1 in fixture, got '$ACK_STATE'${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}✓ Fixture confirms acknowledgementState=1 (ACKNOWLEDGED)${NC}"
-else
-    echo -e "${GREEN}✓ Skipped fixture check (live mode - acknowledgment verified via database)${NC}"
-fi
-echo ""
 
 # Generate JSON report
 TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)

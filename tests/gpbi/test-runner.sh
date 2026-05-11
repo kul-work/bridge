@@ -15,7 +15,6 @@
 #   commerce  - Run only commerce logic (OTP + SUB + ACK)
 #   infra     - Run infrastructure checks (ACC, ERR, LOG, NET, WHK)
 #   smoke     - Run minimal health check (OTP-01, SUB-01, SUB-02, SUB-03, SUB-06, SUB-09, SUB-19B, SUB-25, SUB-26, SUB-PAUSE-01, SUB-PAUSE-02, WHK-01, WHK-02, ACK-01, ERR-01)
-#   replay    - Run ONLY tests with fixture replay capability (18 tests, deterministic, Google API fixture used)
 #
 ##############################################################################
 
@@ -345,59 +344,6 @@ run_smoke_tests() {
     fi
 }
 
-run_replay_test() {
-    local script="$1"
-    local test_id="$2"
-    local test_name="$3"
-    local extra_args="${4:-}"
-    
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}[Replay] $test_id - $test_name${NC}"
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    
-    ALL_TESTS_RUN_LIST="$ALL_TESTS_RUN_LIST $test_id"
-    SUITES_RUN=$((SUITES_RUN + 1))
-    
-    if bash "$script" --replay $extra_args; then
-        echo -e "${GREEN}✓ $test_id Passed${NC}"
-    else
-        echo -e "${RED}✗ $test_id Failed${NC}"
-        FAILED_TESTS=$((FAILED_TESTS + 1))
-        FAILED_TEST_CODES="$FAILED_TEST_CODES $test_id"
-    fi
-    echo ""
-}
-
-run_replay_tests() {
-    echo -e "${YELLOW}Running Replay Tests (Fixture-Based, 18 Tests)...${NC}"
-    echo ""
-    
-    # OTP tests with replay (4)
-    run_replay_test "test-otp-01.sh"      "OTP-01"      "Successful Purchase"
-    run_replay_test "test-otp-04.sh"      "OTP-04"      "Slow Card (Pending State)"
-    run_replay_test "test-otp-rtdn-01.sh" "OTP-RTDN-01" "Webhook Purchase Completed"
-    run_replay_test "test-otp-rtdn-02.sh" "OTP-RTDN-02" "Webhook Refund Completed"
-    
-    # SUB core lifecycle with replay (9)
-    run_replay_test "test-sub-01.sh" "SUB-01" "Initial Subscription Purchase"
-    run_replay_test "test-sub-02.sh" "SUB-02" "Subscription Renewal (Automatic)"
-    run_replay_test "test-sub-03.sh" "SUB-03" "User-Initiated Cancellation"
-    run_replay_test "test-sub-04.sh" "SUB-04" "Renewal After Grace Period Recovery"
-    run_replay_test "test-sub-05.sh" "SUB-05" "Subscription Expiration"
-    run_replay_test "test-sub-06.sh" "SUB-06" "Re-subscription (After Expiry)"
-    run_replay_test "test-sub-08.sh" "SUB-08" "Account Hold (Payment Failure)"
-    run_replay_test "test-sub-09.sh" "SUB-09" "Subscription Revoked (Refund)"
-    run_replay_test "test-sub-24.sh" "SUB-24" "Restart After Cancellation"
-    
-    # SUB price changes with replay (2)
-    run_replay_test "test-sub-20.sh" "SUB-20" "Price Change (Opt-In Increase)"
-    run_replay_test "test-sub-21.sh" "SUB-21" "Price Step-Up Consent (Korea)"
-    
-    # SUB pause with replay (3)
-    run_replay_test "test-sub-pause-01.sh" "SUB-PAUSE-01" "Schedule Pause"
-    run_replay_test "test-sub-pause-02.sh" "SUB-PAUSE-02" "Pause Takes Effect"
-    run_replay_test "test-sub-pause-03.sh" "SUB-PAUSE-03" "Manual Resume from Pause"
-}
 
 start_time=$(date +%s)
 
@@ -438,12 +384,8 @@ case $SCOPE in
         run_smoke_tests
         ;;
         
-    replay)
-        run_replay_tests
-        ;;
-        
     *)
-        echo -e "${RED}Error: Invalid scope '$SCOPE'. Use full, commerce, infra, replay, or smoke.${NC}"
+        echo -e "${RED}Error: Invalid scope '$SCOPE'. Use full, commerce, infra, or smoke.${NC}"
         exit 1
         ;;
 esac

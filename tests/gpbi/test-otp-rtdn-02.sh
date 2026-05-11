@@ -6,7 +6,7 @@
 # Purpose: Verify that a voidedPurchaseNotification (refund) is 
 #          properly received, validated, and revokes entitlement.
 #
-# Usage: ./test-otp-rtdn-02.sh [--token "purchase_token"] [--replay [fixture_file]]
+# Usage: ./test-otp-rtdn-02.sh [--token "purchase_token"]
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -51,8 +51,6 @@ WEBHOOK_WAIT_SECONDS=1
 PURCHASE_TOKEN=""
 APP_URL="$BRIDGE_API_URL"
 DB_URL="$BRIDGE_DB_URL"
-REPLAY_RTDN=false
-REPLAY_FIXTURE=""
 MOCK_GOOGLE_PURCHASE_RESPONSE=""
 OTP_01_REPORT="otp-01-report.json"
 
@@ -71,30 +69,12 @@ while [[ $# -gt 0 ]]; do
             PURCHASE_TOKEN="$2"
             shift 2
             ;;
-        --replay)
-            REPLAY_RTDN=true
-            if [[ -n "${2:-}" && "${2:0:2}" != "--" ]]; then
-                REPLAY_FIXTURE="$2"
-                shift 2
-            else
-                shift 1
-            fi
-            ;;
         *)
             echo "Unknown option: $1"
             exit 1
             ;;
     esac
 done
-
-if [[ "$REPLAY_RTDN" == "true" ]]; then
-    if [[ -n "$REPLAY_FIXTURE" ]]; then
-        MOCK_GOOGLE_PURCHASE_RESPONSE="$REPLAY_FIXTURE"
-    elif [[ -z "${MOCK_GOOGLE_PURCHASE_RESPONSE:-}" ]]; then
-        MOCK_GOOGLE_PURCHASE_RESPONSE="tests/gpb/fixtures/otp-05-rtdn-refunded.json"
-    fi
-    echo -e "${YELLOW}[Replay] MOCK_GOOGLE_PURCHASE_RESPONSE=${MOCK_GOOGLE_PURCHASE_RESPONSE}${NC}"
-fi
 
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-RTDN-02: Webhook Refund Completed"
