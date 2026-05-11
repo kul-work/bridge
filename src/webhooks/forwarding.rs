@@ -5,6 +5,7 @@ use crate::ports::{
 use crate::webhooks::processor::CanonicalWebhookPayload;
 use std::time::Duration;
 use uuid::Uuid;
+use crate::utils::redact_with_prefix;
 use reqwest::Client;
 use tracing::{debug, error, info, warn};
 use hmac::{Hmac, Mac};
@@ -14,8 +15,6 @@ use chrono::Utc;
 type HmacSha256 = Hmac<Sha256>;
 
 const WEBHOOK_FORWARD_TIMEOUT_SECS: u64 = 10;
-const DIAGNOSTIC_REDACTION: &str = "[redacted]";
-const DIAGNOSTIC_VISIBLE_SUFFIX_LEN: usize = 8;
 
 /// Forward webhook to app callback URL with HMAC signature
 /// Used for future webhook delivery to app callbacks.
@@ -194,17 +193,6 @@ fn format_http_failure(status: i32, response_body: &str) -> String {
     }
 }
 
-fn redact_with_prefix(value: &str) -> String {
-    let suffix_chars: Vec<char> = value.chars().rev().take(DIAGNOSTIC_VISIBLE_SUFFIX_LEN).collect();
-    let suffix: String = suffix_chars.into_iter().rev().collect();
-
-    if suffix.is_empty() {
-        DIAGNOSTIC_REDACTION.to_string()
-    } else {
-        format!("{}...{}", DIAGNOSTIC_REDACTION, suffix)
-    }
-}
-
 /// Create a webhook delivery and forward it in one step.
 pub async fn queue_and_forward_webhook<
     R: AppLookupRepository + WebhookForwardRepository + WebhookWriteRepository + ?Sized,
@@ -287,10 +275,4 @@ mod tests {
         assert_eq!(sig1, sig2);
     }
 
-    #[test]
-    fn redact_with_prefix_keeps_last_eight_chars() {
-        assert_eq!(redact_with_prefix("1234567890abcdef"), "[redacted]...90abcdef");
-        assert_eq!(redact_with_prefix("short"), "[redacted]...short");
-        assert_eq!(redact_with_prefix(""), "[redacted]");
     }
-}

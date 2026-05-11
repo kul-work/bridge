@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 
 use crate::error::AppError;
+use crate::utils::redact_with_prefix;
 use crate::services::payment::{
     CheckoutSession, GooglePlayProviderData, PaymentProvider, ProviderData, PurchaseType,
     SubscriptionDetails, SubscriptionStatus, WebhookEvent,
@@ -471,7 +472,7 @@ impl GooglePlayProvider {
             tracing::info!(
                 "MOCK: Simulating acknowledge_subscription for subscription_id: {}, token: {}",
                 subscription_id,
-                purchase_token
+                redact_with_prefix(purchase_token)
             );
             tracing::info!(target: "BPT_RAW", "GooglePlay Raw Response - acknowledge_subscription (mock): {{}}");
             return Ok(());
@@ -501,7 +502,7 @@ impl GooglePlayProvider {
             tracing::info!(
                 "MOCK: Simulating acknowledge for product_id: {}, token: {}",
                 product_id,
-                purchase_token
+                redact_with_prefix(purchase_token)
             );
             tracing::info!(target: "BPT_RAW", "GooglePlay Raw Response - acknowledge (mock): {{}}");
             return Ok(());

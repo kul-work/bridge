@@ -5,6 +5,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use crate::error::AppError;
+use crate::utils::redact_with_prefix;
 use backoff::ExponentialBackoff;
 use backoff::future::retry;
 
@@ -150,7 +151,7 @@ impl GooglePlayClient {
         _subscription_id: &str, // Deprecated in V2 GET, but kept for interface consistency
         token: &str,
     ) -> Result<super::models::SubscriptionPurchaseV2> {
-        tracing::debug!("GooglePlayClient: get_subscription (v2) - package: {}", package_name);
+        tracing::debug!("GooglePlayClient: get_subscription (v2) - package: {}, token: {}", package_name, redact_with_prefix(token));
         
         let access_token = self.get_access_token().await?;
 
@@ -159,7 +160,7 @@ impl GooglePlayClient {
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/subscriptionsv2/tokens/{}",
             package_name, token
         );
-        tracing::debug!("GooglePlayClient: calling API endpoint: {}", url);
+        tracing::debug!("GooglePlayClient: calling API endpoint for subscription");
 
         let res = self.client
             .get(&url)
@@ -173,7 +174,7 @@ impl GooglePlayClient {
              tracing::error!("GooglePlayClient: API error - package: {}, status: {}", package_name, status);
              tracing::debug!("Response: {}", text);
              tracing::debug!(target: "BPT-RAW", "GooglePlay Error Response - get_subscription (v2): status={}, body={}", status, text);
-             return Err(anyhow::anyhow!("Failed to get subscription: {}, response: {}", url, text));
+             return Err(anyhow::anyhow!("Failed to get subscription for package {}, token {}: {}", package_name, redact_with_prefix(token), text));
         }
 
         let text = res.text().await?;
@@ -269,7 +270,7 @@ impl GooglePlayClient {
         subscription_id: &str,
         token: &str,
     ) -> Result<()> {
-        tracing::info!("GooglePlayClient: cancel_subscription - package: {}, subscription_id: {}", package_name, subscription_id);
+        tracing::info!("GooglePlayClient: cancel_subscription - package: {}, subscription_id: {}, token: {}", package_name, subscription_id, redact_with_prefix(token));
         
         let access_token = self.get_access_token().await?;
 
@@ -311,7 +312,7 @@ impl GooglePlayClient {
         subscription_id: &str,
         token: &str,
     ) -> Result<()> {
-        tracing::info!("GooglePlayClient: acknowledge_subscription - package: {}, subscription_id: {}", package_name, subscription_id);
+        tracing::info!("GooglePlayClient: acknowledge_subscription - package: {}, subscription_id: {}, token: {}", package_name, subscription_id, redact_with_prefix(token));
 
         // Exponential backoff for transient errors
         let backoff = ExponentialBackoff {
@@ -401,7 +402,7 @@ impl GooglePlayClient {
         product_id: &str,
         token: &str,
     ) -> Result<()> {
-        tracing::info!("GooglePlayClient: acknowledge - package: {}, product_id: {}", package_name, product_id);
+        tracing::info!("GooglePlayClient: acknowledge - package: {}, product_id: {}, token: {}", package_name, product_id, redact_with_prefix(token));
 
         // Exponential backoff for transient errors
         let backoff = ExponentialBackoff {

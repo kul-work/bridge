@@ -6,14 +6,6 @@ Scope: staged Rust and OTP-04 harness changes for the Google Play one-time produ
 
 ## Findings
 
-### 1. Blocker: raw purchase tokens and user IDs are logged at info level
-
-`src/application/verify_purchase.rs` now logs `external_user_id` and `purchase_token` at `info` level during `verify_purchase`.
-
-Bridge tries to minimize PII and sensitive payment identifiers. Google purchase tokens are long-lived restore/fraud-prevention identifiers, so normal production logs should not contain them.
-
-Advice: remove the log or redact it. If correlation is needed, log app/provider/product type plus a short token hash instead of the raw token.
-
 ### 2. Blocker/design risk: OTP success can be downgraded back to pending
 
 The OTP-04 flow can currently regress:

@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::error::BridgeError;
 use crate::ports::VerifyPurchaseHandlerRepository;
+use crate::utils::redact_with_prefix;
 use crate::application::verify_purchase_types::{
     compute_obfuscated_id_hash, PaymentAcknowledgement, ProductType, VerificationOutcome,
     VerifyPurchaseCallback, VerifyPurchaseCommitRequest, VerifyPurchaseRequest,
@@ -23,7 +24,7 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
         payload.external_user_id,
         payload.provider,
         payload.subscription_id,
-        payload.purchase_token,
+        redact_with_prefix(&payload.purchase_token),
         payload.product_type
     );
     if payload.external_user_id.is_empty() {
@@ -346,7 +347,7 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
                 tracing::warn!(
                     "verify_purchase acknowledgement failed for app {} token {}: {}",
                     app.id,
-                    payload.purchase_token,
+                    redact_with_prefix(&payload.purchase_token),
                     err
                 );
             } else {

@@ -1,3 +1,4 @@
+use crate::utils::redact_with_prefix;
 use std::time::Duration;
 use crate::db::Database;
 use crate::ports::{
@@ -134,7 +135,7 @@ async fn retry_google_play_subscription_acknowledgements(
                     "Retrying Google Play subscription acknowledgement failed for app {} subscription {} token {}: {}",
                     app.id,
                     candidate.subscription_id,
-                    candidate.purchase_token,
+                    redact_with_prefix(&candidate.purchase_token),
                     err
                 );
                 continue;
