@@ -178,6 +178,65 @@ async fn acknowledge_google_play_one_time_from_webhook<R: WebhookProcessingRepos
     repo.mark_payment_acknowledged(ctx.app_id, ctx.provider, purchase_token).await
 }
 
+async fn acknowledge_google_play_subscription_from_webhook<R: WebhookProcessingRepository + ?Sized>(
+    repo: &R,
+    ctx: &EventContext<'_>,
+    subscription_id: &str,
+) -> Result<(), BridgeError> {
+    if ctx.provider != "google_play" || ctx.webhook.event_type != "SUBSCRIPTION_PURCHASED" {
+        return Ok(());
+    }
+
+    if ctx.fields.status.as_deref() == Some("pending") || ctx.fields.google_subscription_state == Some(5) {
+        return Ok(());
+    }
+
+    let Some(purchase_token) = ctx.fields.purchase_token.as_deref()
+        .or(ctx.webhook.purchase_token.as_deref())
+    else {
+        warn!(
+            "Skipping Google Play subscription acknowledgement for webhook {}: missing purchase token",
+            ctx.webhook.provider_webhook_id
+        );
+        return Ok(());
+    };
+
+    if repo.payment_acknowledged_at(ctx.app_id, ctx.provider, purchase_token).await?.is_some() {
+        return Ok(());
+    }
+
+    let provider_config = match repo.get_provider_config(ctx.app_id, "google_play").await {
+        Ok(config) => config,
+        Err(err) => {
+            warn!(
+                "Skipping Google Play subscription acknowledgement for webhook {}: provider config unavailable: {}",
+                ctx.webhook.provider_webhook_id,
+                err
+            );
+            return Ok(());
+        }
+    };
+
+    if let Err(err) = acknowledge_google_play(
+        subscription_id,
+        purchase_token,
+        ProductType::Subscription,
+        &provider_config.config,
+    )
+    .await
+    {
+        warn!(
+            "Google Play subscription acknowledgement failed for webhook {} subscription {}: {}",
+            ctx.webhook.provider_webhook_id,
+            subscription_id,
+            err
+        );
+        return Ok(());
+    }
+
+    repo.mark_payment_acknowledged(ctx.app_id, ctx.provider, purchase_token).await
+}
+
 async fn send_price_step_up_email(ctx: &EventContext<'_>, subscription_id: &str) {
     let Some(email) = lookup_lifecycle_email(ctx, "subscription.price_step_up").await else {
         return;
@@ -355,6 +414,8 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 );
                 return Ok(EventHandling::ReturnNone);
             };
+
+            acknowledge_google_play_subscription_from_webhook(repo, ctx, sub_id_str).await?;
 
             if ctx.provider == "google_play" {
                 let _ = repo

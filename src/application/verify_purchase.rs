@@ -320,6 +320,11 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
         .await?
         .is_some();
 
+    let acknowledgement_ready = match product_type {
+        ProductType::Subscription => verified.status != "pending",
+        ProductType::OneTimeProduct => verified.payment_state == Some(0),
+    };
+
     match verified.acknowledgement {
         PaymentAcknowledgement::AlreadyAcknowledged => {
             repo.mark_payment_acknowledged(app_id, &payload.provider, &payload.purchase_token)
@@ -328,7 +333,7 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
         PaymentAcknowledgement::Pending
             if payload.provider == "google_play"
                 && !payment_acknowledged
-                && (product_type.is_subscription() || verified.payment_state == Some(0)) =>
+                && acknowledgement_ready =>
         {
             if let Err(err) = acknowledge_google_play(
                 &payload.subscription_id,

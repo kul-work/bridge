@@ -20,6 +20,10 @@ pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
             if let Err(e) = retry_webhooks(database.as_ref()).await {
                 error!("Webhook retry worker failed: {}", e);
             }
+
+            if let Err(e) = retry_google_play_subscription_acknowledgements(database.as_ref()).await {
+                error!("Google Play acknowledgement retry failed: {}", e);
+            }
         }
     });
 }
@@ -93,6 +97,56 @@ pub async fn retry_webhooks(
                     error!("Failed to rebuild canonical webhook payload for delivery {}: {}", delivery.id, e);
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+async fn retry_google_play_subscription_acknowledgements(
+    database: &Database,
+) -> Result<(), crate::error::BridgeError> {
+    let apps = SchedulerRepository::list_enabled_apps(database).await?;
+
+    for app in apps {
+        let provider_config = match database.get_provider_config(app.id, "google_play").await {
+            Ok(config) => config,
+            Err(_) => continue,
+        };
+
+        let candidates = crate::db::payments::list_google_play_subscription_ack_candidates(
+            database.pool(),
+            app.id,
+            50,
+        )
+        .await?;
+
+        for candidate in candidates {
+            if let Err(err) = crate::services::provider_api::acknowledge_subscription(
+                "google_play",
+                &candidate.subscription_id,
+                &candidate.purchase_token,
+                &provider_config.config,
+            )
+            .await
+            {
+                warn!(
+                    "Retrying Google Play subscription acknowledgement failed for app {} subscription {} token {}: {}",
+                    app.id,
+                    candidate.subscription_id,
+                    candidate.purchase_token,
+                    err
+                );
+                continue;
+            }
+
+            crate::db::payments::mark_payment_acknowledged(
+                database.pool(),
+                app.id,
+                "google_play",
+                &candidate.purchase_token,
+            )
+            .await?;
         }
     }
 

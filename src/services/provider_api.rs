@@ -81,6 +81,33 @@ pub async fn create_billing_portal(
     }
 }
 
+/// Acknowledge a subscription purchase with the payment provider.
+pub async fn acknowledge_subscription(
+    provider: &str,
+    subscription_id: &str,
+    purchase_token: &str,
+    config: &Value,
+) -> Result<(), BridgeError> {
+    match provider {
+        "google_play" => {
+            let service_account_path = config_str(config, "service_account_json", "Google Play")?;
+            let package_name = config_str(config, "package_name", "Google Play")?;
+
+            let gp_client = crate::services::google_play::client::GooglePlayClient::new(service_account_path)
+                .map_err(|e| BridgeError::ConfigError(format!("Failed to init Google Play client: {}", e)))?;
+
+            gp_client.acknowledge_subscription(package_name, subscription_id, purchase_token)
+                .await
+                .map_err(|e| BridgeError::ProviderError(format!("Google Play acknowledgement failed: {}", e)))?;
+
+            info!("Google Play subscription {} acknowledged via API", subscription_id);
+            Ok(())
+        }
+
+        _ => Err(BridgeError::ValidationError(format!("Acknowledgement not supported for provider: {}", provider))),
+    }
+}
+
 /// Fetch current subscription status from provider API (for reconciliation)
 pub async fn fetch_subscription_status(
     provider: &str,

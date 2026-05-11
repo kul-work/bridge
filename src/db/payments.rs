@@ -33,6 +33,12 @@ pub struct PaymentHistoryEntry {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct GooglePlaySubscriptionAckCandidate {
+    pub subscription_id: String,
+    pub purchase_token: String,
+}
+
 async fn begin_app_tx<'a>(
     pool: &'a sqlx::PgPool,
     app_id: Uuid,
@@ -191,6 +197,40 @@ pub async fn mark_payment_acknowledged(
         .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
     Ok(())
+}
+
+pub async fn list_google_play_subscription_ack_candidates(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    limit: i64,
+) -> Result<Vec<GooglePlaySubscriptionAckCandidate>, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let rows = sqlx::query_as::<_, GooglePlaySubscriptionAckCandidate>(
+        "SELECT s.subscription_id, p.provider_transaction_id AS purchase_token
+         FROM pay.payments p
+         JOIN pay.subscriptions s
+           ON s.app_id = p.app_id
+          AND s.provider = p.provider
+          AND s.purchase_token = p.provider_transaction_id
+         WHERE p.app_id = $1
+           AND p.provider = 'google_play'
+           AND p.status = 'success'
+           AND p.acknowledged_at IS NULL
+           AND s.status IN ('active', 'past_due', 'cancelled', 'on_hold', 'paused')
+         ORDER BY p.created_at ASC
+         LIMIT $2",
+    )
+    .bind(app_id)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(rows)
 }
 
 pub async fn lookup_user_by_purchase_token_payment(
