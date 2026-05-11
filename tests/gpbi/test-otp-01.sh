@@ -6,7 +6,7 @@
 # Purpose: Verify that a successful INAPP product purchase is properly 
 #          verified, stored in pay.payments, and acknowledged to the provider.
 #
-# Usage: ./test-otp-01.sh [--replay [fixture_file]]
+# Usage: ./test-otp-01.sh [--replay]
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -49,8 +49,6 @@ USER_ID="${USER_ID:-test_otp_01_user_$TEST_RUN_ID}"
 # Defaults
 DB_URL="$BRIDGE_DB_URL"
 REPLAY_OTP=false
-REPLAY_FIXTURE=""
-MOCK_GOOGLE_PURCHASE_RESPONSE=""
 MOCK_GOOGLE_ACKNOWLEDGE_RESPONSE=""
 
 # Extract DB password once
@@ -62,12 +60,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --replay)
             REPLAY_OTP=true
-            if [[ -n "${2:-}" && "${2:0:2}" != "--" ]]; then
-                REPLAY_FIXTURE="$2"
-                shift 2
-            else
-                shift 1
-            fi
+            shift 1
             ;;
         *)
             echo "Unknown option: $1"
@@ -77,12 +70,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$REPLAY_OTP" == "true" ]]; then
-    if [[ -n "$REPLAY_FIXTURE" ]]; then
-        MOCK_GOOGLE_PURCHASE_RESPONSE="$REPLAY_FIXTURE"
-    elif [[ -z "${MOCK_GOOGLE_PURCHASE_RESPONSE:-}" ]]; then
-        MOCK_GOOGLE_PURCHASE_RESPONSE="tests/gpb/fixtures/otp-01-purchase-response.json"
-    fi
-    echo -e "${YELLOW}[Replay] MOCK_GOOGLE_PURCHASE_RESPONSE=${MOCK_GOOGLE_PURCHASE_RESPONSE}${NC}"
     if [[ -z "${MOCK_GOOGLE_ACKNOWLEDGE_RESPONSE:-}" ]]; then
         MOCK_GOOGLE_ACKNOWLEDGE_RESPONSE="tests/gpb/fixtures/otp-01-acknowledge-response.json"
     fi
@@ -125,17 +112,11 @@ echo ""
 
 echo "Sending request..."
 
-EXTRA_HEADERS=()
-if [[ "$REPLAY_OTP" == "true" ]]; then
-    EXTRA_HEADERS+=(-H "X-Mock-Google-Purchase-Response: $MOCK_GOOGLE_PURCHASE_RESPONSE")
-fi
-
 VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
    \
-  "${EXTRA_HEADERS[@]}" \
   -d "{
     \"provider\": \"$PROVIDER\",
     \"external_user_id\": \"$USER_ID\",

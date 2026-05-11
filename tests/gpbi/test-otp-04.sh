@@ -6,7 +6,7 @@
 # Purpose: Verify that a slow test card (pending state) is properly handled 
 #          with the correct status transitions from Pending to Success.
 #
-# Usage: ./test-otp-04.sh [--replay [fixture_file]] [--wait-for-approval] [--approve]
+# Usage: ./test-otp-04.sh [--replay] [--wait-for-approval] [--approve]
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -50,8 +50,6 @@ REPORT_FILE="otp-04-report.json"
 WAIT_FOR_APPROVAL=false
 REPLAY_OTP=false
 APPROVE_ONLY=false
-REPLAY_FIXTURE=""
-MOCK_GOOGLE_PURCHASE_RESPONSE=""
 MOCK_RTDN_FIXTURE=""
 APP_URL="$BRIDGE_API_URL"
 DB_URL="$BRIDGE_DB_URL"
@@ -65,12 +63,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --replay)
             REPLAY_OTP=true
-            if [[ -n "${2:-}" && "${2:0:2}" != "--" ]]; then
-                REPLAY_FIXTURE="$2"
-                shift 2
-            else
-                shift 1
-            fi
+            shift 1
             ;;
         --wait-for-approval)
             WAIT_FOR_APPROVAL=true
@@ -98,13 +91,7 @@ if [[ "$REPLAY_OTP" == "true" && "$WAIT_FOR_APPROVAL" == "true" ]]; then
 fi
 
 if [[ "$REPLAY_OTP" == "true" || "$APPROVE_ONLY" == "true" ]]; then
-    if [[ -n "$REPLAY_FIXTURE" ]]; then
-        MOCK_GOOGLE_PURCHASE_RESPONSE="$REPLAY_FIXTURE"
-    elif [[ -z "${MOCK_GOOGLE_PURCHASE_RESPONSE:-}" ]]; then
-        MOCK_GOOGLE_PURCHASE_RESPONSE="$SCRIPT_DIR/fixtures/otp-04-purchased-response.json"
-    fi
     MOCK_RTDN_FIXTURE="$SCRIPT_DIR/fixtures/otp-04-pending-response.json"
-    echo -e "${YELLOW}[Approval] Completion purchase response=${MOCK_GOOGLE_PURCHASE_RESPONSE}${NC}"
     echo -e "${YELLOW}[Approval] MOCK_RTDN_FIXTURE=${MOCK_RTDN_FIXTURE}${NC}"
 fi
 
@@ -113,11 +100,6 @@ send_approval_webhook() {
         echo -e "${RED}✗ Missing RTDN fixture: $MOCK_RTDN_FIXTURE${NC}"
         exit 1
     fi
-    if [[ ! -f "$MOCK_GOOGLE_PURCHASE_RESPONSE" ]]; then
-        echo -e "${RED}✗ Missing purchased response fixture: $MOCK_GOOGLE_PURCHASE_RESPONSE${NC}"
-        exit 1
-    fi
-
     WEBHOOK_PATH_TOKEN="${WEBHOOK_INGRESS_TOKEN:-${WEBHOOK_TOKEN:-}}"
     if [[ -z "$WEBHOOK_PATH_TOKEN" ]]; then
         echo -e "${RED}✗ Missing WEBHOOK_INGRESS_TOKEN or WEBHOOK_TOKEN${NC}"
@@ -133,7 +115,6 @@ send_approval_webhook() {
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer test-token" \
       -H "X-Webhook-Verification-Mode: off" \
-      -H "X-Mock-Google-Purchase-Response: $MOCK_GOOGLE_PURCHASE_RESPONSE" \
       -d "{
         \"message\": {
           \"data\": \"$NOTIFICATION_B64\",

@@ -18,16 +18,5 @@ The DB payment upsert unconditionally applies the incoming status for the same u
 
 Advice: make one-time payment status monotonic in the source-of-truth write path. At minimum, do not allow terminal/stronger states like `success`, `refunded`, or `cancelled` to regress to `pending`.
 
-### 4. Medium: handler `202 Accepted` decision bypasses product type normalization
-
-The handler returns `202` only for raw `product_type == "one_time"` or `"inapp"`, while the parser accepts normalized aliases such as `"one-time"`, uppercase variants, and trimmed input.
-
-Advice: base the HTTP status decision on the normalized product type, or have the application response expose enough semantic state for the handler to avoid raw-string checks.
-
-### 5. Medium/test reliability: mock fixture header does not appear wired in Rust
-
-The OTP-04 shell script sends `X-Mock-Google-Purchase-Response`, but the Rust mock verifier reads `MOCK_GOOGLE_PURCHASE_RESPONSE` from the process environment. I did not find source code consuming that request header.
-
-Advice: either wire the header intentionally in mock/test-only code or remove it from the harness/docs and use the supported environment-based fixture mechanism.
 
 
