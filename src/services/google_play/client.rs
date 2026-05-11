@@ -443,7 +443,7 @@ impl GooglePlayClient {
             }
 
             if status == reqwest::StatusCode::BAD_REQUEST {
-                if text.contains("The purchase is not in a valid state to be acknowledged") || text.contains("already acknowledged") {
+                if text.contains("already acknowledged") {
                     tracing::info!(target: "BPT_RAW", "GooglePlay Raw Response - acknowledge (already acknowledged): {}", text);
                     tracing::info!("GooglePlayClient: Purchase already acknowledged (ignoring error)");
                     return Ok(());

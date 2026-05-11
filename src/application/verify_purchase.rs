@@ -326,7 +326,9 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
                 .await?;
         }
         PaymentAcknowledgement::Pending
-            if payload.provider == "google_play" && !payment_acknowledged =>
+            if payload.provider == "google_play"
+                && !payment_acknowledged
+                && (product_type.is_subscription() || verified.payment_state == Some(0)) =>
         {
             if let Err(err) = acknowledge_google_play(
                 &payload.subscription_id,

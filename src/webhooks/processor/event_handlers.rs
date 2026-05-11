@@ -1,7 +1,11 @@
 use std::time::Duration;
 
 use crate::{
-    application::app_context::AppSnapshot,
+    application::{
+        app_context::AppSnapshot,
+        verify_purchase_provider::acknowledge_google_play,
+        verify_purchase_types::ProductType,
+    },
     error::BridgeError,
     ports::{
         SubscriptionWebhookTransition, WebhookPaymentRecordRequest,
@@ -107,6 +111,71 @@ async fn lookup_lifecycle_email_once(
     user_id: &str,
 ) -> Result<Option<String>, BridgeError> {
     crate::services::email_lookup::lookup_user_email(ctx.app, user_id).await
+}
+
+async fn acknowledge_google_play_one_time_from_webhook<R: WebhookProcessingRepository + ?Sized>(
+    repo: &R,
+    ctx: &EventContext<'_>,
+) -> Result<(), BridgeError> {
+    if ctx.provider != "google_play" {
+        return Ok(());
+    }
+
+    let Some(purchase_token) = ctx.fields.purchase_token.as_deref()
+        .or(ctx.webhook.purchase_token.as_deref())
+    else {
+        warn!(
+            "Skipping Google Play OTP acknowledgement for webhook {}: missing purchase token",
+            ctx.webhook.provider_webhook_id
+        );
+        return Ok(());
+    };
+
+    let Some(product_id) = ctx.fields.product_id.as_deref()
+        .or(ctx.fields.subscription_id.as_deref())
+        .or(ctx.webhook.subscription_id.as_deref())
+    else {
+        warn!(
+            "Skipping Google Play OTP acknowledgement for webhook {}: missing product id",
+            ctx.webhook.provider_webhook_id
+        );
+        return Ok(());
+    };
+
+    if repo.payment_acknowledged_at(ctx.app_id, ctx.provider, purchase_token).await?.is_some() {
+        return Ok(());
+    }
+
+    let provider_config = match repo.get_provider_config(ctx.app_id, "google_play").await {
+        Ok(config) => config,
+        Err(err) => {
+            warn!(
+                "Skipping Google Play OTP acknowledgement for webhook {}: provider config unavailable: {}",
+                ctx.webhook.provider_webhook_id,
+                err
+            );
+            return Ok(());
+        }
+    };
+
+    if let Err(err) = acknowledge_google_play(
+        product_id,
+        purchase_token,
+        ProductType::OneTimeProduct,
+        &provider_config.config,
+    )
+    .await
+    {
+        warn!(
+            "Google Play OTP acknowledgement failed for webhook {} product {}: {}",
+            ctx.webhook.provider_webhook_id,
+            product_id,
+            err
+        );
+        return Ok(());
+    }
+
+    repo.mark_payment_acknowledged(ctx.app_id, ctx.provider, purchase_token).await
 }
 
 async fn send_price_step_up_email(ctx: &EventContext<'_>, subscription_id: &str) {
@@ -933,6 +1002,10 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 ctx.external_user_id.as_deref(),
                 ctx.timestamp_epoch_ms,
             ).await?;
+
+            if outcome.is_some() {
+                acknowledge_google_play_one_time_from_webhook(repo, ctx).await?;
+            }
 
             Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()))
         }
