@@ -1,5 +1,5 @@
 use crate::application;
-use crate::application::verify_purchase_types::{VerifyPurchaseRequest, VerifyPurchaseResponse};
+use crate::application::verify_purchase_types::{ProductType, VerifyPurchaseRequest, VerifyPurchaseResponse};
 use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::state::AppState;
@@ -21,8 +21,9 @@ pub async fn verify_purchase(
         payload.clone(),
     )
     .await?;
+    let product_type = ProductType::parse(&payload.product_type)?;
     let status_code = if payload.provider == "google_play"
-        && (payload.product_type == "one_time" || payload.product_type == "inapp")
+        && !product_type.is_subscription()
         && response.status == "pending"
     {
         StatusCode::ACCEPTED
