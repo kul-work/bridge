@@ -26,14 +26,6 @@ The DB payment upsert unconditionally applies the incoming status for the same u
 
 Advice: make one-time payment status monotonic in the source-of-truth write path. At minimum, do not allow terminal/stronger states like `success`, `refunded`, or `cancelled` to regress to `pending`.
 
-### 3. Blocker for real Google flow: pending purchases are acknowledged too early, while webhook completion may not acknowledge
-
-The application layer acknowledges any Google purchase whose acknowledgement state is pending. For one-time products, that can include `purchaseState: 2` pending slow-card purchases.
-
-In mock mode this marks `acknowledged_at` even while the payment is still pending. In production, Google may reject acknowledgement before the purchase is completed; the later one-time-product purchased webhook records success but does not appear to acknowledge the product.
-
-Advice: only acknowledge one-time products once `purchaseState == 0` / Bridge status is non-pending. Also ensure the RTDN completion path acknowledges, or guarantees a post-completion verify happens before Google’s acknowledgement deadline.
-
 ### 4. Medium: handler `202 Accepted` decision bypasses product type normalization
 
 The handler returns `202` only for raw `product_type == "one_time"` or `"inapp"`, while the parser accepts normalized aliases such as `"one-time"`, uppercase variants, and trimmed input.
@@ -46,13 +38,4 @@ The OTP-04 shell script sends `X-Mock-Google-Purchase-Response`, but the Rust mo
 
 Advice: either wire the header intentionally in mock/test-only code or remove it from the harness/docs and use the supported environment-based fixture mechanism.
 
-## Positive notes
 
-- Moving one-time `is_new` detection from subscription existence to payment existence is directionally correct because one-time products should not create subscription rows.
-- Moving `get_payment_status_for_provider` into `PaymentReadRepository` compiled cleanly and removes a duplicate webhook-specific method.
-- Returning `202 Accepted` for pending Google one-time verification is the right API shape, once the product type normalization issue is addressed.
-
-## Verification run during review
-
-- `cargo check` passed.
-- `cargo test verify_purchase` passed: 4 tests passed.
