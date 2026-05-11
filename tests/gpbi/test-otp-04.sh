@@ -50,6 +50,7 @@ REPORT_FILE="otp-04-report.json"
 WAIT_FOR_APPROVAL=false
 REPLAY_OTP=false
 APPROVE_ONLY=false
+REGRESSION_CHECKED=false
 MOCK_RTDN_FIXTURE=""
 APP_URL="$BRIDGE_API_URL"
 DB_URL="$BRIDGE_DB_URL"
@@ -135,6 +136,40 @@ send_approval_webhook() {
     fi
 }
 
+assert_success_not_downgraded_after_verify_retry() {
+    local regression_user_id="$1"
+
+    echo -e "${YELLOW}[Regression] Retrying verify-purchase after success must not downgrade payment status${NC}"
+
+    VERIFY_RESPONSE_REGRESSION=$(curl -s -w "\n%{http_code}" -X POST \
+      "$APP_URL/api/v1/verify-purchase" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $BRIDGE_API_KEY" \
+      -d "{
+        \"provider\": \"$PROVIDER\",
+        \"external_user_id\": \"$regression_user_id\",
+        \"subscription_id\": \"$PRODUCT_ID\",
+        \"purchase_token\": \"$DUMMY_TOKEN\",
+        \"product_type\": \"inapp\"
+      }")
+
+    REGRESSION_HTTP_CODE=$(echo "$VERIFY_RESPONSE_REGRESSION" | tail -n1)
+    if [[ "$REGRESSION_HTTP_CODE" != "200" && "$REGRESSION_HTTP_CODE" != "202" ]]; then
+        echo -e "${RED}[FAIL] Regression verify retry failed with HTTP $REGRESSION_HTTP_CODE${NC}"
+        echo "$VERIFY_RESPONSE_REGRESSION"
+        exit 1
+    fi
+
+    REGRESSION_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE provider = '$PROVIDER' AND provider_transaction_id = '$DUMMY_TOKEN' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+    if [[ "$REGRESSION_STATUS" != "success" ]]; then
+        echo -e "${RED}[FAIL] Regression: successful OTP was downgraded to $REGRESSION_STATUS after verify retry${NC}"
+        exit 1
+    fi
+
+    REGRESSION_CHECKED=true
+    echo -e "${GREEN}[OK] Success remained monotonic after verify retry${NC}"
+}
+
 if [[ "$APPROVE_ONLY" == "true" ]]; then
     echo -e "${YELLOW}========================================${NC}"
     echo "OTP-04: Approval Simulation"
@@ -173,6 +208,7 @@ if [[ "$APPROVE_ONLY" == "true" ]]; then
         FINAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE provider = '$PROVIDER' AND provider_transaction_id = '$DUMMY_TOKEN' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
         echo "  Status: $FINAL_STATUS"
         if [[ "$FINAL_STATUS" == "success" ]]; then
+            assert_success_not_downgraded_after_verify_retry "$APPROVAL_USER_ID"
             echo -e "${GREEN}✓ OTP-04 approval applied${NC}"
             exit 0
         fi
@@ -412,6 +448,7 @@ echo ""
 if [[ "$REPLAY_OTP" == "true" || "$WAIT_FOR_APPROVAL" == "true" ]]; then
     if [[ "$FINAL_STATUS" == "success" ]]; then
         echo -e "${GREEN}✓ Status transition verified: $INITIAL_STATUS → $FINAL_STATUS${NC}"
+        assert_success_not_downgraded_after_verify_retry "$USER_ID"
     else
         echo -e "${RED}✗ Status did not transition to success${NC}"
         echo "  Current status: $FINAL_STATUS"
@@ -465,6 +502,7 @@ cat > "$REPORT_FILE" <<EOF
     "database_record_created": true,
     "initial_state_pending": $([ "$INITIAL_STATUS" == "pending" ] && echo "true" || echo "false"),
     "status_transition_to_success": $([ "$FINAL_STATUS" == "success" ] && echo "true" || echo "false"),
+    "success_not_downgraded_after_verify_retry": $REGRESSION_CHECKED,
     "payment_acknowledged": $([ -n "$ACKNOWLEDGED_AT" ] && echo "true" || echo "false"),
     "no_subscription_rows": $([ "$SUBSCRIPTION_COUNT" == "0" ] && echo "true" || echo "false"),
     "token_matches": true

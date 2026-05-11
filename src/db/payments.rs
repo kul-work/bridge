@@ -68,7 +68,15 @@ pub async fn record_payment_tx(
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
          ON CONFLICT (app_id, provider, provider_transaction_id)
          DO UPDATE SET
-           status = EXCLUDED.status,
+           status = CASE
+             WHEN payments.status = 'refunded' AND EXCLUDED.status IN ('pending', 'success', 'cancelled')
+               THEN payments.status
+             WHEN payments.status = 'cancelled' AND EXCLUDED.status IN ('pending', 'success')
+               THEN payments.status
+             WHEN payments.status = 'success' AND EXCLUDED.status = 'pending'
+               THEN payments.status
+             ELSE EXCLUDED.status
+           END,
            subscription_id = COALESCE(EXCLUDED.subscription_id, payments.subscription_id),
            product_id = COALESCE(EXCLUDED.product_id, payments.product_id),
            amount_cents = CASE WHEN EXCLUDED.amount_cents > 0 THEN EXCLUDED.amount_cents ELSE payments.amount_cents END,
