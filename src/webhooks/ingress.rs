@@ -160,7 +160,7 @@ pub async fn handle_google_play(
         .unwrap_or(true);
 
     // Only allow header override in test/mock mode (MOCK_EXTERNAL_APIS=true)
-    let verify_signature = if std::env::var("MOCK_EXTERNAL_APIS").as_deref() == Ok("true") {
+    let verify_signature = if crate::config::mock_external_apis_enabled() {
         // Priority 1: Request header override (X-Webhook-Verification-Mode: strict/off) - test mode only
         headers
             .get("X-Webhook-Verification-Mode")
@@ -341,7 +341,7 @@ pub async fn handle_creem(
         .unwrap_or(true);
 
     // Only allow header override in test/mock mode (MOCK_EXTERNAL_APIS=true)
-    let verify_signature = if std::env::var("MOCK_EXTERNAL_APIS").as_deref() == Ok("true") {
+    let verify_signature = if crate::config::mock_external_apis_enabled() {
         // Priority 1: Request header override (X-Webhook-Verification-Mode: strict/off) - test mode only
         headers
             .get("X-Webhook-Verification-Mode")

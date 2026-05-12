@@ -275,7 +275,7 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     }
 
     // Skip API call in mock mode
-    if std::env::var("MOCK_EXTERNAL_APIS").as_deref() == Ok("true") {
+    if crate::config::mock_external_apis_enabled() {
         tracing::info!("MOCK_EXTERNAL_APIS: Skipping Google Play API enrichment in webhook processing");
 
         if webhook.event_type == "SUBSCRIPTION_RENEWED" && fields.current_period_end.is_none() {
@@ -422,7 +422,7 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     // 3. Google Play Strategy 3 (obfuscated_account_id lookup)
     if webhook.provider == "google_play" {
         // Skip real Google API call in mock mode
-        if std::env::var("MOCK_EXTERNAL_APIS").as_deref() == Ok("true") {
+        if crate::config::mock_external_apis_enabled() {
             info!("MOCK_EXTERNAL_APIS: Skipping Google Play obfuscated_account_id lookup in resolve_user");
         } else if let Some(ref token) = webhook.purchase_token {
             if let Ok(config) = repo.get_provider_config(app_id, "google_play").await {

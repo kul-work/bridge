@@ -31,15 +31,6 @@ impl Config {
                 .map_err(|e| anyhow::anyhow!("Failed to parse {} as u16: {}", key, e))
         }
 
-        fn parse_bool_env(key: &str, default: bool) -> Result<bool> {
-            let raw = env::var(key).unwrap_or_else(|_| default.to_string());
-            match raw.to_ascii_lowercase().as_str() {
-                "1" | "true" | "yes" | "on" => Ok(true),
-                "0" | "false" | "no" | "off" => Ok(false),
-                _ => Err(anyhow::anyhow!("Failed to parse {} as bool: {}", key, raw)),
-            }
-        }
-
         Ok(Config {
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql://localhost/bridge".to_string()),
@@ -55,4 +46,17 @@ impl Config {
             enable_background_jobs: parse_bool_env("ENABLE_BACKGROUND_JOBS", true)?,
         })
     }
+}
+
+pub fn parse_bool_env(key: &str, default: bool) -> Result<bool> {
+    let raw = env::var(key).unwrap_or_else(|_| default.to_string());
+    match raw.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(anyhow::anyhow!("Failed to parse {} as bool: {}", key, raw)),
+    }
+}
+
+pub fn mock_external_apis_enabled() -> bool {
+    parse_bool_env("MOCK_EXTERNAL_APIS", false).unwrap_or(false)
 }

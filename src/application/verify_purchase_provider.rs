@@ -51,7 +51,7 @@ async fn verify_google_play(
     external_user_id: &str,
     config: &serde_json::Value,
 ) -> Result<VerificationOutcome, BridgeError> {
-    if mock_external_apis_enabled() {
+    if crate::config::mock_external_apis_enabled() {
         return mock_verify_google_play(subscription_id, purchase_token, product_type, external_user_id);
     }
 
@@ -169,7 +169,7 @@ pub(crate) async fn acknowledge_google_play(
     product_type: ProductType,
     config: &serde_json::Value,
 ) -> Result<(), BridgeError> {
-    if mock_external_apis_enabled() {
+    if crate::config::mock_external_apis_enabled() {
         return Ok(());
     }
 
@@ -185,16 +185,6 @@ pub(crate) async fn acknowledge_google_play(
             .await
             .map_err(|e| BridgeError::ProviderError(format!("Google Play acknowledgement failed: {}", e))),
     }
-}
-
-fn mock_external_apis_enabled() -> bool {
-    matches!(
-        std::env::var("MOCK_EXTERNAL_APIS")
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str(),
-        "1" | "true" | "yes" | "on"
-    )
 }
 
 fn google_package_name(config: &serde_json::Value) -> Result<&str, BridgeError> {

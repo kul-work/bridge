@@ -90,6 +90,13 @@ pub async fn acknowledge_subscription(
 ) -> Result<(), BridgeError> {
     match provider {
         "google_play" => {
+            if crate::config::mock_external_apis_enabled() {
+                info!(
+                    "MOCK_EXTERNAL_APIS: Skipping Google Play subscription acknowledgement via API"
+                );
+                return Ok(());
+            }
+
             let service_account_path = config_str(config, "service_account_json", "Google Play")?;
             let package_name = config_str(config, "package_name", "Google Play")?;
 
