@@ -16,39 +16,6 @@ The remaining risk is not that the database mutation path is completely untested
 
 ## Findings
 
-### 1. Snapshot endpoint is effectively untested
-
-The audit asks for direct coverage of:
-
-```text
-GET /api/v1/users/{external_user_id}/subscription-status
-```
-
-Current GPBI access tests still call:
-
-```text
-GET /api/v1/subscriptions?external_user_id=...
-```
-
-and infer access by grepping subscription statuses.
-
-Current examples:
-
-- `tests/gpbi/test-acc-01.sh` calls `/api/v1/subscriptions?external_user_id=...` for allowed states.
-- `tests/gpbi/test-acc-02.sh` calls `/api/v1/subscriptions?external_user_id=...` for blocked states.
-
-This misses the direct snapshot contract implemented by `src/application/subscription_status.rs`, including:
-
-- `is_premium`
-- `payment_failure_notification`
-- `revoked_at`
-- `revocation_reason`
-- `google_new_price_cents`
-- `google_price_step_up_consent_deadline`
-- `google_pause_scheduled_at`
-- `google_deferred_until`
-- `last_event_time`
-
 ### 2. Callback payload fields are not end-to-end contract tested
 
 The normalized callback contract includes fields such as:
@@ -81,36 +48,6 @@ These tests are useful, but they do not cover the contract boundary that apps co
 
 ## Recommended Test Additions
 
-### 1. Add a dedicated snapshot endpoint test
-
-Add a GPBI test, for example:
-
-```text
-tests/gpbi/test-acc-snapshot.sh
-```
-
-It should insert or create subscriptions for each state, call:
-
-```text
-GET /api/v1/users/$USER_ID/subscription-status
-```
-
-and assert:
-
-- `active` -> `is_premium=true`
-- `trial` -> `is_premium=true`
-- `past_due` -> `is_premium=true`
-- `pending` -> `is_premium=false`
-- `on_hold` -> `is_premium=false`
-- `paused` -> `is_premium=false`
-- `expired` -> `is_premium=false`
-- `revoked` -> `is_premium=false`, with non-null `revoked_at` and `revocation_reason='REFUND'`
-
-It should also assert Google lifecycle fields when present:
-
-- price step-up pending includes `google_new_price_cents` and `google_price_step_up_consent_deadline`
-- pause scheduled includes `google_pause_scheduled_at`
-- deferred includes `google_deferred_until`
 
 ### 2. Extend lifecycle tests with snapshot assertions
 
