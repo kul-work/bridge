@@ -26,6 +26,7 @@ pub trait SchedulerRepository: Send + Sync {
         app_id: Uuid,
         subscription_id: &str,
         new_status: &str,
+        current_period_end: Option<chrono::DateTime<chrono::Utc>>,
         event_time_ms: i64,
     ) -> Result<bool, BridgeError>;
 

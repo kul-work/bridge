@@ -153,7 +153,7 @@ fn normalize_google_status(raw: &str) -> String {
         "SUBSCRIPTION_STATE_ACTIVE" => "active".to_string(),
         "SUBSCRIPTION_STATE_CANCELED" => "cancelled".to_string(),
         "SUBSCRIPTION_STATE_IN_GRACE_PERIOD" => "past_due".to_string(),
-        "SUBSCRIPTION_STATE_ON_HOLD" => "past_due".to_string(),
+        "SUBSCRIPTION_STATE_ON_HOLD" => "on_hold".to_string(),
         "SUBSCRIPTION_STATE_PAUSED" => "paused".to_string(),
         "SUBSCRIPTION_STATE_PENDING" => "pending".to_string(),
         "SUBSCRIPTION_STATE_EXPIRED" => "expired".to_string(),

@@ -198,7 +198,7 @@ async fn reconcile_app_subscriptions(
         .await;
 
         match provider_result {
-            Ok((provider_status, _)) => {
+            Ok((provider_status, provider_period_end)) => {
                 let current_db_status = sub.status.clone();
 
                 if current_db_status != provider_status {
@@ -213,6 +213,7 @@ async fn reconcile_app_subscriptions(
                             app_id,
                             &sub.subscription_id,
                             &provider_status,
+                            provider_period_end,
                             event_time_ms,
                         )
                         .await?;

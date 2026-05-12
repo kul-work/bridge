@@ -35,6 +35,7 @@ impl SchedulerRepository for db::Database {
         app_id: Uuid,
         subscription_id: &str,
         new_status: &str,
+        current_period_end: Option<chrono::DateTime<chrono::Utc>>,
         event_time_ms: i64,
     ) -> Result<bool, BridgeError> {
         db::subscriptions::update_subscription_status(
@@ -42,6 +43,7 @@ impl SchedulerRepository for db::Database {
             app_id,
             subscription_id,
             new_status,
+            current_period_end,
             event_time_ms,
         )
         .await

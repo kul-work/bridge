@@ -1281,15 +1281,21 @@ pub async fn update_subscription_status(
     app_id: Uuid,
     subscription_id: &str,
     new_status: &str,
+    current_period_end: Option<DateTime<Utc>>,
     event_time_ms: i64,
 ) -> Result<bool, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let result = sqlx::query(
         "UPDATE pay.subscriptions
-         SET status = $1, version = version + 1, last_event_time = $2, updated_at = NOW()
-         WHERE app_id = $3 AND subscription_id = $4 AND last_event_time < $2"
+         SET status = $1,
+             current_period_end = COALESCE($2, current_period_end),
+             version = version + 1,
+             last_event_time = $3,
+             updated_at = NOW()
+         WHERE app_id = $4 AND subscription_id = $5 AND last_event_time < $3"
     )
     .bind(new_status)
+    .bind(current_period_end)
     .bind(event_time_ms)
     .bind(app_id)
     .bind(subscription_id)
