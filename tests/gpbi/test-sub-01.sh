@@ -43,6 +43,7 @@ DUMMY_TOKEN="test-sub-01-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 REPORT_FILE="sub-01-report.json"
 USER_ID="${USER_ID:-test_sub_user_01_$TEST_RUN_ID}"
+TEST_STATUS="fail"
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-01: Bridge Initial Subscription Purchase"
@@ -50,6 +51,9 @@ echo -e "${YELLOW}========================================${NC}"
 echo ""
 echo "Test Run ID: $TEST_RUN_ID"
 echo ""
+
+bridge_log_marker "BEGIN test === SUB-01, run id $TEST_RUN_ID"
+trap 'bridge_log_marker "END test === SUB-01, run id $TEST_RUN_ID - $TEST_STATUS"' EXIT
 
 # Step 1: External User ID
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
@@ -158,4 +162,5 @@ EOF
 echo -e "${GREEN}✓ SUB-01 Bridge Test PASSED${NC}"
 echo "Report saved to: $REPORT_FILE"
 cat "$REPORT_FILE"
+TEST_STATUS="pass"
 exit 0

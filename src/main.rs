@@ -146,15 +146,20 @@ async fn main() -> anyhow::Result<()> {
         .with_state(app_state.clone());
 
     // Build app
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/health", get(health_check))
         .nest("/admin", admin_routes)
         .nest("/api/v1", protected_routes)
         .nest("/webhooks", webhooks::webhook_routes())
         .layer(ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
-        )
-        .with_state(app_state);
+        );
+
+    if config.mock_external_apis {
+        app = app.nest("/internal/test", handlers::test_log::routes());
+    }
+
+    let app = app.with_state(app_state);
 
     // Start server
     let addr = SocketAddr::from((

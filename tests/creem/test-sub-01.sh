@@ -60,12 +60,17 @@ if [[ -z "$USER_ID" ]]; then
     USER_ID="creem_user_$TEST_RUN_ID"
 fi
 
+TEST_STATUS="fail"
+
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-01: Initial Subscription (Active)"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 echo "Test Run ID: $TEST_RUN_ID"
 echo ""
+
+bridge_log_marker "BEGIN test === SUB-01, run id $TEST_RUN_ID"
+trap 'bridge_log_marker "END test === SUB-01, run id $TEST_RUN_ID - $TEST_STATUS"' EXIT
 
 # Step 1: User Identity
 echo -e "${YELLOW}[1/5] Using External User ID: $USER_ID (Email: $EMAIL)${NC}"
@@ -177,5 +182,6 @@ echo -e "${GREEN}✓ SUB-01 PASSED${NC}"
 echo "Report saved to: $REPORT_FILE"
 cat "$REPORT_FILE"
 echo ""
+TEST_STATUS="pass"
 exit 0
 
