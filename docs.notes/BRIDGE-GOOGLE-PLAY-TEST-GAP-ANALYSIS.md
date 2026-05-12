@@ -78,21 +78,6 @@ Examples:
 
 These tests are useful, but they do not cover the contract boundary that apps consume.
 
-### 4. Google test plan still points testers toward the weaker status check
-
-The Google Play test plan's "API Endpoints for Status Checks" lists:
-
-- `GET /api/v1/subscriptions`
-- `POST /api/v1/verify-purchase`
-- `GET /api/v1/subscriptions/:subscription_id`
-
-It does not list:
-
-```text
-GET /api/v1/users/:external_user_id/subscription-status
-```
-
-That omission likely contributed to the current shell tests using list-subscription responses as the entitlement contract.
 
 ## Recommended Test Additions
 
@@ -157,21 +142,3 @@ Implementation options:
 - If testing through HiHa, assert the recorded callback payload in HiHa's callback/audit table.
 - As a lower-value fallback, assert the outbound payload in Bridge delivery diagnostics only when a deterministic capture path is unavailable.
 
-### 4. Update the Google Play test plan
-
-Update `docs/google/GOOGLE_PLAY_BILLING_TESTPLAN.md` so the status-check endpoint list includes:
-
-```text
-GET /api/v1/users/:external_user_id/subscription-status
-```
-
-The test plan should make clear that `/api/v1/subscriptions` is a subscription listing API, while `/api/v1/users/:external_user_id/subscription-status` is the app-facing entitlement snapshot contract.
-
-## Suggested Priority
-
-1. Snapshot endpoint state matrix.
-2. Snapshot lifecycle-field checks in existing Google lifecycle tests.
-3. Callback body capture for revoke, pause scheduled, deferred, and price step-up.
-4. Test plan documentation update.
-
-This order closes the app-facing entitlement risk first, then expands coverage to the callback contract.
