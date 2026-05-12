@@ -112,10 +112,10 @@ sleep 2
 
 # 4. Verify Notification Flag (TRUE)
 echo -e "${YELLOW}[3/5] Verifying Notification Flag = TRUE${NC}"
-STATUS_RESP=$(curl -s -X GET "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
+STATUS_RESP=$(curl -s -X GET "$BRIDGE_API_URL/api/v1/users/$USER_ID/subscription-status" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "x-client-version: 99.99.0")
-FLAG=$(echo "$STATUS_RESP" | jq -r '.subscriptions[0].payment_failure_notification')
+FLAG=$(echo "$STATUS_RESP" | jq -r '.payment_failure_notification')
 
 if [[ "$FLAG" == "true" ]]; then
     echo -e "${GREEN}✓ Notification active${NC}"
@@ -167,10 +167,10 @@ fi
 
 # 6. Verify Notification Flag (FALSE)
 echo -e "${YELLOW}[5/5] Verifying Notification Flag = FALSE${NC}"
-STATUS_RESP_FINAL=$(curl -s -X GET "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
+STATUS_RESP_FINAL=$(curl -s -X GET "$BRIDGE_API_URL/api/v1/users/$USER_ID/subscription-status" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "x-client-version: 99.99.0")
-FLAG_FINAL=$(echo "$STATUS_RESP_FINAL" | jq -r '.subscriptions[0].payment_failure_notification')
+FLAG_FINAL=$(echo "$STATUS_RESP_FINAL" | jq -r '.payment_failure_notification')
 
 if [[ "$FLAG_FINAL" == "false" || "$FLAG_FINAL" == "null" ]]; then
     echo -e "${GREEN} Notification cleared${NC}"

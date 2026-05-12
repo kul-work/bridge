@@ -41,9 +41,9 @@ curl -s -X POST "$API_URL/api/v1/verify-purchase" \
   }' | jq .
 echo ""
 
-# Test 4: GET /api/v1/subscriptions (requires auth)
-echo "4. List Subscriptions"
-curl -s -X GET "$API_URL/api/v1/subscriptions?external_user_id=user_123&limit=10" \
+# Test 4: GET /api/v1/users/:id/subscription-status (requires auth)
+echo "4. Get Subscription Status Snapshot"
+curl -s -X GET "$API_URL/api/v1/users/user_123/subscription-status" \
   -H "Authorization: Bearer $API_KEY" | jq .
 echo ""
 
@@ -53,9 +53,10 @@ curl -s -X GET "$API_URL/api/v1/subscriptions/sub_123?external_user_id=user_123"
   -H "Authorization: Bearer $API_KEY" | jq .
 echo ""
 
+
 # Test 6: Missing Auth
 echo "6. Test Missing Authorization"
-curl -s -X GET "$API_URL/api/v1/subscriptions?external_user_id=user_123" | jq .
+curl -s -X GET "$API_URL/api/v1/users/user_123/subscription-status" | jq .
 echo ""
 
 echo "=== Tests Complete ==="

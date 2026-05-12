@@ -1,5 +1,6 @@
 use serde::Serialize;
 use uuid::Uuid;
+use chrono::Utc;
 
 use crate::config::MAX_PAGINATION_LIMIT;
 use crate::db::subscriptions::Subscription;
@@ -89,7 +90,18 @@ pub async fn get_subscription_status_snapshot<R: SubscriptionReadRepository + ?S
 }
 
 fn subscription_is_premium(sub: &Subscription) -> bool {
-    matches!(sub.status.as_str(), "active" | "trial" | "past_due")
+    match sub.status.as_str() {
+        "active" | "trial" | "past_due" => true,
+        "cancelled" => {
+            // Cancelled but pre-expiry (still has access)
+            if let Some(expiry) = sub.current_period_end {
+                expiry > Utc::now()
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
 }
 
 fn snapshot_status_rank(status: &str) -> i32 {

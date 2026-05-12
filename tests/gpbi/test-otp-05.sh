@@ -247,7 +247,7 @@ echo ""
 echo -e "${YELLOW}[6/7] Checking status via /api/v1/subscriptions endpoint${NC}"
 
 STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
-  "$APP_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
+  "$APP_URL/api/v1/users/$USER_ID/subscription-status" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   )
 

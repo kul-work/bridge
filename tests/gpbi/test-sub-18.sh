@@ -100,15 +100,15 @@ echo ""
 echo -e "${YELLOW}[2/5] Simulating Device B login: fetching subscription status${NC}"
 
 STATUS_RESPONSE=$(curl -s -X GET \
-  "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
+  "$BRIDGE_API_URL/api/v1/users/$USER_ID/subscription-status" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "X-Device-ID: device-b-18-$(date +%s)")
 
 # Verify response
-if echo "$STATUS_RESPONSE" | grep -qi '"active"'; then
-    echo -e "${GREEN}✓ Success: Device B identifies subscription as 'active'${NC}"
+if echo "$STATUS_RESPONSE" | grep -qi '"is_premium":true'; then
+    echo -e "${GREEN}✓ Success: Device B identifies subscription as 'is_premium: true'${NC}"
 else
-    echo -e "${RED}✗ Failure: Status API did not return 'active' for Device B. Response: $STATUS_RESPONSE${NC}"
+    echo -e "${RED}✗ Failure: Status API did not return premium status for Device B. Response: $STATUS_RESPONSE${NC}"
     exit 1
 fi
 echo ""

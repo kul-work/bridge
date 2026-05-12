@@ -84,8 +84,8 @@ psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_
 echo -e "${GREEN}✓ DB updated${NC}"
 
 # Step 3: Verify access via Bridge API
-echo -e "${YELLOW}[3/4] Verifying access via Bridge API${NC}"
-RESPONSE=$(curl -s -X GET "$APP_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
+# Check Bridge API
+RESPONSE=$(curl -s -X GET "$APP_URL/api/v1/users/$USER_ID/subscription-status" \
   -H "Authorization: Bearer $BRIDGE_API_KEY")
 
 STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | head -n 1 | cut -d'"' -f4 || echo "")

@@ -89,8 +89,8 @@ test_revoked_access() {
           VALUES ('$USER_ID', '$PRODUCT_ID_SUB', '$status', 'creem', false, '$expiry_date', '$BRIDGE_APP_ID');" > /dev/null
 
     # Check Bridge API
-    echo "  Checking Bridge API GET /api/v1/subscriptions..."
-    local RESPONSE=$(curl -s -X GET "$APP_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
+    echo "  Checking Bridge API GET /api/v1/users/:id/subscription-status..."
+    local RESPONSE=$(curl -s -X GET "$APP_URL/api/v1/users/$USER_ID/subscription-status" \
       -H "Authorization: Bearer $BRIDGE_API_KEY")
     
     local RETURNED_STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | head -n 1 | cut -d'"' -f4 || echo "")

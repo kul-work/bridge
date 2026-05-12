@@ -125,8 +125,9 @@ test_subscription_state() {
     
     echo "  Subscription set to: $state"
     
+    # Call /api/v1/users/:id/subscription-status to check entitlement
     local STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
-      "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
+      "$BRIDGE_API_URL/api/v1/users/$USER_ID/subscription-status" \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $BRIDGE_API_KEY" \
       )
@@ -140,25 +141,12 @@ test_subscription_state() {
     
     echo "  subscription-status HTTP: $STATUS_HTTP_CODE"
     
-    local PREMIUM_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
-      "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER_ID" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $BRIDGE_API_KEY" \
-      )
-    
-    local PREMIUM_HTTP_CODE=$(echo "$PREMIUM_RESPONSE" | tail -n1)
-    
-    echo "  Premium feature (story) HTTP: $PREMIUM_HTTP_CODE"
-    
-    # In Bridge, access is denied if there are NO 'active' or 'past_due' or 'cancelled' (pre-expiry) subscriptions.
-    local access_result="granted"
+    # In Bridge, the snapshot endpoint returns is_premium=true/false
+    local access_result="denied"
     if [[ "$STATUS_HTTP_CODE" == "200" ]]; then
-        # Check if the list contains ANY active-like status
-        if ! (echo "$STATUS_BODY" | grep -qi "\"status\":\"active\"" || echo "$STATUS_BODY" | grep -qi "\"status\":\"past_due\"" || echo "$STATUS_BODY" | grep -qi "\"status\":\"cancelled\""); then
-             access_result="denied"
+        if echo "$STATUS_BODY" | jq -e '.is_premium == true' > /dev/null; then
+             access_result="granted"
         fi
-    else
-        access_result="denied"
     fi
     
     if [[ "$access_result" == "$expected_access" ]]; then

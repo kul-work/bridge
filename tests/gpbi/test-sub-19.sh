@@ -101,13 +101,13 @@ echo ""
 echo -e "${YELLOW}[2/5] Simulating User 2 login: fetching subscription status${NC}"
 
 STATUS_RESPONSE=$(curl -s -X GET \
-  "$BRIDGE_API_URL/api/v1/subscriptions?external_user_id=$USER2_ID" \
+  "$BRIDGE_API_URL/api/v1/users/$USER2_ID/subscription-status" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -H "X-Device-ID: shared-device-19")
 
 echo "Response for User 2: $STATUS_RESPONSE"
 
-if echo "$STATUS_RESPONSE" | grep -qi '"active"'; then
+if echo "$STATUS_RESPONSE" | grep -qi '"is_premium":true'; then
     echo -e "${GREEN}✓ Strategy Detected: Shared Access (User 2 has access)${NC}"
 else
     echo -e "${YELLOW}ℹ Strategy Detected: Exclusive Access (User 2 denied access)${NC}"
