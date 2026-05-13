@@ -12,11 +12,13 @@ No code changes were made as part of this analysis.
 
 The audit findings are valid. Bridge has implementation paths for the app-facing subscription snapshot endpoint and normalized callback fields, but the Google Play shell tests still primarily validate database side effects and list-subscription responses.
 
+The app-facing snapshot endpoint is `/api/v1/users/:external_user_id/subscription-status`. It already exposes Google lifecycle fields such as `google_new_price_cents`, `google_pause_scheduled_at`, `google_deferred_until`, and `revocation_reason`; the gap is that the Google lifecycle shell tests do not assert this endpoint after webhook scenarios.
+
 The remaining risk is not that the database mutation path is completely untested. The risk is that Bridge can correctly update `pay.subscriptions` while still breaking the app-facing contracts used by HiHa and future Tyde apps.
 
 ## Findings
 
-### 2. Callback payload fields are not end-to-end contract tested
+### 1. Callback payload fields are not end-to-end contract tested
 
 The normalized callback contract includes fields such as:
 
@@ -31,9 +33,9 @@ Current coverage includes a Rust serialization unit test for Google lifecycle fi
 
 It does not prove that real webhook scenarios populate the fields, enqueue them, and deliver them to the app callback URL.
 
-The GPBI `NET-05` test verifies `pay.webhook_delivery.forwarded`, `last_http_status`, and `last_error`. It does not validate the callback JSON body received by the app.
+The GPBI `NET-05` test verifies that a webhook was delivered by checking `pay.webhook_delivery.forwarded`, `last_http_status`, and `last_error`. It does not validate that the correct callback JSON body was delivered to the app.
 
-### 3. Existing lifecycle tests stop at database validation
+### 2. Existing lifecycle tests stop at database validation
 
 Several Google lifecycle tests verify the canonical database row but do not assert the app-facing payloads.
 
@@ -49,7 +51,7 @@ These tests are useful, but they do not cover the contract boundary that apps co
 ## Recommended Test Additions
 
 
-### 2. Extend lifecycle tests with snapshot assertions
+### 1. Extend lifecycle tests with snapshot assertions
 
 After existing database assertions, add snapshot checks to these tests:
 
@@ -57,11 +59,12 @@ After existing database assertions, add snapshot checks to these tests:
 - `test-sub-pause-01.sh`: assert `is_premium=true` and `google_pause_scheduled_at`.
 - `test-sub-pause-02.sh`: assert `is_premium=false` for paused state.
 - `test-sub-25.sh`: assert `is_premium=true` and `google_deferred_until`.
-- price step-up test: assert `google_new_price_cents` and `google_price_step_up_consent_deadline`.
+- `test-sub-21.sh`: assert price step-up consent snapshot fields, including `google_new_price_cents` and `google_price_step_up_consent_deadline`.
+- `test-sub-20.sh`, if used for new-price renewal behavior: assert the snapshot reflects the expected Google new-price fields after the renewal scenario.
 
-These checks should call the snapshot endpoint directly, not `/api/v1/subscriptions`.
+These checks should call `/api/v1/users/:external_user_id/subscription-status` directly, not `/api/v1/subscriptions`.
 
-### 3. Add callback body capture for selected scenarios
+### 2. Add callback body capture for selected scenarios
 
 Extend the callback delivery tests to validate the actual normalized JSON body received by the app.
 
@@ -75,7 +78,12 @@ Recommended scenarios:
 
 Implementation options:
 
-- Use a lightweight local callback receiver during GPBI tests and assert captured JSON.
+- Preferred: use a lightweight local callback receiver during GPBI tests and assert captured JSON.
 - If testing through HiHa, assert the recorded callback payload in HiHa's callback/audit table.
-- As a lower-value fallback, assert the outbound payload in Bridge delivery diagnostics only when a deterministic capture path is unavailable.
+- As a lower-value fallback, assert the outbound payload in Bridge delivery diagnostics only when a deterministic capture path is unavailable. `pay.webhook_delivery` records delivery metadata, not the normalized outbound body.
 
+## Suggested Priority
+
+1. Add callback body capture for one high-value lifecycle event first, such as refund/revocation.
+2. Add snapshot assertions to the DB-only lifecycle tests.
+3. Expand callback body assertions to pause, deferred, cancellation, and price step-up scenarios.
