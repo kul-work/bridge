@@ -1,5 +1,18 @@
 # Release Notes
 
+## [0.3.1] - 2026-05-14
+### Features
+- **Google Play**: Handle pending one-time purchase verification with 202 responses and OTP-04 replay/polling coverage.
+
+### Fixes
+- **Google Play**: Enforce acknowledgement lifecycle for subscriptions and one-time products, including mock-mode-safe retry handling.
+- **Subscriptions**: Preserve provider period end during reconciliation and avoid stale lifecycle downgrades.
+- **Payments**: Prevent approved OTP payments from being downgraded by later pending verification retries.
+
+### Improvements
+- **Testing**: Expand provider callback, Google lifecycle snapshot, and provider status change coverage.
+- **Documentation**: Refresh API contract, configuration, billing test plan, and architecture notes.
+
 ## [0.3.0] - 2026-05-09
 ### Features
 - **Lifecycle Emails**: Wire email dispatch for paused, resumed, and refunded events with retry logic and transient lookup recovery.
