@@ -15,6 +15,7 @@
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#   - jq installed and in PATH
 #
 # TESTPLAN Reference:
 #   Expected Behavior: price_step_up_consent_updated (notificationType 22) is processed.
@@ -29,6 +30,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/globals.cfg"
 
+if ! command -v jq >/dev/null 2>&1; then
+    echo "jq is required for SUB-21 snapshot assertions"
+    exit 1
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -42,6 +48,9 @@ TEST_RUN_ID="sub-21-${TIMESTAMP}-$$"
 DUMMY_TOKEN="test-sub-21-trial-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 REPORT_FILE="sub-21-report.json"
+NEW_PRICE_CENTS=1299
+NEW_PRICE_MICROS=$((NEW_PRICE_CENTS * 10000))
+CONSENT_DEADLINE_MS=$(($(date +%s) + 604800))000
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-21: Price Step-Up Consent (Korea Only)"
@@ -52,7 +61,7 @@ echo ""
 
 # Step 1: External User ID
 USER_ID="test_sub_user_01"
-echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
+echo -e "${GREEN}PASS: Testing with User ID: $USER_ID${NC}"
 echo ""
 
 # Step 2: Clean up previous test data
@@ -95,7 +104,7 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"product_type\": \"subscription\"
   }" )
 
-echo -e "${GREEN}✓ Trial subscription established${NC}"
+echo -e "${GREEN}PASS: Trial subscription established${NC}"
 echo ""
 
 # Step 4: Simulate price_step_up_consent_updated (notificationType 22)
@@ -110,7 +119,11 @@ NOTIFICATION_JSON=$(cat <<EOF
     "version": "1.0",
     "notificationType": 22,
     "purchaseToken": "$DUMMY_TOKEN",
-    "subscriptionId": "$PRODUCT_ID"
+    "subscriptionId": "$PRODUCT_ID",
+    "priceStepUpConsentDetails": {
+      "priceMicros": $NEW_PRICE_MICROS,
+      "consentDeadlineTimeMillis": $CONSENT_DEADLINE_MS
+    }
   }
 }
 EOF
@@ -128,7 +141,7 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
     }
   }" > /dev/null
 
-echo -e "${GREEN}✓ Consent notification webhook sent${NC}"
+echo -e "${GREEN}PASS: Consent notification webhook sent${NC}"
 echo ""
 
 # Step 5: Simulate price_changed (notificationType 8) - user accepted
@@ -161,7 +174,7 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
     }
   }" > /dev/null
 
-echo -e "${GREEN}✓ Price changed webhook sent${NC}"
+echo -e "${GREEN}PASS: Price changed webhook sent${NC}"
 echo ""
 
 # Step 6: Verify final subscription state
@@ -171,9 +184,36 @@ STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$
   -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
 
 if [[ "$STATUS" == "active" ]] || [[ "$STATUS" == "trial" ]]; then
-    echo -e "${GREEN}✓ Success: Subscription status is $STATUS (valid state for Korea)${NC}"
+    echo -e "${GREEN}PASS: Subscription status is $STATUS (valid state for Korea)${NC}"
 else
-    echo -e "${RED}✗ Failure: Subscription status is $STATUS, expected 'active' or 'trial'${NC}"
+    echo -e "${RED}FAIL: Subscription status is $STATUS, expected 'active' or 'trial'${NC}"
+    exit 1
+fi
+echo ""
+
+# Step 7: Verify app-facing subscription snapshot
+echo -e "${YELLOW}[5/5] Verifying price step-up snapshot contract${NC}"
+STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
+  "$BRIDGE_API_URL/api/v1/users/$USER_ID/subscription-status" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY")
+
+STATUS_HTTP_CODE=$(echo "$STATUS_RESPONSE" | tail -n1)
+STATUS_BODY=$(echo "$STATUS_RESPONSE" | sed '$d')
+
+if [[ "$STATUS_HTTP_CODE" != "200" ]]; then
+    echo -e "${RED}FAIL: subscription-status returned HTTP $STATUS_HTTP_CODE${NC}"
+    echo "$STATUS_BODY"
+    exit 1
+fi
+
+if echo "$STATUS_BODY" | jq -e \
+  --argjson new_price "$NEW_PRICE_CENTS" \
+  '.is_premium == true and (.status == "active" or .status == "trial") and .google_requires_price_step_up_consent == true and .google_new_price_cents == $new_price and .google_price_step_up_consent_deadline != null' > /dev/null; then
+    echo -e "${GREEN}PASS: Snapshot shows price step-up consent fields${NC}"
+else
+    echo -e "${RED}FAIL: Price step-up snapshot contract mismatch${NC}"
+    echo "$STATUS_BODY" | jq .
     exit 1
 fi
 echo ""
@@ -190,11 +230,12 @@ cat > "$REPORT_FILE" <<EOF
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,
   "verify_http_code": $VERIFY_HTTP_CODE,
-  "automatic_upgrade_verified": true
+  "automatic_upgrade_verified": true,
+  "snapshot_verified": true
 }
 EOF
 
-echo -e "${GREEN}✓ SUB-21 Bridge Test PASSED${NC}"
+echo -e "${GREEN}PASS: SUB-21 Bridge Test PASSED${NC}"
 echo "Report saved to: $REPORT_FILE"
 cat "$REPORT_FILE"
 exit 0

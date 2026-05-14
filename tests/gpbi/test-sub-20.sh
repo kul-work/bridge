@@ -15,6 +15,7 @@
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#   - jq installed and in PATH
 #
 # TESTPLAN Reference:
 #   Expected Behavior: subscription.price_change_updated (notificationType 19) is logged.
@@ -28,6 +29,11 @@ set -euo pipefail
 # Source global configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/globals.cfg"
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "jq is required for SUB-20 snapshot assertions"
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -53,7 +59,7 @@ echo ""
 
 # Step 1: External User ID
 USER_ID="test_sub_user_01"
-echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
+echo -e "${GREEN}PASS: Testing with User ID: $USER_ID${NC}"
 echo ""
 
 # Step 2: Clean up previous test data
@@ -94,7 +100,7 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"product_type\": \"subscription\"
   }" )
 
-echo -e "${GREEN}✓ Active subscription established${NC}"
+echo -e "${GREEN}PASS: Active subscription established${NC}"
 echo ""
 
 # Step 4: Send price_change_updated webhook
@@ -127,7 +133,7 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
     }
   }" > /dev/null
 
-echo -e "${GREEN}✓ Price change webhook sent${NC}"
+echo -e "${GREEN}PASS: Price change webhook sent${NC}"
 echo ""
 
 # Step 5: Simulate renewal with new price
@@ -162,7 +168,7 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
     }
   }" > /dev/null
 
-echo -e "${GREEN}✓ Renewal webhook sent${NC}"
+echo -e "${GREEN}PASS: Renewal webhook sent${NC}"
 echo ""
 
 # Step 6: Verify payment record with updated amount
@@ -172,9 +178,35 @@ LATEST_PAYMENT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PO
   -c "SELECT amount_cents FROM pay.payments WHERE external_user_id = '$USER_ID' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
 
 if [[ "$LATEST_PAYMENT" == "$NEW_PRICE_CENTS" ]]; then
-    echo -e "${GREEN}✓ Success: Latest payment amount is $LATEST_PAYMENT cents${NC}"
+    echo -e "${GREEN}PASS: Latest payment amount is $LATEST_PAYMENT cents${NC}"
 else
-    echo -e "${RED}✗ Failure: Latest payment amount is $LATEST_PAYMENT cents, expected $NEW_PRICE_CENTS${NC}"
+    echo -e "${RED}FAIL: Latest payment amount is $LATEST_PAYMENT cents, expected $NEW_PRICE_CENTS${NC}"
+    exit 1
+fi
+echo ""
+
+# Step 7: Verify app-facing subscription snapshot
+echo -e "${YELLOW}[5/5] Verifying active post-renewal snapshot contract${NC}"
+STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
+  "$BRIDGE_API_URL/api/v1/users/$USER_ID/subscription-status" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY")
+
+STATUS_HTTP_CODE=$(echo "$STATUS_RESPONSE" | tail -n1)
+STATUS_BODY=$(echo "$STATUS_RESPONSE" | sed '$d')
+
+if [[ "$STATUS_HTTP_CODE" != "200" ]]; then
+    echo -e "${RED}FAIL: subscription-status returned HTTP $STATUS_HTTP_CODE${NC}"
+    echo "$STATUS_BODY"
+    exit 1
+fi
+
+if echo "$STATUS_BODY" | jq -e \
+  '.is_premium == true and .status == "active" and .google_new_price_cents == null and .google_price_step_up_consent_deadline == null' > /dev/null; then
+    echo -e "${GREEN}PASS: Snapshot shows active access with no pending price step-up fields${NC}"
+else
+    echo -e "${RED}FAIL: Post-renewal snapshot contract mismatch${NC}"
+    echo "$STATUS_BODY" | jq .
     exit 1
 fi
 echo ""
@@ -191,11 +223,12 @@ cat > "$REPORT_FILE" <<EOF
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,
   "verify_http_code": $VERIFY_HTTP_CODE,
-  "price_change_verified": true
+  "price_change_verified": true,
+  "snapshot_verified": true
 }
 EOF
 
-echo -e "${GREEN}✓ SUB-20 Bridge Test PASSED${NC}"
+echo -e "${GREEN}PASS: SUB-20 Bridge Test PASSED${NC}"
 echo "Report saved to: $REPORT_FILE"
 cat "$REPORT_FILE"
 exit 0
