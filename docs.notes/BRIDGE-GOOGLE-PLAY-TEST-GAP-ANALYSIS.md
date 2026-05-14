@@ -1,6 +1,7 @@
 # Bridge Google Play Test Gap Analysis
 
 **Date**: 2026-05-11
+**Updated**: 2026-05-14
 
 ## Scope
 
@@ -10,11 +11,11 @@ No code changes were made as part of this analysis.
 
 ## Summary
 
-The audit findings are valid. Bridge has implementation paths for the app-facing subscription snapshot endpoint and normalized callback fields, but the Google Play shell tests still primarily validate database side effects and list-subscription responses.
+The original audit finding about missing Google lifecycle snapshot assertions is no longer current. Bridge has implementation paths for the app-facing subscription snapshot endpoint and normalized callback fields, and the relevant Google Play shell tests now assert the app-facing subscription snapshot after webhook scenarios.
 
-The app-facing snapshot endpoint is `/api/v1/users/:external_user_id/subscription-status`. It already exposes Google lifecycle fields such as `google_new_price_cents`, `google_pause_scheduled_at`, `google_deferred_until`, and `revocation_reason`; the gap is that the Google lifecycle shell tests do not assert this endpoint after webhook scenarios.
+The app-facing snapshot endpoint is `/api/v1/users/:external_user_id/subscription-status`. It exposes Google lifecycle fields such as `google_new_price_cents`, `google_pause_scheduled_at`, `google_deferred_until`, and `revocation_reason`; the named Google lifecycle shell tests now call this endpoint directly.
 
-The remaining risk is not that the database mutation path is completely untested. The risk is that Bridge can correctly update `pay.subscriptions` while still breaking the app-facing contracts used by HiHa and future Tyde apps.
+The remaining risk is callback delivery-body coverage. Bridge can correctly update `pay.subscriptions` and expose the correct subscription snapshot while still delivering an incomplete or incorrectly mapped callback JSON payload to HiHa and future Tyde apps.
 
 ## Findings
 
@@ -35,18 +36,31 @@ It does not prove that real webhook scenarios populate the fields, enqueue them,
 
 The GPBI `NET-05` test verifies that a webhook was delivered by checking `pay.webhook_delivery.forwarded`, `last_http_status`, and `last_error`. It does not validate that the correct callback JSON body was delivered to the app.
 
+### 2. Snapshot lifecycle assertions are now covered
+
+The previously recommended snapshot assertions are now present in the GPBI lifecycle tests:
+
+- `tests/gpbi/test-sub-09.sh`: asserts revoked snapshot fields, including `is_premium=false`, `status="revoked"`, `revocation_reason="REFUND"`, and `revoked_at`.
+- `tests/gpbi/test-sub-pause-01.sh`: asserts `is_premium=true`, `status="active"`, and `google_pause_scheduled_at`.
+- `tests/gpbi/test-sub-pause-02.sh`: asserts `is_premium=false` and `status="paused"`.
+- `tests/gpbi/test-sub-25.sh`: asserts `is_premium=true`, `status="active"`, and `google_deferred_until`.
+- `tests/gpbi/test-sub-21.sh`: asserts price step-up consent snapshot fields, including `google_requires_price_step_up_consent`, `google_new_price_cents`, and `google_price_step_up_consent_deadline`.
+- `tests/gpbi/test-sub-20.sh`: asserts the post-renewal snapshot remains active and has no pending price step-up fields.
+
+There is also a broader snapshot contract test in `tests/test-acc-google-snapshot.sh`, but that test seeds database rows directly. It validates the endpoint contract, not the webhook-to-snapshot flow.
+
 ## Recommended Test Additions
 
-### 1. Extend lifecycle tests with snapshot assertions
+### 1. Validate delivered callback JSON bodies
 
-After existing database assertions, add snapshot checks to these tests:
+Add end-to-end assertions that inspect the actual callback JSON body delivered to the app callback URL for representative Google lifecycle scenarios.
 
-- `test-sub-09.sh`: assert revoked snapshot fields.
-- `test-sub-pause-01.sh`: assert `is_premium=true` and `google_pause_scheduled_at`.
-- `test-sub-pause-02.sh`: assert `is_premium=false` for paused state.
-- `test-sub-25.sh`: assert `is_premium=true` and `google_deferred_until`.
-- `test-sub-21.sh`: assert price step-up consent snapshot fields, including `google_new_price_cents` and `google_price_step_up_consent_deadline`.
-- `test-sub-20.sh`, if used for new-price renewal behavior: assert the snapshot reflects the expected Google new-price fields after the renewal scenario.
+At minimum, cover callback payloads for:
 
-These checks should call `/api/v1/users/:external_user_id/subscription-status` directly, not `/api/v1/subscriptions`.
+- revocation/refund: `revocation_reason`.
+- price step-up consent: `new_price_cents` and `google_price_step_up_consent_deadline`.
+- scheduled pause: `google_pause_scheduled_at`.
+- deferral: `google_deferred_until`.
+- cancellation modes where applicable: `cancellation_mode`.
 
+These checks should validate the delivered body content, not only `pay.webhook_delivery.forwarded`, `last_http_status`, or `last_error`.
