@@ -14,6 +14,7 @@
 #     * BRIDGE_API_KEY, BRIDGE_API_URL, WEBHOOK_INGRESS_TOKEN, BRIDGE_WEBHOOK_FUTURE_TS
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
+#   - jq installed and in PATH
 #
 # TESTPLAN Reference:
 #   Expected Behavior: subscription.pause_scheduled (11) is processed.
@@ -27,6 +28,11 @@ set -euo pipefail
 # Source global configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/globals.cfg"
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "jq is required for SUB-PAUSE-01 snapshot assertions"
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -51,7 +57,7 @@ echo ""
 
 # Step 1: External User ID
 USER_ID="test_sub_user_01"
-echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
+echo -e "${GREEN}PASS: Testing with User ID: $USER_ID${NC}"
 echo ""
 
 # Step 2: Clean up previous test data
@@ -92,7 +98,7 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"product_type\": \"subscription\"
   }")
 
-echo -e "${GREEN}✓ Active subscription established${NC}"
+echo -e "${GREEN}PASS: Active subscription established${NC}"
 echo ""
 
 # Step 4: Send Type 11 webhook (pause_scheduled)
@@ -129,7 +135,7 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
     }
   }" > /dev/null
 
-echo -e "${GREEN}✓ Pause scheduled webhook sent${NC}"
+echo -e "${GREEN}PASS: Pause scheduled webhook sent${NC}"
 echo ""
 
 # Step 5: Verify status remains 'active' and google_pause_scheduled_at is set
@@ -140,9 +146,35 @@ RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d 
 
 # Expected: active | t
 if [[ "$RES_DATA" == *"active"*"t"* ]]; then
-    echo -e "${GREEN}✓ Success: Status is still 'active' and pause date is set${NC}"
+    echo -e "${GREEN}PASS: Status is still 'active' and pause date is set${NC}"
 else
-    echo -e "${RED}✗ Failure: Pause state mismatch: $RES_DATA${NC}"
+    echo -e "${RED}FAIL: Pause state mismatch: $RES_DATA${NC}"
+    exit 1
+fi
+echo ""
+
+# Step 6: Verify app-facing subscription snapshot
+echo -e "${YELLOW}[4/5] Verifying active pause-scheduled snapshot contract${NC}"
+STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
+  "$BRIDGE_API_URL/api/v1/users/$USER_ID/subscription-status" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY")
+
+STATUS_HTTP_CODE=$(echo "$STATUS_RESPONSE" | tail -n1)
+STATUS_BODY=$(echo "$STATUS_RESPONSE" | sed '$d')
+
+if [[ "$STATUS_HTTP_CODE" != "200" ]]; then
+    echo -e "${RED}FAIL: subscription-status returned HTTP $STATUS_HTTP_CODE${NC}"
+    echo "$STATUS_BODY"
+    exit 1
+fi
+
+if echo "$STATUS_BODY" | jq -e \
+  '.is_premium == true and .status == "active" and .google_pause_scheduled_at != null' > /dev/null; then
+    echo -e "${GREEN}PASS: Snapshot shows active access with google_pause_scheduled_at${NC}"
+else
+    echo -e "${RED}FAIL: Pause-scheduled snapshot contract mismatch${NC}"
+    echo "$STATUS_BODY" | jq .
     exit 1
 fi
 echo ""
@@ -163,12 +195,13 @@ cat > "$REPORT_FILE" <<EOF
   "verify_http_code": $VERIFY_HTTP_CODE,
   "results": {
     "subscription_established": true,
-    "pause_scheduled": true
+    "pause_scheduled": true,
+    "snapshot_verified": true
   }
 }
 EOF
 
-echo -e "${GREEN}✓ SUB-PAUSE-01 Bridge Test PASSED${NC}"
+echo -e "${GREEN}PASS: SUB-PAUSE-01 Bridge Test PASSED${NC}"
 echo "Report saved to: $REPORT_FILE"
 cat "$REPORT_FILE"
 exit 0

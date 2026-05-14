@@ -11,6 +11,7 @@
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
 #   - globals.cfg sourced with required vars
+#   - jq installed and in PATH
 ##############################################################################
 
 set -euo pipefail
@@ -18,6 +19,11 @@ set -euo pipefail
 # Source global configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/globals.cfg"
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "jq is required for SUB-25 snapshot assertions"
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -56,7 +62,7 @@ echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: Ensure subscription record exists
-echo -e "${YELLOW}[1/3] Verifying subscription record exists${NC}"
+echo -e "${YELLOW}[1/4] Verifying subscription record exists${NC}"
 
 # Extract DB password if needed
 if [[ -n "${BRIDGE_DB_URL:-}" ]]; then
@@ -71,9 +77,18 @@ if [[ -z "$PURCHASE_TOKEN" ]]; then
     echo -e "${YELLOW}creating setup record for user $USER_ID, token: $PURCHASE_TOKEN...${NC}"
     psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
       -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, current_period_end, created_at, updated_at) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW() + INTERVAL '1 month', NOW(), NOW());" > /dev/null
-    echo -e "${GREEN}✓ Created test subscription record${NC}"
+    echo -e "${GREEN}PASS: Created test subscription record${NC}"
+else
+    USER_ID=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+      -c "SELECT external_user_id FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN' LIMIT 1;" -t | tr -d '[:space:]')
+
+    if [[ -z "$USER_ID" ]]; then
+        echo -e "${RED}FAIL: No subscription record found for token $PURCHASE_TOKEN${NC}"
+        exit 1
+    fi
 fi
 
+echo "User ID: $USER_ID"
 echo "Purchase Token: $PURCHASE_TOKEN"
 echo ""
 
@@ -101,7 +116,7 @@ NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || ech
 
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || echo -n "$NOTIFICATION_JSON" | base64)
 
-echo -e "${YELLOW}[2/3] Sending SUBSCRIPTION_DEFERRED webhook...${NC}"
+echo -e "${YELLOW}[2/4] Sending SUBSCRIPTION_DEFERRED webhook...${NC}"
 curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Verification-Mode: off" \
@@ -113,18 +128,44 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
     }
   }" > /dev/null
 
-echo -e "${GREEN}✓ Webhook sent${NC}"
+echo -e "${GREEN}PASS: Webhook sent${NC}"
 sleep 2
 
 # Step 3: Verify in DB
-echo -e "${YELLOW}[3/3] Verifying google_deferred_until in DB...${NC}"
+echo -e "${YELLOW}[3/4] Verifying google_deferred_until in DB...${NC}"
 DEFERRED_UNTIL=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
   -c "SELECT google_deferred_until FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t | tr -d '[:space:]')
 
 if [[ -n "$DEFERRED_UNTIL" && "$DEFERRED_UNTIL" != "" ]]; then
-    echo -e "${GREEN}✓ Success: google_deferred_until is set to $DEFERRED_UNTIL${NC}"
-    exit 0
+    echo -e "${GREEN}PASS: google_deferred_until is set to $DEFERRED_UNTIL${NC}"
 else
-    echo -e "${RED}✗ Failure: google_deferred_until is not set${NC}"
+    echo -e "${RED}FAIL: google_deferred_until is not set${NC}"
     exit 1
 fi
+
+# Step 4: Verify app-facing subscription snapshot
+echo -e "${YELLOW}[4/4] Verifying active deferred snapshot contract${NC}"
+STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
+  "$BRIDGE_API_URL/api/v1/users/$USER_ID/subscription-status" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BRIDGE_API_KEY")
+
+STATUS_HTTP_CODE=$(echo "$STATUS_RESPONSE" | tail -n1)
+STATUS_BODY=$(echo "$STATUS_RESPONSE" | sed '$d')
+
+if [[ "$STATUS_HTTP_CODE" != "200" ]]; then
+    echo -e "${RED}FAIL: subscription-status returned HTTP $STATUS_HTTP_CODE${NC}"
+    echo "$STATUS_BODY"
+    exit 1
+fi
+
+if echo "$STATUS_BODY" | jq -e \
+  '.is_premium == true and .status == "active" and .google_deferred_until != null' > /dev/null; then
+    echo -e "${GREEN}PASS: Snapshot shows active access with google_deferred_until${NC}"
+else
+    echo -e "${RED}FAIL: Deferred snapshot contract mismatch${NC}"
+    echo "$STATUS_BODY" | jq .
+    exit 1
+fi
+
+exit 0
