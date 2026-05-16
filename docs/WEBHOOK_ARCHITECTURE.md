@@ -39,8 +39,8 @@
 │    created_at TIMESTAMPTZ          ← ingestion time                          │
 │  }                                                                            │
 │                                                                               │
-│  UNIQUE (provider, provider_webhook_id)                                      │
-│  UNIQUE (provider, purchase_token, event_type)  ← Logic dedup                │
+│  UNIQUE (app_id, provider, provider_webhook_id)  ← Delivery dedup            │
+│  Never dedupe renewable events by purchase_token + event_type                │
 └─────────────────┬───────────────────────────────────────────────────────────┘
                   │ If NEW webhook
                   ▼

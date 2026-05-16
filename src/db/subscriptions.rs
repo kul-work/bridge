@@ -647,8 +647,10 @@ pub async fn upsert_subscription_tx(
             if existing_sub.last_event_time <= event_time_ms {
                 let updated = sqlx::query_as::<_, Subscription>(
                     "UPDATE pay.subscriptions
-                     SET status = $1, current_period_end = $2, auto_renewing = $3, payment_state = $4,
-                         provider_customer_id = $5,
+                     SET status = $1, current_period_end = COALESCE($2, current_period_end),
+                         auto_renewing = COALESCE($3, auto_renewing),
+                         payment_state = COALESCE($4, payment_state),
+                         provider_customer_id = COALESCE($5, provider_customer_id),
                          google_grace_period_start = CASE WHEN $1 = 'active' THEN NULL ELSE google_grace_period_start END,
                          google_grace_period_end = CASE WHEN $1 = 'active' THEN NULL ELSE google_grace_period_end END,
                          payment_failure_notification = CASE WHEN $1 = 'active' THEN false ELSE payment_failure_notification END,
@@ -688,11 +690,11 @@ pub async fn upsert_subscription_tx(
          ON CONFLICT (app_id, external_user_id, subscription_id, provider)
          DO UPDATE SET
            status = EXCLUDED.status,
-           current_period_end = EXCLUDED.current_period_end,
+           current_period_end = COALESCE(EXCLUDED.current_period_end, subscriptions.current_period_end),
            purchase_token = COALESCE(EXCLUDED.purchase_token, subscriptions.purchase_token),
-           auto_renewing = EXCLUDED.auto_renewing,
-           payment_state = EXCLUDED.payment_state,
-           provider_customer_id = EXCLUDED.provider_customer_id,
+           auto_renewing = COALESCE(EXCLUDED.auto_renewing, subscriptions.auto_renewing),
+           payment_state = COALESCE(EXCLUDED.payment_state, subscriptions.payment_state),
+           provider_customer_id = COALESCE(EXCLUDED.provider_customer_id, subscriptions.provider_customer_id),
            google_grace_period_start = CASE WHEN EXCLUDED.status = 'active' THEN NULL ELSE subscriptions.google_grace_period_start END,
            google_grace_period_end = CASE WHEN EXCLUDED.status = 'active' THEN NULL ELSE subscriptions.google_grace_period_end END,
            payment_failure_notification = CASE WHEN EXCLUDED.status = 'active' THEN false ELSE subscriptions.payment_failure_notification END,

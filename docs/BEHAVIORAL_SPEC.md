@@ -968,7 +968,7 @@ ON CONFLICT DO NOTHING
 - `rows_affected=0` → duplicate/existing webhook. Fetch the existing `webhook_provider` row and decide whether to ignore, resume processing, or resume forwarding.
 - `rows_affected=1` → new webhook. Process it asynchronously and mark `processed=true` only after handler completion.
 - Primary dedupe is app-scoped: `(app_id, provider, provider_webhook_id)`.
-- Secondary unique index `(app_id, provider, purchase_token, event_type)` catches token+type duplicates.
+- Do not dedupe by `(purchase_token, event_type)`: Google Play reuses purchase tokens across legitimate subscription renewals.
 - Forwarding/retry/dead-letter state is tracked in `webhook_delivery`, not `webhook_provider`.
 
 ---
@@ -1083,7 +1083,7 @@ Returns:
 | `subscriptions` | UUID | `(app_id, external_user_id, subscription_id, provider)`, `(app_id, purchase_token)` | Subscription lifecycle |
 | `payments` | UUID | `(app_id, provider, provider_transaction_id)` | Payment records |
 | `provider_configs` | UUID | `(app_id, provider)` | Per-app provider credentials/settings |
-| `webhook_provider` | UUID | `(app_id, provider, provider_webhook_id)`, `(app_id, provider, purchase_token, event_type)` | Provider webhook dedup + audit |
+| `webhook_provider` | UUID | `(app_id, provider, provider_webhook_id)` | Provider webhook dedup + audit |
 | `webhook_delivery` | UUID | `(webhook_provider_id)` | Callback forwarding, retry, and dead-letter state |
 
 ---

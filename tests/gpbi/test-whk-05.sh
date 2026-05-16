@@ -3,8 +3,9 @@
 ##############################################################################
 # WHK-05: Refund Idempotency Verification
 # 
-# Purpose: Verify that second refund webhooks for the SAME token but a 
-#          DIFFERENT message_id skip re-revocation logic.
+# Purpose: Verify that second refund webhooks for the SAME token but a
+#          DIFFERENT message_id are stored as distinct provider deliveries
+#          while refund/revocation side effects remain idempotent.
 #
 # Usage: ./test-whk-05.sh
 #
@@ -18,9 +19,9 @@
 #
 # TESTPLAN Reference:
 #   Expected Behavior: Second refund webhook results in HTTP 200/204.
-#                      No duplicate records or re-applied state.
-#                      Backend logic detects previous 'VOIDED_PURCHASE' processing.
-#                      Ensures robust idempotency across different deliveries.
+#                      Distinct provider message_ids create distinct ingress rows.
+#                      Payment/subscription refund state is not re-applied.
+#                      Ensures robust side-effect idempotency across deliveries.
 ##############################################################################
 
 set -euo pipefail
@@ -133,6 +134,8 @@ sleep 2
 
 PAYMENT_STATUS_1=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND provider_transaction_id = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
 SUB_STATUS_1=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
+PAYMENT_WEBHOOK_RECEIVED_AT_1=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COALESCE((EXTRACT(EPOCH FROM webhook_received_at) * 1000)::bigint::text, '') FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND provider_transaction_id = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+SUB_UPDATED_AT_1=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COALESCE((EXTRACT(EPOCH FROM updated_at) * 1000)::bigint::text, '') FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
 
 echo "After first refund: payment status = $PAYMENT_STATUS_1, subscription status = $SUB_STATUS_1"
 echo ""
@@ -159,12 +162,16 @@ sleep 2
 PAYMENT_STATUS_2=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND provider_transaction_id = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
 SUB_STATUS_2=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
 WEBHOOK_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.webhook_provider WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND purchase_token = '$PURCHASE_TOKEN' AND event_type = 'VOIDED_PURCHASE';" -t 2>/dev/null | tr -d ' ')
+PAYMENT_WEBHOOK_RECEIVED_AT_2=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COALESCE((EXTRACT(EPOCH FROM webhook_received_at) * 1000)::bigint::text, '') FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND provider_transaction_id = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+SUB_UPDATED_AT_2=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COALESCE((EXTRACT(EPOCH FROM updated_at) * 1000)::bigint::text, '') FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d ' ')
 
 echo "After second refund: payment status = $PAYMENT_STATUS_2, subscription status = $SUB_STATUS_2"
-echo "Webhook dedup rows for token/type: $WEBHOOK_COUNT"
+echo "Webhook rows for token/type: $WEBHOOK_COUNT"
+echo "Payment webhook_received_at unchanged: $([[ "$PAYMENT_WEBHOOK_RECEIVED_AT_1" == "$PAYMENT_WEBHOOK_RECEIVED_AT_2" ]] && echo "yes" || echo "no")"
+echo "Subscription updated_at unchanged: $([[ "$SUB_UPDATED_AT_1" == "$SUB_UPDATED_AT_2" ]] && echo "yes" || echo "no")"
 echo ""
 
-if [[ "$PAYMENT_STATUS_1" == "refunded" ]] && [[ "$PAYMENT_STATUS_2" == "refunded" ]] && [[ "$SUB_STATUS_1" == "revoked" ]] && [[ "$SUB_STATUS_2" == "revoked" ]] && [[ "$WEBHOOK_COUNT" == "1" ]]; then
+if [[ "$PAYMENT_STATUS_1" == "refunded" ]] && [[ "$PAYMENT_STATUS_2" == "refunded" ]] && [[ "$SUB_STATUS_1" == "revoked" ]] && [[ "$SUB_STATUS_2" == "revoked" ]] && [[ "$WEBHOOK_COUNT" == "2" ]] && [[ "$PAYMENT_WEBHOOK_RECEIVED_AT_1" == "$PAYMENT_WEBHOOK_RECEIVED_AT_2" ]] && [[ "$SUB_UPDATED_AT_1" == "$SUB_UPDATED_AT_2" ]]; then
     TEST_STATUS="pass"
     TEST_RESULT_MSG="${GREEN}[OK] WHK-05 Test PASSED${NC}"
 else
@@ -192,9 +199,11 @@ cat > "$REPORT_FILE" <<EOF
     "second_refund_payment_status": "$PAYMENT_STATUS_2",
     "second_refund_subscription_status": "$SUB_STATUS_2",
     "webhook_rows_for_token_and_type": $WEBHOOK_COUNT,
-    "idempotency_enforced": $([[ "$PAYMENT_STATUS_1" == "refunded" ]] && [[ "$PAYMENT_STATUS_2" == "refunded" ]] && [[ "$SUB_STATUS_1" == "revoked" ]] && [[ "$SUB_STATUS_2" == "revoked" ]] && [[ "$WEBHOOK_COUNT" == "1" ]] && echo "true" || echo "false")
+    "payment_webhook_received_at_unchanged": $([[ "$PAYMENT_WEBHOOK_RECEIVED_AT_1" == "$PAYMENT_WEBHOOK_RECEIVED_AT_2" ]] && echo "true" || echo "false"),
+    "subscription_updated_at_unchanged": $([[ "$SUB_UPDATED_AT_1" == "$SUB_UPDATED_AT_2" ]] && echo "true" || echo "false"),
+    "idempotency_enforced": $([[ "$PAYMENT_STATUS_1" == "refunded" ]] && [[ "$PAYMENT_STATUS_2" == "refunded" ]] && [[ "$SUB_STATUS_1" == "revoked" ]] && [[ "$SUB_STATUS_2" == "revoked" ]] && [[ "$WEBHOOK_COUNT" == "2" ]] && [[ "$PAYMENT_WEBHOOK_RECEIVED_AT_1" == "$PAYMENT_WEBHOOK_RECEIVED_AT_2" ]] && [[ "$SUB_UPDATED_AT_1" == "$SUB_UPDATED_AT_2" ]] && echo "true" || echo "false")
   },
-  "notes": "Repeated refund webhooks should not create duplicate token/event records or re-apply refund state."
+  "notes": "Distinct Google Pub/Sub message ids should be stored separately; repeated refund side effects should not be re-applied."
 }
 EOF
 

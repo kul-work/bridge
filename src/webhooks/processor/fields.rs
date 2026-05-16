@@ -50,7 +50,7 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                 .and_then(|v| v.as_i64())
                 .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
                 .map(|dt| dt.to_rfc3339()),
-            provider_transaction_id: p.pointer("/subscriptionNotification/purchaseToken")
+            provider_transaction_id: p.pointer("/subscriptionNotification/orderId")
                 .and_then(|v| v.as_str()).map(|s| s.to_string())
                 .or_else(|| p.pointer("/oneTimeProductNotification/purchaseToken")
                     .and_then(|v| v.as_str()).map(|s| s.to_string())),

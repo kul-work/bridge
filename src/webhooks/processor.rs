@@ -240,6 +240,44 @@ fn google_cancellation_context_from_resource(
     (None, None)
 }
 
+fn google_subscription_expiry_time(
+    resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
+) -> Option<String> {
+    resource
+        .line_items
+        .first()
+        .and_then(|line_item| line_item.expiry_time.clone())
+        .or_else(|| resource.expiry_time.clone())
+}
+
+fn google_subscription_transaction_id(
+    resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
+    provider_webhook_id: &str,
+) -> String {
+    resource
+        .latest_order_id
+        .clone()
+        .unwrap_or_else(|| format!("google_play_rtdn:{}", provider_webhook_id))
+}
+
+fn google_money_to_cents(money: &crate::services::google_play::models::Money) -> Option<i32> {
+    let units = money.units.as_deref().unwrap_or("0").parse::<i64>().ok()?;
+    let nanos = i64::from(money.nanos.unwrap_or(0));
+    let cents = units.checked_mul(100)?.checked_add(nanos / 10_000_000)?;
+    i32::try_from(cents).ok()
+}
+
+fn google_subscription_recurring_amount_cents(
+    resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
+) -> Option<i32> {
+    resource
+        .line_items
+        .first()
+        .and_then(|line_item| line_item.auto_renewing_plan.as_ref())
+        .and_then(|plan| plan.recurring_price.as_ref())
+        .and_then(google_money_to_cents)
+}
+
 async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     repo: &R,
     app_id: Uuid,
@@ -306,6 +344,10 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
             fields.amount_cents = Some(test_price as i32);
         }
 
+        if webhook.event_type.starts_with("SUBSCRIPTION_") && fields.provider_transaction_id.is_none() {
+            fields.provider_transaction_id = Some(format!("google_play_rtdn:{}", webhook.provider_webhook_id));
+        }
+
         return Ok(fields);
     }
 
@@ -319,7 +361,18 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     };
 
     if fields.current_period_end.is_none() {
-        fields.current_period_end = resource.expiry_time.clone();
+        fields.current_period_end = google_subscription_expiry_time(&resource);
+    }
+
+    if webhook.event_type.starts_with("SUBSCRIPTION_") {
+        fields.provider_transaction_id = Some(google_subscription_transaction_id(
+            &resource,
+            &webhook.provider_webhook_id,
+        ));
+    }
+
+    if fields.amount_cents.is_none() {
+        fields.amount_cents = google_subscription_recurring_amount_cents(&resource);
     }
 
     if fields.auto_renewing.is_none() {

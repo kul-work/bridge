@@ -140,9 +140,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 
 - **Subscriptions**: One row per (app_id, external_user_id, subscription_id, provider). Unique constraint on this tuple. `purchase_token` also unique (fraud prevention). Includes `payment_failure_notification` flag for tracking payment failure events.
 - **Payments**: One row per provider transaction. Atomic UPSERT with fraud detection (mismatched `external_user_id` returns 409).
-- **Webhook_provider**: Two unique constraints:
-  - `(provider, provider_webhook_id)` — prevents exact duplicates
-  - `(provider, purchase_token, event_type)` — catches token+type duplicates from multi-app scenarios
+- **Webhook_provider**: Unique constraint on `(app_id, provider, provider_webhook_id)` prevents exact provider delivery duplicates. Purchase token + event type is not a valid deduplication key for renewable subscriptions because providers such as Google Play reuse purchase tokens across renewal events.
 - **Webhook_delivery**: Tracks callback forwarding state with dead letter queue support. `dead_lettered` flag marks exhausted retries.
 - **Checkout_idempotency**: Prevents duplicate checkout requests via unique constraint on idempotency key.
 - **Concurrency**: Subscriptions use optimistic locking via `version` field. `last_event_time` guards against out-of-order events.

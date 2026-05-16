@@ -1,11 +1,11 @@
 #!/bin/bash
 
 ##############################################################################
-# WHK-06: Token-based Webhook Deduplication
+# WHK-06: Google Play Renewal Message Deduplication
 # 
 # Purpose: Verify that two Google Play renewal webhooks with different
-#          message_id values but the same logical purchase_token + event
-#          combination are deduplicated and do not create duplicate rows.
+#          message_id values but the same purchase_token + event type are
+#          both processed as distinct renewals.
 #
 # Usage: ./test-whk-06.sh
 #
@@ -17,12 +17,12 @@
 #     * BRIDGE_DB_HOST, BRIDGE_DB_PORT, BRIDGE_DB_NAME, BRIDGE_DB_USER
 #   - psql installed and in PATH
 #
-# TESTPLAN Reference:
-#   Expected Behavior: Second renewal webhook (for same token, novel message_id) results in HTTP 200/204.
-#                      No duplicate records are created in pay.webhook_provider or pay.payments.
-#                      Backend logic correctly detects previous processing for the specific token/event tuple.
-#                      Ensures infrastructure stability against duplicate logical notifications even if message_ids differ.
-#                      Validates that the (purchase_token, event_type) unique constraint handles deduplication correctly.
+# Expected Behavior:
+#   - Same message_id is idempotent.
+#   - Different message_id is a distinct Google Play renewal, even when
+#     purchase_token and event_type are reused.
+#   - pay.webhook_provider stores both renewal message ids.
+#   - pay.payments uses a per-event/order transaction id, not the purchase token.
 ##############################################################################
 
 set -euo pipefail
@@ -54,7 +54,7 @@ if [[ "$DB_URL" == *":"* ]]; then
 fi
 
 echo -e "${YELLOW}========================================${NC}"
-echo "WHK-06: Token-based Webhook Deduplication"
+echo "WHK-06: Google Play Renewal Message Deduplication"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 echo "Test Run ID: $TEST_RUN_ID"
@@ -77,7 +77,7 @@ echo -e "${YELLOW}[2/3] Setting up test subscription${NC}"
 PURCHASE_TOKEN="test-whk-06-token-$TEST_RUN_ID"
 
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.webhook_provider WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND purchase_token LIKE 'test-whk-06%';" 2>/dev/null
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND provider_transaction_id LIKE 'test-whk-06%';" 2>/dev/null
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND (provider_transaction_id LIKE 'test-whk-06%' OR provider_transaction_id LIKE 'google_play_rtdn:msg-whk-06%' OR external_user_id = '$USER_ID');" 2>/dev/null
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE app_id = '$APP_ID' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" 2>/dev/null
 
 INSERT_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$APP_ID', '$USER_ID', '$PRODUCT_ID', 'active', '$PURCHASE_TOKEN', '$PROVIDER', true, NOW(), NOW()) ON CONFLICT (app_id, external_user_id, subscription_id, provider) DO UPDATE SET status = 'active', purchase_token = EXCLUDED.purchase_token, auto_renewing = EXCLUDED.auto_renewing, updated_at = NOW();" 2>&1)
@@ -91,7 +91,7 @@ echo -e "${GREEN}[OK] Created subscription fixture${NC}"
 echo -e "${BLUE}Purchase token: $PURCHASE_TOKEN${NC}"
 echo ""
 
-echo -e "${YELLOW}[3/3] Sending duplicate renewal webhooks${NC}"
+echo -e "${YELLOW}[3/3] Sending distinct renewal webhooks${NC}"
 
 NOTIFICATION_JSON=$(cat <<EOF
 {
@@ -126,7 +126,7 @@ fi
 
 sleep 2
 
-COUNT_1=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND provider_transaction_id = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+COUNT_1=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 
 MESSAGE_ID_2="msg-whk-06-2-$TEST_RUN_ID"
 RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
@@ -145,15 +145,17 @@ fi
 
 sleep 2
 
-COUNT_2=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND provider_transaction_id = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+COUNT_2=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 WEBHOOK_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.webhook_provider WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND purchase_token = '$PURCHASE_TOKEN' AND event_type = 'SUBSCRIPTION_RENEWED';" -t 2>/dev/null | tr -d ' ')
+TOKEN_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND provider_transaction_id = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
 
 echo "After first webhook: $COUNT_1 payment record(s)"
 echo "After second webhook: $COUNT_2 payment record(s)"
 echo "Webhook dedup rows for token/type: $WEBHOOK_COUNT"
+echo "Payments using purchase token as transaction id: $TOKEN_PAYMENT_COUNT"
 echo ""
 
-if [[ "$COUNT_1" == "1" ]] && [[ "$COUNT_2" == "1" ]] && [[ "$WEBHOOK_COUNT" == "1" ]]; then
+if [[ "$COUNT_1" == "1" ]] && [[ "$COUNT_2" == "2" ]] && [[ "$WEBHOOK_COUNT" == "2" ]] && [[ "$TOKEN_PAYMENT_COUNT" == "0" ]]; then
     TEST_STATUS="pass"
     TEST_RESULT_MSG="${GREEN}[OK] WHK-06 Test PASSED${NC}"
 else
@@ -166,7 +168,7 @@ TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > "$REPORT_FILE" <<EOF
 {
   "test_id": "WHK-06",
-  "test_name": "Token-based Webhook Deduplication",
+  "test_name": "Google Play Renewal Message Deduplication",
   "test_run_id": "$TEST_RUN_ID",
   "started_at": "$TEST_STARTED_AT",
   "finished_at": "$TEST_FINISHED_AT",
@@ -181,9 +183,10 @@ cat > "$REPORT_FILE" <<EOF
     "second_webhook_http_code": $HTTP_CODE_2,
     "payment_count_after_second": $COUNT_2,
     "webhook_rows_for_token_and_type": $WEBHOOK_COUNT,
-    "deduplication_enforced": $([[ "$COUNT_1" == "1" ]] && [[ "$COUNT_2" == "1" ]] && [[ "$WEBHOOK_COUNT" == "1" ]] && echo "true" || echo "false")
+    "purchase_token_payment_count": $TOKEN_PAYMENT_COUNT,
+    "distinct_renewals_processed": $([[ "$COUNT_1" == "1" ]] && [[ "$COUNT_2" == "2" ]] && [[ "$WEBHOOK_COUNT" == "2" ]] && [[ "$TOKEN_PAYMENT_COUNT" == "0" ]] && echo "true" || echo "false")
   },
-  "notes": "The duplicate renewal should collapse to one token/event ingress row and one payment row."
+  "notes": "Distinct Google Play renewal message ids should not collapse by purchase_token + event_type."
 }
 EOF
 

@@ -239,6 +239,99 @@ fn test_creem_field_extraction_checkout_completed_one_time() {
 }
 
 #[test]
+fn test_google_play_subscription_field_extraction_does_not_use_purchase_token_as_transaction_id() {
+    let payload = serde_json::json!({
+        "subscriptionNotification": {
+            "subscriptionId": "hiha_monthly",
+            "purchaseToken": "shared_purchase_token",
+            "notificationType": 2
+        }
+    });
+
+    let webhook = WebhookProviderSnapshot {
+        provider: "google_play".to_string(),
+        provider_webhook_id: "19071854013335023".to_string(),
+        event_type: "SUBSCRIPTION_RENEWED".to_string(),
+        subscription_id: Some("hiha_monthly".to_string()),
+        purchase_token: Some("shared_purchase_token".to_string()),
+        payload,
+        processed: false,
+        timestamp_epoch_ms: Some(1778943638046),
+        suppressed: false,
+        suppressed_reason: None,
+    };
+
+    let fields = extract_webhook_fields(&webhook);
+
+    assert_eq!(fields.purchase_token, Some("shared_purchase_token".to_string()));
+    assert_eq!(fields.provider_transaction_id, None);
+}
+
+#[test]
+fn test_google_subscription_expiry_prefers_line_item_expiry() {
+    let resource = crate::services::google_play::models::SubscriptionPurchaseV2 {
+        expiry_time: Some("2026-05-16T14:30:34Z".to_string()),
+        line_items: vec![crate::services::google_play::models::SubscriptionLineItem {
+            product_id: "hiha_monthly".to_string(),
+            expiry_time: Some("2026-05-16T14:35:34Z".to_string()),
+            auto_renewing_plan: None,
+            offer_details: None,
+        }],
+        ..Default::default()
+    };
+
+    assert_eq!(
+        google_subscription_expiry_time(&resource),
+        Some("2026-05-16T14:35:34Z".to_string())
+    );
+}
+
+#[test]
+fn test_google_subscription_transaction_id_prefers_latest_order_id() {
+    let resource = crate::services::google_play::models::SubscriptionPurchaseV2 {
+        latest_order_id: Some("GPA.1234-5678-9012-34567".to_string()),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        google_subscription_transaction_id(&resource, "19071854013335023"),
+        "GPA.1234-5678-9012-34567"
+    );
+}
+
+#[test]
+fn test_google_subscription_transaction_id_falls_back_to_rtdn_message_id() {
+    let resource = crate::services::google_play::models::SubscriptionPurchaseV2::default();
+
+    assert_eq!(
+        google_subscription_transaction_id(&resource, "19071854013335023"),
+        "google_play_rtdn:19071854013335023"
+    );
+}
+
+#[test]
+fn test_google_subscription_recurring_amount_uses_integer_cents() {
+    let resource = crate::services::google_play::models::SubscriptionPurchaseV2 {
+        line_items: vec![crate::services::google_play::models::SubscriptionLineItem {
+            product_id: "hiha_monthly".to_string(),
+            expiry_time: None,
+            auto_renewing_plan: Some(crate::services::google_play::models::AutoRenewingPlan {
+                auto_renew_enabled: Some(true),
+                recurring_price: Some(crate::services::google_play::models::Money {
+                    currency_code: Some("USD".to_string()),
+                    units: Some("5".to_string()),
+                    nanos: Some(490_000_000),
+                }),
+            }),
+            offer_details: None,
+        }],
+        ..Default::default()
+    };
+
+    assert_eq!(google_subscription_recurring_amount_cents(&resource), Some(549));
+}
+
+#[test]
 fn test_creem_field_extraction_refund_with_amount_fallback() {
     let payload = serde_json::json!({
         "id": "evt_ref_123",

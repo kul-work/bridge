@@ -115,7 +115,9 @@ The actual idempotency key for Google Play Pub/Sub delivery should be the provid
 
 ## Required Fixes
 
-1. Remove or narrow `idx_webhook_provider_token_event_dedup`.
+Status: code fix applied. Live Google Play lifecycle verification is still pending.
+
+1. **FIXED**: Remove or narrow `idx_webhook_provider_token_event_dedup`.
 
    The safest immediate fix is to drop this index and rely on `(app_id, provider, provider_webhook_id)` for webhook idempotency.
 
@@ -123,7 +125,7 @@ The actual idempotency key for Google Play Pub/Sub delivery should be the provid
    DROP INDEX IF EXISTS pay.idx_webhook_provider_token_event_dedup;
    ```
 
-2. Remove the fallback duplicate lookup by `(purchase_token, event_type)` from `create_webhook_provider`.
+2. **FIXED**: Remove the fallback duplicate lookup by `(purchase_token, event_type)` from `create_webhook_provider`.
 
    After insert conflict, fetch the existing row only by:
 
@@ -133,7 +135,7 @@ The actual idempotency key for Google Play Pub/Sub delivery should be the provid
    AND provider_webhook_id = $3
    ```
 
-3. Add a regression test for repeated Google Play renewals.
+3. **FIXED**: Add a regression test for repeated Google Play renewals.
 
    The test should insert/process multiple `SUBSCRIPTION_RENEWED` events with:
 
@@ -150,7 +152,7 @@ The actual idempotency key for Google Play Pub/Sub delivery should be the provid
    - each renewal is processed
    - each renewal can be forwarded to the app
 
-4. Keep stale event suppression based on provider event time.
+4. **FIXED**: Keep stale event suppression based on provider event time.
 
    Deduplication and stale suppression are different concerns:
 
@@ -159,7 +161,7 @@ The actual idempotency key for Google Play Pub/Sub delivery should be the provid
 
    Do not use `(purchase_token, event_type)` as a duplicate proxy for renewable lifecycle events.
 
-5. Recheck `current_period_end` handling for Google Play v2.
+5. **FIXED IN CODE**: Recheck `current_period_end` handling for Google Play v2.
 
    During this run, Google Play API logs showed:
 
@@ -172,6 +174,8 @@ The actual idempotency key for Google Play Pub/Sub delivery should be the provid
    After fixing dedup, verify whether Bridge should read expiry from Google Play v2 `lineItems[].expiryTime` instead of a top-level expiry field.
 
 ## Related Issue: Renewal Expiry Is Not Propagated
+
+Status: **FIXED IN CODE**. Webhook enrichment now reads Google Play v2 `lineItems[].expiryTime` before falling back to top-level `expiryTime`. Live HiHa propagation still needs a full Google Play lifecycle run.
 
 The renewal dedup fix is necessary, but it is not enough to fix `hiha.users.premium_expires_at`.
 
@@ -217,7 +221,7 @@ GooglePlay subscription retrieved: state: Some("SUBSCRIPTION_STATE_ACTIVE"), exp
 
 So, after fixing renewal deduplication, Bridge would process all renewal events, but renewal callbacks could still carry `current_period_end = NULL` until the webhook enrichment path is changed to use `line_items[0].expiry_time` before falling back to `resource.expiry_time`.
 
-Required additional fix:
+Required additional fix: **FIXED**
 
 ```rust
 if fields.current_period_end.is_none() {
@@ -231,12 +235,14 @@ if fields.current_period_end.is_none() {
 
 Acceptance criteria for this related fix:
 
-- Each processed Google Play renewal updates `pay.subscriptions.current_period_end`.
-- Each forwarded renewal callback includes non-null `current_period_end` when Google Play v2 has `lineItems[].expiryTime`.
-- HiHa advances `hiha.users.premium_expires_at` on every renewal.
-- Final `SUBSCRIPTION_EXPIRED` still sets `hiha.users.is_premium = false`.
+- **FIXED IN CODE**: Each processed Google Play renewal updates `pay.subscriptions.current_period_end`.
+- **FIXED IN CODE**: Each forwarded renewal callback includes non-null `current_period_end` when Google Play v2 has `lineItems[].expiryTime`.
+- **PENDING LIVE VERIFICATION**: HiHa advances `hiha.users.premium_expires_at` on every renewal.
+- **PENDING LIVE VERIFICATION**: Final `SUBSCRIPTION_EXPIRED` still sets `hiha.users.is_premium = false`.
 
 ## Related Issue: Renewals Do Not Create Payment Rows
+
+Status: **FIXED IN CODE**. Google Play subscription webhook payments no longer use purchase token as the recurring transaction id; enrichment prefers `latestOrderId` and falls back to `google_play_rtdn:<message_id>`.
 
 `pay.payments` currently contains only one row for the full Google Play test lifecycle, even though Google Play Orders showed 7 orders and Gmail received 7 receipts.
 
@@ -266,14 +272,12 @@ provider_transaction_id: p.pointer("/subscriptionNotification/purchaseToken")
 
 Because the purchase token is reused across the subscription lifecycle, every renewal updates the same `pay.payments` row instead of creating one payment row per charge/order.
 
-Required additional fix:
+Required additional fix: **FIXED**
 
-- For Google Play subscription payments, use a per-order identifier, not the purchase token, as `provider_transaction_id`.
-- Prefer Google Play v2 `latestOrderId` from `SubscriptionPurchaseV2` when enriching webhook fields.
-- Keep `purchase_token` on `pay.subscriptions.purchase_token`; do not use it as the recurring payment transaction id.
-- If a renewal cannot be enriched with `latestOrderId`, choose an explicit fallback policy:
-  - either skip creating a payment row and log a warning, or
-  - use a synthetic id based on provider webhook id, such as `google_play_rtdn:<message_id>`, while marking that it is not a Play order id.
+- **FIXED**: For Google Play subscription payments, use a per-order identifier, not the purchase token, as `provider_transaction_id`.
+- **FIXED**: Prefer Google Play v2 `latestOrderId` from `SubscriptionPurchaseV2` when enriching webhook fields.
+- **FIXED**: Keep `purchase_token` on `pay.subscriptions.purchase_token`; do not use it as the recurring payment transaction id.
+- **FIXED**: If a renewal cannot be enriched with `latestOrderId`, use a synthetic id based on provider webhook id: `google_play_rtdn:<message_id>`.
 
 The preferred behavior for audit and reconciliation is one `pay.payments` row per Google Play order/charge:
 
@@ -287,13 +291,15 @@ The preferred behavior for audit and reconciliation is one `pay.payments` row pe
 
 Acceptance criteria for this related fix:
 
-- A full Google Play monthly test lifecycle with 7 Play Console orders creates 7 `pay.payments` rows.
-- Each row has a distinct `provider_transaction_id`.
-- Renewal rows do not overwrite the initial purchase row.
-- `amount_cents` is populated when available from Google Play order or recurring price data.
-- Fraud protection still prevents the same provider order id from being claimed by a different `external_user_id`.
+- **PENDING LIVE VERIFICATION**: A full Google Play monthly test lifecycle with 7 Play Console orders creates 7 `pay.payments` rows.
+- **FIXED IN CODE**: Each row has a distinct `provider_transaction_id`.
+- **FIXED IN CODE**: Renewal rows do not overwrite the initial purchase row.
+- **FIXED IN CODE**: `amount_cents` is populated when available from Google Play order or recurring price data.
+- **UNCHANGED / STILL COVERED BY EXISTING PAYMENT UPSERT**: Fraud protection still prevents the same provider order id from being claimed by a different `external_user_id`.
 
 ## Related Issue: Subscription Row Loses Known Nullable Fields
+
+Status: **FIXED IN CODE** for `upsert_subscription_tx` nullable lifecycle fields.
 
 `pay.subscriptions` correctly has only one row for this lifecycle. That part is expected: a subscription lifecycle is represented by one row keyed by app/user/subscription/provider and by purchase token.
 
@@ -360,10 +366,10 @@ SET status = $1,
 
 This can overwrite previously known values with `NULL` when a later webhook lacks that field. In this run, the first renewal had `current_period_end = NULL`, and the subscription row lost the initial expiry from verify purchase.
 
-Required fix:
+Required fix: **FIXED**
 
-- Preserve existing nullable values when incoming webhook data is absent.
-- Use `COALESCE` for fields where missing data should not erase known state:
+- **FIXED**: Preserve existing nullable values when incoming webhook data is absent.
+- **FIXED**: Use `COALESCE` for fields where missing data should not erase known state:
 
 ```sql
 current_period_end = COALESCE($2, current_period_end),
@@ -379,25 +385,29 @@ For terminal events, explicit false/status changes should still apply:
 
 Acceptance criteria for this related fix:
 
-- A renewal webhook with missing expiry must not erase an existing `current_period_end`.
-- A later enriched renewal with expiry must advance `current_period_end`.
-- Terminal events still update status and `auto_renewing = false`.
-- Existing Google account/link metadata must not be erased by lifecycle webhooks that do not contain those fields.
+- **FIXED IN CODE**: A renewal webhook with missing expiry must not erase an existing `current_period_end`.
+- **FIXED IN CODE**: A later enriched renewal with expiry must advance `current_period_end`.
+- **FIXED IN CODE**: Terminal events still update status and `auto_renewing = false`.
+- **FIXED IN CODE**: Existing Google account/link metadata must not be erased by lifecycle webhooks that do not contain those fields.
 
 ## Acceptance Criteria
 
-- A full monthly Google Play test lifecycle with 7 orders results in:
+- **PENDING LIVE VERIFICATION**: A full monthly Google Play test lifecycle with 7 orders results in:
   - initial activation
   - 6 processed/stored renewal webhooks
   - final cancellation/expiration events
-- `pay.webhook_provider` contains all distinct Google Pub/Sub message ids.
-- Bridge logs no longer say `Duplicate Google Play webhook already recovered` for legitimate renewals with new message ids.
-- HiHa receives all renewal callbacks or the intentional canonical callback for each renewal.
-- `pay.subscriptions.current_period_end` and `hiha.users.premium_expires_at` advance on renewal when Google provides expiry data.
+- **FIXED IN CODE**: `pay.webhook_provider` contains all distinct Google Pub/Sub message ids.
+- **FIXED IN CODE**: Bridge logs no longer say `Duplicate Google Play webhook already recovered` for legitimate renewals with new message ids.
+- **PENDING LIVE VERIFICATION**: HiHa receives all renewal callbacks or the intentional canonical callback for each renewal.
+- **FIXED IN CODE / PENDING HIHA VERIFICATION**: `pay.subscriptions.current_period_end` and `hiha.users.premium_expires_at` advance on renewal when Google provides expiry data.
 
 ## Files To Change
 
-- `migrations/12_add_webhook_provider_secondary_dedup.sql`
-- add a new migration to drop or replace `idx_webhook_provider_token_event_dedup`
-- `src/db/webhooks.rs`
-- tests around Google Play webhook ingestion/renewals
+- **CHANGED**: `migrations/12_add_webhook_provider_secondary_dedup.sql`
+- **ADDED**: `migrations/17_drop_webhook_provider_token_event_dedup.sql`
+- **CHANGED**: `src/db/webhooks.rs`
+- **CHANGED**: `src/db/subscriptions.rs`
+- **CHANGED**: `src/webhooks/processor.rs`
+- **CHANGED**: `src/webhooks/processor/fields.rs`
+- **CHANGED**: `src/webhooks/processor/tests.rs`
+- **CHANGED**: `tests/gpbi/test-whk-06.sh`
