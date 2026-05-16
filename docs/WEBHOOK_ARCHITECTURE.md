@@ -190,7 +190,7 @@ Process Webhook (dedup + ordering + normalization)
     ↓
 Create webhook_delivery task
     ↓
-Return 200 OK (immediately, for provider acknowledgement)
+Return 204 No Content (immediately, for provider acknowledgement)
 ```
 
 ### 2. FORWARDING (Bridge → App)
