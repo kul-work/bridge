@@ -195,8 +195,19 @@ pub async fn handle_google_play(
             })?;
 
         let service_account_path_owned = service_account_path.to_string();
+        let verify_audience = crate::config::parse_bool_env("GOOGLE_VERIFY_AUDIENCE", false)
+            .map_err(|e| BridgeError::ConfigError(e.to_string()))?;
+        let pub_sub_audience = std::env::var("GOOGLE_PUB_SUB_AUDIENCE").unwrap_or_default();
+        let skip_rsa_verification = crate::config::parse_bool_env("GOOGLE_SKIP_RSA_VERIFICATION", false)
+            .map_err(|e| BridgeError::ConfigError(e.to_string()))?;
+
         let client = tokio::task::spawn_blocking(move || {
-            crate::services::google_play::client::GooglePlayClient::new(&service_account_path_owned)
+            crate::services::google_play::client::GooglePlayClient::with_config(
+                &service_account_path_owned,
+                verify_audience,
+                pub_sub_audience,
+                skip_rsa_verification,
+            )
         })
         .await
         .map_err(|e| BridgeError::ProviderError(format!("Failed to spawn blocking task: {}", e)))?
@@ -223,18 +234,15 @@ pub async fn handle_google_play(
         BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
     })?;
 
-    let message_data = payload["message"]["data"].as_str().ok_or_else(|| {
-        error!("Missing message.data in Google Play webhook");
-        BridgeError::WebhookError("Missing message.data field".to_string())
-    })?;
+    let (mut google_play_event, pubsub_message_id) = decode_google_play_payload(&payload, &headers)?;
 
-    let decoded_message = decode_base64_flexible(message_data)
-        .map_err(|e| BridgeError::WebhookError(format!("Invalid message.data: {}", e)))?;
-
-    let mut google_play_event: serde_json::Value = serde_json::from_slice(&decoded_message).map_err(|e| {
-        error!("Failed to parse Google Play message.data payload: {}", e);
-        BridgeError::WebhookError(format!("Invalid Google Play message.data payload: {}", e))
-    })?;
+    if google_play_event.get("testNotification").is_some() {
+        info!(
+            message_id = pubsub_message_id.as_deref().unwrap_or("unknown"),
+            "Google Play test notification received; no-op"
+        );
+        return Ok(StatusCode::NO_CONTENT);
+    }
 
     // Inject test price override into payload for mock-mode enrichment
     if let Some(price_str) = headers.get("X-Test-Price-Cents").and_then(|h| h.to_str().ok()) {
@@ -243,9 +251,8 @@ pub async fn handle_google_play(
         }
     }
 
-    let event_id = payload["message"]["messageId"]
-        .as_str()
-        .or_else(|| payload["message"]["message_id"].as_str())
+    let event_id = pubsub_message_id
+        .as_deref()
         .or_else(|| google_play_event["eventId"].as_str())
         .ok_or_else(|| BridgeError::WebhookError("Missing provider event ID".to_string()))?;
 
@@ -453,6 +460,40 @@ fn decode_base64_flexible(input: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())
 }
 
+fn decode_google_play_payload(
+    payload: &serde_json::Value,
+    headers: &HeaderMap,
+) -> Result<(serde_json::Value, Option<String>), BridgeError> {
+    if payload.get("message").is_some() {
+        let message_data = payload["message"]["data"].as_str().ok_or_else(|| {
+            error!("Missing message.data in Google Play webhook");
+            BridgeError::WebhookError("Missing message.data field".to_string())
+        })?;
+
+        let decoded_message = decode_base64_flexible(message_data)
+            .map_err(|e| BridgeError::WebhookError(format!("Invalid message.data: {}", e)))?;
+
+        let google_play_event: serde_json::Value = serde_json::from_slice(&decoded_message).map_err(|e| {
+            error!("Failed to parse Google Play message.data payload: {}", e);
+            BridgeError::WebhookError(format!("Invalid Google Play message.data payload: {}", e))
+        })?;
+
+        let message_id = payload["message"]["messageId"]
+            .as_str()
+            .or_else(|| payload["message"]["message_id"].as_str())
+            .map(|s| s.to_string());
+
+        return Ok((google_play_event, message_id));
+    }
+
+    let message_id = headers
+        .get("x-goog-pubsub-message-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    Ok((payload.clone(), message_id))
+}
+
 fn extract_google_event_type(payload: &serde_json::Value) -> String {
     if let Some(notification_type) = payload["subscriptionNotification"]["notificationType"]
         .as_i64()
@@ -557,8 +598,58 @@ fn extract_header_value<'a>(headers: &'a HeaderMap, names: &[&str]) -> Option<&'
 #[cfg(test)]
 mod tests {
     use axum::http::{HeaderMap, HeaderValue};
+    use base64::Engine as _;
+    use serde_json::json;
 
-    use super::{duplicate_webhook_action, extract_header_value, DuplicateWebhookAction, CREEM_SIGNATURE_HEADERS};    
+    use super::{
+        decode_google_play_payload, duplicate_webhook_action, extract_header_value,
+        DuplicateWebhookAction, CREEM_SIGNATURE_HEADERS,
+    };
+
+    #[test]
+    fn decodes_wrapped_google_play_pubsub_payload() {
+        let headers = HeaderMap::new();
+        let google_event = json!({
+            "version": "1.0",
+            "packageName": "com.hiha.fe",
+            "eventTimeMillis": "1778936707956",
+            "testNotification": { "version": "1.0" }
+        });
+        let payload = json!({
+            "message": {
+                "messageId": "wrapped-message-id",
+                "data": base64::engine::general_purpose::STANDARD.encode(google_event.to_string())
+            },
+            "subscription": "projects/play/subscriptions/play-sub-dev"
+        });
+
+        let (decoded, message_id) = decode_google_play_payload(&payload, &headers).unwrap();
+
+        assert_eq!(message_id.as_deref(), Some("wrapped-message-id"));
+        assert_eq!(decoded["packageName"].as_str(), Some("com.hiha.fe"));
+        assert!(decoded.get("testNotification").is_some());
+    }
+
+    #[test]
+    fn accepts_unwrapped_google_play_pubsub_payload() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-goog-pubsub-message-id",
+            HeaderValue::from_static("unwrapped-message-id"),
+        );
+        let payload = json!({
+            "version": "1.0",
+            "packageName": "com.hiha.fe",
+            "eventTimeMillis": "1778936707956",
+            "testNotification": { "version": "1.0" }
+        });
+
+        let (decoded, message_id) = decode_google_play_payload(&payload, &headers).unwrap();
+
+        assert_eq!(message_id.as_deref(), Some("unwrapped-message-id"));
+        assert_eq!(decoded["packageName"].as_str(), Some("com.hiha.fe"));
+        assert!(decoded.get("testNotification").is_some());
+    }
 
     #[test]
     fn prefers_creem_signature_over_all_others() {

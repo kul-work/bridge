@@ -619,6 +619,7 @@ impl GooglePlayClient {
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&["https://accounts.google.com"]);
         validation.validate_exp = true;
+        validation.validate_aud = false;
 
         let verified = decode::<PubSubClaims>(token, &decoding_key, &validation)
             .map_err(|e| {
