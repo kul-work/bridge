@@ -71,6 +71,7 @@ pub struct WebhookPaymentRecordRequest<'a> {
     pub subscription_id: Option<&'a str>,
     pub product_id: Option<&'a str>,
     pub amount_cents: i32,
+    pub currency: Option<&'a str>,
     pub status: &'a str,
 }
 
@@ -133,5 +134,6 @@ pub struct OwnedWebhookPaymentRecord {
     pub subscription_id: Option<String>,
     pub product_id: Option<String>,
     pub amount_cents: i32,
+    pub currency: Option<String>,
     pub status: String,
 }

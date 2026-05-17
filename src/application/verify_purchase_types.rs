@@ -83,6 +83,7 @@ pub(crate) struct VerifiedPurchase {
     pub(crate) current_period_end: Option<DateTime<Utc>>,
     pub(crate) auto_renewing: Option<bool>,
     pub(crate) amount_cents: Option<i32>,
+    pub(crate) currency: Option<String>,
     pub(crate) payment_state: Option<i32>,
     pub(crate) acknowledgement: PaymentAcknowledgement,
     pub(crate) obfuscated_account_id: Option<String>,
@@ -129,6 +130,7 @@ pub(crate) struct VerifyPurchaseCommitRequest<'a> {
     pub google_obfuscated_account_id: Option<&'a str>,
     pub google_linked_purchase_token: Option<&'a str>,
     pub amount_cents: i32,
+    pub currency: Option<&'a str>,
     pub event_time_ms: i64,
     pub is_subscription: bool,
 }

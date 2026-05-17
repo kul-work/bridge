@@ -399,6 +399,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         subscription_id: ctx.fields.subscription_id.as_deref(),
                         product_id: ctx.fields.product_id.as_deref(),
                         amount_cents: ctx.fields.amount_cents.unwrap_or(0),
+                        currency: ctx.fields.currency.as_deref(),
                         status: "success",
                     }),
                     adopt_stale_payment,
@@ -920,6 +921,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         subscription_id: ctx.fields.subscription_id.as_deref(),
                         product_id: ctx.fields.product_id.as_deref(),
                         amount_cents: ctx.fields.amount_cents.unwrap_or(0),
+                        currency: ctx.fields.currency.as_deref(),
                         status: "price_changed",
                     })
                     .await;
@@ -959,6 +961,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     subscription_id: ctx.fields.subscription_id.as_deref(),
                     product_id: ctx.fields.product_id.as_deref(),
                     amount_cents: ctx.fields.amount_cents.unwrap_or(0),
+                    currency: ctx.fields.currency.as_deref(),
                     status: "pending",
                 })
                 .await?;
@@ -988,6 +991,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     subscription_id: if sub_id.is_empty() { None } else { Some(sub_id) },
                     product_id: ctx.fields.product_id.as_deref(),
                     amount_cents: ctx.fields.amount_cents.unwrap_or(0),
+                    currency: ctx.fields.currency.as_deref(),
                     status: "failed",
                 })
                 .await?;
@@ -1198,6 +1202,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     subscription_id: ctx.fields.subscription_id.as_deref(),
                     product_id: ctx.fields.product_id.as_deref(),
                     amount_cents: ctx.fields.amount_cents.unwrap_or(0),
+                    currency: ctx.fields.currency.as_deref(),
                     status: "dispute_created",
                 })
                 .await?;

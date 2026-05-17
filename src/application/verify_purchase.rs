@@ -283,6 +283,7 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
             google_obfuscated_account_id: verified.obfuscated_account_id.as_deref(),
             google_linked_purchase_token: verified.linked_purchase_token.as_deref(),
             amount_cents: verified.amount_cents.unwrap_or(0),
+            currency: verified.currency.as_deref(),
             event_time_ms: Utc::now().timestamp_millis(),
             is_subscription: product_type.is_subscription(),
         })

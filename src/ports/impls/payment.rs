@@ -148,6 +148,7 @@ impl VerifyPurchaseRepository for db::Database {
         let auto_renewing = request.auto_renewing;
         let payment_state = request.payment_state;
         let amount_cents = request.amount_cents;
+        let currency = request.currency.map(str::to_string);
         let event_time_ms = request.event_time_ms;
         let is_subscription = request.is_subscription;
 
@@ -167,6 +168,7 @@ impl VerifyPurchaseRepository for db::Database {
                     // For one-time products, this was already the existing behavior: subscription_id carries the product id.
                     Some(&subscription_id),
                     amount_cents,
+                    currency.as_deref(),
                     &payment_status,
                 )
                 .await?;

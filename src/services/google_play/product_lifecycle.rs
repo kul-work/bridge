@@ -37,6 +37,7 @@ pub async fn handle_otp_purchased<R: WebhookProcessingTransactionRepository + ?S
             subscription_id: None,
             product_id: fields.product_id.as_deref(),
             amount_cents: fields.amount_cents.unwrap_or(0),
+            currency: fields.currency.as_deref(),
             status: "success",
         })
         .await?;
@@ -87,6 +88,7 @@ pub async fn handle_otp_cancelled<
             subscription_id: None,
             product_id: fields.product_id.as_deref(),
             amount_cents: fields.amount_cents.unwrap_or(0),
+            currency: fields.currency.as_deref(),
             status: "cancelled",
         })
         .await?;
@@ -137,6 +139,7 @@ pub async fn handle_otp_refunded<
             subscription_id: None,
             product_id: fields.product_id.as_deref(),
             amount_cents: fields.amount_cents.unwrap_or(0),
+            currency: fields.currency.as_deref(),
             status: "refunded",
         })
         .await?;

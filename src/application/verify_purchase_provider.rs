@@ -280,6 +280,12 @@ fn map_google_subscription_verification(
         .find_map(|line_item| line_item.auto_renewing_plan.as_ref())
         .and_then(|plan| plan.recurring_price.as_ref())
         .and_then(google_money_to_cents);
+    let currency = purchase
+        .line_items
+        .iter()
+        .find_map(|line_item| line_item.auto_renewing_plan.as_ref())
+        .and_then(|plan| plan.recurring_price.as_ref())
+        .and_then(|money| money.currency_code.clone());
 
     let acknowledgement = match purchase.acknowledgement_state.as_deref() {
         Some("ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED") => PaymentAcknowledgement::AlreadyAcknowledged,
@@ -297,6 +303,7 @@ fn map_google_subscription_verification(
         current_period_end,
         auto_renewing,
         amount_cents,
+        currency,
         payment_state: None,
         acknowledgement,
         obfuscated_account_id,
@@ -328,6 +335,7 @@ fn map_google_product_verification(
         current_period_end: None,
         auto_renewing: None,
         amount_cents,
+        currency: None,
         payment_state: Some(purchase.purchase_state),
         acknowledgement,
         obfuscated_account_id: purchase.obfuscated_account_id,
@@ -361,6 +369,7 @@ fn mock_verify_google_play(
                     current_period_end: Some(Utc::now() + Duration::days(30)),
                     auto_renewing: Some(true),
                     amount_cents: None,
+                    currency: None,
                     payment_state: None,
                     acknowledgement: PaymentAcknowledgement::Pending,
                     obfuscated_account_id: Some(obfuscated_account_id),
@@ -384,6 +393,7 @@ fn mock_verify_google_play(
                     current_period_end: Some(Utc::now() + Duration::days(30)),
                     auto_renewing: Some(true),
                     amount_cents: None,
+                    currency: None,
                     payment_state: None,
                     acknowledgement: PaymentAcknowledgement::Pending,
                     obfuscated_account_id: Some(obfuscated_account_id.clone()),
@@ -420,6 +430,7 @@ fn mock_verify_google_play(
                     !purchase_token.contains("cancelled") && !purchase_token.contains("canceled"),
                 ),
                 amount_cents: None,
+                currency: None,
                 payment_state: None,
                 acknowledgement: PaymentAcknowledgement::Pending,
                 obfuscated_account_id: Some(compute_obfuscated_id_hash(external_user_id)),
@@ -455,6 +466,7 @@ fn mock_verify_google_play(
                 current_period_end: None,
                 auto_renewing: None,
                 amount_cents: None,
+                currency: None,
                 payment_state: Some(if purchase_token.contains("slow") || purchase_token.contains("pending") {
                     2
                 } else {
@@ -520,6 +532,7 @@ mod tests {
         match verification {
             VerificationOutcome::Verified(verified) => {
                 assert_eq!(verified.amount_cents, Some(1299));
+                assert_eq!(verified.currency, Some("USD".to_string()));
                 assert_eq!(verified.status, "active");
             }
             VerificationOutcome::LinkingRequired { .. } => {

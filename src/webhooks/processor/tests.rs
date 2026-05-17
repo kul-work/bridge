@@ -320,7 +320,7 @@ fn test_google_subscription_recurring_amount_uses_integer_cents() {
             auto_renewing_plan: Some(crate::services::google_play::models::AutoRenewingPlan {
                 auto_renew_enabled: Some(true),
                 recurring_price: Some(crate::services::google_play::models::Money {
-                    currency_code: Some("USD".to_string()),
+                    currency_code: Some("RON".to_string()),
                     units: Some("5".to_string()),
                     nanos: Some(490_000_000),
                 }),
@@ -331,6 +331,7 @@ fn test_google_subscription_recurring_amount_uses_integer_cents() {
     };
 
     assert_eq!(google_subscription_recurring_amount_cents(&resource), Some(549));
+    assert_eq!(google_subscription_recurring_currency(&resource), Some("RON".to_string()));
 }
 
 #[test]

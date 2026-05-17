@@ -19,6 +19,7 @@ impl<'a> From<WebhookPaymentRecordRequest<'a>> for OwnedWebhookPaymentRecord {
             subscription_id: request.subscription_id.map(str::to_string),
             product_id: request.product_id.map(str::to_string),
             amount_cents: request.amount_cents,
+            currency: request.currency.map(str::to_string),
             status: request.status.to_string(),
         }
     }

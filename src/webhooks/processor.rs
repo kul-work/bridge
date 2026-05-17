@@ -293,6 +293,17 @@ fn google_subscription_recurring_amount_cents(
         .and_then(google_money_to_cents)
 }
 
+fn google_subscription_recurring_currency(
+    resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
+) -> Option<String> {
+    resource
+        .line_items
+        .first()
+        .and_then(|line_item| line_item.auto_renewing_plan.as_ref())
+        .and_then(|plan| plan.recurring_price.as_ref())
+        .and_then(|money| money.currency_code.clone())
+}
+
 async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     repo: &R,
     app_id: Uuid,
@@ -388,6 +399,10 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
 
     if fields.amount_cents.is_none() {
         fields.amount_cents = google_subscription_recurring_amount_cents(&resource);
+    }
+
+    if fields.currency.is_none() {
+        fields.currency = google_subscription_recurring_currency(&resource);
     }
 
     if fields.auto_renewing.is_none() {
