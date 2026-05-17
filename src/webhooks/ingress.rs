@@ -13,6 +13,7 @@ use crate::{
     ports::{ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository, WebhookWriteRepository},
     ports::composites::WebhookIngressRepository,
     state::AppState,
+    utils::diagnostic_hash,
 };
 
 const CREEM_SIGNATURE_HEADERS: [&str; 3] = ["creem-signature", "Webhook-Signature", "x-signature"];
@@ -136,7 +137,6 @@ pub async fn handle_google_play(
     body: String,
 ) -> Result<StatusCode, BridgeError> {
     let database = state.database();
-    info!("Received Google Play webhook with token: {}", token);
 
     let token_uuid = match Uuid::parse_str(&token) {
         Ok(token_uuid) => token_uuid,
@@ -291,6 +291,22 @@ pub async fn handle_google_play(
         .and_then(|s| s.parse::<i64>().ok())
         .or_else(|| google_play_event["eventTimeMillis"].as_i64());
 
+    info!(
+        "Google Play webhook received: app_id={}, app_slug={}, event_id={}, event={}, sub_id={}, token_hash={}, event_time_ms={}",
+        app.id,
+        app.slug,
+        event_id,
+        event_type,
+        subscription_id.as_deref().unwrap_or("missing"),
+        purchase_token
+            .as_deref()
+            .map(diagnostic_hash)
+            .unwrap_or_else(|| "missing".to_string()),
+        timestamp_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "missing".to_string())
+    );
+
     let (webhook_id, is_new) = database
         .as_ref()
         .create_webhook_provider(
@@ -328,8 +344,6 @@ pub async fn handle_creem(
         Ok(token_uuid) => token_uuid,
         Err(_) => return Ok(StatusCode::NOT_FOUND),
     };
-
-    info!("Received Creem webhook with token: {}...", &token_uuid.to_string()[..8]);
 
     let app = match database.as_ref().get_app_by_webhook_token(token_uuid).await {
         Ok(app) => app,
@@ -423,6 +437,19 @@ pub async fn handle_creem(
             .ok()
             .map(|dt| dt.timestamp_millis())
     });
+
+    info!(
+        "Creem webhook received: app_id={}, app_slug={}, event_id={}, event={}, sub_id={}, token_hash={}, event_time_ms={}",
+        app.id,
+        app.slug,
+        event_id,
+        event_type,
+        subscription_id.as_deref().unwrap_or("missing"),
+        diagnostic_hash(purchase_token.as_deref().unwrap_or(event_id)),
+        timestamp_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "missing".to_string())
+    );
 
     let (webhook_id, is_new) = database
         .as_ref()

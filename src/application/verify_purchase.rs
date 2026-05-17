@@ -1,8 +1,10 @@
 use chrono::Utc;
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::error::BridgeError;
 use crate::ports::VerifyPurchaseHandlerRepository;
+use crate::services::google_play::trace::BpTrace;
 use crate::utils::redact_with_prefix;
 use crate::application::verify_purchase_types::{
     compute_obfuscated_id_hash, PaymentAcknowledgement, ProductType, VerificationOutcome,
@@ -52,6 +54,13 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
             "product_type is required".to_string(),
         ));
     }
+
+    let trace_id = Uuid::new_v4().to_string();
+    let mut trace = BpTrace::new("verify", &trace_id);
+    trace
+        .set_user_id(&payload.external_user_id)
+        .set_subscription_id(&payload.subscription_id)
+        .set_token_hash(&payload.purchase_token);
 
     let product_type = ProductType::parse(&payload.product_type)?;
 
@@ -368,6 +377,17 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
         message: None,
         obfuscated_account_id: None,
     };
+
+    trace
+        .set_step("finish")
+        .set_result("success")
+        .add_metadata("status", json!(response.status.as_str()))
+        .add_metadata("provider", json!(payload.provider.as_str()))
+        .add_metadata("current_period_end", json!(response.current_period_end.as_deref()))
+        .add_metadata("auto_renewing", json!(response.auto_renewing))
+        .add_metadata("amount_cents", json!(verified.amount_cents.unwrap_or(0)))
+        .add_metadata("payment_status", json!(payment_status.as_str()))
+        .emit();
 
     if response.status != "pending" {
         let callback_status = product_type.callback_status(&response.status);

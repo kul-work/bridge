@@ -4,7 +4,9 @@ use crate::{
     ports::{
         WebhookProcessingRepository, WebhookProviderSnapshot, WebhookSubscriptionSnapshot,
     },
+    services::google_play::trace::BpTrace,
 };
+use serde_json::json;
 use uuid::Uuid;
 use tracing::{error, info, warn};
 
@@ -21,6 +23,11 @@ use self::{
     },
 };
 pub(crate) use self::fields::WebhookFields;
+
+struct UserResolution {
+    external_user_id: Option<String>,
+    failure_summary: Option<String>,
+}
 
 /// Webhook event type (canonical)
 /// Used for future webhook event normalization and processing.
@@ -74,12 +81,14 @@ async fn suppress_unresolved_webhook<R: WebhookProcessingRepository>(
     repo: &R,
     webhook_provider_id: Uuid,
     webhook: &WebhookProviderSnapshot,
+    failure_summary: Option<&str>,
 ) -> Result<(), BridgeError> {
     warn!(
-        "Webhook {} discarded: unable to resolve external_user_id (provider={}, event={})",
+        "Webhook {} discarded: unable to resolve external_user_id (provider={}, event={}, reason={})",
         webhook.provider_webhook_id,
         webhook.provider,
-        webhook.event_type
+        webhook.event_type,
+        failure_summary.unwrap_or("unknown")
     );
     repo.suppress_webhook(webhook_provider_id, "unresolved_external_user_id").await
 }
@@ -88,13 +97,19 @@ async fn ensure_resolved_user<R: WebhookProcessingRepository>(
     repo: &R,
     webhook_provider_id: Uuid,
     webhook: &WebhookProviderSnapshot,
-    external_user_id: &Option<String>,
+    resolution: &UserResolution,
 ) -> Result<bool, BridgeError> {
-    if external_user_id.is_some() {
+    if resolution.external_user_id.is_some() {
         return Ok(true);
     }
 
-    suppress_unresolved_webhook(repo, webhook_provider_id, webhook).await?;
+    suppress_unresolved_webhook(
+        repo,
+        webhook_provider_id,
+        webhook,
+        resolution.failure_summary.as_deref(),
+    )
+    .await?;
     Ok(false)
 }
 
@@ -437,17 +452,26 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProviderSnapshot,
-) -> Option<String> {
+) -> UserResolution {
+    let mut failure_parts: Vec<&'static str> = Vec::new();
+
     // Google Play subscription_id is a shared product id, so prefer the
     // purchase token which uniquely identifies the user's subscription.
     if webhook.provider == "google_play" {
         if let Some(ref token) = webhook.purchase_token {
-            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token(app_id, &webhook.provider, token).await {
-                return Some(user);
+            match repo.lookup_user_by_purchase_token(app_id, &webhook.provider, token).await {
+                Ok(Some(user)) => return UserResolution { external_user_id: Some(user), failure_summary: None },
+                Ok(None) => failure_parts.push("subscription_token=miss"),
+                Err(_) => failure_parts.push("subscription_token=error"),
             }
-            if let Ok(Some(user)) = repo.lookup_user_by_purchase_token_payment(app_id, &webhook.provider, token).await {
-                return Some(user);
+            match repo.lookup_user_by_purchase_token_payment(app_id, &webhook.provider, token).await {
+                Ok(Some(user)) => return UserResolution { external_user_id: Some(user), failure_summary: None },
+                Ok(None) => failure_parts.push("payment_token=miss"),
+                Err(_) => failure_parts.push("payment_token=error"),
             }
+        } else {
+            failure_parts.push("subscription_token=missing");
+            failure_parts.push("payment_token=missing");
         }
     }
 
@@ -455,7 +479,7 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     if webhook.provider != "google_play" {
         if let Some(ref sub_id) = webhook.subscription_id {
             if let Ok(Some(user)) = repo.lookup_user_by_subscription_id(app_id, &webhook.provider, sub_id).await {
-                return Some(user);
+                return UserResolution { external_user_id: Some(user), failure_summary: None };
             }
         }
     }
@@ -464,10 +488,10 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     if webhook.provider != "google_play" {
         if let Some(ref token) = webhook.purchase_token {
             if let Ok(Some(user)) = repo.lookup_user_by_purchase_token(app_id, &webhook.provider, token).await {
-                return Some(user);
+                return UserResolution { external_user_id: Some(user), failure_summary: None };
             }
             if let Ok(Some(user)) = repo.lookup_user_by_purchase_token_payment(app_id, &webhook.provider, token).await {
-                return Some(user);
+                return UserResolution { external_user_id: Some(user), failure_summary: None };
             }
         }
     }
@@ -476,7 +500,7 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     if webhook.provider == "google_play" {
         // Skip real Google API call in mock mode
         if crate::config::mock_external_apis_enabled() {
-            info!("MOCK_EXTERNAL_APIS: Skipping Google Play obfuscated_account_id lookup in resolve_user");
+            failure_parts.push("obfuscated_account_id=skipped_mock");
         } else if let Some(ref token) = webhook.purchase_token {
             if let Ok(config) = repo.get_provider_config(app_id, "google_play").await {
                 let pkg = config.config.get("package_name").and_then(|v| v.as_str()).unwrap_or("");
@@ -487,20 +511,32 @@ async fn resolve_user<R: WebhookProcessingRepository>(
                         if let Some(ref ids) = sub.external_account_identifiers {
                             if let Some(ref obf_id) = ids.obfuscated_account_id {
                                 if let Ok(Some(user)) = repo.lookup_user_by_google_obfuscated_id(app_id, obf_id).await {
-                                    return Some(user);
+                                    return UserResolution { external_user_id: Some(user), failure_summary: None };
                                 }
+                                failure_parts.push("obfuscated_account_id=miss");
+                            } else {
+                                failure_parts.push("obfuscated_account_id=missing");
                             }
+                        } else {
+                            failure_parts.push("obfuscated_account_id=missing");
                         }
+                    } else {
+                        failure_parts.push("obfuscated_account_id=api_error");
                     }
+                } else {
+                    failure_parts.push("obfuscated_account_id=client_error");
                 }
+            } else {
+                failure_parts.push("obfuscated_account_id=config_error");
             }
         }
     }
 
     // 4. Provider metadata.user_id / external_user_id
     if let Some(user_id) = extract_metadata_user_id(&webhook.payload) {
-        return Some(user_id);
+        return UserResolution { external_user_id: Some(user_id), failure_summary: None };
     }
+    failure_parts.push("metadata=missing");
 
     // 5. Creem orphan guard
     if webhook.provider == "creem" {
@@ -508,11 +544,17 @@ async fn resolve_user<R: WebhookProcessingRepository>(
             "Creem orphan guard: discarding webhook {} (event={})",
             webhook.provider_webhook_id, webhook.event_type
         );
-        return None;
+        return UserResolution {
+            external_user_id: None,
+            failure_summary: Some(failure_parts.join(", ")),
+        };
     }
 
     // 6. All strategies failed
-    None
+    UserResolution {
+        external_user_id: None,
+        failure_summary: Some(failure_parts.join(", ")),
+    }
 }
 
 pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
@@ -535,10 +577,11 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    let external_user_id = resolve_user(repo, app_id, &webhook).await;
-    if !ensure_resolved_user(repo, webhook_provider_id, &webhook, &external_user_id).await? {
+    let resolution = resolve_user(repo, app_id, &webhook).await;
+    if !ensure_resolved_user(repo, webhook_provider_id, &webhook, &resolution).await? {
         return Ok(None);
     }
+    let external_user_id = resolution.external_user_id;
 
     let mut fields = extract_webhook_fields(&webhook);
     if webhook.provider == "google_play" {
@@ -694,6 +737,37 @@ fn apply_event_effects(
     *should_forward = effects.should_forward;
 }
 
+fn emit_webhook_trace(app_id: Uuid, canonical: &CanonicalWebhookPayload) {
+    let mut trace = BpTrace::new("webhook", &canonical.provider_event_id);
+
+    if let Some(external_user_id) = canonical.external_user_id.as_deref() {
+        trace.set_user_id(external_user_id);
+    }
+    if let Some(subscription_id) = canonical.subscription_id.as_deref() {
+        trace.set_subscription_id(subscription_id);
+    }
+    if let Some(purchase_token) = canonical.purchase_token.as_deref() {
+        trace.set_token_hash(purchase_token);
+        trace.add_metadata("hash_source", json!("purchase_token"));
+    } else {
+        trace.set_token_hash(&canonical.provider_event_id);
+        trace.add_metadata("hash_source", json!("provider_event_id"));
+    }
+
+    trace
+        .set_step("finish")
+        .set_result("success")
+        .add_metadata("app_id", json!(app_id.to_string()))
+        .add_metadata("app_slug", json!(canonical.app_slug.as_str()))
+        .add_metadata("provider", json!(canonical.provider.as_str()))
+        .add_metadata("event_type", json!(canonical.event_type.as_str()))
+        .add_metadata("status", json!(canonical.status.as_deref()))
+        .add_metadata("current_period_end", json!(canonical.current_period_end.as_deref()))
+        .add_metadata("auto_renewing", json!(canonical.auto_renewing))
+        .add_metadata("amount_cents", json!(canonical.amount_cents))
+        .emit();
+}
+
 /// Process webhook: dedup, ordering, normalization, DB mutations
 pub async fn process_webhook(
     repo: &impl WebhookProcessingRepository,
@@ -722,10 +796,11 @@ pub async fn process_webhook(
         Some(&webhook.payload),
     );
 
-    let external_user_id = resolve_user(repo, app_id, &webhook).await;
-    if !ensure_resolved_user(repo, webhook_provider_id, &webhook, &external_user_id).await? {
+    let resolution = resolve_user(repo, app_id, &webhook).await;
+    if !ensure_resolved_user(repo, webhook_provider_id, &webhook, &resolution).await? {
         return Ok(None);
     }
+    let external_user_id = resolution.external_user_id;
 
     let mut fields = extract_webhook_fields(&webhook);
     if webhook.provider == "google_play" {
@@ -851,6 +926,8 @@ pub async fn process_webhook(
 
     // Step 6: Mark webhook as processed
     repo.mark_webhook_processed(webhook_provider_id).await?;
+
+    emit_webhook_trace(app_id, &canonical);
 
     Ok(Some(canonical))
 }

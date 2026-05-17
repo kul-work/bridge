@@ -95,6 +95,7 @@ impl BpTrace {
     }
 
     /// Set error message
+    #[allow(dead_code)]
     pub fn set_error(&mut self, error: &str) -> &mut Self {
         self.error = Some(error.to_string());
         self.result = "error".to_string();

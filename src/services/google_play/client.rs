@@ -183,7 +183,16 @@ impl GooglePlayClient {
         let purchase: super::models::SubscriptionPurchaseV2 = serde_json::from_str(&text).map_err(|e| {
              anyhow::anyhow!("Failed to parse subscription response: {} | Raw body: {}", e, text)
         })?;
-        tracing::info!("GooglePlay subscription retrieved: state: {:?}, expiry: {:?}", purchase.subscription_state, purchase.expiry_time);
+        let effective_expiry = purchase
+            .line_items
+            .first()
+            .and_then(|item| item.expiry_time.as_deref())
+            .or(purchase.expiry_time.as_deref());
+        tracing::info!(
+            "GooglePlay subscription retrieved: state: {:?}, expiry: {:?}",
+            purchase.subscription_state,
+            effective_expiry
+        );
         Ok(purchase)
     }
 

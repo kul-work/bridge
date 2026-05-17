@@ -105,8 +105,13 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
 
             if is_success {
                 info!(
-                    "Successfully forwarded webhook {} to app {} (status: {})",
-                    webhook_delivery_id, app_id, status
+                    "Successfully forwarded webhook {} to app {} (event={}, provider_event_id={}, external_user_id={}, status: {})",
+                    webhook_delivery_id,
+                    app_id,
+                    payload.event_type,
+                    payload.provider_event_id,
+                    payload.external_user_id.as_deref().unwrap_or("missing"),
+                    status
                 );
                 repo.update_webhook_delivery_attempt(
                     webhook_delivery_id,

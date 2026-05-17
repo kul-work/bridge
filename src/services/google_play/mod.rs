@@ -6,7 +6,7 @@ pub mod models;
 // They can be integrated later when Bridge has equivalent database/handler structures
 // pub mod provider;
 // pub mod validation;
-// pub mod trace;
+pub mod trace;
 pub mod notifications;
 pub mod product_lifecycle;
 pub mod subscription_lifecycle;

@@ -34,8 +34,9 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "development".to_string());
     
     let default_filter = match environment.as_str() {
-        "production" | "prod" => "bridge=info,axum=info",
-        _ => "bridge=debug,axum=debug",
+        //"production" | "prod" => "bridge=info,axum=info",
+        "production" | "prod" => "bridge=info,axum=info,BPT-TRACE=info,BPT-RAW=info",
+        _ => "bridge=debug,axum=debug,BPT-TRACE=debug,BPT-RAW=debug",
     };
     
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
