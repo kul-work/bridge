@@ -185,7 +185,9 @@ echo ""
 # Step 6: Verify acknowledgment in pay.payments table (canonical idempotency source)
 echo -e "${YELLOW}[6/7] Verifying acknowledgment in pay.payments table${NC}"
 
-ACK_QUERY="SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$DUMMY_TOKEN' LIMIT 1;"
+# PAYMENT_TOKEN holds the actual provider_transaction_id stored by the server
+# (which is the order id, e.g. mock-google-play-order:<purchase_token>, not the raw token).
+ACK_QUERY="SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$PAYMENT_TOKEN' LIMIT 1;"
 
 echo "Query:"
 echo "  $ACK_QUERY"

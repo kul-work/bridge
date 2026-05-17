@@ -101,10 +101,11 @@ if [[ -z "$PURCHASE_TOKEN" && -f "$OTP_01_REPORT" ]]; then
 fi
 echo ""
 
-# Step 1.5: Clean up stale payment records (but preserve OTP-01's token)
+# Step 1.5: Clean up stale payment records (but preserve OTP-01's purchase token).
+# provider_purchase_token holds the raw purchase token; provider_transaction_id holds the order id.
 echo -e "${YELLOW}[1.5/6] Cleaning up stale payment records${NC}"
 if [[ -n "$PURCHASE_TOKEN" ]]; then
-    PAYMENT_CLEANUP="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id != '$PURCHASE_TOKEN';"
+    PAYMENT_CLEANUP="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND (provider_purchase_token IS DISTINCT FROM '$PURCHASE_TOKEN' AND provider_transaction_id != '$PURCHASE_TOKEN');"
     psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_CLEANUP" 2>/dev/null
     echo -e "${GREEN}✓ Stale payment records removed (preserved OTP-01 token)${NC}"
 else
@@ -116,9 +117,10 @@ echo ""
 echo -e "${YELLOW}[2/6] Verifying payment record exists${NC}"
 
 if [[ -n "$PURCHASE_TOKEN" ]]; then
-    DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id = '$PURCHASE_TOKEN' ORDER BY created_at DESC LIMIT 1;"
+    # provider_purchase_token holds the raw purchase token in the new schema.
+    DB_QUERY="SELECT status, provider_purchase_token FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_purchase_token = '$PURCHASE_TOKEN' ORDER BY created_at DESC LIMIT 1;"
 else
-    DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+    DB_QUERY="SELECT status, COALESCE(provider_purchase_token, provider_transaction_id) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
 fi
 
 echo "Query:"
@@ -266,20 +268,30 @@ else
 fi
 echo ""
 
-# Step 5: Verify payment record updated to refunded status (with idempotency)
-echo -e "${YELLOW}[5/6] Verifying payment record status updated to refunded (idempotency)${NC}"
+# Step 5: Verify refund was applied (idempotency check).
+# voidedPurchaseNotification calls update_payment_status_for_provider which mutates the EXISTING
+# verify-purchase row in-place (matched via provider_purchase_token OR clause). No new RTDN row
+# is created for OTPs. So count=0 by message_id is correct — check the existing row instead.
+# - count=0: voided webhook updated the existing row; check it via provider_purchase_token
+# - count=1: webhook created its own RTDN row; check that row
+# - count>1: idempotency violation
+echo -e "${YELLOW}[5/6] Verifying refund was applied (idempotency)${NC}"
 
-# First verify count is exactly 1 (idempotency check)
-PAYMENT_COUNT_QUERY="SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID';"
-PAYMENT_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+WEBHOOK_TX_ID="google_play_rtdn:$MESSAGE_ID"
+PAYMENT_COUNT_QUERY="SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id = '$WEBHOOK_TX_ID';"
+EXISTING_ROW_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_purchase_token = '$PURCHASE_TOKEN' ORDER BY created_at ASC LIMIT 1;"
 PAYMENT_COUNT="0"
 PAYMENT_STATUS=""
 
 for attempt in $(seq 1 $WEBHOOK_WAIT_ATTEMPTS); do
     PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_COUNT_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
-    PAYMENT_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null | tr -d ' ')
+    if [[ "$PAYMENT_COUNT" == "1" ]]; then
+        PAYMENT_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id = '$WEBHOOK_TX_ID' LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+    else
+        PAYMENT_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$EXISTING_ROW_QUERY" -t 2>/dev/null | tr -d ' ')
+    fi
 
-    if [[ "$PAYMENT_COUNT" == "1" ]] && [[ "$PAYMENT_STATUS" == "refunded" ]]; then
+    if [[ "$PAYMENT_STATUS" == "refunded" ]] || [[ "$PAYMENT_STATUS" == "cancelled" ]]; then
         break
     fi
 
@@ -288,22 +300,29 @@ for attempt in $(seq 1 $WEBHOOK_WAIT_ATTEMPTS); do
     fi
 done
 
-echo "Payment record count: $PAYMENT_COUNT"
+echo "Webhook RTDN row count (by message_id): $PAYMENT_COUNT"
+echo "Effective payment status: $PAYMENT_STATUS"
 
 if [[ "$PAYMENT_COUNT" == "0" ]]; then
-    echo -e "${RED}✗ No payment record found${NC}"
-    PAYMENT_REFUNDED="false"
+    # No RTDN row — the voided webhook updated the existing verify-purchase row in-place.
+    if [[ "$PAYMENT_STATUS" == "refunded" ]] || [[ "$PAYMENT_STATUS" == "cancelled" ]]; then
+        echo -e "${GREEN}✓ Refund applied to existing verify-purchase row (no-op RTDN pattern, idempotent)${NC}"
+        PAYMENT_REFUNDED="true"
+    else
+        echo -e "${RED}✗ voided webhook processed but existing row not refunded: '$PAYMENT_STATUS'${NC}"
+        PAYMENT_REFUNDED="false"
+    fi
 elif [[ "$PAYMENT_COUNT" != "1" ]]; then
-    echo -e "${RED}✗ Idempotency violation: Expected 1 payment record (duplicate webhooks), got $PAYMENT_COUNT${NC}"
+    echo -e "${RED}✗ Idempotency violation: expected 0 or 1 webhook row for message_id, got $PAYMENT_COUNT${NC}"
     PAYMENT_REFUNDED="false"
     IDEMPOTENCY_WORKS="false"
 else
-    echo -e "${GREEN}✓ Payment record count verified (exactly 1, idempotent)${NC}"
-    echo -e "${GREEN}✓ Payment record status: $PAYMENT_STATUS${NC}"
-    
+    echo -e "${GREEN}✓ Webhook RTDN row verified (exactly 1, idempotent)${NC}"
     if [[ "$PAYMENT_STATUS" == "refunded" ]] || [[ "$PAYMENT_STATUS" == "cancelled" ]]; then
+        echo -e "${GREEN}✓ Webhook payment status: $PAYMENT_STATUS${NC}"
         PAYMENT_REFUNDED="true"
     else
+        echo -e "${RED}✗ Webhook row status is '$PAYMENT_STATUS', expected 'refunded'${NC}"
         PAYMENT_REFUNDED="false"
     fi
 fi

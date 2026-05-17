@@ -168,8 +168,11 @@ fi
 STATUS=$(echo "$DB_RESULT" | awk -F '|' '{print $3}' | head -n1 | tr -d ' ')
 PURCHASE_TOKEN=$(echo "$DB_RESULT" | awk -F '|' '{print $4}' | head -n1 | tr -d ' ')
 
-# Fetch acknowledged_at from pay.payments table (canonical source)
-ACK_QUERY="SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$PURCHASE_TOKEN';"
+# Fetch acknowledged_at from pay.payments table (canonical source).
+# After db4da5c: provider_purchase_token holds the raw purchase token (provider_transaction_id is the order id).
+ACK_QUERY="SELECT acknowledged_at FROM pay.payments WHERE provider_purchase_token = '$PURCHASE_TOKEN' AND ack_required = true LIMIT 1;"
+# Acknowledgement runs async; give the scheduler a moment to process it.
+sleep 2
 ACKNOWLEDGED_AT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "$ACK_QUERY" -t 2>/dev/null | head -n1 | tr -d ' ')
 
 echo "Subscription Record:"

@@ -123,7 +123,9 @@ fi
 echo -e "${GREEN}✓ Setup purchase successful (HTTP 200)${NC}"
 
 # Verify initial DB state
-DB_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id = '$PURCHASE_TOKEN';"
+# Verify initial DB state by user + product (provider_transaction_id now holds the order id,
+# not the raw purchase token, so we use the same key as all other queries in this test).
+DB_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
 INITIAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$DB_QUERY" -t 2>/dev/null | tr -d ' ')
 
 if [[ "$INITIAL_STATUS" != "success" ]]; then

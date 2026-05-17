@@ -114,7 +114,7 @@ NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$(date +%s000)",
+  "eventTimeMillis": "\$((\$(date +%s) + 10))000",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 22,
@@ -151,7 +151,7 @@ PRICE_CHANGED_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$(date +%s000)",
+  "eventTimeMillis": "\$((\$(date +%s) + 20))000",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 8,

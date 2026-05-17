@@ -99,10 +99,11 @@ if [[ -z "$PURCHASE_TOKEN" && -f "$OTP_01_REPORT" ]]; then
 fi
 echo ""
 
-# Step 1.5: Clean up stale payment records (but preserve OTP-01's token)
+# Step 1.5: Clean up stale payment records (but preserve OTP-01's purchase token).
+# provider_purchase_token holds the raw purchase token; provider_transaction_id holds the order id.
 echo -e "${YELLOW}[1.5/5] Cleaning up stale payment records${NC}"
 if [[ -n "$PURCHASE_TOKEN" ]]; then
-    PAYMENT_CLEANUP="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id != '$PURCHASE_TOKEN';"
+    PAYMENT_CLEANUP="DELETE FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND (provider_purchase_token IS DISTINCT FROM '$PURCHASE_TOKEN' AND provider_transaction_id != '$PURCHASE_TOKEN');"
     psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_CLEANUP" 2>/dev/null
     echo -e "${GREEN}✓ Stale payment records removed (preserved OTP-01 token)${NC}"
 else
@@ -114,9 +115,10 @@ echo ""
 echo -e "${YELLOW}[2/5] Verifying payment record exists (from OTP-01 or similar)${NC}"
 
 if [[ -n "$PURCHASE_TOKEN" ]]; then
-    DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id = '$PURCHASE_TOKEN' ORDER BY created_at DESC LIMIT 1;"
+    # provider_purchase_token holds the raw purchase token in the new schema.
+    DB_QUERY="SELECT status, provider_purchase_token FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_purchase_token = '$PURCHASE_TOKEN' ORDER BY created_at DESC LIMIT 1;"
 else
-    DB_QUERY="SELECT status, provider_transaction_id FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
+    DB_QUERY="SELECT status, COALESCE(provider_purchase_token, provider_transaction_id) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
 fi
 
 echo "Query:"
@@ -273,33 +275,42 @@ else
 fi
 echo ""
 
-# Verify payment record exists and count is exactly 1 (idempotency check)
-PAYMENT_COUNT_QUERY="SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID';"
+# Idempotency check: for ONE_TIME_PRODUCT_PURCHASED, the backend may be a no-op if the purchase
+# was already handled by verify-purchase (no new RTDN row created). That is valid.
+# - count=0: no-op, acceptable when the existing verify-purchase row is intact (STATUS_VERIFIED=true)
+# - count=1: RTDN created its own payment row, exactly once — also valid
+# - count>1: idempotency violation
+WEBHOOK_TX_ID="google_play_rtdn:$MESSAGE_ID"
+PAYMENT_COUNT_QUERY="SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id = '$WEBHOOK_TX_ID';"
 PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_COUNT_QUERY" -t 2>/dev/null | tr -d ' ' || echo "0")
 
-echo "Payment record count: $PAYMENT_COUNT"
+echo "Webhook payment row count (by message_id): $PAYMENT_COUNT"
 
 if [[ "$PAYMENT_COUNT" == "0" ]]; then
-    echo -e "${YELLOW}⚠ No payment record found${NC}"
-    PAYMENT_VERIFIED="false"
+    # No RTDN-specific row — acceptable if the verify-purchase row is still intact.
+    if [[ "$STATUS_VERIFIED" == "true" ]]; then
+        echo -e "${GREEN}✓ No new RTDN row (webhook was a no-op; existing verify-purchase row intact)${NC}"
+        PAYMENT_VERIFIED="true"
+    else
+        echo -e "${RED}✗ No webhook row and existing payment is not 'success' — unexpected state${NC}"
+        PAYMENT_VERIFIED="false"
+    fi
 elif [[ "$PAYMENT_COUNT" != "1" ]]; then
-    echo -e "${RED}✗ Idempotency violation: Expected 1 payment record (duplicate webhooks), got $PAYMENT_COUNT${NC}"
+    echo -e "${RED}✗ Idempotency violation: expected 0 or 1 webhook row for message_id, got $PAYMENT_COUNT${NC}"
     PAYMENT_VERIFIED="false"
     IDEMPOTENCY_WORKS="false"
 else
-    # Count is 1, verify status
-    PAYMENT_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;"
-    PAYMENT_RESULT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null | tr -d ' ')
-    PAYMENT_STATUS=$(echo "$PAYMENT_RESULT" | tr -d ' ')
-    echo -e "${GREEN}✓ Payment record count verified (exactly 1, idempotent)${NC}"
-    echo -e "${GREEN}✓ Payment record status: $PAYMENT_STATUS${NC}"
+    PAYMENT_QUERY="SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID' AND provider_transaction_id = '$WEBHOOK_TX_ID';"
+    PAYMENT_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$PAYMENT_QUERY" -t 2>/dev/null | tr -d ' ')
+    echo -e "${GREEN}✓ Webhook payment row verified (exactly 1, idempotent)${NC}"
+    echo -e "${GREEN}✓ Webhook payment status: $PAYMENT_STATUS${NC}"
     PAYMENT_VERIFIED="true"
 fi
 echo ""
 
 # Determine test status
 TEST_STATUS="pass"
-if [[ "$STATUS_VERIFIED" != "true" ]] || [[ "$IDEMPOTENCY_WORKS" != "true" ]] || [[ "$WEBHOOK_ACCEPTED" != "true" ]]; then
+if [[ "$STATUS_VERIFIED" != "true" ]] || [[ "$IDEMPOTENCY_WORKS" != "true" ]] || [[ "$WEBHOOK_ACCEPTED" != "true" ]] || [[ "$PAYMENT_VERIFIED" != "true" ]]; then
     TEST_STATUS="fail"
 fi
 

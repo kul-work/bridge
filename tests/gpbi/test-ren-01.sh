@@ -188,7 +188,7 @@ echo ""
 echo -e "${YELLOW}[1/7] Cleaning previous REN-01 data${NC}"
 bridge_sql "DELETE FROM pay.webhook_delivery WHERE webhook_provider_id IN (SELECT id FROM pay.webhook_provider WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND (purchase_token LIKE 'test-ren-01-token-%' OR provider_webhook_id LIKE 'ren-01-%' OR payload->>'external_user_id' LIKE 'test_ren_01_user_%'));" >/dev/null
 bridge_sql "DELETE FROM pay.webhook_provider WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND (purchase_token LIKE 'test-ren-01-token-%' OR provider_webhook_id LIKE 'ren-01-%' OR payload->>'external_user_id' LIKE 'test_ren_01_user_%');" >/dev/null
-bridge_sql "DELETE FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND (external_user_id LIKE 'test_ren_01_user_%' OR provider_transaction_id LIKE 'test-ren-01-token-%' OR provider_transaction_id LIKE 'google_play_rtdn:ren-01-%');" >/dev/null
+bridge_sql "DELETE FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND (external_user_id LIKE 'test_ren_01_user_%' OR provider_transaction_id LIKE 'test-ren-01-token-%' OR provider_transaction_id LIKE 'mock-google-play-order:test-ren-01-token-%' OR provider_transaction_id LIKE 'google_play_rtdn:ren-01-%');" >/dev/null
 bridge_sql "DELETE FROM pay.subscriptions WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND external_user_id LIKE 'test_ren_01_user_%';" >/dev/null
 detect_hiha_db_mode >/dev/null 2>&1 || true
 hiha_sql "DELETE FROM hiha.webhook_callbacks WHERE clerk_id LIKE 'test_ren_01_user_%'; DELETE FROM hiha.users WHERE clerk_id LIKE 'test_ren_01_user_%';" >/dev/null || true

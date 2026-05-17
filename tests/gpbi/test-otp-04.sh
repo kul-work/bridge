@@ -160,7 +160,8 @@ assert_success_not_downgraded_after_verify_retry() {
         exit 1
     fi
 
-    REGRESSION_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE provider = '$PROVIDER' AND provider_transaction_id = '$DUMMY_TOKEN' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+    # PURCHASE_TOKEN holds the actual provider_transaction_id (order id, e.g. mock-google-play-order:...) read from the DB in step 4.
+    REGRESSION_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE provider = '$PROVIDER' AND provider_transaction_id = '$PURCHASE_TOKEN' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
     if [[ "$REGRESSION_STATUS" != "success" ]]; then
         echo -e "${RED}[FAIL] Regression: successful OTP was downgraded to $REGRESSION_STATUS after verify retry${NC}"
         exit 1
@@ -178,7 +179,8 @@ if [[ "$APPROVE_ONLY" == "true" ]]; then
     echo "Purchase token: $DUMMY_TOKEN"
     echo ""
 
-    APPROVAL_TARGET=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT external_user_id, status FROM pay.payments WHERE provider = '$PROVIDER' AND provider_transaction_id = '$DUMMY_TOKEN' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null || echo "")
+    # provider_transaction_id is the mock order id (mock-google-play-order:DUMMY_TOKEN), not the raw token.
+    APPROVAL_TARGET=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT external_user_id, status FROM pay.payments WHERE provider = '$PROVIDER' AND provider_transaction_id = 'mock-google-play-order:$DUMMY_TOKEN' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null || echo "")
     if [[ -z "$APPROVAL_TARGET" || "$APPROVAL_TARGET" == *"(0 rows)"* ]]; then
         echo -e "${RED}✗ No OTP-04 payment found for token $DUMMY_TOKEN${NC}"
         echo "Start a pending run first: bash test-otp-04.sh --wait-for-approval"
@@ -205,7 +207,7 @@ if [[ "$APPROVE_ONLY" == "true" ]]; then
     echo "Polling for webhook processing..."
     FINAL_STATUS="$APPROVAL_STATUS"
     for _ in {1..10}; do
-        FINAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE provider = '$PROVIDER' AND provider_transaction_id = '$DUMMY_TOKEN' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
+        FINAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.payments WHERE provider = '$PROVIDER' AND provider_transaction_id = 'mock-google-play-order:$DUMMY_TOKEN' AND product_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
         echo "  Status: $FINAL_STATUS"
         if [[ "$FINAL_STATUS" == "success" ]]; then
             assert_success_not_downgraded_after_verify_retry "$APPROVAL_USER_ID"
@@ -238,11 +240,12 @@ CLEANUP_QUERY="DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID'
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous subscription record removed${NC}"
 
-CLEANUP_TOKEN_SUBSCRIPTIONS_QUERY="DELETE FROM pay.subscriptions s USING pay.payments p WHERE p.provider_transaction_id = '$DUMMY_TOKEN' AND p.product_id = '$PRODUCT_ID' AND s.external_user_id = p.external_user_id AND s.subscription_id = '$PRODUCT_ID';"
+CLEANUP_TOKEN_SUBSCRIPTIONS_QUERY="DELETE FROM pay.subscriptions s USING pay.payments p WHERE p.product_id = '$PRODUCT_ID' AND s.external_user_id = p.external_user_id AND s.subscription_id = '$PRODUCT_ID' AND (p.provider_transaction_id = '$DUMMY_TOKEN' OR p.provider_transaction_id = 'mock-google-play-order:$DUMMY_TOKEN');"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_TOKEN_SUBSCRIPTIONS_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous slow-card token subscription records removed${NC}"
 
-CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE (external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID') OR (provider_transaction_id = '$DUMMY_TOKEN' AND product_id = '$PRODUCT_ID');"
+# Include both the raw token (legacy) and the mock order id (current) to cover re-runs.
+CLEANUP_PAYMENTS_QUERY="DELETE FROM pay.payments WHERE (external_user_id = '$USER_ID' AND product_id = '$PRODUCT_ID') OR ((provider_transaction_id = '$DUMMY_TOKEN' OR provider_transaction_id = 'mock-google-play-order:$DUMMY_TOKEN') AND product_id = '$PRODUCT_ID');"
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "$CLEANUP_PAYMENTS_QUERY" 2>/dev/null
 echo -e "${GREEN}✓ Previous payment records removed${NC}"
 
