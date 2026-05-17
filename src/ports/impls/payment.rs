@@ -160,9 +160,9 @@ impl VerifyPurchaseRepository for db::Database {
                     &provider,
                     &purchase_token,
                     if is_subscription { Some(&subscription_id) } else { None },
-                    // For subscriptions: product_id is None (subscription_id *is* the product, stored in subscriptions table).
-                    // For one-time products: the subscription_id field IS the product_id (e.g. "hiha_one_time").
-                    if is_subscription { None } else { Some(&subscription_id) },
+                    // For subscriptions, also store the product id on the payment row.
+                    // For one-time products, this was already the existing behavior: subscription_id carries the product id.
+                    Some(&subscription_id),
                     amount_cents,
                     &payment_status,
                 )
