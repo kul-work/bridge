@@ -4,6 +4,7 @@
 - NEVER use f64/f32 for currency. Integer cents only.
 - All amounts stored as i64 cents in DB.
 - Display formatting happens at API boundary, never in domain logic.
+- `payments.provider_transaction_id` is the provider's economic transaction/order id. Google Play purchase tokens are lifecycle/API handles and must use dedicated token fields such as `payments.provider_purchase_token` or `subscriptions.purchase_token`.
 
 ## Status / Lifecycle
 - Subscription status MUST be a typed enum, never raw String in domain code.

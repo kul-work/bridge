@@ -908,7 +908,13 @@ pub async fn mark_payment_acknowledged_for_subscription(
         sqlx::query(
             "UPDATE pay.payments
              SET acknowledged_at = COALESCE(acknowledged_at, NOW())
-             WHERE app_id = $1 AND external_user_id = $2 AND provider = $3 AND provider_transaction_id = $4",
+             WHERE app_id = $1
+               AND external_user_id = $2
+               AND provider = $3
+               AND (
+                 provider_transaction_id = $4
+                 OR (provider_purchase_token = $4 AND ack_required = true)
+               )",
         )
         .bind(app_id)
         .bind(external_user_id)

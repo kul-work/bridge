@@ -63,9 +63,39 @@ pub async fn record_payment_tx(
     amount_cents: i32,
     status: &str,
 ) -> Result<(), crate::error::BridgeError> {
+    record_payment_with_purchase_token_tx(
+        tx,
+        app_id,
+        external_user_id,
+        provider,
+        provider_transaction_id,
+        None,
+        false,
+        subscription_id,
+        product_id,
+        amount_cents,
+        status,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn record_payment_with_purchase_token_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+    external_user_id: &str,
+    provider: &str,
+    provider_transaction_id: &str,
+    provider_purchase_token: Option<&str>,
+    ack_required: bool,
+    subscription_id: Option<&str>,
+    product_id: Option<&str>,
+    amount_cents: i32,
+    status: &str,
+) -> Result<(), crate::error::BridgeError> {
     let result = sqlx::query(
-        "INSERT INTO pay.payments (app_id, external_user_id, provider, provider_transaction_id, subscription_id, product_id, amount_cents, status, webhook_received_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+        "INSERT INTO pay.payments (app_id, external_user_id, provider, provider_transaction_id, provider_purchase_token, ack_required, subscription_id, product_id, amount_cents, status, webhook_received_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
          ON CONFLICT (app_id, provider, provider_transaction_id)
          DO UPDATE SET
            status = CASE
@@ -77,6 +107,8 @@ pub async fn record_payment_tx(
                THEN payments.status
              ELSE EXCLUDED.status
            END,
+           provider_purchase_token = COALESCE(EXCLUDED.provider_purchase_token, payments.provider_purchase_token),
+           ack_required = payments.ack_required OR EXCLUDED.ack_required,
            subscription_id = COALESCE(EXCLUDED.subscription_id, payments.subscription_id),
            product_id = COALESCE(EXCLUDED.product_id, payments.product_id),
            amount_cents = CASE WHEN EXCLUDED.amount_cents > 0 THEN EXCLUDED.amount_cents ELSE payments.amount_cents END,
@@ -87,6 +119,8 @@ pub async fn record_payment_tx(
     .bind(external_user_id)
     .bind(provider)
     .bind(provider_transaction_id)
+    .bind(provider_purchase_token)
+    .bind(ack_required)
     .bind(subscription_id)
     .bind(product_id)
     .bind(amount_cents)
@@ -115,7 +149,13 @@ pub async fn get_payment_status_for_provider(
 ) -> Result<Option<String>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT status FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3"
+        "SELECT status
+         FROM pay.payments
+         WHERE app_id = $1
+           AND provider = $2
+           AND (provider_transaction_id = $3 OR provider_purchase_token = $3)
+         ORDER BY created_at ASC
+         LIMIT 1"
     )
     .bind(app_id)
     .bind(provider)
@@ -140,7 +180,11 @@ pub async fn update_payment_status_for_provider(
 ) -> Result<(), crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     sqlx::query(
-        "UPDATE pay.payments SET status = $1, webhook_received_at = NOW() WHERE app_id = $2 AND provider = $3 AND provider_transaction_id = $4"
+        "UPDATE pay.payments
+         SET status = $1, webhook_received_at = NOW()
+         WHERE app_id = $2
+           AND provider = $3
+           AND (provider_transaction_id = $4 OR provider_purchase_token = $4)"
     )
     .bind(new_status)
     .bind(app_id)
@@ -165,7 +209,16 @@ pub async fn get_payment_acknowledged_at(
 ) -> Result<Option<DateTime<Utc>>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let row = sqlx::query_scalar(
-        "SELECT acknowledged_at FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3",
+        "SELECT acknowledged_at
+         FROM pay.payments
+         WHERE app_id = $1
+           AND provider = $2
+           AND (
+             provider_transaction_id = $3
+             OR (provider_purchase_token = $3 AND ack_required = true)
+           )
+         ORDER BY ack_required DESC, created_at ASC
+         LIMIT 1",
     )
     .bind(app_id)
     .bind(provider)
@@ -191,7 +244,12 @@ pub async fn mark_payment_acknowledged(
     sqlx::query(
         "UPDATE pay.payments
          SET acknowledged_at = COALESCE(acknowledged_at, NOW())
-         WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3",
+         WHERE app_id = $1
+           AND provider = $2
+           AND (
+             provider_transaction_id = $3
+             OR (provider_purchase_token = $3 AND ack_required = true)
+           )",
     )
     .bind(app_id)
     .bind(provider)
@@ -214,16 +272,18 @@ pub async fn list_google_play_subscription_ack_candidates(
 ) -> Result<Vec<GooglePlaySubscriptionAckCandidate>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let rows = sqlx::query_as::<_, GooglePlaySubscriptionAckCandidate>(
-        "SELECT s.subscription_id, p.provider_transaction_id AS purchase_token
+        "SELECT s.subscription_id, p.provider_purchase_token AS purchase_token
          FROM pay.payments p
          JOIN pay.subscriptions s
            ON s.app_id = p.app_id
           AND s.provider = p.provider
-          AND s.purchase_token = p.provider_transaction_id
+          AND s.purchase_token = p.provider_purchase_token
          WHERE p.app_id = $1
            AND p.provider = 'google_play'
            AND p.status = 'success'
+           AND p.ack_required = true
            AND p.acknowledged_at IS NULL
+           AND p.provider_purchase_token IS NOT NULL
            AND s.status IN ('active', 'past_due', 'cancelled', 'on_hold', 'paused')
          ORDER BY p.created_at ASC
          LIMIT $2",
@@ -249,7 +309,13 @@ pub async fn lookup_user_by_purchase_token_payment(
 ) -> Result<Option<String>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT external_user_id FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3 LIMIT 1"
+        "SELECT external_user_id
+         FROM pay.payments
+         WHERE app_id = $1
+           AND provider = $2
+           AND (provider_transaction_id = $3 OR provider_purchase_token = $3)
+         ORDER BY created_at ASC
+         LIMIT 1"
     )
     .bind(app_id)
     .bind(provider)
@@ -273,7 +339,14 @@ pub async fn lookup_product_id_by_purchase_token_payment(
 ) -> Result<Option<String>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT COALESCE(product_id, subscription_id) FROM pay.payments WHERE app_id = $1 AND provider = $2 AND provider_transaction_id = $3 AND COALESCE(product_id, subscription_id) IS NOT NULL LIMIT 1"
+        "SELECT COALESCE(product_id, subscription_id)
+         FROM pay.payments
+         WHERE app_id = $1
+           AND provider = $2
+           AND (provider_transaction_id = $3 OR provider_purchase_token = $3)
+           AND COALESCE(product_id, subscription_id) IS NOT NULL
+         ORDER BY created_at ASC
+         LIMIT 1"
     )
     .bind(app_id)
     .bind(provider)

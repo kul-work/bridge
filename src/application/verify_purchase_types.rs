@@ -79,6 +79,7 @@ pub(crate) enum VerificationOutcome {
 
 pub(crate) struct VerifiedPurchase {
     pub(crate) status: String,
+    pub(crate) provider_transaction_id: Option<String>,
     pub(crate) current_period_end: Option<DateTime<Utc>>,
     pub(crate) auto_renewing: Option<bool>,
     pub(crate) amount_cents: Option<i32>,
@@ -117,6 +118,7 @@ pub(crate) struct VerifyPurchaseCommitRequest<'a> {
     pub resolved_external_user_id: &'a str,
     pub provider: &'a str,
     pub subscription_id: &'a str,
+    pub provider_transaction_id: &'a str,
     pub purchase_token: &'a str,
     pub subscription_status: &'a str,
     pub payment_status: &'a str,

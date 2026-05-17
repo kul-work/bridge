@@ -220,12 +220,14 @@ impl WebhookProcessingTransactionRepository for db::Database {
                 }
 
                 if let Some(payment) = payment.as_ref() {
-                    db::payments::record_payment_tx(
+                    db::payments::record_payment_with_purchase_token_tx(
                         tx,
                         payment.app_id,
                         &payment.external_user_id,
                         &payment.provider,
                         &payment.provider_transaction_id,
+                        purchase_token.as_deref(),
+                        false,
                         payment.subscription_id.as_deref(),
                         payment.product_id.as_deref(),
                         payment.amount_cents,

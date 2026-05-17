@@ -140,6 +140,7 @@ pub struct Money {
 pub struct SubscriptionLineItem {
     pub product_id: String,
     pub expiry_time: Option<String>,
+    pub latest_successful_order_id: Option<String>,
     pub auto_renewing_plan: Option<AutoRenewingPlan>,
     pub offer_details: Option<OfferDetails>,
 }

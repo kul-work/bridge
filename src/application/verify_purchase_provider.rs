@@ -285,9 +285,15 @@ fn map_google_subscription_verification(
         Some("ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED") => PaymentAcknowledgement::AlreadyAcknowledged,
         _ => PaymentAcknowledgement::Pending,
     };
+    let provider_transaction_id = purchase
+        .line_items
+        .first()
+        .and_then(|line_item| line_item.latest_successful_order_id.clone())
+        .or_else(|| purchase.latest_order_id.clone());
 
     Ok(VerificationOutcome::Verified(VerifiedPurchase {
         status,
+        provider_transaction_id,
         current_period_end,
         auto_renewing,
         amount_cents,
@@ -318,6 +324,7 @@ fn map_google_product_verification(
 
     VerifiedPurchase {
         status,
+        provider_transaction_id: purchase.order_id,
         current_period_end: None,
         auto_renewing: None,
         amount_cents,
@@ -350,6 +357,7 @@ fn mock_verify_google_play(
                 let obfuscated_account_id = compute_obfuscated_id_hash(external_user_id);
                 return Ok(VerificationOutcome::Verified(VerifiedPurchase {
                     status: "active".to_string(),
+                    provider_transaction_id: Some(format!("mock-google-play-order:{}", purchase_token)),
                     current_period_end: Some(Utc::now() + Duration::days(30)),
                     auto_renewing: Some(true),
                     amount_cents: None,
@@ -372,6 +380,7 @@ fn mock_verify_google_play(
 
                 return Ok(VerificationOutcome::Verified(VerifiedPurchase {
                     status: "active".to_string(),
+                    provider_transaction_id: Some(format!("mock-google-play-order:{}", purchase_token)),
                     current_period_end: Some(Utc::now() + Duration::days(30)),
                     auto_renewing: Some(true),
                     amount_cents: None,
@@ -405,6 +414,7 @@ fn mock_verify_google_play(
 
             Ok(VerificationOutcome::Verified(VerifiedPurchase {
                 status,
+                provider_transaction_id: Some(format!("mock-google-play-order:{}", purchase_token)),
                 current_period_end: Some(Utc::now() + Duration::days(30)),
                 auto_renewing: Some(
                     !purchase_token.contains("cancelled") && !purchase_token.contains("canceled"),
@@ -441,6 +451,7 @@ fn mock_verify_google_play(
 
             Ok(VerificationOutcome::Verified(VerifiedPurchase {
                 status,
+                provider_transaction_id: Some(format!("mock-google-play-order:{}", purchase_token)),
                 current_period_end: None,
                 auto_renewing: None,
                 amount_cents: None,
@@ -489,6 +500,7 @@ mod tests {
             line_items: vec![SubscriptionLineItem {
                 product_id: "premium_monthly".to_string(),
                 expiry_time: Some("2026-04-30T00:00:00Z".to_string()),
+                latest_successful_order_id: None,
                 auto_renewing_plan: Some(AutoRenewingPlan {
                     auto_renew_enabled: Some(true),
                     recurring_price: Some(Money {

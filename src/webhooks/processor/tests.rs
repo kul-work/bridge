@@ -274,6 +274,7 @@ fn test_google_subscription_expiry_prefers_line_item_expiry() {
         line_items: vec![crate::services::google_play::models::SubscriptionLineItem {
             product_id: "hiha_monthly".to_string(),
             expiry_time: Some("2026-05-16T14:35:34Z".to_string()),
+            latest_successful_order_id: None,
             auto_renewing_plan: None,
             offer_details: None,
         }],
@@ -315,6 +316,7 @@ fn test_google_subscription_recurring_amount_uses_integer_cents() {
         line_items: vec![crate::services::google_play::models::SubscriptionLineItem {
             product_id: "hiha_monthly".to_string(),
             expiry_time: None,
+            latest_successful_order_id: None,
             auto_renewing_plan: Some(crate::services::google_play::models::AutoRenewingPlan {
                 auto_renew_enabled: Some(true),
                 recurring_price: Some(crate::services::google_play::models::Money {

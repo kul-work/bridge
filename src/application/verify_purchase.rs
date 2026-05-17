@@ -259,6 +259,10 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
             resolved_external_user_id: &resolved_external_user_id,
             provider: &payload.provider,
             subscription_id: &payload.subscription_id,
+            provider_transaction_id: verified
+                .provider_transaction_id
+                .as_deref()
+                .unwrap_or(&payload.purchase_token),
             purchase_token: &payload.purchase_token,
             subscription_status: &verified.status,
             payment_status: &payment_status,

@@ -133,6 +133,7 @@ impl VerifyPurchaseRepository for db::Database {
         let resolved_external_user_id = request.resolved_external_user_id.to_string();
         let provider = request.provider.to_string();
         let subscription_id = request.subscription_id.to_string();
+        let provider_transaction_id = request.provider_transaction_id.to_string();
         let purchase_token = request.purchase_token.to_string();
         let subscription_status = request.subscription_status.to_string();
         let payment_status = request.payment_status.to_string();
@@ -153,12 +154,14 @@ impl VerifyPurchaseRepository for db::Database {
         let pool = self.pool();
         with_transaction_impl(pool, app_id, move |tx| {
             Box::pin(async move {
-                db::payments::record_payment_tx(
+                db::payments::record_payment_with_purchase_token_tx(
                     tx,
                     app_id,
                     &resolved_external_user_id,
                     &provider,
-                    &purchase_token,
+                    &provider_transaction_id,
+                    Some(&purchase_token),
+                    provider == "google_play",
                     if is_subscription { Some(&subscription_id) } else { None },
                     // For subscriptions, also store the product id on the payment row.
                     // For one-time products, this was already the existing behavior: subscription_id carries the product id.
