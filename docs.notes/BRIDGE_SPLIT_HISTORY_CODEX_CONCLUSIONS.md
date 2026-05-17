@@ -292,11 +292,32 @@ The Git history shows the work was actually:
 
 That is not a short split. That is a new platform boundary.
 
-### 5.2 Secondary Root Cause: Behavioral Inventory Was Late
+### 5.2 Secondary Root Cause: HiHa Was Treated as Source Material, Not as an Oracle
+
+After further discussion, the more precise diagnosis is not simply that provider behavior was discovered late. Much of the painful Google Play and payment behavior had already been discovered in old HiHa during the December-to-March work.
+
+The failure mode is that Bridge did not preserve old HiHa as a strict behavioral oracle. The split appears to have copied or rebuilt shapes of the old system, but not constrained every important side effect against the known-good behavior.
+
+For payment systems, the behavior is the product. Preserving broad flow tests is not enough. A flow can pass while field-level side effects are wrong:
+
+- currency can silently default to `USD`,
+- purchase tokens can be confused with economic transaction IDs,
+- duplicate callbacks can be emitted for one logical event,
+- webhook deduplication can suppress valid renewals,
+- partial provider events can erase existing subscription fields,
+- logs can become noisy without improving diagnosis.
+
+The correct standard should have been:
+
+> Bridge should not rediscover Google Play behavior. Bridge should preserve old HiHa behavior unless there is a documented Bridge-specific reason to differ.
+
+This changes the main lesson. The missing artifact was not only a Bridge architecture plan. It was a parity ledger that mapped old HiHa behavior to Bridge behavior at the level of DB writes, callback payloads, provider IDs, status transitions, and edge-case handling.
+
+### 5.3 Tertiary Root Cause: Behavioral Inventory Was Late
 
 The repeated `gap fixes`, `BEHAVIORAL_SPEC_GAPS`, `BEHAVIORAL_SPEC_AUDIT`, test alignment, and provider-specific fixes indicate that behavior was still being discovered while code was being built.
 
-The process should probably have started with a behavior inventory:
+For the truly new Bridge-only parts, the process should probably have started with a behavior inventory:
 
 - What HiHa behavior must be preserved exactly?
 - What behavior changes because Bridge is multi-app?
@@ -308,7 +329,7 @@ The process should probably have started with a behavior inventory:
 
 Without that inventory, commits naturally become reactive.
 
-### 5.3 Third Root Cause: Payment Provider Reality Was Underestimated
+### 5.4 Fourth Root Cause: Payment Provider Reality Was Underestimated
 
 Google Play, Creem, subscriptions, OTPs, refunds, acknowledgement, RTDN payloads, sandbox renewal cadence, purchase tokens, order IDs, and stale events are not a simple CRUD extraction.
 
@@ -321,7 +342,7 @@ Late commits around purchase token identity and renewal preservation are especia
 
 These are domain invariants. They are hard to recover cheaply once implementation has spread them through DB queries, webhook processing, and tests.
 
-### 5.4 Fourth Root Cause: Tests Were Doing Discovery Work
+### 5.5 Fifth Root Cause: Tests Were Doing Discovery Work
 
 Tests have the highest line churn:
 
@@ -332,7 +353,14 @@ src    61117 total changed lines
 
 That is not bad by itself. But the timing matters: many test alignment and fix commits happened after major implementation and architecture work. That suggests tests were used not only to verify known behavior, but to discover the missing behavior.
 
-For provider-heavy payment systems, that discovery needs to happen earlier.
+For old HiHa parity, discovery should not have been necessary. The tests and flow documents should have been used as an oracle, then extended with field-level assertions where the old business behavior depended on hidden side effects.
+
+The important distinction:
+
+- flow parity checks that the scenario succeeds,
+- side-effect parity checks that the same durable business facts are written and emitted.
+
+Bridge appears to have needed more of the second category.
 
 ## 6. What Went Right
 
@@ -353,11 +381,12 @@ The work appears to have converged toward a stronger system. The issue is that c
 The missed estimate most likely came from these mistakes:
 
 1. Treating a product boundary as a code movement task.
-2. Starting implementation before the behavioral inventory was complete.
-3. Discovering provider and economic invariants through late tests and live-ish scenarios.
-4. Combining extraction, architecture correction, provider hardening, security, tenancy, and test harness work into one moving stream.
-5. Allowing vague commit subjects like `fix`, `update`, and `gap fixes` to hide the true cost centers during the project.
-6. Not freezing the minimal success criteria for "Bridge split done" early enough.
+2. Treating old HiHa as implementation material instead of a strict behavioral oracle.
+3. Starting implementation before the behavioral inventory was complete.
+4. Discovering provider and economic invariants through late tests and live-ish scenarios.
+5. Combining extraction, architecture correction, provider hardening, security, tenancy, and test harness work into one moving stream.
+6. Allowing vague commit subjects like `fix`, `update`, and `gap fixes` to hide the true cost centers during the project.
+7. Not freezing the minimal success criteria for "Bridge split done" early enough.
 
 ## 8. My Final Conclusion
 
@@ -370,6 +399,10 @@ That is a fundamentally different project.
 The most defensible postmortem statement is:
 
 > Bridge was estimated as an extraction, but executed as a new payment platform. The missing up-front work was a behavioral and invariant inventory. Without that, implementation became the discovery mechanism, producing repeated gap fixes, architecture rewrites, provider-specific corrections, and late payment identity fixes.
+
+After discussion, I would make the statement even sharper:
+
+> Bridge should have used old HiHa as the behavioral oracle. Where old HiHa already paid the cost of discovering Google Play behavior, Bridge should have preserved that behavior by default. Every deviation should have been treated as incorrect unless it was explicitly documented as a Bridge-only invariant.
 
 As of 2026-05-17, the repo looks closer to stabilization than thrashing, but the stabilization is recent. Late commits still touch core payment identity and Google Play behavior, so Bridge should be treated as a system entering stabilization, not one with long-proven stability.
 
@@ -392,7 +425,169 @@ As of 2026-05-17, the repo looks closer to stabilization than thrashing, but the
 - Treat any future provider addition as a platform feature, not a small integration.
 - For future splits, write the parity test plan before extraction begins.
 
-## 10. Commands Used
+## 10. Recommended Guardrails
+
+These guardrails are intended for future Bridge work, especially Google Play reintegration and any task where old HiHa already has working behavior.
+
+### 10.1 Classify Every Task First
+
+Use one of three labels before coding:
+
+```text
+PARITY: preserve old HiHa behavior exactly.
+BRIDGE-ONLY: intentionally different because Bridge is multi-app/payment middleware.
+UNKNOWN: stop and classify before coding.
+```
+
+Most Google Play reintegration work should start as `PARITY`.
+
+### 10.2 Require a Parity Claim
+
+Every parity task should begin with one precise sentence:
+
+```text
+PARITY: For Google Play <flow>, Bridge must match old HiHa for <specific side effect>.
+```
+
+Examples:
+
+```text
+PARITY: For Google Play subscription renewal, Bridge must persist provider currency, not default USD.
+PARITY: For OTP refund, Bridge must emit one refund callback, not duplicate semantic callbacks.
+PARITY: For subscription renewal, Bridge must create a distinct economic payment row, not overwrite the previous one.
+```
+
+### 10.3 Avoid Broad LLM Fix Requests
+
+Avoid requests like:
+
+```text
+Fix Google Play renewal.
+Fix currency.
+Fix logs.
+Align Bridge to HiHa.
+```
+
+Prefer narrow requests:
+
+```text
+Find the old HiHa source of Google Play currency for subscription purchases, then make Bridge persist the same value for the equivalent flow. Do not change unrelated Google Play behavior.
+```
+
+### 10.4 Add Field-Level Assertions
+
+Flow tests are not enough. For payment parity, tests should assert important durable side effects:
+
+```text
+provider_transaction_id
+provider_purchase_token
+currency
+amount_cents
+product_id
+subscription_id
+status
+period_start / period_end
+callback type
+callback body fields
+webhook dedup key
+```
+
+A high-level test can pass while one of these fields is wrong.
+
+### 10.5 Use Old HiHa as Oracle, Not Inspiration
+
+For each bug or behavior gap, force this structure:
+
+```text
+Old HiHa:
+- file/function:
+- exact behavior:
+- relevant test/doc:
+
+Bridge:
+- file/function:
+- current behavior:
+- divergence:
+
+Decision:
+- parity or intentional Bridge difference:
+```
+
+If this cannot be filled in, the task is not ready for implementation.
+
+### 10.6 Separate Logging From Behavior
+
+Logging changes should be treated as their own tasks. Good logs are not "more logs"; they are low-noise decision points.
+
+Logging rules:
+
+```text
+- one log per state transition or external boundary
+- include correlation IDs
+- no logs inside tight retry/poll loops unless rate-limited
+- no duplicate logs for the same logical event
+- no secrets, tokens, or raw sensitive payloads
+- every new warning/error should imply an operator action
+```
+
+If the log does not help decide what happened or what to do, do not add it.
+
+### 10.7 Keep LLM Tasks Small
+
+Good task size:
+
+```text
+One flow.
+One divergence.
+One expected old behavior.
+One test/assertion.
+One small patch.
+```
+
+Bad task size:
+
+```text
+Reintegrate Google Play.
+Improve webhook processing.
+Make logs better.
+Align lifecycle behavior.
+```
+
+### 10.8 Maintain a Deviation Ledger
+
+Track deviations explicitly:
+
+```text
+Flow | Behavior | Old HiHa | Bridge | Status | Intentional?
+Google renewal | currency persistence | provider currency | USD | broken | no
+OTP refund | callback count | one | two | broken | no
+Subscription renewal | payment identity | order id row | token overwrite | fixed | no
+```
+
+This prevents "align to HiHa" from being an implicit instruction that gets lost during implementation.
+
+### 10.9 Document Intentional Bridge Differences
+
+Some differences from old HiHa are valid:
+
+```text
+RLS/app isolation
+provider config lookup
+callback delivery retries
+webhook ingress token routing
+centralized app registry
+PII minimization
+```
+
+But every valid difference should have a sentence:
+
+```text
+Bridge differs from old HiHa because ...
+```
+
+Otherwise it should be treated as drift.
+
+## 11. Commands Used
 
 Representative commands:
 
@@ -407,4 +602,3 @@ git tag --sort=creatordate --format='%(creatordate:short)`t%(refname:short)'
 git show --stat --oneline 39f80c8
 git show --stat --oneline 26c5e2f
 ```
-
