@@ -191,7 +191,7 @@ pub async fn get_payment_currency_for_subscription(
            AND provider = $2
            AND external_user_id = $3
            AND subscription_id = $4
-           AND currency IS NOT NULL
+           AND currency != 'N/A'
          ORDER BY created_at DESC
          LIMIT 1"
     )
