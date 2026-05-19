@@ -31,6 +31,12 @@ struct TokenResponse {
     // expires_in: i32,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GoogleOrderPaymentDetails {
+    pub amount_cents: Option<i32>,
+    pub currency: Option<String>,
+}
+
 /// Google's public key set response
 #[derive(Debug, Deserialize, Clone)]
 struct GoogleCerts {
@@ -236,12 +242,12 @@ impl GooglePlayClient {
         Ok(purchase)
     }
 
-    pub async fn get_order_amount_cents(
+    pub async fn get_order_payment_details(
         &self,
         package_name: &str,
         order_id: &str,
-    ) -> Result<Option<i32>> {
-        tracing::debug!("GooglePlayClient: get_order_amount_cents - package: {}, order_id: {}", package_name, order_id);
+    ) -> Result<GoogleOrderPaymentDetails> {
+        tracing::debug!("GooglePlayClient: get_order_payment_details - package: {}, order_id: {}", package_name, order_id);
 
         let access_token = self.get_access_token().await?;
 
@@ -270,7 +276,7 @@ impl GooglePlayClient {
         }
 
         let order: serde_json::Value = res.json().await?;
-        Ok(order_amount_cents_from_payload(&order))
+        Ok(order_payment_details_from_payload(&order))
     }
 
     pub async fn cancel_subscription(
@@ -725,14 +731,43 @@ impl GooglePlayClient {
     }
 }
 
-fn order_amount_cents_from_payload(order: &serde_json::Value) -> Option<i32> {
-    let total_cents = order["lineItems"]
-        .as_array()?
+fn order_payment_details_from_payload(order: &serde_json::Value) -> GoogleOrderPaymentDetails {
+    let Some(line_items) = order["lineItems"].as_array() else {
+        return GoogleOrderPaymentDetails::default();
+    };
+
+    let total_cents = line_items
         .iter()
         .filter_map(|line_item| money_cents_from_value(&line_item["total"]))
-        .try_fold(0i64, |sum, amount| sum.checked_add(i64::from(amount)))?;
+        .try_fold(0i64, |sum, amount| sum.checked_add(i64::from(amount)))
+        .and_then(|total| i32::try_from(total).ok());
 
-    i32::try_from(total_cents).ok()
+    let currency = consistent_line_item_currency(line_items);
+
+    GoogleOrderPaymentDetails {
+        amount_cents: total_cents,
+        currency,
+    }
+}
+
+fn consistent_line_item_currency(line_items: &[serde_json::Value]) -> Option<String> {
+    let mut currency: Option<String> = None;
+
+    for line_item in line_items {
+        let Some(line_currency) = line_item["total"]["currencyCode"].as_str()
+            .filter(|value| !value.is_empty())
+        else {
+            return None;
+        };
+
+        match currency.as_deref() {
+            Some(existing) if existing != line_currency => return None,
+            Some(_) => {}
+            None => currency = Some(line_currency.to_string()),
+        }
+    }
+
+    currency
 }
 
 fn money_cents_from_value(value: &serde_json::Value) -> Option<i32> {
@@ -744,4 +779,55 @@ fn money_cents_from_value(value: &serde_json::Value) -> Option<i32> {
     let nanos = i64::from(value["nanos"].as_i64().unwrap_or(0) as i32).clamp(0, 999_999_999);
     let cents = units.checked_mul(100)?.checked_add(nanos / 10_000_000)?;
     i32::try_from(cents).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn order_payment_details_include_amount_and_currency() {
+        let order = json!({
+            "lineItems": [
+                {
+                    "total": {
+                        "currencyCode": "RON",
+                        "units": "25",
+                        "nanos": 990000000
+                    }
+                }
+            ]
+        });
+
+        let details = order_payment_details_from_payload(&order);
+
+        assert_eq!(details.amount_cents, Some(2599));
+        assert_eq!(details.currency, Some("RON".to_string()));
+    }
+
+    #[test]
+    fn order_payment_details_drop_currency_when_line_items_disagree() {
+        let order = json!({
+            "lineItems": [
+                {
+                    "total": {
+                        "currencyCode": "RON",
+                        "units": "10"
+                    }
+                },
+                {
+                    "total": {
+                        "currencyCode": "EUR",
+                        "units": "5"
+                    }
+                }
+            ]
+        });
+
+        let details = order_payment_details_from_payload(&order);
+
+        assert_eq!(details.amount_cents, Some(1500));
+        assert_eq!(details.currency, None);
+    }
 }

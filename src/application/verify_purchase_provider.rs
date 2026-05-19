@@ -12,7 +12,7 @@ use crate::ports::{
     AppLookupRepository, WebhookForwardRepository, WebhookWriteRepository,
 };
 use crate::services::google_play::{
-    client::GooglePlayClient,
+    client::{GoogleOrderPaymentDetails, GooglePlayClient},
     models::{Money, ProductPurchase, SubscriptionPurchaseV2},
 };
 use crate::webhooks::processor::CanonicalWebhookPayload;
@@ -72,27 +72,27 @@ async fn verify_google_play(
                 .await
                 .map_err(|e| BridgeError::ProviderError(format!("Google Play verify failed: {}", e)))?;
 
-            let amount_cents = match purchase.order_id.as_deref() {
+            let order_payment = match purchase.order_id.as_deref() {
                 Some(order_id) => match client
-                    .get_order_amount_cents(google_package_name(config)?, order_id)
+                    .get_order_payment_details(google_package_name(config)?, order_id)
                     .await
                 {
-                    Ok(amount_cents) => amount_cents,
+                    Ok(order_payment) => order_payment,
                     Err(err) => {
                         tracing::warn!(
-                            "Google Play order amount lookup failed for order {}: {}",
+                            "Google Play order payment details lookup failed for order {}: {}",
                             order_id,
                             err
                         );
-                        None
+                        GoogleOrderPaymentDetails::default()
                     }
                 },
-                None => None,
+                None => GoogleOrderPaymentDetails::default(),
             };
 
-            Ok(VerificationOutcome::Verified(map_google_product_verification(
+            Ok(VerificationOutcome::Verified(map_google_product_verification_with_order_payment(
                 purchase,
-                amount_cents,
+                order_payment,
             )))
         }
     }
@@ -342,6 +342,15 @@ fn map_google_product_verification(
         resubscribe_obfuscated_account_id: None,
         linked_purchase_token: None,
     }
+}
+
+fn map_google_product_verification_with_order_payment(
+    purchase: ProductPurchase,
+    order_payment: GoogleOrderPaymentDetails,
+) -> VerifiedPurchase {
+    let mut verified = map_google_product_verification(purchase, order_payment.amount_cents);
+    verified.currency = order_payment.currency;
+    verified
 }
 
 fn mock_verify_google_play(
@@ -616,9 +625,16 @@ mod tests {
             acknowledgement_state: Some(1),
         };
 
-        let verified = map_google_product_verification(purchase, Some(499));
+        let verified = map_google_product_verification_with_order_payment(
+            purchase,
+            GoogleOrderPaymentDetails {
+                amount_cents: Some(499),
+                currency: Some("RON".to_string()),
+            },
+        );
 
         assert_eq!(verified.amount_cents, Some(499));
+        assert_eq!(verified.currency, Some("RON".to_string()));
         assert_eq!(verified.status, "active");
         assert_eq!(verified.payment_state, Some(0));
     }
