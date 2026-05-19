@@ -253,6 +253,8 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
     let response_current_period_end = current_period_end.as_ref().map(|d| d.to_rfc3339());
     let payment_status = product_type.payment_status(&verified.status).to_string();
 
+    let commit_currency = verified.currency.as_deref().or(payload.currency.as_deref());
+
     let commit_result = match repo
         .commit_verified_purchase(VerifyPurchaseCommitRequest {
             app_id,
@@ -283,7 +285,7 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
             google_obfuscated_account_id: verified.obfuscated_account_id.as_deref(),
             google_linked_purchase_token: verified.linked_purchase_token.as_deref(),
             amount_cents: verified.amount_cents.unwrap_or(0),
-            currency: verified.currency.as_deref(),
+            currency: commit_currency,
             event_time_ms: Utc::now().timestamp_millis(),
             is_subscription: product_type.is_subscription(),
         })

@@ -11,6 +11,7 @@ pub struct VerifyPurchaseRequest {
     pub subscription_id: String,
     pub purchase_token: String,
     pub product_type: String,
+    pub currency: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

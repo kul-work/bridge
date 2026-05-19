@@ -102,7 +102,8 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"provider\": \"$PROVIDER\",
     \"subscription_id\": \"$PRODUCT_ID\",
     \"purchase_token\": \"$DUMMY_TOKEN\",
-    \"product_type\": \"subscription\"
+    \"product_type\": \"subscription\",
+    \"currency\": \"KRW\"
   }" )
 
 echo -e "${GREEN}PASS: Trial subscription established${NC}"
@@ -188,6 +189,16 @@ if [[ "$STATUS" == "active" ]] || [[ "$STATUS" == "trial" ]]; then
     echo -e "${GREEN}PASS: Subscription status is $STATUS (valid state for Korea)${NC}"
 else
     echo -e "${RED}FAIL: Subscription status is $STATUS, expected 'active' or 'trial'${NC}"
+    exit 1
+fi
+
+PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t | tr -d '[:space:]')
+
+if [[ "$PAYMENT_COUNT" == "2" ]]; then
+    echo -e "${GREEN}PASS: Payment row count is 2 (initial payment + price update)${NC}"
+else
+    echo -e "${RED}FAIL: Payment row count is $PAYMENT_COUNT, expected 2${NC}"
     exit 1
 fi
 

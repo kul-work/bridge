@@ -66,6 +66,23 @@ impl PaymentReadRepository for db::Database {
         )
         .await
     }
+
+    async fn get_payment_currency_for_subscription(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        external_user_id: &str,
+        subscription_id: &str,
+    ) -> Result<Option<String>, BridgeError> {
+        db::payments::get_payment_currency_for_subscription(
+            self.pool(),
+            app_id,
+            provider,
+            external_user_id,
+            subscription_id,
+        )
+        .await
+    }
 }
 
 #[async_trait]

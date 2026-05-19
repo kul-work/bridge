@@ -912,16 +912,33 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 let txn_id = ctx.fields.provider_transaction_id.as_deref()
                     .or(ctx.fields.subscription_id.as_deref())
                     .unwrap_or(&ctx.webhook.provider_webhook_id);
+                let sub_id = ctx.fields.subscription_id.as_deref();
+                let existing_currency = if ctx.fields.currency.is_none() {
+                    if let Some(sub_id) = sub_id {
+                        repo.get_payment_currency_for_subscription(
+                            ctx.app_id,
+                            ctx.provider,
+                            user_id,
+                            sub_id,
+                        )
+                        .await?
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                let currency = ctx.fields.currency.as_deref().or(existing_currency.as_deref());
                 let _ = repo
                     .record_webhook_payment(WebhookPaymentRecordRequest {
                         app_id: ctx.app_id,
                         external_user_id: user_id,
                         provider: ctx.provider,
                         provider_transaction_id: txn_id,
-                        subscription_id: ctx.fields.subscription_id.as_deref(),
+                        subscription_id: sub_id,
                         product_id: ctx.fields.product_id.as_deref(),
                         amount_cents: ctx.fields.amount_cents.unwrap_or(0),
-                        currency: ctx.fields.currency.as_deref(),
+                        currency,
                         status: "price_changed",
                     })
                     .await;
