@@ -83,28 +83,6 @@ No Bridge log showed:
 - `record_payment_with_purchase_token_tx` uses `COALESCE(NULLIF($10, ''), 'USD')`.
 - Missing currency becomes `USD`.
 
-## Old HiHa Parity Check
-
-Classification: `BRIDGE-ONLY`
-
-Old HiHa did not correctly handle Google OTP currency either.
-
-Old HiHa evidence:
-
-- `C:\share\hiha\src\services\google_play\provider.rs`
-  - Google OTP verification returned `amount_cents: None`.
-  - Comment: `INAPP pricing not tracked in this response; stored elsewhere in Play Console`.
-- `C:\share\hiha\src\handlers\payments\verify_purchase.rs`
-  - Recorded `amount_cents = subscription.amount_cents.unwrap_or(0)`.
-  - Passed no currency into payment persistence.
-- `C:\share\hiha\src\db\payments.rs`
-  - `PaymentParams` had no currency field.
-  - `record_payment` inserted no currency.
-- `C:\share\hiha\migrations\03_create_payments_table.sql`
-  - `payments.currency TEXT DEFAULT 'USD'`.
-
-Conclusion: old HiHa also defaulted Google OTP currency to `USD`; it usually also stored OTP amount as `0`. Bridge improved amount capture, but still needs currency capture.
-
 ## Problem
 
 Bridge now has a partial Google OTP payment record:
@@ -134,4 +112,3 @@ Instead, extend the Google Orders API lookup path:
 
 - Do not use RTDN payloads for OTP currency; they do not include it.
 - Do not map `regionCode = RO` to `RON`; region and currency are distinct and can diverge.
-- Do not preserve old HiHa behavior here; old HiHa is not a correct oracle for OTP currency.
