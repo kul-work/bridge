@@ -239,6 +239,16 @@ But Bridge has three issues worth addressing later:
 2. A single Google OTP refund can produce two app callbacks with refund semantics.
 3. OTP refund handling can create a duplicate `pay.payments` row keyed by purchase token, violating the payment transaction id invariant.
 
+## Actual Issues
+
+1. OTP/refund events can call Google subscription APIs even though one-time-product tokens are not subscription tokens. This causes expected but noisy `410 Gone` / `purchaseTokenNoLongerValid` errors.
+2. `VOIDED_PURCHASE` notifications for one-time products can be made to look subscription-like because ingress may populate `subscription_id` with the product id.
+3. A single Google OTP refund can produce two refund-like callbacks to the app: `purchase.one_time` with `status=refunded` and `payment.refunded`.
+4. OTP refund handling can create a duplicate `pay.payments` row by using the Google purchase token as `provider_transaction_id`.
+5. The duplicate payment row violates the invariant that `payments.provider_transaction_id` stores the provider economic transaction/order id, while Google purchase tokens belong in token fields.
+6. If the initial purchase RTDN arrives before `verify_purchase`, Bridge cannot resolve the user because the purchase token has not yet been bound to `external_user_id`.
+7. The user-resolution fallback is subscription-oriented for OTP events because it attempts a Google subscription API lookup for obfuscated account id resolution.
+
 ## Suggested Follow-Up
 
 Likely fix direction for a later session:
