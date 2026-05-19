@@ -48,7 +48,7 @@ TEST_RUN_ID="sub-21-${TIMESTAMP}-$$"
 DUMMY_TOKEN="test-sub-21-trial-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 REPORT_FILE="sub-21-report.json"
-NEW_PRICE_CENTS=1299
+NEW_PRICE_CENTS=1200000 # 12,000 KRW (Google Play represents this as 12,000,000,000 micros)
 NEW_PRICE_MICROS=$((NEW_PRICE_CENTS * 10000))
 CONSENT_DEADLINE_MS=$(($(date +%s) + 604800))000
 
@@ -87,6 +87,7 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-step-up-setup-21\",
     \"product_type\": \"subscription\",
     \"amount_cents\": 0,
+    \"currency\": \"KRW\",
     \"transaction_id\": \"test-reg-21-$(date +%s)\"
   }" )
 
@@ -187,6 +188,16 @@ if [[ "$STATUS" == "active" ]] || [[ "$STATUS" == "trial" ]]; then
     echo -e "${GREEN}PASS: Subscription status is $STATUS (valid state for Korea)${NC}"
 else
     echo -e "${RED}FAIL: Subscription status is $STATUS, expected 'active' or 'trial'${NC}"
+    exit 1
+fi
+
+PAYMENT_CURRENCY=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT currency FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
+
+if [[ "$PAYMENT_CURRENCY" == "KRW" ]]; then
+    echo -e "${GREEN}PASS: Payment currency is KRW${NC}"
+else
+    echo -e "${RED}FAIL: Payment currency is $PAYMENT_CURRENCY, expected KRW${NC}"
     exit 1
 fi
 echo ""
