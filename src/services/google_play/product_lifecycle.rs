@@ -2,7 +2,8 @@ use crate::{
     error::BridgeError,
     ports::{
         WebhookPaymentRecordRequest, WebhookProcessingLookupRepository,
-        WebhookProcessingTransactionRepository, WebhookProviderSnapshot,
+        WebhookProcessingMutationRepository, WebhookProcessingTransactionRepository,
+        WebhookProviderSnapshot,
     },
     services::google_play::subscription_lifecycle::GooglePlayLifecycleOutcome,
     webhooks::processor::WebhookFields,
@@ -23,9 +24,8 @@ pub async fn handle_otp_purchased<R: WebhookProcessingTransactionRepository + ?S
     };
 
     let txn_id = fields
-        .purchase_token
+        .provider_transaction_id
         .as_deref()
-        .or(fields.provider_transaction_id.as_deref())
         .unwrap_or(&webhook.provider_webhook_id);
 
     repo
@@ -54,7 +54,7 @@ pub async fn handle_otp_purchased<R: WebhookProcessingTransactionRepository + ?S
 }
 
 pub async fn handle_otp_cancelled<
-    R: WebhookProcessingTransactionRepository + WebhookProcessingLookupRepository + ?Sized,
+    R: WebhookProcessingMutationRepository + WebhookProcessingLookupRepository + ?Sized,
 >(
     repo: &R,
     app_id: Uuid,
@@ -63,7 +63,7 @@ pub async fn handle_otp_cancelled<
     external_user_id: Option<&str>,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
-    let Some(user_id) = external_user_id
+    let Some(_user_id) = external_user_id
     else {
         return Ok(None);
     };
@@ -73,25 +73,16 @@ pub async fn handle_otp_cancelled<
         .as_deref()
         .or(fields.provider_transaction_id.as_deref())
         .unwrap_or("");
+    if token.is_empty() {
+        return Ok(None);
+    }
 
     let existing = repo.get_payment_status_for_provider(app_id, &webhook.provider, token).await?;
     if matches!(existing.as_deref(), Some("refunded") | Some("cancelled")) {
         return Ok(None);
     }
 
-    repo
-        .record_webhook_payment(WebhookPaymentRecordRequest {
-            app_id,
-            external_user_id: user_id,
-            provider: &webhook.provider,
-            provider_transaction_id: token,
-            subscription_id: None,
-            product_id: fields.product_id.as_deref(),
-            amount_cents: fields.amount_cents.unwrap_or(0),
-            currency: fields.currency.as_deref(),
-            status: "cancelled",
-        })
-        .await?;
+    repo.update_payment_status_for_provider(app_id, &webhook.provider, token, "cancelled").await?;
 
     let _ = timestamp_epoch_ms;
 
@@ -105,7 +96,7 @@ pub async fn handle_otp_cancelled<
 }
 
 pub async fn handle_otp_refunded<
-    R: WebhookProcessingTransactionRepository + WebhookProcessingLookupRepository + ?Sized,
+    R: WebhookProcessingMutationRepository + WebhookProcessingLookupRepository + ?Sized,
 >(
     repo: &R,
     app_id: Uuid,
@@ -114,7 +105,7 @@ pub async fn handle_otp_refunded<
     external_user_id: Option<&str>,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
-    let Some(user_id) = external_user_id
+    let Some(_user_id) = external_user_id
     else {
         return Ok(None);
     };
@@ -124,25 +115,16 @@ pub async fn handle_otp_refunded<
         .as_deref()
         .or(fields.provider_transaction_id.as_deref())
         .unwrap_or("");
+    if token.is_empty() {
+        return Ok(None);
+    }
 
     let existing = repo.get_payment_status_for_provider(app_id, &webhook.provider, token).await?;
     if existing.as_deref() == Some("refunded") {
         return Ok(None);
     }
 
-    repo
-        .record_webhook_payment(WebhookPaymentRecordRequest {
-            app_id,
-            external_user_id: user_id,
-            provider: &webhook.provider,
-            provider_transaction_id: token,
-            subscription_id: None,
-            product_id: fields.product_id.as_deref(),
-            amount_cents: fields.amount_cents.unwrap_or(0),
-            currency: fields.currency.as_deref(),
-            status: "refunded",
-        })
-        .await?;
+    repo.update_payment_status_for_provider(app_id, &webhook.provider, token, "refunded").await?;
 
     let _ = timestamp_epoch_ms;
 

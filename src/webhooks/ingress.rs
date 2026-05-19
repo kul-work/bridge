@@ -18,6 +18,12 @@ use crate::{
 
 const CREEM_SIGNATURE_HEADERS: [&str; 3] = ["creem-signature", "Webhook-Signature", "x-signature"];
 
+fn google_voided_purchase_product_type(payload: &serde_json::Value) -> Option<i64> {
+    payload
+        .pointer("/voidedPurchaseNotification/productType")
+        .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
+}
+
 fn spawn_process_and_forward_webhook(
     database: Arc<Database>,
     app_id: Uuid,
@@ -260,7 +266,6 @@ pub async fn handle_google_play(
 
     let subscription_id = google_play_event["subscriptionNotification"]["subscriptionId"]
         .as_str()
-        .or_else(|| google_play_event["oneTimeProductNotification"]["productId"].as_str())
         .map(|s| s.to_string());
 
     let purchase_token = google_play_event["subscriptionNotification"]["purchaseToken"]
@@ -270,7 +275,10 @@ pub async fn handle_google_play(
         .map(|s| s.to_string());
 
     // For voided purchase notifications, lookup subscription_id from purchase_token if not present
-    let subscription_id = if subscription_id.is_none() && google_play_event["voidedPurchaseNotification"].is_object() {
+    let subscription_id = if subscription_id.is_none()
+        && google_play_event["voidedPurchaseNotification"].is_object()
+        && google_voided_purchase_product_type(&google_play_event) != Some(2)
+    {
         if let Some(purchase_token) = purchase_token.as_deref() {
             if let Ok(Some(sub_id)) = crate::db::subscriptions::lookup_subscription_id_by_purchase_token(database.pool(), app.id, purchase_token).await {
                 Some(sub_id)
@@ -630,6 +638,7 @@ mod tests {
 
     use super::{
         decode_google_play_payload, duplicate_webhook_action, extract_header_value,
+        google_voided_purchase_product_type,
         DuplicateWebhookAction, CREEM_SIGNATURE_HEADERS,
     };
 
@@ -751,5 +760,22 @@ mod tests {
             duplicate_webhook_action(true, false, true),
             DuplicateWebhookAction::Ignore
         );
+    }
+
+    #[test]
+    fn reads_voided_purchase_product_type_from_number_or_string() {
+        let numeric_payload = json!({
+            "voidedPurchaseNotification": {
+                "productType": 2
+            }
+        });
+        let string_payload = json!({
+            "voidedPurchaseNotification": {
+                "productType": "2"
+            }
+        });
+
+        assert_eq!(google_voided_purchase_product_type(&numeric_payload), Some(2));
+        assert_eq!(google_voided_purchase_product_type(&string_payload), Some(2));
     }
 }

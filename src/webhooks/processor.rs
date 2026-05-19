@@ -304,12 +304,32 @@ fn google_subscription_recurring_currency(
         .and_then(|money| money.currency_code.clone())
 }
 
+fn google_voided_purchase_product_type(payload: &serde_json::Value) -> Option<i64> {
+    payload
+        .pointer("/voidedPurchaseNotification/productType")
+        .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
+}
+
+fn is_google_play_one_time_webhook(webhook: &WebhookProviderSnapshot) -> bool {
+    if webhook.provider != "google_play" {
+        return false;
+    }
+
+    webhook.event_type.starts_with("ONE_TIME_PRODUCT_")
+        || webhook.payload.get("oneTimeProductNotification").is_some()
+        || google_voided_purchase_product_type(&webhook.payload) == Some(2)
+}
+
 async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProviderSnapshot,
     mut fields: WebhookFields,
 ) -> Result<WebhookFields, BridgeError> {
+    if is_google_play_one_time_webhook(webhook) {
+        return Ok(fields);
+    }
+
     let Some(purchase_token) = fields.purchase_token.as_deref().or(webhook.purchase_token.as_deref()) else {
         return Ok(fields);
     };
@@ -516,6 +536,8 @@ async fn resolve_user<R: WebhookProcessingRepository>(
         // Skip real Google API call in mock mode
         if crate::config::mock_external_apis_enabled() {
             failure_parts.push("obfuscated_account_id=skipped_mock");
+        } else if is_google_play_one_time_webhook(webhook) {
+            failure_parts.push("obfuscated_account_id=skipped_otp");
         } else if let Some(ref token) = webhook.purchase_token {
             if let Ok(config) = repo.get_provider_config(app_id, "google_play").await {
                 let pkg = config.config.get("package_name").and_then(|v| v.as_str()).unwrap_or("");

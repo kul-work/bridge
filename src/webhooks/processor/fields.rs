@@ -42,6 +42,8 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
             purchase_token: p.pointer("/subscriptionNotification/purchaseToken")
                 .and_then(|v| v.as_str()).map(|s| s.to_string())
                 .or_else(|| p.pointer("/oneTimeProductNotification/purchaseToken")
+                    .and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .or_else(|| p.pointer("/voidedPurchaseNotification/purchaseToken")
                     .and_then(|v| v.as_str()).map(|s| s.to_string())),
             amount_cents: p.pointer("/oneTimeProductNotification/priceMicros")
                 .and_then(|v| v.as_i64()).map(|m| (m / 10_000) as i32),
@@ -53,11 +55,13 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                 .map(|dt| dt.to_rfc3339()),
             provider_transaction_id: p.pointer("/subscriptionNotification/orderId")
                 .and_then(|v| v.as_str()).map(|s| s.to_string())
-                .or_else(|| p.pointer("/oneTimeProductNotification/purchaseToken")
+                .or_else(|| p.pointer("/voidedPurchaseNotification/orderId")
                     .and_then(|v| v.as_str()).map(|s| s.to_string())),
             provider_customer_id: None,
             product_id: p.pointer("/subscriptionNotification/subscriptionId")
                 .and_then(|v| v.as_str()).map(|s| s.to_string())
+                .or_else(|| p.pointer("/oneTimeProductNotification/productId")
+                    .and_then(|v| v.as_str()).map(|s| s.to_string()))
                 .or_else(|| p.pointer("/oneTimeProductNotification/sku")
                     .and_then(|v| v.as_str()).map(|s| s.to_string())),
             cancel_reason: p.pointer("/subscriptionNotification/cancelReason")

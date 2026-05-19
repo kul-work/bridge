@@ -3,6 +3,15 @@ pub(super) fn normalize_event_type_with_payload(
     event_type: &str,
     payload: Option<&serde_json::Value>,
 ) -> String {
+    if provider == "google_play" && event_type == "VOIDED_PURCHASE"
+        && payload
+            .and_then(|payload| payload.pointer("/voidedPurchaseNotification/productType"))
+            .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
+            == Some(2)
+    {
+        return "purchase.one_time_refunded".to_string();
+    }
+
     if provider == "creem" && event_type == "refund.created" {
         if let Some(payload) = payload {
             let object = payload.get("object").unwrap_or(&serde_json::Value::Null);

@@ -268,6 +268,83 @@ fn test_google_play_subscription_field_extraction_does_not_use_purchase_token_as
 }
 
 #[test]
+fn test_normalize_google_play_voided_otp_to_one_time_refund() {
+    let payload = serde_json::json!({
+        "voidedPurchaseNotification": {
+            "purchaseToken": "otp_purchase_token",
+            "orderId": "GPA.3346-7932-0960-90782",
+            "productType": 2
+        }
+    });
+
+    assert_eq!(
+        normalize_event_type_with_payload("google_play", "VOIDED_PURCHASE", Some(&payload)),
+        "purchase.one_time_refunded"
+    );
+}
+
+#[test]
+fn test_google_play_one_time_field_extraction_keeps_token_out_of_transaction_id() {
+    let payload = serde_json::json!({
+        "oneTimeProductNotification": {
+            "productId": "hiha_one_time",
+            "purchaseToken": "otp_purchase_token",
+            "notificationType": 1
+        }
+    });
+
+    let webhook = WebhookProviderSnapshot {
+        provider: "google_play".to_string(),
+        provider_webhook_id: "19082919261635860".to_string(),
+        event_type: "ONE_TIME_PRODUCT_PURCHASED".to_string(),
+        subscription_id: None,
+        purchase_token: Some("otp_purchase_token".to_string()),
+        payload,
+        processed: false,
+        timestamp_epoch_ms: Some(1779043946000),
+        suppressed: false,
+        suppressed_reason: None,
+    };
+
+    let fields = extract_webhook_fields(&webhook);
+
+    assert_eq!(fields.subscription_id, None);
+    assert_eq!(fields.product_id, Some("hiha_one_time".to_string()));
+    assert_eq!(fields.purchase_token, Some("otp_purchase_token".to_string()));
+    assert_eq!(fields.provider_transaction_id, None);
+}
+
+#[test]
+fn test_google_play_voided_otp_field_extraction_uses_order_id_not_token() {
+    let payload = serde_json::json!({
+        "voidedPurchaseNotification": {
+            "purchaseToken": "otp_purchase_token",
+            "orderId": "GPA.3346-7932-0960-90782",
+            "productType": 2
+        }
+    });
+
+    let webhook = WebhookProviderSnapshot {
+        provider: "google_play".to_string(),
+        provider_webhook_id: "19545006170252135".to_string(),
+        event_type: "VOIDED_PURCHASE".to_string(),
+        subscription_id: None,
+        purchase_token: Some("otp_purchase_token".to_string()),
+        payload,
+        processed: false,
+        timestamp_epoch_ms: Some(1779044094000),
+        suppressed: false,
+        suppressed_reason: None,
+    };
+
+    let fields = extract_webhook_fields(&webhook);
+
+    assert_eq!(fields.subscription_id, None);
+    assert_eq!(fields.purchase_token, Some("otp_purchase_token".to_string()));
+    assert_eq!(fields.provider_transaction_id, Some("GPA.3346-7932-0960-90782".to_string()));
+}
+
+#[test]
 fn test_google_subscription_expiry_prefers_line_item_expiry() {
     let resource = crate::services::google_play::models::SubscriptionPurchaseV2 {
         expiry_time: Some("2026-05-16T14:30:34Z".to_string()),
