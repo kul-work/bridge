@@ -17,6 +17,10 @@ Old HiHa lives at:
 C:\share\hiha
 ```
 
+Use this as the historical pre-Bridge oracle.
+
+Do not use `C:\share\tyde\hiha` as the old-behavior oracle unless the task is explicitly about current post-Bridge HiHa integration.
+
 Bridge lives at:
 
 ```text
@@ -30,7 +34,7 @@ Before coding, classify the task:
 ```text
 PARITY: preserve old HiHa behavior exactly.
 BRIDGE-ONLY: intentionally different because Bridge is multi-app/payment middleware.
-UNKNOWN: stop and classify before coding.
+UNKNOWN: stop implementation, keep investigating until old behavior or a user decision classifies it.
 ```
 
 Most Google Play and Creem reintegration work should start as `PARITY`.
@@ -73,6 +77,7 @@ For each parity task, fill this before changing code:
 ```text
 Old HiHa:
 - file/function:
+- commit/date inspected:
 - exact behavior:
 - relevant test/doc:
 
@@ -86,7 +91,7 @@ Decision:
 - reason:
 ```
 
-If this cannot be filled in from code, docs, tests, or user-provided context, report that the task is `UNKNOWN` and ask for the missing oracle detail.
+If this cannot be filled in from code, docs, tests, git history, or user-provided context, report that the task is `UNKNOWN`. Ask for the missing oracle detail only after focused investigation cannot find it.
 
 ## Workflow
 
@@ -180,4 +185,3 @@ Use this to keep "align to HiHa" concrete.
 - Do not treat current Bridge behavior as correct merely because tests pass.
 - Do not call a difference intentional unless a Bridge invariant, doc, or user decision says so.
 - Prefer one flow, one divergence, one assertion, one patch.
-
