@@ -15,7 +15,7 @@ CREATE TABLE payments (
     product_id TEXT,                            -- opaque, from app (e.g. 'premium_monthly', 'otp_lifetime')
     
     amount_cents INT NOT NULL,
-    currency TEXT DEFAULT 'USD',
+    currency TEXT DEFAULT 'N/A',
     
     status TEXT NOT NULL,                       -- 'pending', 'success', 'failed', 'refunded'
     

@@ -98,7 +98,7 @@ pub async fn record_payment_with_purchase_token_tx(
 ) -> Result<(), crate::error::BridgeError> {
     let result = sqlx::query(
         "INSERT INTO pay.payments (app_id, external_user_id, provider, provider_transaction_id, provider_purchase_token, ack_required, subscription_id, product_id, amount_cents, currency, status, webhook_received_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE(NULLIF($10, ''), 'USD'), $11, NOW())
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE(NULLIF($10, ''), 'N/A'), $11, NOW())
          ON CONFLICT (app_id, provider, provider_transaction_id)
          DO UPDATE SET
            status = CASE
