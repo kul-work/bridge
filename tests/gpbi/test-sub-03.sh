@@ -95,14 +95,20 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
 echo -e "${GREEN}✓ Active subscription established${NC}"
 echo ""
 
+echo -e "${YELLOW}Waiting 2 seconds so activation and cancellation timestamps are easier to inspect${NC}"
+sleep 2
+echo ""
+
 # Step 4: Simulate Google Pub/Sub cancellation webhook
 echo -e "${YELLOW}[2/5] Sending subscription.cancelled webhook (notificationType 3)${NC}"
+
+WEBHOOK_EVENT_TIME_MS=$(($(date +%s) * 1000))
 
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$BRIDGE_WEBHOOK_FUTURE_TS",
+  "eventTimeMillis": "$WEBHOOK_EVENT_TIME_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 3,
