@@ -10,7 +10,12 @@ use crate::{
 };
 use uuid::Uuid;
 
-pub async fn handle_otp_purchased<R: WebhookProcessingTransactionRepository + ?Sized>(
+pub async fn handle_otp_purchased<
+    R: WebhookProcessingLookupRepository
+        + WebhookProcessingMutationRepository
+        + WebhookProcessingTransactionRepository
+        + ?Sized,
+>(
     repo: &R,
     app_id: Uuid,
     webhook: &WebhookProviderSnapshot,
@@ -22,6 +27,21 @@ pub async fn handle_otp_purchased<R: WebhookProcessingTransactionRepository + ?S
     else {
         return Ok(None);
     };
+
+    if let Some(purchase_token) = fields.purchase_token.as_deref().or(webhook.purchase_token.as_deref()) {
+        if repo.get_payment_status_for_provider(app_id, &webhook.provider, purchase_token).await?.is_some() {
+            repo.update_payment_status_for_provider(app_id, &webhook.provider, purchase_token, "success").await?;
+            let _ = timestamp_epoch_ms;
+
+            return Ok(Some(GooglePlayLifecycleOutcome {
+                canonical_subscription: None,
+                callback_event_type: Some("purchase.one_time".to_string()),
+                callback_status_override: Some("completed".to_string()),
+                callback_revocation_reason_override: None,
+                callback_cancellation_mode_override: None,
+            }));
+        }
+    }
 
     let txn_id = fields
         .provider_transaction_id

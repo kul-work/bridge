@@ -189,6 +189,7 @@ if [[ "$APPROVE_ONLY" == "true" ]]; then
 
     APPROVAL_USER_ID=$(echo "$APPROVAL_TARGET" | awk -F '|' '{print $1}' | head -n1 | xargs)
     APPROVAL_STATUS=$(echo "$APPROVAL_TARGET" | awk -F '|' '{print $2}' | head -n1 | xargs)
+    PURCHASE_TOKEN="mock-google-play-order:$DUMMY_TOKEN"
 
     echo "Found payment:"
     echo "  User ID: $APPROVAL_USER_ID"
