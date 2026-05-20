@@ -6,7 +6,7 @@
 # Purpose: Verify that a slow test card (pending state) is properly handled 
 #          with the correct status transitions from Pending to Success.
 #
-# Usage: ./test-otp-04.sh [--replay] [--wait-for-approval] [--approve]
+# Usage: ./test-otp-04.sh [--replay] [--wait-for-approval] [--approve] [--repro-duplicate-verify-gap]
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -50,6 +50,7 @@ REPORT_FILE="otp-04-report.json"
 WAIT_FOR_APPROVAL=false
 REPLAY_OTP=false
 APPROVE_ONLY=false
+REPRO_DUPLICATE_VERIFY_GAP=false
 REGRESSION_CHECKED=false
 MOCK_RTDN_FIXTURE=""
 APP_URL="$BRIDGE_API_URL"
@@ -74,6 +75,10 @@ while [[ $# -gt 0 ]]; do
             APPROVE_ONLY=true
             shift
             ;;
+        --repro-duplicate-verify-gap)
+            REPRO_DUPLICATE_VERIFY_GAP=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -81,20 +86,89 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ "$APPROVE_ONLY" == "true" && ( "$REPLAY_OTP" == "true" || "$WAIT_FOR_APPROVAL" == "true" ) ]]; then
-    echo -e "${RED}--approve cannot be combined with --replay or --wait-for-approval${NC}"
+if [[ "$APPROVE_ONLY" == "true" && ( "$REPLAY_OTP" == "true" || "$WAIT_FOR_APPROVAL" == "true" || "$REPRO_DUPLICATE_VERIFY_GAP" == "true" ) ]]; then
+    echo -e "${RED}--approve cannot be combined with --replay, --wait-for-approval, or --repro-duplicate-verify-gap${NC}"
     exit 1
 fi
 
-if [[ "$REPLAY_OTP" == "true" && "$WAIT_FOR_APPROVAL" == "true" ]]; then
-    echo -e "${RED}--replay and --wait-for-approval are mutually exclusive${NC}"
+if [[ "$REPLAY_OTP" == "true" && ( "$WAIT_FOR_APPROVAL" == "true" || "$REPRO_DUPLICATE_VERIFY_GAP" == "true" ) ]]; then
+    echo -e "${RED}--replay cannot be combined with --wait-for-approval or --repro-duplicate-verify-gap${NC}"
     exit 1
 fi
 
-if [[ "$REPLAY_OTP" == "true" || "$APPROVE_ONLY" == "true" ]]; then
+if [[ "$WAIT_FOR_APPROVAL" == "true" && "$REPRO_DUPLICATE_VERIFY_GAP" == "true" ]]; then
+    echo -e "${RED}--wait-for-approval and --repro-duplicate-verify-gap are mutually exclusive${NC}"
+    exit 1
+fi
+
+if [[ "$REPLAY_OTP" == "true" || "$APPROVE_ONLY" == "true" || "$REPRO_DUPLICATE_VERIFY_GAP" == "true" ]]; then
     MOCK_RTDN_FIXTURE="$SCRIPT_DIR/fixtures/otp-04-pending-response.json"
     echo -e "${YELLOW}[Approval] MOCK_RTDN_FIXTURE=${MOCK_RTDN_FIXTURE}${NC}"
 fi
+
+bridge_sql() {
+    psql -v ON_ERROR_STOP=1 -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -At -c "$1"
+}
+
+wait_for_bridge_value() {
+    local sql="$1"
+    local expected="$2"
+    local label="$3"
+    local actual=""
+
+    for _ in {1..20}; do
+        actual="$(bridge_sql "$sql" 2>/dev/null | tr -d '[:space:]' || true)"
+        if [[ "$actual" == "$expected" ]]; then
+            echo -e "${GREEN}[OK] $label: $actual${NC}"
+            return 0
+        fi
+        sleep 1
+    done
+
+    echo -e "${RED}[FAIL] $label: expected $expected, got ${actual:-<empty>}${NC}"
+    return 1
+}
+
+HIHA_DB_MODE=""
+
+detect_hiha_db_mode() {
+    local bridge_schema_count
+    bridge_schema_count=$(bridge_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'hiha' AND table_name = 'webhook_callbacks';" 2>/dev/null | tr -d '[:space:]' || true)
+    if [[ "$bridge_schema_count" == "1" ]]; then
+        HIHA_DB_MODE="bridge_schema"
+        return 0
+    fi
+
+    local separate_db_count
+    separate_db_count=$(psql -v ON_ERROR_STOP=1 -U "$HIHA_DB_USER" -h "$HIHA_DB_HOST" -p "$HIHA_DB_PORT" -d "$HIHA_DB_NAME" -At \
+        -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'webhook_callbacks';" 2>/dev/null | tr -d '[:space:]' || true)
+    if [[ "$separate_db_count" == "1" ]]; then
+        HIHA_DB_MODE="separate_public"
+        return 0
+    fi
+
+    HIHA_DB_MODE=""
+    return 1
+}
+
+hiha_sql() {
+    local sql="$1"
+
+    case "$HIHA_DB_MODE" in
+        bridge_schema)
+            psql -v ON_ERROR_STOP=1 -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -At -c "$sql"
+            ;;
+        separate_public)
+            local public_sql
+            public_sql="${sql//hiha.webhook_callbacks/webhook_callbacks}"
+            public_sql="${public_sql//hiha.users/users}"
+            psql -v ON_ERROR_STOP=1 -U "$HIHA_DB_USER" -h "$HIHA_DB_HOST" -p "$HIHA_DB_PORT" -d "$HIHA_DB_NAME" -At -c "$public_sql"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
 
 send_approval_webhook() {
     if [[ ! -f "$MOCK_RTDN_FIXTURE" ]]; then
@@ -220,6 +294,186 @@ if [[ "$APPROVE_ONLY" == "true" ]]; then
 
     echo -e "${RED}✗ Approval webhook did not transition payment to success${NC}"
     exit 1
+fi
+
+if [[ "$REPRO_DUPLICATE_VERIFY_GAP" == "true" ]]; then
+    echo -e "${YELLOW}========================================${NC}"
+    echo "OTP-04: Duplicate Verify Gap Regression"
+    echo -e "${YELLOW}========================================${NC}"
+    echo ""
+    # Keep this off the OTP-04 slow token so this disposable repro can run
+    # beside --wait-for-approval without changing server-wide mock fixtures.
+    REPRO_TOKEN="${REPRO_TOKEN:-test-inapp-otp04-gap-active-$TIMESTAMP}"
+    echo "Purchase token: $REPRO_TOKEN"
+    echo "User ID: ${USER_ID:-test_otp_gap_user_$TEST_RUN_ID}"
+    echo ""
+
+    if [[ -z "${BRIDGE_API_KEY:-}" ]]; then
+        echo -e "${RED}[FAIL] BRIDGE_API_KEY is required${NC}"
+        exit 1
+    fi
+    if [[ -z "${BRIDGE_APP_ID:-}" ]]; then
+        echo -e "${RED}[FAIL] BRIDGE_APP_ID is required${NC}"
+        exit 1
+    fi
+
+    USER_ID="${USER_ID:-test_otp_gap_user_$TEST_RUN_ID}"
+    WEBHOOK_PATH_TOKEN="${WEBHOOK_INGRESS_TOKEN:-${WEBHOOK_TOKEN:-}}"
+    RTDN_EVENT_ID="test-webhook-otp04-gap-purchased-$TEST_RUN_ID"
+    if [[ -z "$WEBHOOK_PATH_TOKEN" ]]; then
+        echo -e "${RED}[FAIL] WEBHOOK_INGRESS_TOKEN or WEBHOOK_TOKEN is required${NC}"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}[1/6] Cleaning repro data${NC}"
+    bridge_sql "DELETE FROM pay.webhook_delivery WHERE webhook_provider_id IN (SELECT id FROM pay.webhook_provider WHERE app_id = '$BRIDGE_APP_ID' AND provider = '$PROVIDER' AND (purchase_token = '$REPRO_TOKEN' OR provider_webhook_id LIKE 'test-webhook-otp04-gap-%'));" >/dev/null
+    bridge_sql "DELETE FROM pay.webhook_provider WHERE app_id = '$BRIDGE_APP_ID' AND provider = '$PROVIDER' AND (purchase_token = '$REPRO_TOKEN' OR provider_webhook_id LIKE 'test-webhook-otp04-gap-%');" >/dev/null
+    bridge_sql "DELETE FROM pay.payments WHERE app_id = '$BRIDGE_APP_ID' AND provider = '$PROVIDER' AND product_id = '$PRODUCT_ID' AND (external_user_id = '$USER_ID' OR provider_purchase_token = '$REPRO_TOKEN' OR provider_transaction_id = 'mock-google-play-order:$REPRO_TOKEN');" >/dev/null
+    bridge_sql "DELETE FROM pay.subscriptions WHERE app_id = '$BRIDGE_APP_ID' AND provider = '$PROVIDER' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" >/dev/null
+    detect_hiha_db_mode >/dev/null 2>&1 || true
+    hiha_sql "DELETE FROM hiha.webhook_callbacks WHERE clerk_id = '$USER_ID'; DELETE FROM hiha.users WHERE clerk_id = '$USER_ID';" >/dev/null || true
+    echo -e "${GREEN}[OK] Cleanup complete${NC}"
+    echo ""
+
+    echo -e "${YELLOW}[2/6] Sending OTP RTDN before any verify-purchase binding exists${NC}"
+    NOTIFICATION_JSON=$(sed "s/<REDACTED_PURCHASE_TOKEN>/$REPRO_TOKEN/g" "$MOCK_RTDN_FIXTURE")
+    NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || echo -n "$NOTIFICATION_JSON" | base64)
+    WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+      "$APP_URL/webhooks/$WEBHOOK_PATH_TOKEN/$PROVIDER" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer test-token" \
+      -H "X-Webhook-Verification-Mode: off" \
+      -d "{
+        \"message\": {
+          \"data\": \"$NOTIFICATION_B64\",
+          \"message_id\": \"$RTDN_EVENT_ID\",
+          \"attributes\": {}
+        },
+        \"subscription\": \"projects/test-project/subscriptions/test-sub\"
+      }")
+    WH_HTTP_CODE=$(echo "$WEBHOOK_RESPONSE" | tail -n1)
+    if [[ "$WH_HTTP_CODE" != "200" && "$WH_HTTP_CODE" != "204" ]]; then
+        echo -e "${RED}[FAIL] RTDN returned HTTP $WH_HTTP_CODE${NC}"
+        echo "$WEBHOOK_RESPONSE"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] RTDN accepted: HTTP $WH_HTTP_CODE${NC}"
+    wait_for_bridge_value "SELECT COUNT(*) FROM pay.webhook_provider WHERE app_id = '$BRIDGE_APP_ID' AND provider = '$PROVIDER' AND provider_webhook_id = '$RTDN_EVENT_ID' AND event_type = 'ONE_TIME_PRODUCT_PURCHASED' AND purchase_token = '$REPRO_TOKEN' AND suppressed = true AND suppressed_reason = 'unresolved_external_user_id';" "1" "OTP RTDN suppressed without user binding"
+    echo ""
+
+    echo -e "${YELLOW}[3/6] Sending three verify-purchase requests for the same OTP token/user${NC}"
+    VERIFY_BODY="{
+      \"provider\": \"$PROVIDER\",
+      \"external_user_id\": \"$USER_ID\",
+      \"subscription_id\": \"$PRODUCT_ID\",
+      \"purchase_token\": \"$REPRO_TOKEN\",
+      \"product_type\": \"inapp\"
+    }"
+    VERIFY_TMP_DIR="${TMPDIR:-/tmp}/otp04-gap-$TEST_RUN_ID"
+    mkdir -p "$VERIFY_TMP_DIR"
+    for n in 1 2 3; do
+        curl -s -w "\n%{http_code}" -X POST \
+          "$APP_URL/api/v1/verify-purchase" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer $BRIDGE_API_KEY" \
+          -d "$VERIFY_BODY" > "$VERIFY_TMP_DIR/verify-$n.out" &
+    done
+    wait
+
+    for n in 1 2 3; do
+        VERIFY_HTTP=$(tail -n1 "$VERIFY_TMP_DIR/verify-$n.out")
+        VERIFY_PAYLOAD=$(head -n -1 "$VERIFY_TMP_DIR/verify-$n.out")
+        echo "  verify $n HTTP: $VERIFY_HTTP"
+        echo "  verify $n body: $VERIFY_PAYLOAD"
+        if [[ "$VERIFY_HTTP" != "200" ]]; then
+            echo -e "${RED}[FAIL] Expected verify $n to return HTTP 200 completed/active${NC}"
+            exit 1
+        fi
+        if [[ "$VERIFY_PAYLOAD" != *"\"status\":\"active\""* ]]; then
+            echo -e "${RED}[FAIL] Expected verify $n response status to be active${NC}"
+            exit 1
+        fi
+    done
+    rm -f "$VERIFY_TMP_DIR"/verify-*.out
+    rmdir "$VERIFY_TMP_DIR" 2>/dev/null || true
+    echo -e "${GREEN}[OK] Three successful verify-purchase calls completed${NC}"
+    echo ""
+
+    echo -e "${YELLOW}[4/6] Validating Bridge verify callback idempotency${NC}"
+    wait_for_bridge_value "SELECT COUNT(*) FROM pay.webhook_provider WHERE app_id = '$BRIDGE_APP_ID' AND provider = '$PROVIDER' AND purchase_token = '$REPRO_TOKEN' AND event_type = 'verify_purchase.succeeded';" "1" "One synthetic verify webhook row"
+    PAYMENT_COUNT=$(bridge_sql "SELECT COUNT(*) FROM pay.payments WHERE app_id = '$BRIDGE_APP_ID' AND provider = '$PROVIDER' AND product_id = '$PRODUCT_ID' AND provider_purchase_token = '$REPRO_TOKEN';" | tr -d '[:space:]')
+    DELIVERY_COUNT=$(bridge_sql "SELECT COUNT(*) FROM pay.webhook_delivery d JOIN pay.webhook_provider w ON w.id = d.webhook_provider_id WHERE w.app_id = '$BRIDGE_APP_ID' AND w.provider = '$PROVIDER' AND w.purchase_token = '$REPRO_TOKEN' AND w.event_type = 'verify_purchase.succeeded';" | tr -d '[:space:]')
+    FORWARDED_COUNT=$(bridge_sql "SELECT COUNT(*) FROM pay.webhook_delivery d JOIN pay.webhook_provider w ON w.id = d.webhook_provider_id WHERE w.app_id = '$BRIDGE_APP_ID' AND w.provider = '$PROVIDER' AND w.purchase_token = '$REPRO_TOKEN' AND w.event_type = 'verify_purchase.succeeded' AND d.forwarded = true;" | tr -d '[:space:]')
+    echo "Payment rows for OTP token: $PAYMENT_COUNT"
+    echo "Verify delivery rows: $DELIVERY_COUNT"
+    echo "Forwarded verify delivery rows: $FORWARDED_COUNT"
+    if [[ "$PAYMENT_COUNT" != "1" ]]; then
+        echo -e "${RED}[FAIL] Expected one payment row for the OTP token${NC}"
+        exit 1
+    fi
+    if [[ "$DELIVERY_COUNT" != "1" ]]; then
+        echo -e "${RED}[FAIL] Expected one verify delivery row${NC}"
+        exit 1
+    fi
+    if [[ "$FORWARDED_COUNT" != "1" ]]; then
+        echo -e "${RED}[FAIL] Expected one forwarded verify delivery row${NC}"
+        exit 1
+    fi
+    echo ""
+
+    echo -e "${YELLOW}[5/6] Optional HiHa callback validation${NC}"
+    HIHA_AVAILABLE=false
+    HIHA_CALLBACK_COUNT="0"
+    HIHA_USER_PREMIUM="unknown"
+    detect_hiha_db_mode >/dev/null 2>&1 || true
+    if [[ -n "$HIHA_DB_MODE" ]] && HIHA_CALLBACK_COUNT=$(hiha_sql "SELECT COUNT(*) FROM hiha.webhook_callbacks WHERE clerk_id = '$USER_ID' AND event_id LIKE 'verify-purchase-%';" 2>/dev/null | tr -d '[:space:]'); then
+        HIHA_AVAILABLE=true
+        HIHA_USER_PREMIUM=$(hiha_sql "SELECT COALESCE(is_premium::text, 'missing') FROM hiha.users WHERE clerk_id = '$USER_ID';" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+        echo "HiHa verify callback rows: $HIHA_CALLBACK_COUNT"
+        echo "HiHa user is_premium: $HIHA_USER_PREMIUM"
+        if [[ "$HIHA_CALLBACK_COUNT" != "1" ]]; then
+            echo -e "${RED}[FAIL] Expected one HiHa verify callback row${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${YELLOW}[WARN] HiHa DB unavailable or callback rows absent; skipped app-side assertions${NC}"
+    fi
+    echo ""
+
+    echo -e "${YELLOW}[6/6] Repro summary${NC}"
+    REPORT_FILE="otp-04-duplicate-verify-gap-report.json"
+    TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "OTP-04-DUPLICATE-VERIFY-GAP",
+  "test_name": "OTP slow-card RTDN unresolved user plus verify callback idempotency",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$TEST_FINISHED_AT",
+  "status": "pass",
+  "user_id": "$USER_ID",
+  "product_id": "$PRODUCT_ID",
+  "purchase_token": "$REPRO_TOKEN",
+  "rtdn_event_id": "$RTDN_EVENT_ID",
+  "bridge": {
+    "suppressed_rtdn_count": 1,
+    "payment_count": $PAYMENT_COUNT,
+    "verify_webhook_count": 1,
+    "verify_delivery_count": $DELIVERY_COUNT,
+    "verify_forwarded_count": $FORWARDED_COUNT
+  },
+  "hiha": {
+    "available": $HIHA_AVAILABLE,
+    "verify_callback_count": "$HIHA_CALLBACK_COUNT",
+    "user_is_premium": "$HIHA_USER_PREMIUM"
+  }
+}
+EOF
+    echo -e "${GREEN}[OK] Duplicate verify callback suppression verified${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    cat "$REPORT_FILE"
+    echo ""
+    exit 0
 fi
 
 echo -e "${YELLOW}========================================${NC}"

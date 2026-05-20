@@ -17,6 +17,20 @@ use crate::services::google_play::{
 };
 use crate::webhooks::processor::CanonicalWebhookPayload;
 
+fn verify_purchase_event_id(
+    provider: &str,
+    product_type: ProductType,
+    subscription_id: &str,
+    purchase_token: &str,
+) -> String {
+    if provider == "google_play" && matches!(product_type, ProductType::OneTimeProduct) {
+        let identity = format!("{}:{}", subscription_id, purchase_token);
+        return format!("verify-purchase-google-play-otp-{}", crate::utils::diagnostic_hash(&identity));
+    }
+
+    format!("verify-purchase-{}", Uuid::new_v4())
+}
+
 pub(crate) async fn verify_purchase_with_provider(
     provider: &str,
     subscription_id: &str,
@@ -109,7 +123,12 @@ pub(crate) async fn forward_verify_purchase_callback<
     callback: VerifyPurchaseCallback<'_>,
 ) -> Result<(), BridgeError> {
     let now = chrono::Utc::now();
-    let event_id = format!("verify-purchase-{}", Uuid::new_v4());
+    let event_id = verify_purchase_event_id(
+        &callback.request.provider,
+        callback.product_type,
+        &callback.request.subscription_id,
+        &callback.request.purchase_token,
+    );
 
     let provider_payload = serde_json::json!({
         "source": "verify_purchase",
@@ -637,5 +656,50 @@ mod tests {
         assert_eq!(verified.currency, Some("RON".to_string()));
         assert_eq!(verified.status, "active");
         assert_eq!(verified.payment_state, Some(0));
+    }
+
+    #[test]
+    fn google_one_time_verify_event_id_is_stable_per_product_and_token() {
+        let first = verify_purchase_event_id(
+            "google_play",
+            ProductType::OneTimeProduct,
+            "hiha_one_time",
+            "purchase-token-123",
+        );
+        let second = verify_purchase_event_id(
+            "google_play",
+            ProductType::OneTimeProduct,
+            "hiha_one_time",
+            "purchase-token-123",
+        );
+        let other_product = verify_purchase_event_id(
+            "google_play",
+            ProductType::OneTimeProduct,
+            "other_one_time",
+            "purchase-token-123",
+        );
+
+        assert_eq!(first, second);
+        assert_ne!(first, other_product);
+        assert!(first.starts_with("verify-purchase-google-play-otp-"));
+    }
+
+    #[test]
+    fn subscription_verify_event_id_remains_per_request() {
+        let first = verify_purchase_event_id(
+            "google_play",
+            ProductType::Subscription,
+            "hiha_monthly",
+            "purchase-token-123",
+        );
+        let second = verify_purchase_event_id(
+            "google_play",
+            ProductType::Subscription,
+            "hiha_monthly",
+            "purchase-token-123",
+        );
+
+        assert_ne!(first, second);
+        assert!(first.starts_with("verify-purchase-"));
     }
 }

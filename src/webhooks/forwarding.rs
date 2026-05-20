@@ -230,7 +230,7 @@ pub async fn create_and_forward_webhook<
     timestamp_epoch_ms: Option<i64>,
     canonical_payload: crate::webhooks::processor::CanonicalWebhookPayload,
 ) -> Result<(), BridgeError> {
-    let (webhook_provider_id, _) = repo
+    let (webhook_provider_id, is_new) = repo
         .create_webhook_provider(
             app_id,
             provider,
@@ -242,6 +242,17 @@ pub async fn create_and_forward_webhook<
             timestamp_epoch_ms,
         )
         .await?;
+
+    if !is_new {
+        info!(
+            "Skipping duplicate synthetic webhook delivery: app_id={}, provider={}, provider_event_id={}, event_type={}",
+            app_id,
+            provider,
+            provider_webhook_id,
+            event_type
+        );
+        return Ok(());
+    }
 
     queue_and_forward_webhook(repo, app_id, webhook_provider_id, canonical_payload).await
 }
