@@ -63,6 +63,9 @@ psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.payments WHERE external_user_id IN ('$USER_A_ID', '$USER_B_ID') OR provider_transaction_id = '$PURCHASE_TOKEN';" \
   2>/dev/null || true
+psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "DELETE FROM pay.fraud_prevention WHERE external_user_id IN ('$USER_A_ID', '$USER_B_ID') OR subscription_id = '$PRODUCT_ID';" \
+  2>/dev/null || true
 
 echo -e "${GREEN}Cleanup complete${NC}"
 echo -e "${BLUE}Shared token for test: $PURCHASE_TOKEN${NC}"
@@ -122,8 +125,8 @@ else
 fi
 echo ""
 
-# Step 4: Verify User A owns the token in the database
-echo -e "${YELLOW}[4/6] Verifying token ownership in Bridge DB${NC}"
+# Step 4: Verify User A owns the token and fraud prevention mapping is recorded in the database
+echo -e "${YELLOW}[4/6] Verifying token ownership and fraud prevention in Bridge DB${NC}"
 
 TOKEN_OWNER=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "SELECT external_user_id FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d '[:space:]')
@@ -134,6 +137,17 @@ if [[ "$TOKEN_OWNER" == "$USER_A_ID" ]]; then
     SUB_EXISTS="true"
 else
     echo -e "  ${RED}Unexpected token owner: ${TOKEN_OWNER:-<none>}${NC}"
+fi
+
+FRAUD_MAPPING_USER=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -c "SELECT external_user_id FROM pay.fraud_prevention WHERE subscription_id = '$PRODUCT_ID' AND provider = '$PROVIDER';" -t 2>/dev/null | tr -d '[:space:]')
+
+FRAUD_RECORDED="false"
+if [[ "$FRAUD_MAPPING_USER" == "$USER_A_ID" ]]; then
+    echo -e "  ${GREEN}Fraud prevention mapping recorded successfully for User A${NC}"
+    FRAUD_RECORDED="true"
+else
+    echo -e "  ${RED}Fraud prevention mapping NOT recorded or mismatch: ${FRAUD_MAPPING_USER:-<none>}${NC}"
 fi
 echo ""
 
@@ -197,17 +211,20 @@ else
 fi
 echo ""
 
-# Cleanup
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.subscriptions WHERE external_user_id IN ('$USER_A_ID', '$USER_B_ID') OR purchase_token = '$PURCHASE_TOKEN';" \
-  2>/dev/null || true
-psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "DELETE FROM pay.payments WHERE external_user_id IN ('$USER_A_ID', '$USER_B_ID') OR provider_transaction_id = '$PURCHASE_TOKEN';" \
-  2>/dev/null || true
-echo -e "${BLUE}Cleaned up test data${NC}"
-echo ""
+# # Cleanup
+# psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+#   -c "DELETE FROM pay.subscriptions WHERE external_user_id IN ('$USER_A_ID', '$USER_B_ID') OR purchase_token = '$PURCHASE_TOKEN';" \
+#   2>/dev/null || true
+# psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+#   -c "DELETE FROM pay.payments WHERE external_user_id IN ('$USER_A_ID', '$USER_B_ID') OR provider_transaction_id = '$PURCHASE_TOKEN';" \
+#   2>/dev/null || true
+# psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+#   -c "DELETE FROM pay.fraud_prevention WHERE external_user_id IN ('$USER_A_ID', '$USER_B_ID') OR subscription_id = '$PRODUCT_ID';" \
+#   2>/dev/null || true
+# echo -e "${BLUE}Cleaned up test data${NC}"
+# echo ""
 
-if [[ "$USER_A_SUCCESS" == "true" ]] && [[ "$SUB_EXISTS" == "true" ]] && [[ "$USER_B_REJECTED" == "true" ]] && [[ "$NO_DUPLICATE" == "true" ]]; then
+if [[ "$USER_A_SUCCESS" == "true" ]] && [[ "$SUB_EXISTS" == "true" ]] && [[ "$FRAUD_RECORDED" == "true" ]] && [[ "$USER_B_REJECTED" == "true" ]] && [[ "$NO_DUPLICATE" == "true" ]]; then
     TEST_STATUS="pass"
     TEST_RESULT_MSG="${GREEN}ACC-03 Test PASSED${NC}"
 else
@@ -232,6 +249,7 @@ cat > "$REPORT_FILE" <<EOF
     "user_a_register_http_code": $REGISTER_HTTP_CODE_A,
     "user_a_verification_success": $USER_A_SUCCESS,
     "user_a_verify_http_code": $HTTP_CODE_A,
+    "fraud_prevention_recorded": $FRAUD_RECORDED,
     "user_b_verification_rejected": $USER_B_REJECTED,
     "user_b_verify_http_code": $HTTP_CODE_B,
     "no_duplicate_subscription": $NO_DUPLICATE,

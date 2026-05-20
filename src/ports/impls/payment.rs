@@ -226,6 +226,28 @@ impl VerifyPurchaseRepository for db::Database {
                         .execute(&mut **tx)
                         .await
                         .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+                        if let Some(ref obf_id) = google_obfuscated_account_id {
+                            sqlx::query(
+                                "INSERT INTO pay.fraud_prevention (
+                                     app_id, provider, provider_obfuscated_account_id, external_user_id, subscription_id
+                                 )
+                                 VALUES ($1, $2, $3, $4, $5)
+                                 ON CONFLICT (app_id, provider, provider_obfuscated_account_id)
+                                 DO UPDATE SET
+                                     external_user_id = EXCLUDED.external_user_id,
+                                     subscription_id = EXCLUDED.subscription_id,
+                                     updated_at = NOW()",
+                            )
+                            .bind(app_id)
+                            .bind(&provider)
+                            .bind(obf_id)
+                            .bind(&resolved_external_user_id)
+                            .bind(&subscription_id)
+                            .execute(&mut **tx)
+                            .await
+                            .map_err(|e| BridgeError::DbError(e.to_string()))?;
+                        }
                     }
 
                     subscription = Some(map_verify_purchase_subscription(
