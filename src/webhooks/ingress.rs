@@ -44,7 +44,7 @@ fn spawn_process_and_forward_webhook(
                 {
                     error!("Failed to forward webhook for {}: {}", event_id, e);
                 }
-                info!("{} webhook processed: {}", provider_name, event_id);
+                info!("END {} webhook processed: {}", provider_name, event_id);
             }
             Ok(None) => info!("{} webhook suppressed: {}", provider_name, event_id),
             Err(e) => error!("{} webhook processing failed {}: {}", provider_name, event_id, e),
