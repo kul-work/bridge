@@ -72,13 +72,7 @@ impl BpTrace {
 
     /// Set the token hash (first 12 chars of SHA256)
     pub fn set_token_hash(&mut self, token: &str) -> &mut Self {
-        use sha2::{Sha256, Digest};
-        
-        let mut hasher = Sha256::new();
-        hasher.update(token.as_bytes());
-        let hash = hasher.finalize();
-        let hash_hex = format!("{:x}", hash);
-        self.token_hash = hash_hex.chars().take(12).collect();
+        self.token_hash = hash_token(token);
         self
     }
 
@@ -131,6 +125,16 @@ impl BpTrace {
             );
         }
     }
+}
+
+pub fn hash_token(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    let hash = hasher.finalize();
+    let hash_hex = format!("{:x}", hash);
+    hash_hex.chars().take(12).collect()
 }
 
 #[cfg(test)]

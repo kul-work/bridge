@@ -4,7 +4,7 @@ use crate::{
     ports::{
         WebhookProcessingRepository, WebhookProviderSnapshot, WebhookSubscriptionSnapshot,
     },
-    services::google_play::trace::BpTrace,
+    services::google_play::trace::{hash_token, BpTrace},
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -781,6 +781,73 @@ fn google_play_notification_type(payload: &serde_json::Value) -> Option<i64> {
         .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
 }
 
+fn google_play_rtdn_type(payload: &serde_json::Value) -> Option<&'static str> {
+    if payload.get("subscriptionNotification").is_some() {
+        return Some("subscription");
+    }
+    if payload.get("oneTimeProductNotification").is_some() {
+        return Some("one_time_product");
+    }
+    if payload.get("voidedPurchaseNotification").is_some() {
+        return Some("voided_purchase");
+    }
+    if payload.get("testNotification").is_some() {
+        return Some("test");
+    }
+
+    None
+}
+
+fn google_play_notification_event_type(payload: &serde_json::Value) -> Option<&'static str> {
+    let notification_type = google_play_notification_type(payload)?;
+
+    if payload.get("subscriptionNotification").is_some() {
+        return Some(match notification_type {
+            1 => "SUBSCRIPTION_RESTORED",
+            2 => "SUBSCRIPTION_RENEWED",
+            3 => "SUBSCRIPTION_CANCELED",
+            4 => "SUBSCRIPTION_PURCHASED",
+            5 => "SUBSCRIPTION_ON_HOLD",
+            6 => "SUBSCRIPTION_IN_GRACE_PERIOD",
+            7 => "SUBSCRIPTION_RESTARTED",
+            8 => "SUBSCRIPTION_PRICE_CHANGE_CONFIRMED",
+            9 => "SUBSCRIPTION_DEFERRED",
+            10 => "SUBSCRIPTION_PAUSED",
+            11 => "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED",
+            12 => "SUBSCRIPTION_REVOKED",
+            13 => "SUBSCRIPTION_EXPIRED",
+            17 => "SUBSCRIPTION_ITEMS_CHANGED",
+            18 => "SUBSCRIPTION_CANCELLATION_SCHEDULED",
+            19 => "SUBSCRIPTION_PRICE_CHANGE_UPDATED",
+            20 => "SUBSCRIPTION_PENDING_PURCHASE_CANCELED",
+            21 => "SUBSCRIPTION_RENEWAL_PENDING",
+            22 => "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED",
+            _ => "SUBSCRIPTION_UNKNOWN",
+        });
+    }
+
+    if payload.get("oneTimeProductNotification").is_some() {
+        return Some(match notification_type {
+            1 => "ONE_TIME_PRODUCT_PURCHASED",
+            2 => "ONE_TIME_PRODUCT_REFUNDED",
+            14 => "ONE_TIME_PRODUCT_CANCELED",
+            _ => "ONE_TIME_PRODUCT_UNKNOWN",
+        });
+    }
+
+    if payload.get("voidedPurchaseNotification").is_some() {
+        return Some("VOIDED_PURCHASE");
+    }
+
+    None
+}
+
+fn google_play_purchase_token(payload: &serde_json::Value) -> Option<&str> {
+    json_string_at(payload, "/subscriptionNotification/purchaseToken")
+        .or_else(|| json_string_at(payload, "/oneTimeProductNotification/purchaseToken"))
+        .or_else(|| json_string_at(payload, "/voidedPurchaseNotification/purchaseToken"))
+}
+
 fn json_string_at<'a>(payload: &'a serde_json::Value, pointer: &str) -> Option<&'a str> {
     payload.pointer(pointer).and_then(|value| value.as_str())
 }
@@ -812,6 +879,12 @@ fn emit_webhook_trace(
         trace.add_metadata("hash_source", json!("provider_event_id"));
     }
     if canonical.provider == "google_play" {
+        if let Some(rtdn_type) = google_play_rtdn_type(provider_payload) {
+            trace.add_metadata("rtdn_type", json!(rtdn_type));
+        }
+        if let Some(google_event_type) = google_play_notification_event_type(provider_payload) {
+            trace.add_metadata("google_event_type", json!(google_event_type));
+        }
         if let Some(package_name) = json_string_at(provider_payload, "/packageName") {
             trace.add_metadata("packageName", json!(package_name));
         }
@@ -821,10 +894,18 @@ fn emit_webhook_trace(
         if let Some(notification_type) = google_play_notification_type(provider_payload) {
             trace.add_metadata("notificationType", json!(notification_type));
         }
+        if let Some(subscription_id) = json_string_at(provider_payload, "/subscriptionNotification/subscriptionId") {
+            trace.add_metadata("subscriptionId", json!(subscription_id));
+            trace.add_metadata("product_id", json!(subscription_id));
+        }
+        if let Some(purchase_token) = google_play_purchase_token(provider_payload) {
+            trace.add_metadata("purchase_token_hash", json!(hash_token(purchase_token)));
+        }
         if let Some(sku) = json_string_at(provider_payload, "/oneTimeProductNotification/sku")
             .or_else(|| json_string_at(provider_payload, "/oneTimeProductNotification/productId"))
         {
             trace.add_metadata("sku", json!(sku));
+            trace.add_metadata("product_id", json!(sku));
         }
         if let Some(order_id) = json_string_at(provider_payload, "/voidedPurchaseNotification/orderId") {
             trace.add_metadata("orderId", json!(order_id));
