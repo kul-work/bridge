@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
-    db::{self, webhooks::{WebhookDelivery, WebhookRecord}},
+    db::{self, webhooks::{WebhookDelivery, WebhookDeliveryEnqueue, WebhookRecord}},
     error::BridgeError,
     ports::traits::{
         WebhookForwardRepository, WebhookProviderLookupRepository, WebhookReadRepository,
@@ -59,7 +59,7 @@ impl WebhookWriteRepository for db::Database {
         &self,
         app_id: Uuid,
         webhook_provider_id: Uuid,
-    ) -> Result<Uuid, BridgeError> {
+    ) -> Result<WebhookDeliveryEnqueue, BridgeError> {
         db::webhooks::create_webhook_delivery(self.pool(), app_id, webhook_provider_id).await
     }
 }

@@ -207,11 +207,20 @@ pub async fn queue_and_forward_webhook<
     webhook_provider_id: Uuid,
     payload: crate::webhooks::processor::CanonicalWebhookPayload,
 ) -> Result<(), BridgeError> {
-    let delivery_id = repo
+    let delivery = repo
         .create_webhook_delivery(app_id, webhook_provider_id)
         .await?;
 
-    forward_webhook(repo, app_id, delivery_id, payload).await
+    if !delivery.created {
+        info!(
+            "Webhook delivery already queued for provider webhook {} (delivery={}); treating duplicate as idempotent",
+            webhook_provider_id,
+            delivery.id,
+        );
+        return Ok(());
+    }
+
+    forward_webhook(repo, app_id, delivery.id, payload).await
 }
 
 /// Create a webhook provider record, enqueue a delivery, and forward it.

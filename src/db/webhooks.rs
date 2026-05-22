@@ -39,6 +39,12 @@ pub struct WebhookDelivery {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct WebhookDeliveryEnqueue {
+    pub id: Uuid,
+    pub created: bool,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct WebhookRecord {
     pub provider: String,
@@ -366,13 +372,15 @@ pub async fn create_webhook_delivery(
     pool: &PgPool,
     app_id: Uuid,
     webhook_provider_id: Uuid,
-) -> Result<Uuid, BridgeError> {
+) -> Result<WebhookDeliveryEnqueue, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
 
-    let delivery_id: (Uuid,) = sqlx::query_as(
+    let delivery: WebhookDeliveryEnqueue = sqlx::query_as(
         "INSERT INTO pay.webhook_delivery (app_id, webhook_provider_id, forward_attempts, forwarded)
          VALUES ($1, $2, 0, false)
-         RETURNING id"
+         ON CONFLICT (webhook_provider_id) DO UPDATE
+         SET updated_at = pay.webhook_delivery.updated_at
+         RETURNING id, (xmax = 0) AS created"
     )
     .bind(app_id)
     .bind(webhook_provider_id)
@@ -382,5 +390,5 @@ pub async fn create_webhook_delivery(
 
     tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    Ok(delivery_id.0)
+    Ok(delivery)
 }

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
-    db::webhooks::{WebhookDelivery, WebhookRecord},
+    db::webhooks::{WebhookDelivery, WebhookDeliveryEnqueue, WebhookRecord},
     error::BridgeError,
 };
 
@@ -35,7 +35,7 @@ pub trait WebhookWriteRepository: Send + Sync {
         &self,
         app_id: Uuid,
         webhook_provider_id: Uuid,
-    ) -> Result<Uuid, BridgeError>;
+    ) -> Result<WebhookDeliveryEnqueue, BridgeError>;
 }
 
 #[async_trait]
