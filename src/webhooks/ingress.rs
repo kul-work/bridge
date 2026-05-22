@@ -13,7 +13,7 @@ use crate::{
     ports::{ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository, WebhookWriteRepository},
     ports::composites::WebhookIngressRepository,
     state::AppState,
-    utils::diagnostic_hash,
+    utils::{diagnostic_hash, redact_with_prefix},
 };
 
 const CREEM_SIGNATURE_HEADERS: [&str; 3] = ["creem-signature", "Webhook-Signature", "x-signature"];
@@ -241,6 +241,11 @@ pub async fn handle_google_play(
     })?;
 
     let (mut google_play_event, pubsub_message_id) = decode_google_play_payload(&payload, &headers)?;
+    tracing::debug!(
+        target: "BPT-RAW",
+        "Webhook Incoming Payload [google_play]: {}",
+        sanitize_google_play_payload_for_log(&google_play_event)
+    );
 
     if google_play_event.get("testNotification").is_some() {
         info!(
@@ -527,6 +532,24 @@ fn decode_google_play_payload(
         .map(|s| s.to_string());
 
     Ok((payload.clone(), message_id))
+}
+
+fn sanitize_google_play_payload_for_log(payload: &serde_json::Value) -> String {
+    let mut sanitized = payload.clone();
+
+    for pointer in [
+        "/subscriptionNotification/purchaseToken",
+        "/oneTimeProductNotification/purchaseToken",
+        "/voidedPurchaseNotification/purchaseToken",
+    ] {
+        if let Some(value) = sanitized.pointer_mut(pointer) {
+            if let Some(token) = value.as_str() {
+                *value = serde_json::Value::String(redact_with_prefix(token));
+            }
+        }
+    }
+
+    serde_json::to_string(&sanitized).unwrap_or_else(|_| "{}".to_string())
 }
 
 fn extract_google_event_type(payload: &serde_json::Value) -> String {

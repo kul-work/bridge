@@ -774,7 +774,28 @@ fn apply_event_effects(
     *should_forward = effects.should_forward;
 }
 
-fn emit_webhook_trace(app_id: Uuid, canonical: &CanonicalWebhookPayload) {
+fn google_play_notification_type(payload: &serde_json::Value) -> Option<i64> {
+    payload
+        .pointer("/subscriptionNotification/notificationType")
+        .or_else(|| payload.pointer("/oneTimeProductNotification/notificationType"))
+        .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
+}
+
+fn json_string_at<'a>(payload: &'a serde_json::Value, pointer: &str) -> Option<&'a str> {
+    payload.pointer(pointer).and_then(|value| value.as_str())
+}
+
+fn json_i64_at(payload: &serde_json::Value, pointer: &str) -> Option<i64> {
+    payload
+        .pointer(pointer)
+        .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
+}
+
+fn emit_webhook_trace(
+    app_id: Uuid,
+    canonical: &CanonicalWebhookPayload,
+    provider_payload: &serde_json::Value,
+) {
     let mut trace = BpTrace::new("webhook", &canonical.provider_event_id);
 
     if let Some(external_user_id) = canonical.external_user_id.as_deref() {
@@ -789,6 +810,31 @@ fn emit_webhook_trace(app_id: Uuid, canonical: &CanonicalWebhookPayload) {
     } else {
         trace.set_token_hash(&canonical.provider_event_id);
         trace.add_metadata("hash_source", json!("provider_event_id"));
+    }
+    if canonical.provider == "google_play" {
+        if let Some(package_name) = json_string_at(provider_payload, "/packageName") {
+            trace.add_metadata("packageName", json!(package_name));
+        }
+        if let Some(event_time_ms) = json_i64_at(provider_payload, "/eventTimeMillis") {
+            trace.add_metadata("eventTimeMillis", json!(event_time_ms));
+        }
+        if let Some(notification_type) = google_play_notification_type(provider_payload) {
+            trace.add_metadata("notificationType", json!(notification_type));
+        }
+        if let Some(sku) = json_string_at(provider_payload, "/oneTimeProductNotification/sku")
+            .or_else(|| json_string_at(provider_payload, "/oneTimeProductNotification/productId"))
+        {
+            trace.add_metadata("sku", json!(sku));
+        }
+        if let Some(order_id) = json_string_at(provider_payload, "/voidedPurchaseNotification/orderId") {
+            trace.add_metadata("orderId", json!(order_id));
+        }
+        if let Some(product_type) = json_i64_at(provider_payload, "/voidedPurchaseNotification/productType") {
+            trace.add_metadata("productType", json!(product_type));
+        }
+        if let Some(refund_type) = json_i64_at(provider_payload, "/voidedPurchaseNotification/refundType") {
+            trace.add_metadata("refundType", json!(refund_type));
+        }
     }
 
     trace
@@ -964,7 +1010,7 @@ pub async fn process_webhook(
     // Step 6: Mark webhook as processed
     repo.mark_webhook_processed(webhook_provider_id).await?;
 
-    emit_webhook_trace(app_id, &canonical);
+    emit_webhook_trace(app_id, &canonical, &webhook.payload);
 
     Ok(Some(canonical))
 }
