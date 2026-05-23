@@ -15,6 +15,11 @@ pub struct SubscriptionLookupSnapshot {
     pub google_price_step_up_consent_deadline: Option<chrono::DateTime<chrono::Utc>>,
     pub google_pause_scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
     pub google_deferred_until: Option<chrono::DateTime<chrono::Utc>>,
+    pub google_pending_price_change_new_price_cents: Option<i64>,
+    pub google_pending_price_change_currency: Option<String>,
+    pub google_pending_price_change_mode: Option<String>,
+    pub google_pending_price_change_state: Option<String>,
+    pub google_pending_price_change_expected_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +59,13 @@ pub enum SubscriptionWebhookTransition {
         google_new_price_cents: Option<i32>,
         google_price_step_up_consent_deadline: Option<chrono::DateTime<chrono::Utc>>,
     },
+    PendingPriceChange {
+        new_price_cents: Option<i64>,
+        currency: Option<String>,
+        mode: Option<String>,
+        state: Option<String>,
+        expected_at: Option<chrono::DateTime<chrono::Utc>>,
+    },
     PauseScheduled {
         google_pause_scheduled_at: chrono::DateTime<chrono::Utc>,
     },
@@ -88,6 +100,7 @@ pub struct WebhookSubscriptionCommitRequest<'a> {
     pub payment_state: Option<i32>,
     pub provider_customer_id: Option<&'a str>,
     pub event_time_ms: i64,
+    pub recurring_amount_cents: Option<i64>,
     pub payment: Option<WebhookPaymentRecordRequest<'a>>,
     pub adopt_stale_payment: bool,
     pub stale_payment_window_secs: i64,
@@ -103,6 +116,11 @@ pub struct WebhookSubscriptionSnapshot {
     pub google_price_step_up_consent_deadline: Option<chrono::DateTime<chrono::Utc>>,
     pub google_pause_scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
     pub google_deferred_until: Option<chrono::DateTime<chrono::Utc>>,
+    pub google_pending_price_change_new_price_cents: Option<i64>,
+    pub google_pending_price_change_currency: Option<String>,
+    pub google_pending_price_change_mode: Option<String>,
+    pub google_pending_price_change_state: Option<String>,
+    pub google_pending_price_change_expected_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone)]

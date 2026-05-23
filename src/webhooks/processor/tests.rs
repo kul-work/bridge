@@ -401,6 +401,7 @@ fn test_google_subscription_recurring_amount_uses_integer_cents() {
                     units: Some("5".to_string()),
                     nanos: Some(490_000_000),
                 }),
+                price_change_details: None,
             }),
             offer_details: None,
         }],
@@ -565,6 +566,11 @@ fn test_canonical_payload_serializes_google_lifecycle_fields() {
         google_price_step_up_consent_deadline: Some(1778760000000),
         google_pause_scheduled_at: Some(1778846400000),
         google_deferred_until: Some(1781438400000),
+        google_pending_price_change_new_price_cents: None,
+        google_pending_price_change_currency: None,
+        google_pending_price_change_mode: None,
+        google_pending_price_change_state: None,
+        google_pending_price_change_expected_at: None,
     };
 
     let value = serde_json::to_value(payload).unwrap();

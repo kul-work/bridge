@@ -129,6 +129,15 @@ pub struct PriceChangeSummary {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct PriceChangeDetails {
+    pub new_price: Option<Money>,
+    pub price_change_mode: Option<String>,
+    pub price_change_state: Option<String>,
+    pub expected_new_price_charge_time: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Money {
     pub currency_code: Option<String>,
     pub units: Option<String>,
@@ -150,7 +159,48 @@ pub struct SubscriptionLineItem {
 pub struct AutoRenewingPlan {
     pub auto_renew_enabled: Option<bool>,
     pub recurring_price: Option<Money>,
+    pub price_change_details: Option<PriceChangeDetails>,
     // subscription_notes omitted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserializes_auto_renewing_plan_price_change_details() {
+        let value = serde_json::json!({
+            "subscriptionState": "SUBSCRIPTION_STATE_ACTIVE",
+            "lineItems": [{
+                "productId": "hiha_monthly",
+                "autoRenewingPlan": {
+                    "autoRenewEnabled": true,
+                    "priceChangeDetails": {
+                        "newPrice": {
+                            "currencyCode": "RON",
+                            "units": "7",
+                            "nanos": 490000000
+                        },
+                        "priceChangeMode": "PRICE_INCREASE",
+                        "priceChangeState": "OUTSTANDING",
+                        "expectedNewPriceChargeTime": "2026-05-22T16:58:21.621Z"
+                    }
+                }
+            }]
+        });
+
+        let purchase: SubscriptionPurchaseV2 = serde_json::from_value(value).unwrap();
+        let details = purchase.line_items[0]
+            .auto_renewing_plan
+            .as_ref()
+            .and_then(|plan| plan.price_change_details.as_ref())
+            .unwrap();
+
+        assert_eq!(details.new_price.as_ref().and_then(|p| p.currency_code.as_deref()), Some("RON"));
+        assert_eq!(details.price_change_mode.as_deref(), Some("PRICE_INCREASE"));
+        assert_eq!(details.price_change_state.as_deref(), Some("OUTSTANDING"));
+        assert_eq!(details.expected_new_price_charge_time.as_deref(), Some("2026-05-22T16:58:21.621Z"));
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

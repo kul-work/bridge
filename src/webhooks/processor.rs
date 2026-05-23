@@ -56,7 +56,7 @@ pub struct CanonicalWebhookPayload {
     pub subscription_id: Option<String>,
     pub external_user_id: Option<String>,
     pub amount_cents: Option<i32>,
-    pub new_price_cents: Option<i32>,
+    pub new_price_cents: Option<i64>,
     pub auto_renewing: Option<bool>,
     pub purchase_token: Option<String>,
     pub current_period_end: Option<String>,  // ISO 8601
@@ -71,6 +71,11 @@ pub struct CanonicalWebhookPayload {
     pub google_price_step_up_consent_deadline: Option<i64>,
     pub google_pause_scheduled_at: Option<i64>,
     pub google_deferred_until: Option<i64>,
+    pub google_pending_price_change_new_price_cents: Option<i64>,
+    pub google_pending_price_change_currency: Option<String>,
+    pub google_pending_price_change_mode: Option<String>,
+    pub google_pending_price_change_state: Option<String>,
+    pub google_pending_price_change_expected_at: Option<i64>,
 }
 
 fn to_epoch_ms(value: Option<chrono::DateTime<chrono::Utc>>) -> Option<i64> {
@@ -282,6 +287,12 @@ fn google_money_to_cents(money: &crate::services::google_play::models::Money) ->
     i32::try_from(cents).ok()
 }
 
+fn google_money_to_cents_i64(money: &crate::services::google_play::models::Money) -> Option<i64> {
+    let units = money.units.as_deref().unwrap_or("0").parse::<i64>().ok()?;
+    let nanos = i64::from(money.nanos.unwrap_or(0));
+    units.checked_mul(100)?.checked_add(nanos / 10_000_000)
+}
+
 fn google_subscription_recurring_amount_cents(
     resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
 ) -> Option<i32> {
@@ -302,6 +313,34 @@ fn google_subscription_recurring_currency(
         .and_then(|line_item| line_item.auto_renewing_plan.as_ref())
         .and_then(|plan| plan.recurring_price.as_ref())
         .and_then(|money| money.currency_code.clone())
+}
+
+fn google_subscription_pending_price_change(
+    resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
+) -> (
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    let details = resource
+        .line_items
+        .first()
+        .and_then(|line_item| line_item.auto_renewing_plan.as_ref())
+        .and_then(|plan| plan.price_change_details.as_ref());
+
+    let Some(details) = details else {
+        return (None, None, None, None, None);
+    };
+
+    (
+        details.new_price.as_ref().and_then(google_money_to_cents_i64),
+        details.new_price.as_ref().and_then(|money| money.currency_code.clone()),
+        details.price_change_mode.clone(),
+        details.price_change_state.clone(),
+        details.expected_new_price_charge_time.clone(),
+    )
 }
 
 fn google_voided_purchase_product_type(payload: &serde_json::Value) -> Option<i64> {
@@ -449,6 +488,14 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
             _ => None,
         });
     }
+
+    let (pending_price_cents, pending_currency, pending_mode, pending_state, pending_expected_at) =
+        google_subscription_pending_price_change(&resource);
+    fields.google_pending_price_change_new_price_cents = pending_price_cents;
+    fields.google_pending_price_change_currency = pending_currency;
+    fields.google_pending_price_change_mode = pending_mode;
+    fields.google_pending_price_change_state = pending_state;
+    fields.google_pending_price_change_expected_at = pending_expected_at;
 
     let (cancellation_context, cancellation_feedback) = google_cancellation_context_from_resource(&resource);
     if fields.google_cancellation_context.is_none() {
@@ -721,6 +768,18 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
     let google_deferred_until = canonical_subscription
         .as_ref()
         .and_then(|sub| to_epoch_ms(sub.google_deferred_until));
+    let use_pending_price_change_fallback = !matches!(
+        fields.google_pending_price_change_state.as_deref(),
+        Some("APPLIED") | Some("CANCELED")
+    );
+    let google_pending_price_change_expected_at = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_pending_price_change_expected_at))
+        .or_else(|| {
+            use_pending_price_change_fallback
+                .then(|| fields.google_pending_price_change_expected_at.as_deref().and_then(parse_rfc3339_utc).map(|dt| dt.timestamp_millis()))
+                .flatten()
+        });
 
     Ok(Some(CanonicalWebhookPayload {
         event_id: format!("{}-{}", webhook.provider, webhook.provider_webhook_id),
@@ -732,7 +791,9 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         subscription_id: fields.subscription_id.or(webhook.subscription_id.clone()),
         external_user_id,
         amount_cents: fields.amount_cents,
-        new_price_cents: fields.google_new_price_cents,
+        new_price_cents: fields.google_new_price_cents.map(i64::from).or_else(|| {
+            use_pending_price_change_fallback.then_some(fields.google_pending_price_change_new_price_cents).flatten()
+        }),
         auto_renewing: canonical_auto_renewing,
         purchase_token: canonical_purchase_token,
         current_period_end: canonical_current_period_end,
@@ -751,6 +812,23 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         google_price_step_up_consent_deadline,
         google_pause_scheduled_at,
         google_deferred_until,
+        google_pending_price_change_new_price_cents: canonical_subscription
+            .as_ref()
+            .and_then(|sub| sub.google_pending_price_change_new_price_cents)
+            .or_else(|| use_pending_price_change_fallback.then_some(fields.google_pending_price_change_new_price_cents).flatten()),
+        google_pending_price_change_currency: canonical_subscription
+            .as_ref()
+            .and_then(|sub| sub.google_pending_price_change_currency.clone())
+            .or_else(|| use_pending_price_change_fallback.then(|| fields.google_pending_price_change_currency.clone()).flatten()),
+        google_pending_price_change_mode: canonical_subscription
+            .as_ref()
+            .and_then(|sub| sub.google_pending_price_change_mode.clone())
+            .or_else(|| use_pending_price_change_fallback.then(|| fields.google_pending_price_change_mode.clone()).flatten()),
+        google_pending_price_change_state: canonical_subscription
+            .as_ref()
+            .and_then(|sub| sub.google_pending_price_change_state.clone())
+            .or_else(|| fields.google_pending_price_change_state.clone()),
+        google_pending_price_change_expected_at,
     }))
 }
 
@@ -1061,6 +1139,18 @@ pub async fn process_webhook(
     let google_deferred_until = canonical_subscription
         .as_ref()
         .and_then(|sub| to_epoch_ms(sub.google_deferred_until));
+    let use_pending_price_change_fallback = !matches!(
+        fields.google_pending_price_change_state.as_deref(),
+        Some("APPLIED") | Some("CANCELED")
+    );
+    let google_pending_price_change_expected_at = canonical_subscription
+        .as_ref()
+        .and_then(|sub| to_epoch_ms(sub.google_pending_price_change_expected_at))
+        .or_else(|| {
+            use_pending_price_change_fallback
+                .then(|| fields.google_pending_price_change_expected_at.as_deref().and_then(parse_rfc3339_utc).map(|dt| dt.timestamp_millis()))
+                .flatten()
+        });
     let canonical = CanonicalWebhookPayload {
         event_id: format!("{}-{}", provider, webhook_provider_webhook_id),
         event_type: callback_event_type,
@@ -1071,7 +1161,9 @@ pub async fn process_webhook(
         subscription_id: fields_subscription_id.clone().or(webhook_subscription_id.clone()),
         external_user_id,
         amount_cents: fields.amount_cents,
-        new_price_cents: fields.google_new_price_cents,
+        new_price_cents: fields.google_new_price_cents.map(i64::from).or_else(|| {
+            use_pending_price_change_fallback.then_some(fields.google_pending_price_change_new_price_cents).flatten()
+        }),
         auto_renewing: canonical_auto_renewing,
         purchase_token: canonical_purchase_token,
         current_period_end: canonical_current_period_end,
@@ -1086,6 +1178,23 @@ pub async fn process_webhook(
         google_price_step_up_consent_deadline,
         google_pause_scheduled_at,
         google_deferred_until,
+        google_pending_price_change_new_price_cents: canonical_subscription
+            .as_ref()
+            .and_then(|sub| sub.google_pending_price_change_new_price_cents)
+            .or_else(|| use_pending_price_change_fallback.then_some(fields.google_pending_price_change_new_price_cents).flatten()),
+        google_pending_price_change_currency: canonical_subscription
+            .as_ref()
+            .and_then(|sub| sub.google_pending_price_change_currency.clone())
+            .or_else(|| use_pending_price_change_fallback.then(|| fields.google_pending_price_change_currency.clone()).flatten()),
+        google_pending_price_change_mode: canonical_subscription
+            .as_ref()
+            .and_then(|sub| sub.google_pending_price_change_mode.clone())
+            .or_else(|| use_pending_price_change_fallback.then(|| fields.google_pending_price_change_mode.clone()).flatten()),
+        google_pending_price_change_state: canonical_subscription
+            .as_ref()
+            .and_then(|sub| sub.google_pending_price_change_state.clone())
+            .or_else(|| fields.google_pending_price_change_state.clone()),
+        google_pending_price_change_expected_at,
     };
 
     // Step 6: Mark webhook as processed

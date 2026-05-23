@@ -165,6 +165,11 @@ pub(crate) async fn forward_verify_purchase_callback<
         google_price_step_up_consent_deadline: None,
         google_pause_scheduled_at: None,
         google_deferred_until: None,
+        google_pending_price_change_new_price_cents: None,
+        google_pending_price_change_currency: None,
+        google_pending_price_change_mode: None,
+        google_pending_price_change_state: None,
+        google_pending_price_change_expected_at: None,
     };
 
     crate::webhooks::forwarding::create_and_forward_webhook(
@@ -548,6 +553,7 @@ mod tests {
                         units: Some("12".to_string()),
                         nanos: Some(990_000_000),
                     }),
+                    price_change_details: None,
                 }),
                 offer_details: None,
             }],

@@ -193,6 +193,7 @@ impl WebhookProcessingTransactionRepository for db::Database {
         let payment_state = request.payment_state;
         let provider_customer_id = request.provider_customer_id.map(str::to_string);
         let event_time_ms = request.event_time_ms;
+        let recurring_amount_cents = request.recurring_amount_cents;
         let payment = request.payment.map(OwnedWebhookPaymentRecord::from);
         let adopt_stale_payment = request.adopt_stale_payment;
         let stale_payment_window_secs = request.stale_payment_window_secs;
@@ -213,6 +214,7 @@ impl WebhookProcessingTransactionRepository for db::Database {
                     payment_state,
                     provider_customer_id.as_deref(),
                     event_time_ms,
+                    recurring_amount_cents,
                 )
                 .await?;
 

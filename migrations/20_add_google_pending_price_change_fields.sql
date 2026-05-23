@@ -1,0 +1,6 @@
+ALTER TABLE pay.subscriptions
+ADD COLUMN google_pending_price_change_new_price_cents BIGINT,
+ADD COLUMN google_pending_price_change_currency TEXT,
+ADD COLUMN google_pending_price_change_mode TEXT,
+ADD COLUMN google_pending_price_change_state TEXT,
+ADD COLUMN google_pending_price_change_expected_at TIMESTAMPTZ;

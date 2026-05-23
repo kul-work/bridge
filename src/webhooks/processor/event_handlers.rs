@@ -390,6 +390,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     payment_state: None,
                     provider_customer_id: ctx.fields.provider_customer_id.as_deref(),
                     event_time_ms: ctx.timestamp_epoch_ms,
+                    recurring_amount_cents: ctx.fields.amount_cents.map(i64::from),
                     payment: Some(WebhookPaymentRecordRequest {
                         app_id: ctx.app_id,
                         external_user_id: user_id,
@@ -481,6 +482,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     payment_state: None,
                     provider_customer_id: ctx.fields.provider_customer_id.as_deref(),
                     event_time_ms: ctx.timestamp_epoch_ms,
+                    recurring_amount_cents: ctx.fields.amount_cents.map(i64::from),
                     payment: None,
                     adopt_stale_payment: false,
                     stale_payment_window_secs: 86400,
@@ -794,6 +796,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         payment_state: None,
                         provider_customer_id: ctx.fields.provider_customer_id.as_deref(),
                         event_time_ms: ctx.timestamp_epoch_ms,
+                        recurring_amount_cents: ctx.fields.amount_cents.map(i64::from),
                         payment: None,
                         adopt_stale_payment: false,
                         stale_payment_window_secs: 86400,
@@ -947,7 +950,48 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
             Ok(EventHandling::Handled(EventEffects::default()))
         }
 
-        "subscription.price_change_updated" | "subscription.expired_voided" => {
+        "subscription.price_change_updated" => {
+            if let Some(user_id) = ctx.external_user_id.as_deref() {
+                let sub_id = ctx.fields.subscription_id.as_deref()
+                    .or(ctx.webhook.subscription_id.as_deref())
+                    .unwrap_or("");
+
+                let expected_at = ctx.fields.google_pending_price_change_expected_at
+                    .as_deref()
+                    .and_then(parse_rfc3339_utc);
+
+                let updated = repo.apply_subscription_transition(
+                    ctx.app_id,
+                    user_id,
+                    ctx.provider,
+                    sub_id,
+                    ctx.timestamp_epoch_ms,
+                    SubscriptionWebhookTransition::PendingPriceChange {
+                        new_price_cents: ctx.fields.google_pending_price_change_new_price_cents,
+                        currency: ctx.fields.google_pending_price_change_currency.clone(),
+                        mode: ctx.fields.google_pending_price_change_mode.clone(),
+                        state: ctx.fields.google_pending_price_change_state.clone(),
+                        expected_at,
+                    },
+                ).await?;
+
+                if let Some(updated_sub) = updated {
+                    return Ok(EventHandling::Handled(EventEffects {
+                        callback_event_type: Some("subscription.price_change_updated".to_string()),
+                        callback_status_override: Some(updated_sub.status.clone()),
+                        canonical_subscription: Some(updated_sub.into()),
+                        ..Default::default()
+                    }));
+                }
+
+                info!("Skipped stale price_change_updated event for subscription {}", sub_id);
+                return Ok(EventHandling::ReturnNone);
+            }
+
+            Ok(EventHandling::Handled(EventEffects::default()))
+        }
+
+        "subscription.expired_voided" => {
             info!(
                 "Processed informational webhook event: {} (provider: {})",
                 ctx.canonical_event,

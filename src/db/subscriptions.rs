@@ -44,6 +44,16 @@ pub struct Subscription {
     pub google_paused_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub google_deferred_until: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub google_pending_price_change_new_price_cents: Option<i64>,
+    #[serde(default)]
+    pub google_pending_price_change_currency: Option<String>,
+    #[serde(default)]
+    pub google_pending_price_change_mode: Option<String>,
+    #[serde(default)]
+    pub google_pending_price_change_state: Option<String>,
+    #[serde(default)]
+    pub google_pending_price_change_expected_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -366,6 +376,42 @@ pub async fn apply_webhook_transition(
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
+        SubscriptionWebhookTransition::PendingPriceChange {
+            new_price_cents,
+            currency,
+            mode,
+            state,
+            expected_at,
+        } => {
+            let clears_pending = matches!(state.as_deref(), Some("APPLIED") | Some("CANCELED"));
+            sqlx::query_as::<_, Subscription>(
+                "UPDATE pay.subscriptions
+                 SET google_pending_price_change_new_price_cents = CASE WHEN $1 THEN NULL ELSE $2 END,
+                     google_pending_price_change_currency = CASE WHEN $1 THEN NULL ELSE $3 END,
+                     google_pending_price_change_mode = CASE WHEN $1 THEN NULL ELSE $4 END,
+                     google_pending_price_change_state = $5,
+                     google_pending_price_change_expected_at = CASE WHEN $1 THEN NULL ELSE $6 END,
+                     version = version + 1,
+                     last_event_time = $7,
+                     updated_at = NOW()
+                 WHERE app_id = $8 AND external_user_id = $9 AND provider = $10 AND subscription_id = $11 AND last_event_time < $7
+                 RETURNING *",
+            )
+            .bind(clears_pending)
+            .bind(new_price_cents)
+            .bind(currency)
+            .bind(mode)
+            .bind(state)
+            .bind(expected_at)
+            .bind(event_time_ms)
+            .bind(app_id)
+            .bind(external_user_id)
+            .bind(provider)
+            .bind(subscription_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| BridgeError::DbError(e.to_string()))?
+        }
         SubscriptionWebhookTransition::PauseScheduled {
             google_pause_scheduled_at,
         } => {
@@ -628,6 +674,7 @@ pub async fn upsert_subscription_tx(
     payment_state: Option<i32>,
     provider_customer_id: Option<&str>,
     event_time_ms: i64,
+    recurring_amount_cents: Option<i64>,
 ) -> Result<SubscriptionUpsertResult, BridgeError> {
     // If purchase_token is provided, check if a subscription with that token already exists
     // This handles Google Play renewals where the same purchase_token is used for the lifecycle
@@ -654,6 +701,11 @@ pub async fn upsert_subscription_tx(
                          google_grace_period_start = CASE WHEN $1 = 'active' THEN NULL ELSE google_grace_period_start END,
                          google_grace_period_end = CASE WHEN $1 = 'active' THEN NULL ELSE google_grace_period_end END,
                          payment_failure_notification = CASE WHEN $1 = 'active' THEN false ELSE payment_failure_notification END,
+                         google_pending_price_change_new_price_cents = CASE WHEN $8::bigint IS NOT NULL AND google_pending_price_change_new_price_cents = $8 THEN NULL ELSE google_pending_price_change_new_price_cents END,
+                         google_pending_price_change_currency = CASE WHEN $8::bigint IS NOT NULL AND google_pending_price_change_new_price_cents = $8 THEN NULL ELSE google_pending_price_change_currency END,
+                         google_pending_price_change_mode = CASE WHEN $8::bigint IS NOT NULL AND google_pending_price_change_new_price_cents = $8 THEN NULL ELSE google_pending_price_change_mode END,
+                         google_pending_price_change_state = CASE WHEN $8::bigint IS NOT NULL AND google_pending_price_change_new_price_cents = $8 THEN NULL ELSE google_pending_price_change_state END,
+                         google_pending_price_change_expected_at = CASE WHEN $8::bigint IS NOT NULL AND google_pending_price_change_new_price_cents = $8 THEN NULL ELSE google_pending_price_change_expected_at END,
                          version = version + 1, last_event_time = $6, updated_at = NOW()
                      WHERE id = $7
                      RETURNING *"
@@ -665,6 +717,7 @@ pub async fn upsert_subscription_tx(
                 .bind(provider_customer_id)
                 .bind(event_time_ms)
                 .bind(existing_sub.id)
+                .bind(recurring_amount_cents)
                 .fetch_one(&mut **tx)
                 .await
                 .map_err(|e| BridgeError::DbError(e.to_string()))?;
@@ -698,6 +751,11 @@ pub async fn upsert_subscription_tx(
            google_grace_period_start = CASE WHEN EXCLUDED.status = 'active' THEN NULL ELSE subscriptions.google_grace_period_start END,
            google_grace_period_end = CASE WHEN EXCLUDED.status = 'active' THEN NULL ELSE subscriptions.google_grace_period_end END,
            payment_failure_notification = CASE WHEN EXCLUDED.status = 'active' THEN false ELSE subscriptions.payment_failure_notification END,
+           google_pending_price_change_new_price_cents = CASE WHEN $12::bigint IS NOT NULL AND subscriptions.google_pending_price_change_new_price_cents = $12 THEN NULL ELSE subscriptions.google_pending_price_change_new_price_cents END,
+           google_pending_price_change_currency = CASE WHEN $12::bigint IS NOT NULL AND subscriptions.google_pending_price_change_new_price_cents = $12 THEN NULL ELSE subscriptions.google_pending_price_change_currency END,
+           google_pending_price_change_mode = CASE WHEN $12::bigint IS NOT NULL AND subscriptions.google_pending_price_change_new_price_cents = $12 THEN NULL ELSE subscriptions.google_pending_price_change_mode END,
+           google_pending_price_change_state = CASE WHEN $12::bigint IS NOT NULL AND subscriptions.google_pending_price_change_new_price_cents = $12 THEN NULL ELSE subscriptions.google_pending_price_change_state END,
+           google_pending_price_change_expected_at = CASE WHEN $12::bigint IS NOT NULL AND subscriptions.google_pending_price_change_new_price_cents = $12 THEN NULL ELSE subscriptions.google_pending_price_change_expected_at END,
            version = subscriptions.version + 1,
            last_event_time = EXCLUDED.last_event_time,
            updated_at = NOW()
@@ -715,6 +773,7 @@ pub async fn upsert_subscription_tx(
     .bind(payment_state)
     .bind(provider_customer_id)
     .bind(event_time_ms)
+    .bind(recurring_amount_cents)
     .fetch_optional(&mut **tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;

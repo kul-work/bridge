@@ -561,6 +561,11 @@ async fn emit_scheduler_callback(
         google_price_step_up_consent_deadline,
         google_pause_scheduled_at,
         google_deferred_until,
+        google_pending_price_change_new_price_cents: None,
+        google_pending_price_change_currency: None,
+        google_pending_price_change_mode: None,
+        google_pending_price_change_state: None,
+        google_pending_price_change_expected_at: None,
     };
 
     crate::webhooks::forwarding::create_and_forward_webhook(

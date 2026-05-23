@@ -105,12 +105,13 @@ echo ""
 
 # Step 4: Send price_change_updated webhook
 echo -e "${YELLOW}[2/5] Sending subscription.price_change_updated webhook (notificationType 19)${NC}"
+PRICE_CHANGE_EVENT_TIME_MS=$(($(date +%s) + 10))000
 
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$(date +%s000)",
+  "eventTimeMillis": "$PRICE_CHANGE_EVENT_TIME_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 19,
@@ -138,12 +139,13 @@ echo ""
 
 # Step 5: Simulate renewal with new price
 echo -e "${YELLOW}[3/5] Simulating renewal with NEW price ($NEW_PRICE_CENTS cents)${NC}"
+RENEWAL_EVENT_TIME_MS=$(($PRICE_CHANGE_EVENT_TIME_MS + 1000))
 
 RENEWAL_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$(date +%s000)",
+  "eventTimeMillis": "$RENEWAL_EVENT_TIME_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 2,

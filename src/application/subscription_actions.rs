@@ -470,7 +470,7 @@ async fn dispatch_subscription_callback<R: SubscriptionActionsHandlerRepository 
         subscription_id: Some(sub.subscription_id.clone()),
         external_user_id: Some(sub.external_user_id.clone()),
         amount_cents: None,
-        new_price_cents,
+        new_price_cents: new_price_cents.map(i64::from),
         auto_renewing: sub.auto_renewing,
         purchase_token: sub.purchase_token.clone(),
         current_period_end: sub.current_period_end.map(|d| d.to_rfc3339()),
@@ -485,6 +485,11 @@ async fn dispatch_subscription_callback<R: SubscriptionActionsHandlerRepository 
         google_price_step_up_consent_deadline: sub.google_price_step_up_consent_deadline.map(|d| d.timestamp_millis()),
         google_pause_scheduled_at: sub.google_pause_scheduled_at.map(|d| d.timestamp_millis()),
         google_deferred_until: sub.google_deferred_until.map(|d| d.timestamp_millis()),
+        google_pending_price_change_new_price_cents: None,
+        google_pending_price_change_currency: None,
+        google_pending_price_change_mode: None,
+        google_pending_price_change_state: None,
+        google_pending_price_change_expected_at: None,
     };
 
     crate::webhooks::forwarding::create_and_forward_webhook(

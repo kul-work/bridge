@@ -19,6 +19,11 @@ pub(crate) struct WebhookFields {
     pub(crate) google_cancellation_feedback: Option<String>,
     pub(crate) google_new_price_cents: Option<i32>,
     pub(crate) google_price_step_up_consent_deadline: Option<String>,
+    pub(crate) google_pending_price_change_new_price_cents: Option<i64>,
+    pub(crate) google_pending_price_change_currency: Option<String>,
+    pub(crate) google_pending_price_change_mode: Option<String>,
+    pub(crate) google_pending_price_change_state: Option<String>,
+    pub(crate) google_pending_price_change_expected_at: Option<String>,
 }
 
 pub(super) fn extract_metadata_user_id(payload: &serde_json::Value) -> Option<String> {
@@ -77,6 +82,11 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                 .and_then(|v| v.as_i64())
                 .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
                 .map(|dt| dt.to_rfc3339()),
+            google_pending_price_change_new_price_cents: None,
+            google_pending_price_change_currency: None,
+            google_pending_price_change_mode: None,
+            google_pending_price_change_state: None,
+            google_pending_price_change_expected_at: None,
         },
         "creem" => {
             let obj = p.get("object").unwrap_or(&serde_json::Value::Null);
@@ -197,6 +207,11 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                 google_cancellation_feedback: None,
                 google_new_price_cents: None,
                 google_price_step_up_consent_deadline: None,
+                google_pending_price_change_new_price_cents: None,
+                google_pending_price_change_currency: None,
+                google_pending_price_change_mode: None,
+                google_pending_price_change_state: None,
+                google_pending_price_change_expected_at: None,
             }
         }
         _ => WebhookFields {
@@ -216,6 +231,11 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
             google_cancellation_feedback: None,
             google_new_price_cents: None,
             google_price_step_up_consent_deadline: None,
+            google_pending_price_change_new_price_cents: None,
+            google_pending_price_change_currency: None,
+            google_pending_price_change_mode: None,
+            google_pending_price_change_state: None,
+            google_pending_price_change_expected_at: None,
         },
     }
 }

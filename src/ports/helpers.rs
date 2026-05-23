@@ -36,6 +36,11 @@ impl From<Subscription> for WebhookSubscriptionSnapshot {
             google_price_step_up_consent_deadline: subscription.google_price_step_up_consent_deadline,
             google_pause_scheduled_at: subscription.google_pause_scheduled_at,
             google_deferred_until: subscription.google_deferred_until,
+            google_pending_price_change_new_price_cents: subscription.google_pending_price_change_new_price_cents,
+            google_pending_price_change_currency: subscription.google_pending_price_change_currency,
+            google_pending_price_change_mode: subscription.google_pending_price_change_mode,
+            google_pending_price_change_state: subscription.google_pending_price_change_state,
+            google_pending_price_change_expected_at: subscription.google_pending_price_change_expected_at,
         }
     }
 }
@@ -55,6 +60,11 @@ pub(crate) fn map_subscription_lookup_snapshot(subscription: Subscription) -> Su
         google_price_step_up_consent_deadline: subscription.google_price_step_up_consent_deadline,
         google_pause_scheduled_at: subscription.google_pause_scheduled_at,
         google_deferred_until: subscription.google_deferred_until,
+        google_pending_price_change_new_price_cents: subscription.google_pending_price_change_new_price_cents,
+        google_pending_price_change_currency: subscription.google_pending_price_change_currency,
+        google_pending_price_change_mode: subscription.google_pending_price_change_mode,
+        google_pending_price_change_state: subscription.google_pending_price_change_state,
+        google_pending_price_change_expected_at: subscription.google_pending_price_change_expected_at,
     }
 }
 
