@@ -2,6 +2,24 @@
 
 Date: 2026-05-22
 
+Rechecked: 2026-05-23
+
+## Recheck Summary
+
+The original parity finding still holds: ordinary Google Play price-change state is not durably
+modeled by Bridge, so HiHa cannot expose a useful pending-price-change UI until Bridge adds those
+fields. The recheck added three important corrections:
+
+- Google Play API v2 exposes ordinary price-change data at
+  `lineItems[].autoRenewingPlan.priceChangeDetails`, not the legacy/top-level
+  `price_change_summary` shape currently modeled in Bridge.
+- Current Google v2 `priceChangeState` enum values are `OUTSTANDING`, `CONFIRMED`, `APPLIED`, and
+  `CANCELED`.
+- RTDN `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED` (`notificationType: 8`) is deprecated. Do not rely on
+  it as the primary signal that the new price was actually charged; Google documents renewal after
+  a price change as `SUBSCRIPTION_RENEWED`, while all price-change status updates use
+  `SUBSCRIPTION_PRICE_CHANGE_UPDATED`.
+
 ## Context
 
 These notes capture the parity investigation across:
@@ -81,7 +99,7 @@ Relevant files:
 
 Current Bridge already maps:
 
-- `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED` -> `subscription.price_changed`
+- `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED` -> `subscription.price_changed` (deprecated Google RTDN)
 - `SUBSCRIPTION_PRICE_CHANGE_UPDATED` -> `subscription.price_change_updated`
 - `SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED` -> `subscription.price_step_up`
 
@@ -92,6 +110,8 @@ Current Bridge behavior:
 - Bridge forwards the callback to apps.
 - Bridge callback payload supports `new_price_cents`, but ordinary price-change details from
   Google `priceChangeDetails` are not currently persisted to subscription status.
+- Bridge's current Google model only reads legacy/top-level `price_change_summary`; it does not
+  deserialize `lineItems[].autoRenewingPlan.priceChangeDetails`.
 
 Important distinction:
 
@@ -182,6 +202,15 @@ Add `price_change_details` under `AutoRenewingPlan`, matching Google v2:
 The live Google response showed `priceChangeDetails` inside `autoRenewingPlan`, not in the
 top-level `price_change_summary`.
 
+Use current Google v2 enum names for `priceChangeState`:
+
+- `OUTSTANDING`
+- `CONFIRMED`
+- `APPLIED`
+- `CANCELED`
+
+Do not use the older `PRICE_CHANGE_STATE_*` names for this v2 field.
+
 ### 2. Bridge Subscription Persistence
 
 File:
@@ -191,12 +220,10 @@ File:
 Add separate fields for ordinary pending price change, for example:
 
 - `google_pending_price_change_new_price_cents`
+- `google_pending_price_change_currency`
+- `google_pending_price_change_mode`
 - `google_pending_price_change_state`
 - `google_pending_price_change_expected_at`
-
-Optional if UI needs it:
-
-- `google_pending_price_change_currency`
 
 Do not reuse `google_requires_price_step_up_consent` for this ordinary flow.
 
@@ -209,13 +236,24 @@ File:
 For `subscription.price_change_updated`:
 
 - Persist the pending price-change fields extracted from the enriched Google subscription.
+- Treat `OUTSTANDING` as a user-review-required pending state for ordinary developer price changes.
+- Treat `CONFIRMED`, `APPLIED`, and `CANCELED` as state transitions that should update or clear the
+  pending fields as appropriate.
 - Keep premium access unchanged.
 - Continue forwarding the callback to the app.
 
 For `subscription.price_changed`:
 
 - Keep existing audit payment behavior.
-- Consider clearing pending price-change fields after the new price is actually confirmed/charged.
+- Remember this comes from deprecated Google RTDN `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED`.
+- Do not rely on this event alone to decide that the new price was charged/applied.
+
+For `subscription.paid` / Google `SUBSCRIPTION_RENEWED` after a price change:
+
+- Re-read Google subscription state and compare the current `recurringPrice` / latest order details
+  with any pending price-change fields.
+- Clear pending fields after the new recurring price is actually applied, or when Google reports the
+  price change as `APPLIED`/`CANCELED`.
 
 ### 4. Bridge Subscription Status API
 
@@ -227,9 +265,10 @@ Files:
 Expose ordinary pending price-change fields in the status snapshot, separately from Korea step-up:
 
 - `google_pending_price_change_new_price_cents`
+- `google_pending_price_change_currency`
+- `google_pending_price_change_mode`
 - `google_pending_price_change_state`
 - `google_pending_price_change_expected_at`
-- optionally `google_pending_price_change_currency`
 
 ### 5. Current HiHa Backend Pass-Through
 
@@ -248,6 +287,9 @@ Deserialize the new Bridge fields and map them to frontend-friendly fields:
 Only map ordinary pending price changes to these fields when the pending state is outstanding.
 Keep Korea step-up fields available separately.
 
+Use `price_change_effective_date` from Bridge's
+`google_pending_price_change_expected_at` when Google provides it.
+
 ## Decision
 
 Classification: PARITY, adapted for Bridge split.
@@ -260,4 +302,3 @@ Ordinary Google price changes and Korea price step-up consent must remain separa
 
 - Ordinary `subscription.price_change_updated`: pending Google-managed price increase review.
 - Korea `subscription.price_step_up`: app/backend-managed consent flow with accept/decline actions.
-
