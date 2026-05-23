@@ -1,7 +1,7 @@
 # Google Play Subscription Lifecycle
 
 **Version**: 1.1  
-**Last Updated**: 2026-01-09
+**Last Updated**: 2026-05-23
 **Scope**: Google Play Billing API v2
 
 This document outlines the lifecycle of Auto-Renewing Subscriptions in the Google Play Billing system and how the backend handles them.
@@ -181,16 +181,36 @@ Subscriptions are complex because they have a persistent state that changes over
     *   Ensure user access continues until new date.
     *   During deferral: user has full access but is not charged.
 
-### 14. Price Change (`SUBSCRIPTION_PRICE_CHANGE_UPDATED` / `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED`)
-*   **Trigger**: Developer initiates price change, or User accepts/rejects it.
+### 14. Price Change (`SUBSCRIPTION_PRICE_CHANGE_UPDATED`, deprecated `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED`)
+*   **Trigger**: Developer changes the base plan price, or the user's price-change status changes.
+*   **Primary RTDN**: `SUBSCRIPTION_PRICE_CHANGE_UPDATED`.
+    *   Sent when a price change is added.
+    *   Sent when the price-change status is updated, including user confirmation/rejection cases.
+*   **Deprecated RTDN**: `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED` (`notificationType: 8`).
+    *   Google marks this notification type as deprecated.
+    *   It can still be received for compatibility, but backend logic must not rely on it as the primary signal that a new price was accepted or charged.
 *   **Types**:
-    *   **Opt-in Price Increase**: User must accept before higher price applies.
-    *   **Opt-out Price Decrease**: Applied automatically.
+    *   **Price Decrease**: Applies automatically.
+    *   **Opt-in Price Increase**: User must accept before the higher price applies.
+    *   **Opt-out Price Increase**: User is notified and can opt out/cancel before the higher price applies.
+*   **Source of Truth**: After any price-change RTDN, call `purchases.subscriptionsv2.get()` and read:
+    *   `lineItems[].autoRenewingPlan.priceChangeDetails.newPrice`
+    *   `lineItems[].autoRenewingPlan.priceChangeDetails.priceChangeMode`
+    *   `lineItems[].autoRenewingPlan.priceChangeDetails.priceChangeState`
+    *   `lineItems[].autoRenewingPlan.priceChangeDetails.expectedNewPriceChargeTime`
+*   **Current `priceChangeState` values**:
+    *   `OUTSTANDING`: Waiting for user action/review.
+    *   `CONFIRMED`: Price change is confirmed and waiting to take effect.
+    *   `APPLIED`: New price has taken effect.
+    *   `CANCELED`: Price change was canceled.
 *   **Backend Action**:
-    *   On `PRICE_CHANGE_UPDATED`: Update price change status/details.
-    *   On `PRICE_CHANGE_CONFIRMED`: Log acceptance (deprecated for subscriptions with addons; use `PRICE_CHANGE_UPDATED` instead).
-    *   On renewal at new price: Handle as normal `SUBSCRIPTION_RENEWED`.
-    *   If user doesn't accept opt-in increase before renewal: Receive `SUBSCRIPTION_CANCELED`.
+    *   On `PRICE_CHANGE_UPDATED`: Persist ordinary price-change details separately from KR price step-up consent fields.
+    *   For `OUTSTANDING`: Keep subscription access unchanged and expose pending review details to the app/UI.
+    *   For `CONFIRMED`: Keep subscription access unchanged; keep or update pending details until the new price takes effect.
+    *   For `APPLIED` or `CANCELED`: Clear/update pending price-change fields as appropriate.
+    *   On `PRICE_CHANGE_CONFIRMED`: Log for compatibility only; do not use it alone to mark the new price as charged/applied.
+    *   On renewal after price change: Handle as normal `SUBSCRIPTION_RENEWED`, then clear pending fields once the new recurring price is verified as applied.
+    *   If user doesn't accept an opt-in increase before renewal: Receive `SUBSCRIPTION_CANCELED`.
 
 #### 14.1. Price Step-Up Consent (KR Region Only)
 *   **Regulation**: South Korean users must consent to price step-ups after free trial/intro periods.
@@ -335,6 +355,17 @@ stateDiagram-v2
     *   `installmentDetails.remainingCommittedPaymentsCount`
     *   `pendingCancellation` object (present when user cancels but commitment remains)
 
+### Price Change Tracking
+*   **Monitor Fields**:
+    *   `lineItems[].autoRenewingPlan.priceChangeDetails.newPrice`
+    *   `lineItems[].autoRenewingPlan.priceChangeDetails.priceChangeMode`
+    *   `lineItems[].autoRenewingPlan.priceChangeDetails.priceChangeState`
+    *   `lineItems[].autoRenewingPlan.priceChangeDetails.expectedNewPriceChargeTime`
+*   **Separate Flows**:
+    *   Ordinary developer-initiated price changes use `priceChangeDetails`.
+    *   KR price step-up consent uses `priceStepUpConsentDetails` and `SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED`.
+    *   Do not reuse KR consent fields for ordinary developer-initiated price changes.
+
 ### Real-Time Developer Notifications (RTDNs)
 All RTDNs to handle:
 *   `SUBSCRIPTION_PURCHASED` (new and resubscribe)
@@ -350,12 +381,13 @@ All RTDNs to handle:
 *   `SUBSCRIPTION_REVOKED`
 *   `SUBSCRIPTION_RESTARTED`
 *   `SUBSCRIPTION_DEFERRED`
-*   `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED` (deprecated for addons)
-*   `SUBSCRIPTION_PRICE_CHANGE_UPDATED`
+*   `SUBSCRIPTION_PRICE_CHANGE_UPDATED` (primary price-change status signal)
+*   `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED` (deprecated; handle for compatibility only)
 *   `SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED` (KR only)
 
 ### Best Practices
 *   **Call API on RTDN**: Don't wait for `expiryTime`. Call `purchases.subscriptionsv2.get()` when RTDN arrives for accurate status.
+*   **Price Changes**: Use `SUBSCRIPTION_PRICE_CHANGE_UPDATED` plus `priceChangeDetails` from `purchases.subscriptionsv2.get()` as the source of truth. Do not rely on deprecated `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED` to decide that the new price was charged.
 *   **In-App Messaging**: Use In-App Messaging API to prompt users to fix payment issues during grace period and account hold.
 *   **Deep Links**: Provide deep links to Google Play subscription management for users to update payment methods.
 *   **Monitoring**: Track acknowledgment success rates and implement alerts for failures.
@@ -370,3 +402,5 @@ All RTDNs to handle:
 5. **Ignoring installment-specific RTDNs**: `SUBSCRIPTION_CANCELLATION_SCHEDULED` is distinct from `SUBSCRIPTION_CANCELED`.
 6. **Missing token expiration**: Tokens expire 60 days after subscription expiration.
 7. **Not resetting billing date on account hold recovery**: Billing date moves to recovery date (unlike grace period recovery).
+8. **Treating price change as KR price step-up**: Ordinary developer price changes use `priceChangeDetails`; KR price step-up consent uses `priceStepUpConsentDetails` and is a separate flow.
+9. **Relying on deprecated price-change confirmation**: `SUBSCRIPTION_PRICE_CHANGE_CONFIRMED` can still arrive, but `SUBSCRIPTION_PRICE_CHANGE_UPDATED` plus `subscriptionsv2.get` is the current source of truth.
