@@ -1,5 +1,24 @@
 # Release Notes
 
+## [0.3.2] - 2026-05-24
+### Features
+- **Google Play**: Track ordinary pending price changes from v2 `priceChangeDetails` and expose them in callbacks and subscription APIs.
+- **Fraud Prevention**: Record Google Play obfuscated account IDs during verified purchases.
+
+### Fixes
+- **Google Play**: Reject invalid mock subscription verifications before committing state.
+- **Google Play**: Record free trial subscriptions as zero-value phases.
+- **Google Play**: Persist payment and OTP currencies from provider data, including refunds and price step-up rows.
+- **Google Play**: Preserve renewal webhook/payment records and separate purchase tokens from transaction IDs.
+- **Google Play**: Align OTP refund handling with purchase-token invariants and deduplicate OTP verify callbacks.
+- **Webhooks**: Make delivery enqueue idempotent and improve Google Pub/Sub audience/test notification handling.
+- **Subscriptions**: Clear pending Google price-change fields on terminal states.
+
+### Improvements
+- **Logging**: Improve webhook and provider diagnostics.
+- **Documentation**: Refresh Google Play price-change, OTP, and parity notes.
+- **Testing**: Expand Google Play renewal, OTP, currency, and price-change coverage.
+
 ## [0.3.1] - 2026-05-14
 ### Features
 - **Google Play**: Handle pending one-time purchase verification with 202 responses and OTP-04 replay/polling coverage.
