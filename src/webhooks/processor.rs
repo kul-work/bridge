@@ -293,13 +293,23 @@ fn google_money_to_cents_i64(money: &crate::services::google_play::models::Money
     units.checked_mul(100)?.checked_add(nanos / 10_000_000)
 }
 
-fn google_subscription_recurring_amount_cents(
+fn google_subscription_current_amount_cents(
     resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
 ) -> Option<i32> {
-    resource
-        .line_items
-        .first()
-        .and_then(|line_item| line_item.auto_renewing_plan.as_ref())
+    let line_item = resource.line_items.first()?;
+
+    if line_item
+        .offer_phase
+        .as_ref()
+        .and_then(|phase| phase.free_trial.as_ref())
+        .is_some()
+    {
+        return Some(0);
+    }
+
+    line_item
+        .auto_renewing_plan
+        .as_ref()
         .and_then(|plan| plan.recurring_price.as_ref())
         .and_then(google_money_to_cents)
 }
@@ -457,7 +467,7 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     }
 
     if fields.amount_cents.is_none() {
-        fields.amount_cents = google_subscription_recurring_amount_cents(&resource);
+        fields.amount_cents = google_subscription_current_amount_cents(&resource);
     }
 
     if fields.currency.is_none() {

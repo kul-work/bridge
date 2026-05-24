@@ -152,6 +152,7 @@ pub struct SubscriptionLineItem {
     pub latest_successful_order_id: Option<String>,
     pub auto_renewing_plan: Option<AutoRenewingPlan>,
     pub offer_details: Option<OfferDetails>,
+    pub offer_phase: Option<OfferPhase>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -209,6 +210,13 @@ pub struct OfferDetails {
     pub offer_id: Option<String>,
     pub base_plan_id: String,
     pub offer_tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferPhase {
+    pub free_trial: Option<serde_json::Value>,
+    pub base_price: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

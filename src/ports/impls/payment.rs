@@ -130,16 +130,15 @@ impl VerifyPurchaseRepository for db::Database {
         subscription_id: &str,
         provider: &str,
     ) -> Result<Option<crate::application::verify_purchase_types::VerifyPurchaseSubscriptionSnapshot>, BridgeError> {
-        db::subscriptions::get_subscription(
+        db::subscriptions::get_subscription_by_sub_id_and_user_for_provider(
             self.pool(),
             app_id,
-            external_user_id,
-            subscription_id,
             provider,
+            subscription_id,
+            external_user_id,
         )
         .await
-        .map(map_verify_purchase_subscription)
-        .map(Some)
+        .map(|subscription| subscription.map(map_verify_purchase_subscription))
     }
 
     async fn commit_verified_purchase(

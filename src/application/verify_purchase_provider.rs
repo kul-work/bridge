@@ -298,12 +298,7 @@ fn map_google_subscription_verification(
             .and_then(|plan| plan.auto_renew_enabled)
     });
 
-    let amount_cents = purchase
-        .line_items
-        .iter()
-        .find_map(|line_item| line_item.auto_renewing_plan.as_ref())
-        .and_then(|plan| plan.recurring_price.as_ref())
-        .and_then(google_money_to_cents);
+    let amount_cents = google_subscription_current_amount_cents(&purchase);
     let currency = purchase
         .line_items
         .iter()
@@ -334,6 +329,25 @@ fn map_google_subscription_verification(
         resubscribe_obfuscated_account_id,
         linked_purchase_token: purchase.linked_purchase_token.clone(),
     }))
+}
+
+fn google_subscription_current_amount_cents(purchase: &SubscriptionPurchaseV2) -> Option<i32> {
+    let line_item = purchase.line_items.first()?;
+
+    if line_item
+        .offer_phase
+        .as_ref()
+        .and_then(|phase| phase.free_trial.as_ref())
+        .is_some()
+    {
+        return Some(0);
+    }
+
+    line_item
+        .auto_renewing_plan
+        .as_ref()
+        .and_then(|plan| plan.recurring_price.as_ref())
+        .and_then(google_money_to_cents)
 }
 
 fn map_google_product_verification(
@@ -533,7 +547,7 @@ fn load_mock_fixture<T: DeserializeOwned>(env_key: &str) -> Option<T> {
 mod tests {
     use super::*;
     use crate::services::google_play::models::{
-        AutoRenewingPlan, ExternalAccountIdentifiers, OutOfAppPurchaseContext, SubscriptionLineItem,
+        AutoRenewingPlan, ExternalAccountIdentifiers, OfferPhase, OutOfAppPurchaseContext, SubscriptionLineItem,
     };
 
     #[test]
@@ -556,6 +570,7 @@ mod tests {
                     price_change_details: None,
                 }),
                 offer_details: None,
+                offer_phase: None,
             }],
             ..Default::default()
         };
@@ -567,6 +582,49 @@ mod tests {
             VerificationOutcome::Verified(verified) => {
                 assert_eq!(verified.amount_cents, Some(1299));
                 assert_eq!(verified.currency, Some("USD".to_string()));
+                assert_eq!(verified.status, "active");
+            }
+            VerificationOutcome::LinkingRequired { .. } => {
+                panic!("expected a verified purchase response")
+            }
+        }
+    }
+
+    #[test]
+    fn google_subscription_verification_uses_zero_amount_for_free_trial_phase() {
+        let purchase = SubscriptionPurchaseV2 {
+            auto_renewing: Some(true),
+            subscription_state: Some("SUBSCRIPTION_STATE_ACTIVE".to_string()),
+            acknowledgement_state: Some("ACKNOWLEDGEMENT_STATE_PENDING".to_string()),
+            line_items: vec![SubscriptionLineItem {
+                product_id: "premium_monthly".to_string(),
+                expiry_time: Some("2026-04-30T00:00:00Z".to_string()),
+                latest_successful_order_id: Some("GPA.1234-5678-9012-34567".to_string()),
+                auto_renewing_plan: Some(AutoRenewingPlan {
+                    auto_renew_enabled: Some(true),
+                    recurring_price: Some(Money {
+                        currency_code: Some("RON".to_string()),
+                        units: Some("5".to_string()),
+                        nanos: Some(490_000_000),
+                    }),
+                    price_change_details: None,
+                }),
+                offer_details: None,
+                offer_phase: Some(OfferPhase {
+                    free_trial: Some(serde_json::json!({})),
+                    base_price: None,
+                }),
+            }],
+            ..Default::default()
+        };
+
+        let verification = map_google_subscription_verification(purchase, "user-123")
+            .expect("google subscription verification should succeed");
+
+        match verification {
+            VerificationOutcome::Verified(verified) => {
+                assert_eq!(verified.amount_cents, Some(0));
+                assert_eq!(verified.currency, Some("RON".to_string()));
                 assert_eq!(verified.status, "active");
             }
             VerificationOutcome::LinkingRequired { .. } => {

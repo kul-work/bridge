@@ -857,8 +857,10 @@ impl GooglePlayProvider {
                     line_items: vec![super::models::SubscriptionLineItem {
                         product_id: subscription_id.to_string(),
                         expiry_time: Some(mock_expiry),
+                        latest_successful_order_id: None,
                         auto_renewing_plan: None,
                         offer_details: None,
+                        offer_phase: None,
                     }],
                     external_account_identifiers: Some(super::models::ExternalAccountIdentifiers {
                         obfuscated_account_id: Some("sub-19b-owner-hash".to_string()),
@@ -917,8 +919,10 @@ impl GooglePlayProvider {
                     line_items: vec![super::models::SubscriptionLineItem {
                         product_id: subscription_id.to_string(),
                         expiry_time: Some(mock_expiry),
+                        latest_successful_order_id: None,
                         auto_renewing_plan: None,
                         offer_details: None,
+                        offer_phase: None,
                     }],
                     external_account_identifiers: Some(super::models::ExternalAccountIdentifiers {
                         obfuscated_account_id: Some(obfuscated_account_id),

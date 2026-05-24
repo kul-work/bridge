@@ -354,6 +354,7 @@ fn test_google_subscription_expiry_prefers_line_item_expiry() {
             latest_successful_order_id: None,
             auto_renewing_plan: None,
             offer_details: None,
+            offer_phase: None,
         }],
         ..Default::default()
     };
@@ -404,11 +405,41 @@ fn test_google_subscription_recurring_amount_uses_integer_cents() {
                 price_change_details: None,
             }),
             offer_details: None,
+            offer_phase: None,
         }],
         ..Default::default()
     };
 
-    assert_eq!(google_subscription_recurring_amount_cents(&resource), Some(549));
+    assert_eq!(google_subscription_current_amount_cents(&resource), Some(549));
+    assert_eq!(google_subscription_recurring_currency(&resource), Some("RON".to_string()));
+}
+
+#[test]
+fn test_google_subscription_recurring_amount_uses_zero_for_free_trial_phase() {
+    let resource = crate::services::google_play::models::SubscriptionPurchaseV2 {
+        line_items: vec![crate::services::google_play::models::SubscriptionLineItem {
+            product_id: "hiha_monthly".to_string(),
+            expiry_time: None,
+            latest_successful_order_id: Some("GPA.3393-5701-2992-95414".to_string()),
+            auto_renewing_plan: Some(crate::services::google_play::models::AutoRenewingPlan {
+                auto_renew_enabled: Some(true),
+                recurring_price: Some(crate::services::google_play::models::Money {
+                    currency_code: Some("RON".to_string()),
+                    units: Some("5".to_string()),
+                    nanos: Some(490_000_000),
+                }),
+                price_change_details: None,
+            }),
+            offer_details: None,
+            offer_phase: Some(crate::services::google_play::models::OfferPhase {
+                free_trial: Some(serde_json::json!({})),
+                base_price: None,
+            }),
+        }],
+        ..Default::default()
+    };
+
+    assert_eq!(google_subscription_current_amount_cents(&resource), Some(0));
     assert_eq!(google_subscription_recurring_currency(&resource), Some("RON".to_string()));
 }
 
