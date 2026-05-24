@@ -8,6 +8,8 @@
 use crate::error::AppError;
 use std::str::FromStr;
 
+const MOCK_SUBSCRIPTION_TOKEN_PREFIX: &str = "mock-google-play-subscription:";
+
 /// Token validation mode enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TokenValidationMode {
@@ -107,8 +109,8 @@ impl TokenValidator {
     ///
     /// Rules:
     /// - If token contains "mismatch", fail validation
-    /// - In STRICT mode, token must contain valid subscription keywords OR explicitly support the subscription
-    /// - This simulates the case where the token doesn't match the requested subscription
+    /// - Mock subscription tokens can encode their provider product id using
+    ///   `mock-google-play-subscription:{subscription_id}:{unique_token}`.
     pub fn validate_subscription_match(
         token: &str,
         subscription_id: &str,
@@ -121,13 +123,12 @@ impl TokenValidator {
             ));
         }
 
-        // In STRICT mode, validate that token is intended for this subscription
-        // Special case: "test-err-02-valid-token" tokens are only valid with "hiha_subscription"
-        // When called with "wrong_subscription_id", reject it
-        if token.contains("test-err-02-valid-token") && subscription_id != "hiha_subscription" {
-            return Err(AppError::PaymentProviderError(
-                "Purchase token does not match the requested subscription ID".to_string(),
-            ));
+        if let Some(token_subscription_id) = mock_subscription_id_from_token(token) {
+            if token_subscription_id != subscription_id {
+                return Err(AppError::PaymentProviderError(
+                    "Purchase token does not match the requested subscription ID".to_string(),
+                ));
+            }
         }
 
         Ok(())
@@ -212,6 +213,13 @@ impl TokenValidator {
     }
 }
 
+fn mock_subscription_id_from_token(token: &str) -> Option<&str> {
+    token
+        .strip_prefix(MOCK_SUBSCRIPTION_TOKEN_PREFIX)
+        .and_then(|rest| rest.split(':').next())
+        .filter(|subscription_id| !subscription_id.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,7 +256,7 @@ mod tests {
     #[test]
     fn test_validate_format_valid() {
         assert!(TokenValidator::validate_format("valid-token-abc123xyz789", true).is_ok());
-        assert!(TokenValidator::validate_format("test-err-02-valid-token-1234567890", true).is_ok());
+        assert!(TokenValidator::validate_format("mock-google-play-subscription:premium_monthly:1234567890", true).is_ok());
         assert!(TokenValidator::validate_format("resubscribe-linking-required", true).is_ok());
     }
 
@@ -279,9 +287,8 @@ mod tests {
     fn test_validate_subscription_match() {
         assert!(TokenValidator::validate_subscription_match("valid-token", "sub-123", &[]).is_ok());
         assert!(TokenValidator::validate_subscription_match("token-mismatch-sub", "sub-123", &[]).is_err());
-        // Test ERR-02: test-err-02 tokens only valid with hiha_subscription
-        assert!(TokenValidator::validate_subscription_match("test-err-02-valid-token-1234567890", "hiha_subscription", &[]).is_ok());
-        assert!(TokenValidator::validate_subscription_match("test-err-02-valid-token-1234567890", "wrong_subscription_id", &[]).is_err());
+        assert!(TokenValidator::validate_subscription_match("mock-google-play-subscription:premium_monthly:1234567890", "premium_monthly", &[]).is_ok());
+        assert!(TokenValidator::validate_subscription_match("mock-google-play-subscription:premium_monthly:1234567890", "wrong_subscription_id", &[]).is_err());
     }
 
     #[test]

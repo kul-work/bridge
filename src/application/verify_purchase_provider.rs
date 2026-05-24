@@ -17,6 +17,8 @@ use crate::services::google_play::{
 };
 use crate::webhooks::processor::CanonicalWebhookPayload;
 
+const MOCK_SUBSCRIPTION_TOKEN_PREFIX: &str = "mock-google-play-subscription:";
+
 fn verify_purchase_event_id(
     provider: &str,
     product_type: ProductType,
@@ -78,7 +80,7 @@ async fn verify_google_play(
                 .await
                 .map_err(|e| BridgeError::ProviderError(format!("Google Play verify failed: {}", e)))?;
 
-            map_google_subscription_verification(purchase, external_user_id)
+            map_google_subscription_verification(purchase, subscription_id, external_user_id)
         }
         ProductType::OneTimeProduct => {
             let purchase = client
@@ -248,6 +250,7 @@ fn google_money_to_cents(money: &Money) -> Option<i32> {
 
 fn map_google_subscription_verification(
     purchase: SubscriptionPurchaseV2,
+    subscription_id: &str,
     external_user_id: &str,
 ) -> Result<VerificationOutcome, BridgeError> {
     let obfuscated_account_id = purchase
@@ -269,6 +272,17 @@ fn map_google_subscription_verification(
                 });
             }
         }
+    }
+
+    if purchase.line_items.is_empty()
+        || !purchase
+            .line_items
+            .iter()
+            .any(|line_item| line_item.product_id == subscription_id)
+    {
+        return Err(BridgeError::ValidationError(
+            "Purchase token does not match the requested subscription ID".to_string(),
+        ));
     }
 
     let status = match purchase.subscription_state.as_deref() {
@@ -392,17 +406,19 @@ fn map_google_product_verification_with_order_payment(
 }
 
 fn mock_verify_google_play(
-    _subscription_id: &str,
+    subscription_id: &str,
     purchase_token: &str,
     product_type: ProductType,
     external_user_id: &str,
 ) -> Result<VerificationOutcome, BridgeError> {
     match product_type {
         ProductType::Subscription => {
+            reject_mock_google_subscription_token(subscription_id, purchase_token)?;
+
             if let Some(purchase) = load_mock_fixture::<SubscriptionPurchaseV2>(
                 "MOCK_GOOGLE_PURCHASE_RESPONSE",
             ) {
-                return map_google_subscription_verification(purchase, external_user_id);
+                return map_google_subscription_verification(purchase, subscription_id, external_user_id);
             }
 
             // Token designed to test linking_required: returns Verified so the first
@@ -528,6 +544,76 @@ fn mock_verify_google_play(
     }
 }
 
+fn reject_mock_google_subscription_token(
+    subscription_id: &str,
+    purchase_token: &str,
+) -> Result<(), BridgeError> {
+    let token = purchase_token.trim();
+
+    if token.is_empty() {
+        return Err(BridgeError::ValidationError(
+            "Purchase token cannot be empty".to_string(),
+        ));
+    }
+
+    if token.len() < 10 {
+        return Err(BridgeError::ValidationError(
+            "Purchase token is too short (minimum 10 characters)".to_string(),
+        ));
+    }
+
+    if token.len() > 1000 {
+        return Err(BridgeError::ValidationError(
+            "Purchase token is too long (maximum 1000 characters)".to_string(),
+        ));
+    }
+
+    if token.contains("invalid")
+        || token.contains("not-a-valid")
+        || (token.contains("abc") && token.contains("!@#$"))
+        || token.chars().all(|c| c.is_numeric())
+    {
+        return Err(BridgeError::ValidationError(
+            "Invalid or revoked purchase token".to_string(),
+        ));
+    }
+
+    if token.contains("expired") {
+        return Err(BridgeError::ProviderError(
+            "Purchase token has expired (>60 days past subscription expiry)".to_string(),
+        ));
+    }
+
+    if token.contains("api-error") || token.contains("google-api-error") {
+        return Err(BridgeError::ProviderError(
+            "Google Play API temporarily unavailable (5xx error)".to_string(),
+        ));
+    }
+
+    if token.contains("mismatch") {
+        return Err(BridgeError::ValidationError(
+            "Purchase token does not match the requested subscription ID".to_string(),
+        ));
+    }
+
+    if let Some(token_subscription_id) = mock_subscription_id_from_token(token) {
+        if token_subscription_id != subscription_id {
+            return Err(BridgeError::ValidationError(
+                "Purchase token does not match the requested subscription ID".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn mock_subscription_id_from_token(token: &str) -> Option<&str> {
+    token
+        .strip_prefix(MOCK_SUBSCRIPTION_TOKEN_PREFIX)
+        .and_then(|rest| rest.split(':').next())
+        .filter(|subscription_id| !subscription_id.is_empty())
+}
+
 fn load_mock_fixture<T: DeserializeOwned>(env_key: &str) -> Option<T> {
     let path = std::env::var(env_key).ok()?;
     let content = fs::read_to_string(path).ok()?;
@@ -575,7 +661,7 @@ mod tests {
             ..Default::default()
         };
 
-        let verification = map_google_subscription_verification(purchase, "user-123")
+        let verification = map_google_subscription_verification(purchase, "premium_monthly", "user-123")
             .expect("google subscription verification should succeed");
 
         match verification {
@@ -618,7 +704,7 @@ mod tests {
             ..Default::default()
         };
 
-        let verification = map_google_subscription_verification(purchase, "user-123")
+        let verification = map_google_subscription_verification(purchase, "premium_monthly", "user-123")
             .expect("google subscription verification should succeed");
 
         match verification {
@@ -634,10 +720,66 @@ mod tests {
     }
 
     #[test]
+    fn google_subscription_verification_rejects_mismatched_product_id() {
+        let purchase = SubscriptionPurchaseV2 {
+            subscription_state: Some("SUBSCRIPTION_STATE_ACTIVE".to_string()),
+            acknowledgement_state: Some("ACKNOWLEDGEMENT_STATE_PENDING".to_string()),
+            line_items: vec![SubscriptionLineItem {
+                product_id: "premium_monthly".to_string(),
+                expiry_time: Some("2026-04-30T00:00:00Z".to_string()),
+                latest_successful_order_id: None,
+                auto_renewing_plan: None,
+                offer_details: None,
+                offer_phase: None,
+            }],
+            ..Default::default()
+        };
+
+        let err = match map_google_subscription_verification(
+            purchase,
+            "wrong_subscription_id",
+            "user-123",
+        ) {
+            Ok(_) => panic!("mismatched subscription id should be rejected"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, BridgeError::ValidationError(msg) if msg.contains("does not match")));
+    }
+
+    #[test]
+    fn mock_google_subscription_rejects_err_token_patterns() {
+        let cases = [
+            "invalid-token-xyz",
+            "1234567890",
+            "not-a-valid-purchase-token",
+            "abc!@#$%^&*()",
+            "expired-token-err-03",
+            "google-api-error-500",
+            "mock-google-play-subscription:premium_monthly:token-123",
+        ];
+
+        for token in cases {
+            assert!(
+                reject_mock_google_subscription_token("wrong_subscription_id", token).is_err(),
+                "expected token {token} to be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn google_subscription_verification_prefers_expired_obfuscated_account_id_for_resubscribe() {
         let purchase = SubscriptionPurchaseV2 {
             subscription_state: Some("SUBSCRIPTION_STATE_ACTIVE".to_string()),
             acknowledgement_state: Some("ACKNOWLEDGEMENT_STATE_PENDING".to_string()),
+            line_items: vec![SubscriptionLineItem {
+                product_id: "premium_monthly".to_string(),
+                expiry_time: None,
+                latest_successful_order_id: None,
+                auto_renewing_plan: None,
+                offer_details: None,
+                offer_phase: None,
+            }],
             external_account_identifiers: Some(ExternalAccountIdentifiers {
                 obfuscated_account_id: Some("current-owner-hash".to_string()),
                 obfuscated_profile_id: None,
@@ -652,7 +794,7 @@ mod tests {
             ..Default::default()
         };
 
-        let verification = map_google_subscription_verification(purchase, "user-123")
+        let verification = map_google_subscription_verification(purchase, "premium_monthly", "user-123")
             .expect("google subscription verification should succeed");
 
         match verification {
@@ -684,7 +826,7 @@ mod tests {
             ..Default::default()
         };
 
-        let verification = map_google_subscription_verification(purchase, "user-123")
+        let verification = map_google_subscription_verification(purchase, "premium_monthly", "user-123")
             .expect("google subscription verification should succeed");
 
         match verification {
@@ -753,13 +895,13 @@ mod tests {
         let first = verify_purchase_event_id(
             "google_play",
             ProductType::Subscription,
-            "hiha_monthly",
+            "premium_monthly",
             "purchase-token-123",
         );
         let second = verify_purchase_event_id(
             "google_play",
             ProductType::Subscription,
-            "hiha_monthly",
+            "premium_monthly",
             "purchase-token-123",
         );
 

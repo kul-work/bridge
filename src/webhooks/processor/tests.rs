@@ -242,7 +242,7 @@ fn test_creem_field_extraction_checkout_completed_one_time() {
 fn test_google_play_subscription_field_extraction_does_not_use_purchase_token_as_transaction_id() {
     let payload = serde_json::json!({
         "subscriptionNotification": {
-            "subscriptionId": "hiha_monthly",
+            "subscriptionId": "premium_monthly",
             "purchaseToken": "shared_purchase_token",
             "notificationType": 2
         }
@@ -252,7 +252,7 @@ fn test_google_play_subscription_field_extraction_does_not_use_purchase_token_as
         provider: "google_play".to_string(),
         provider_webhook_id: "19071854013335023".to_string(),
         event_type: "SUBSCRIPTION_RENEWED".to_string(),
-        subscription_id: Some("hiha_monthly".to_string()),
+        subscription_id: Some("premium_monthly".to_string()),
         purchase_token: Some("shared_purchase_token".to_string()),
         payload,
         processed: false,
@@ -349,7 +349,7 @@ fn test_google_subscription_expiry_prefers_line_item_expiry() {
     let resource = crate::services::google_play::models::SubscriptionPurchaseV2 {
         expiry_time: Some("2026-05-16T14:30:34Z".to_string()),
         line_items: vec![crate::services::google_play::models::SubscriptionLineItem {
-            product_id: "hiha_monthly".to_string(),
+            product_id: "premium_monthly".to_string(),
             expiry_time: Some("2026-05-16T14:35:34Z".to_string()),
             latest_successful_order_id: None,
             auto_renewing_plan: None,
@@ -392,7 +392,7 @@ fn test_google_subscription_transaction_id_falls_back_to_rtdn_message_id() {
 fn test_google_subscription_recurring_amount_uses_integer_cents() {
     let resource = crate::services::google_play::models::SubscriptionPurchaseV2 {
         line_items: vec![crate::services::google_play::models::SubscriptionLineItem {
-            product_id: "hiha_monthly".to_string(),
+            product_id: "premium_monthly".to_string(),
             expiry_time: None,
             latest_successful_order_id: None,
             auto_renewing_plan: Some(crate::services::google_play::models::AutoRenewingPlan {
@@ -418,7 +418,7 @@ fn test_google_subscription_recurring_amount_uses_integer_cents() {
 fn test_google_subscription_recurring_amount_uses_zero_for_free_trial_phase() {
     let resource = crate::services::google_play::models::SubscriptionPurchaseV2 {
         line_items: vec![crate::services::google_play::models::SubscriptionLineItem {
-            product_id: "hiha_monthly".to_string(),
+            product_id: "premium_monthly".to_string(),
             expiry_time: None,
             latest_successful_order_id: Some("GPA.3393-5701-2992-95414".to_string()),
             auto_renewing_plan: Some(crate::services::google_play::models::AutoRenewingPlan {

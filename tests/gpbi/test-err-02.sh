@@ -92,8 +92,9 @@ echo ""
 echo -e "${YELLOW}[3/5] Testing with valid token but WRONG subscription_id${NC}"
 echo ""
 
-# Use a token format that looks valid but with wrong subscription_id
-PURCHASE_TOKEN="test-err-02-valid-token-$(date +%s)"
+# Encode the provider product in the mock token so Bridge can validate the
+# requested subscription_id without hard-coded test products.
+PURCHASE_TOKEN="mock-google-play-subscription:${CORRECT_PRODUCT_ID}:$(date +%s)"
 
 echo "Request details:"
 echo "  Token: $PURCHASE_TOKEN (valid format)"

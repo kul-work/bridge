@@ -173,7 +173,7 @@ mod tests {
         let value = serde_json::json!({
             "subscriptionState": "SUBSCRIPTION_STATE_ACTIVE",
             "lineItems": [{
-                "productId": "hiha_monthly",
+                "productId": "premium_monthly",
                 "autoRenewingPlan": {
                     "autoRenewEnabled": true,
                     "priceChangeDetails": {
