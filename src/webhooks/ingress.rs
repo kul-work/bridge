@@ -4,7 +4,7 @@ use axum::{
 };
 use base64::Engine;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
@@ -32,6 +32,7 @@ fn spawn_process_and_forward_webhook(
     event_id: String,
 ) {
     tokio::spawn(async move {
+        debug!("BEGIN processing {} webhook: {}", provider_name, event_id);
         match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
                 if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
@@ -44,7 +45,7 @@ fn spawn_process_and_forward_webhook(
                 {
                     error!("Failed to forward webhook for {}: {}", event_id, e);
                 }
-                info!("END processing {} webhook: {}", provider_name, event_id);
+                debug!("END processing {} webhook: {}", provider_name, event_id);
             }
             Ok(None) => info!("{} webhook suppressed: {}", provider_name, event_id),
             Err(e) => error!("{} webhook processing failed {}: {}", provider_name, event_id, e),
