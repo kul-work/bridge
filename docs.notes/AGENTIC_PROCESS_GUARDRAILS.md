@@ -20,7 +20,9 @@ Use sub-agents as narrow critics and evidence gatherers. Keep actual code change
 
 In Amp, these roles are not background daemons or autonomous coding swarms. The practical implementation unit is a reusable skill, a shared checklist/resource, or a manual workflow invoked in a thread.
 
-A loop is not a separate runtime object. It is a repeatable workflow recipe. If the recipe is used often, implement it as one orchestrator skill: a normal `SKILL.md` whose workflow tells Amp which phases to run, when to stop, and which other checklists/skills to apply. The orchestrator is triggered the same way as any other skill, for example: "Run `bridge-release-gate` from the latest tag." It is not a hook and it does not run in the background.
+A loop is a repeatable workflow recipe. An orchestrator is the Amp skill form of a loop: a normal `SKILL.md` file whose workflow tells Amp which phases to run, when to stop, and which other checklists/skills to apply. It lives at `.agents/skills/<skill-name>/SKILL.md` and is triggered like any other skill, for example: "Run `bridge-release-gate` from the latest tag."
+
+Do not treat "loop" or "orchestrator" as separate Amp runtime objects. They are not hooks, schedulers, background daemons, or coding swarms. If a loop is reusable, make or use one orchestrator skill for it. If no skill exists, the loop can still be followed manually by pasting/adapting the recipe into the task prompt, but that manual use is not an orchestrator.
 
 | Section | Role / loop | Suitable as Amp skill? | Practical form |
 |---|---:|---|---|
@@ -29,9 +31,9 @@ A loop is not a separate runtime object. It is a repeatable workflow recipe. If 
 | 4 | Side-Effect Test Auditor | Yes | Standalone `bridge-side-effect-test-auditor` skill. |
 | 5 | Release Risk Gate | Yes | Standalone `bridge-release-gate` skill. |
 | 6 | Skeptical Reviewer | Yes | Standalone `bridge-skeptical-reviewer` skill. |
-| 7.1 | Parity Loop | Optional orchestrator | Only create a `bridge-parity-loop` skill if this full sequence is invoked often; otherwise follow it manually. |
-| 7.2 | Bug Fix Loop | Optional orchestrator | Useful as a Bridge payment/provider bugfix workflow; too broad as a generic bugfix skill. |
-| 7.3 | Release Loop | Already implemented by skill | `bridge-release-gate` is the orchestrator for the release loop; do not create a second release-loop skill. |
+| 7.1 | Parity Loop | Optional orchestrator skill | Create/use `bridge-parity-loop` only if this full sequence is invoked often; otherwise follow the recipe manually. |
+| 7.2 | Bug Fix Loop | Optional orchestrator skill | Create/use a Bridge payment/provider bugfix orchestrator only if this exact phase gate becomes frequent. |
+| 7.3 | Release Loop | Orchestrator skill | Use `bridge-release-gate`; this is the Release Loop's orchestrator skill. |
 
 Do not create one skill per heading by default. Create skills around actual Amp invocation moments: extracting old behavior, auditing side-effect tests, reviewing risky payment diffs, and preparing a release.
 
@@ -267,9 +269,9 @@ Release notes coverage:
 
 The release gate should be changed-area based. "Run all tests and hope" is not enough for Bridge.
 
-### 5.1 Minimal Amp Skill Template: `bridge-release-gate`
+### 5.1 Release Loop Orchestrator Skill: `bridge-release-gate`
 
-Create this only if release gating will be invoked repeatedly from Amp.
+`bridge-release-gate` is the orchestrator skill for the Release Loop. Keep the actual skill in:
 
 File path:
 
@@ -277,7 +279,7 @@ File path:
 .agents/skills/bridge-release-gate/SKILL.md
 ```
 
-Template:
+Sample skill:
 
 ```md
 ---
@@ -288,6 +290,8 @@ description: "Bridge release readiness gate. Use before tagging or releasing Bri
 # Bridge Release Gate
 
 This skill does not commit, tag, push, or run `cargo release --execute`.
+
+Use this skill before tagging or releasing Bridge. It owns the Release Loop: inspect the diff, classify release risk, choose focused checks, run/fix checks, audit release notes, and require skeptical review for medium/high-risk payment changes.
 
 ## Workflow
 
@@ -311,8 +315,9 @@ This skill does not commit, tag, push, or run `cargo release --execute`.
 4. Map risk to required focused checks.
 5. Run the narrowest meaningful checks first. On Windows, use:
    - `cargo check 2>&1 && echo EXIT: %ERRORLEVEL%`
+   If a required check fails, fix the failure, rerun the relevant check, and keep the verdict `NOT READY` until required checks pass.
 6. Audit `Release Notes.md` against changed risk areas.
-7. If risk is MEDIUM or HIGH, run the skeptical reviewer workflow before declaring readiness.
+7. If risk is MEDIUM or HIGH, run the skeptical reviewer workflow before declaring readiness. Record its verdict and keep the release verdict `NOT READY` unless the reviewer accepts.
 
 ## Output
 
@@ -332,6 +337,10 @@ Failures:
 
 Release notes coverage:
 - sufficient / missing
+
+Skeptical reviewer:
+- required / not required
+- verdict:
 
 Verdict:
 - READY / NOT READY
@@ -447,14 +456,16 @@ Evidence checked:
 
 ## 7. Workflow Loops
 
-These loops are recipes, not Amp objects. They are implemented in one of two ways:
+These loops are recipes. An orchestrator is the skill-backed form of a loop: one `SKILL.md` file that owns the recipe and runs the phases in order.
+
+Use a loop in one of two ways:
 
 ```text
 Manual loop: user asks Amp to follow the recipe in this section for one task.
 Orchestrator skill: one normal skill owns the recipe and runs the phases in order.
 ```
 
-Use an orchestrator skill only when the same loop is invoked repeatedly. Otherwise, keep the loop as documentation and ask Amp to follow it explicitly in the thread.
+Use an orchestrator skill when the same loop is invoked repeatedly or when this document names a concrete orchestrator. Otherwise, keep the loop as documentation and ask Amp to follow it explicitly in the thread.
 
 ### 7.1 Parity Loop
 
@@ -491,7 +502,7 @@ Amp implementation: usually manual. Create a dedicated payment/provider bugfix o
 
 ### 7.3 Release Loop
 
-Use before `vX.Y.Z` tags. This loop is implemented by the `bridge-release-gate` skill template in section 5.1; do not create a separate release-loop skill.
+Use before `vX.Y.Z` tags. This loop is implemented by the `bridge-release-gate` orchestrator skill in section 5.1. If the skill is missing, create it at `.agents/skills/bridge-release-gate/SKILL.md`. If it already exists, update that skill rather than inventing another release-loop name.
 
 ```text
 1. Release risk gate reviews diff since previous tag.
