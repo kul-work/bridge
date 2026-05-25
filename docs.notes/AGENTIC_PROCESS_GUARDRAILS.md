@@ -33,7 +33,7 @@ Do not treat "loop" or "orchestrator" as separate Amp runtime objects. They are 
 | 6 | Skeptical Reviewer | Yes | Standalone `bridge-skeptical-reviewer` skill. |
 | 7.1 | Parity Loop | Optional orchestrator skill | Create/use `bridge-parity-loop` only if this full sequence is invoked often; otherwise follow the recipe manually. |
 | 7.2 | Bug Fix Loop | Optional orchestrator skill | Create/use a Bridge payment/provider bugfix orchestrator only if this exact phase gate becomes frequent. |
-| 7.3 | Release Loop | Orchestrator skill | Use `bridge-release-gate`; this is the Release Loop's orchestrator skill. |
+| 7.3 | Release Loop | Orchestrator skill | Use `bridge-release-loop`; invokes `bridge-release-gate` for classification, then sequences checks and review. |
 
 Do not create one skill per heading by default. Create skills around actual Amp invocation moments: extracting old behavior, auditing side-effect tests, reviewing risky payment diffs, and preparing a release.
 
@@ -269,9 +269,9 @@ Release notes coverage:
 
 The release gate should be changed-area based. "Run all tests and hope" is not enough for Bridge.
 
-### 5.1 Release Loop Orchestrator Skill: `bridge-release-gate`
+### 5.1 Release Risk Gate Skill: `bridge-release-gate`
 
-`bridge-release-gate` is the orchestrator skill for the Release Loop. Keep the actual skill in:
+`bridge-release-gate` is the risk classification skill for releases. Keep the actual skill in:
 
 File path:
 
@@ -284,14 +284,14 @@ Sample skill:
 ```md
 ---
 name: bridge-release-gate
-description: "Bridge release readiness gate. Use before tagging or releasing Bridge to classify diff risk, map changed areas to focused checks, audit release notes, and require skeptical review for high-risk payment/provider changes."
+description: "Bridge release risk classifier. Inspects diff since last tag, classifies changed risk areas, and maps them to required focused checks."
 ---
 
 # Bridge Release Gate
 
-This skill does not commit, tag, push, or run `cargo release --execute`.
+This skill does not commit, tag, push, run checks, or run `cargo release --execute`.
 
-Use this skill before tagging or releasing Bridge. It owns the Release Loop: inspect the diff, classify release risk, choose focused checks, run/fix checks, audit release notes, and require skeptical review for medium/high-risk payment changes.
+It classifies risk and outputs required checks. The `bridge-release-loop` orchestrator sequences the remaining work.
 
 ## Workflow
 
@@ -313,11 +313,6 @@ Use this skill before tagging or releasing Bridge. It owns the Release Loop: ins
    - logging-only
    - docs-only
 4. Map risk to required focused checks.
-5. Run the narrowest meaningful checks first. On Windows, use:
-   - `cargo check 2>&1 && echo EXIT: %ERRORLEVEL%`
-   If a required check fails, fix the failure, rerun the relevant check, and keep the verdict `NOT READY` until required checks pass.
-6. Audit `Release Notes.md` against changed risk areas.
-7. If risk is MEDIUM or HIGH, run the skeptical reviewer workflow before declaring readiness. Record its verdict and keep the release verdict `NOT READY` unless the reviewer accepts.
 
 ## Output
 
@@ -329,21 +324,8 @@ Changed risk areas:
 Required checks:
 - ...
 
-Checks run:
-- ...
-
-Failures:
-- ...
-
-Release notes coverage:
-- sufficient / missing
-
-Skeptical reviewer:
-- required / not required
-- verdict:
-
-Verdict:
-- READY / NOT READY
+Skeptical reviewer required:
+- yes / no
 ```
 
 ## 6. Skeptical Reviewers
@@ -502,7 +484,7 @@ Amp implementation: usually manual. Create a dedicated payment/provider bugfix o
 
 ### 7.3 Release Loop
 
-Use before `vX.Y.Z` tags. This loop is implemented by the `bridge-release-gate` orchestrator skill in section 5.1. If the skill is missing, create it at `.agents/skills/bridge-release-gate/SKILL.md`. If it already exists, update that skill rather than inventing another release-loop name.
+Use before `vX.Y.Z` tags. This loop is implemented by the `bridge-release-loop` orchestrator skill. It invokes `bridge-release-gate` (section 5.1) for risk classification, then sequences focused checks, release notes audit, and skeptical review.
 
 ```text
 1. Release risk gate reviews diff since previous tag.
@@ -515,63 +497,41 @@ Use before `vX.Y.Z` tags. This loop is implemented by the `bridge-release-gate` 
 Amp trigger examples:
 
 ```text
-Run bridge-release-gate from the latest tag.
-Run bridge-release-gate for v0.3.2..HEAD.
+Run bridge-release-loop from the latest tag.
+Run bridge-release-loop for v0.3.2..HEAD.
 ```
 
-#### 7.3.1 Sample Skill: bridge-release-gate
+#### 7.3.1 Orchestrator Skill: `bridge-release-loop`
 
-Below is the sample definition for the orchestrator skill `bridge-release-gate` that automates this loop:
+`bridge-release-loop` is the orchestrator skill for the Release Loop. It invokes `bridge-release-gate` for risk classification, then sequences the remaining phases.
 
-File path: `.agents/skills/bridge-release-gate/SKILL.md`
+File path: `.agents/skills/bridge-release-loop/SKILL.md`
 
 ```md
 ---
-name: bridge-release-gate
-description: "Bridge release readiness gate. Use before tagging or releasing Bridge to classify diff risk, map changed areas to focused checks, audit release notes, and require skeptical review for high-risk payment/provider changes."
+name: bridge-release-loop
+description: "Bridge release workflow orchestrator. Sequences risk classification, focused checks, release notes audit, and skeptical review before a release tag."
 ---
 
-# Bridge Release Gate
+# Bridge Release Loop
 
 This skill does not commit, tag, push, or run `cargo release --execute`.
 
-Use this skill before tagging or releasing Bridge. It owns the Release Loop: inspect the diff, classify release risk, choose focused checks, run/fix checks, audit release notes, and require skeptical review for medium/high-risk payment changes.
+Use this skill before tagging or releasing Bridge. It orchestrates the full release workflow by invoking other skills and roles in sequence.
 
 ## Workflow
 
-1. Resolve the base:
-   - If the user gives a tag/SHA, use it.
-   - Otherwise run `git describe --tags --abbrev=0`.
-2. Collect release evidence:
-   - `git log --oneline BASE..HEAD`
-   - `git diff --name-only BASE..HEAD`
-   - `git diff --stat BASE..HEAD`
-3. Classify changed risk areas:
-   - provider behavior
-   - payment identity
-   - subscription lifecycle
-   - webhook semantics
-   - callback payload
-   - migration
-   - tenant/RLS behavior
-   - logging-only
-   - docs-only
-4. Map risk to required focused checks.
-5. Run the narrowest meaningful checks first. On Windows, use:
-   - `cargo check 2>&1 && echo EXIT: %ERRORLEVEL%`
-   If a required check fails, fix the failure, rerun the relevant check, and keep the verdict `NOT READY` until required checks pass.
-6. Audit `Release Notes.md` against changed risk areas.
-7. If risk is MEDIUM or HIGH, run the skeptical reviewer workflow before declaring readiness. Record its verdict and keep the release verdict `NOT READY` unless the reviewer accepts.
+1. Run `bridge-release-gate` to classify risk and list required checks.
+2. Run the required focused checks from the gate output. On Windows, use:
+   - `cargo check 2>&1 & echo EXIT: %ERRORLEVEL%`
+   If a check fails, fix the failure and rerun. Keep the verdict `NOT READY` until all required checks pass.
+3. Audit `Release Notes.md` against the changed risk areas from step 1.
+4. If `bridge-release-gate` output requires skeptical review, run `bridge-skeptical-reviewer`. Record its verdict. Keep the release verdict `NOT READY` unless the reviewer accepts.
 
 ## Output
 
-Release risk: LOW / MEDIUM / HIGH
-
-Changed risk areas:
-- ...
-
-Required checks:
-- ...
+Gate classification:
+- (include `bridge-release-gate` output)
 
 Checks run:
 - ...
