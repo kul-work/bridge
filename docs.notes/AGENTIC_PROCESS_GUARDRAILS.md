@@ -20,6 +20,8 @@ Use sub-agents as narrow critics and evidence gatherers. Keep actual code change
 
 In Amp, these roles are not background daemons or autonomous coding swarms. The practical implementation unit is a reusable skill, a shared checklist/resource, or a manual workflow invoked in a thread.
 
+A loop is not a separate runtime object. It is a repeatable workflow recipe. If the recipe is used often, implement it as one orchestrator skill: a normal `SKILL.md` whose workflow tells Amp which phases to run, when to stop, and which other checklists/skills to apply. The orchestrator is triggered the same way as any other skill, for example: "Run `bridge-release-gate` from the latest tag." It is not a hook and it does not run in the background.
+
 | Section | Role / loop | Suitable as Amp skill? | Practical form |
 |---|---:|---|---|
 | 2 | Oracle Extractor | Yes | Strengthen/use `bridge-hiha-parity` as the oracle-extraction skill. |
@@ -27,9 +29,9 @@ In Amp, these roles are not background daemons or autonomous coding swarms. The 
 | 4 | Side-Effect Test Auditor | Yes | Standalone `bridge-side-effect-test-auditor` skill. |
 | 5 | Release Risk Gate | Yes | Standalone `bridge-release-gate` skill. |
 | 6 | Skeptical Reviewer | Yes | Standalone `bridge-skeptical-reviewer` skill. |
-| 7.1 | Parity Loop | Yes, as orchestrator | Optional workflow skill that chains oracle extraction, small implementation, side-effect audit, and skeptical review. |
-| 7.2 | Bug Fix Loop | Partially | Useful as a Bridge payment/provider bugfix skill; too broad as a generic bugfix skill. |
-| 7.3 | Release Loop | Yes | Fold into `bridge-release-gate`; do not create a second release-loop skill. |
+| 7.1 | Parity Loop | Optional orchestrator | Only create a `bridge-parity-loop` skill if this full sequence is invoked often; otherwise follow it manually. |
+| 7.2 | Bug Fix Loop | Optional orchestrator | Useful as a Bridge payment/provider bugfix workflow; too broad as a generic bugfix skill. |
+| 7.3 | Release Loop | Already implemented by skill | `bridge-release-gate` is the orchestrator for the release loop; do not create a second release-loop skill. |
 
 Do not create one skill per heading by default. Create skills around actual Amp invocation moments: extracting old behavior, auditing side-effect tests, reviewing risky payment diffs, and preparing a release.
 
@@ -443,7 +445,16 @@ Evidence checked:
 - invariants:
 ```
 
-## 7. Recommended Orchestration Loops
+## 7. Workflow Loops
+
+These loops are recipes, not Amp objects. They are implemented in one of two ways:
+
+```text
+Manual loop: user asks Amp to follow the recipe in this section for one task.
+Orchestrator skill: one normal skill owns the recipe and runs the phases in order.
+```
+
+Use an orchestrator skill only when the same loop is invoked repeatedly. Otherwise, keep the loop as documentation and ask Amp to follow it explicitly in the thread.
 
 ### 7.1 Parity Loop
 
@@ -458,6 +469,8 @@ Use for old HiHa parity and provider reintegration.
 ```
 
 Stop if classification is `UNKNOWN`.
+
+Amp implementation: usually manual, or an optional future `bridge-parity-loop` skill if this exact sequence becomes frequent. The skill would not be a separate daemon; it would be a `SKILL.md` that tells Amp to run the phases above and stop at the phase gates.
 
 ### 7.2 Bug Fix Loop
 
@@ -474,9 +487,11 @@ Use for concrete production/test bugs.
 
 Every payment bug should leave behind a guardrail test or a documented reason why not.
 
+Amp implementation: usually manual. Create a dedicated payment/provider bugfix orchestrator only if these bugs become common enough that the same phase gates are repeatedly requested.
+
 ### 7.3 Release Loop
 
-Use before `vX.Y.Z` tags.
+Use before `vX.Y.Z` tags. This loop is implemented by the `bridge-release-gate` skill template in section 5.1; do not create a separate release-loop skill.
 
 ```text
 1. Release risk gate reviews diff since previous tag.
@@ -484,6 +499,13 @@ Use before `vX.Y.Z` tags.
 3. Checks run and failures are fixed.
 4. Release notes are audited against changed risk areas.
 5. Skeptical reviewer signs off on high-risk changes.
+```
+
+Amp trigger examples:
+
+```text
+Run bridge-release-gate from the latest tag.
+Run bridge-release-gate for v0.3.2..HEAD.
 ```
 
 ## 8. Anti-Patterns
