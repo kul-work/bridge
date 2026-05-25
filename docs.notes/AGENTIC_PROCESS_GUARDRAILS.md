@@ -20,7 +20,7 @@ Use sub-agents as narrow critics and evidence gatherers. Keep actual code change
 
 In Amp, these roles are not background daemons or autonomous coding swarms. The practical implementation unit is a reusable skill, a shared checklist/resource, or a manual workflow invoked in a thread.
 
-A loop is a repeatable workflow recipe. An orchestrator is the Amp skill form of a loop: a normal `SKILL.md` file whose workflow tells Amp which phases to run, when to stop, and which other checklists/skills to apply. It lives at `.agents/skills/<skill-name>/SKILL.md` and is triggered like any other skill, for example: "Run `bridge-release-gate` from the latest tag."
+A loop is a repeatable workflow recipe. An orchestrator is the Amp skill form of a loop: a normal `SKILL.md` file whose workflow tells Amp which phases to run, when to stop, and which other checklists/skills to apply. It lives at `.agents/skills/<skill-name>/SKILL.md` and is triggered like any other skill, for example: "Run `bridge-release-loop` from the latest tag."
 
 Do not treat "loop" or "orchestrator" as separate Amp runtime objects. They are not hooks, schedulers, background daemons, or coding swarms. If a loop is reusable, make or use one orchestrator skill for it. If no skill exists, the loop can still be followed manually by pasting/adapting the recipe into the task prompt, but that manual use is not an orchestrator.
 
