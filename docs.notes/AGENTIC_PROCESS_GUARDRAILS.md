@@ -8,10 +8,10 @@ Scope: Practical agent/sub-agent process guidance for Bridge and Tyde payment wo
 
 Bridge did not mainly suffer from lack of implementation speed. It suffered from late behavior discovery, parity drift from old HiHa, and missing field-level guardrails around provider/payment side effects.
 
-Agent orchestration can help, but not by creating a coding swarm. The useful pattern is:
+Agent orchestration can help, but not by creating a coding swarm. The useful pattern is a set of distinct, specialized roles:
 
 ```text
-oracle extractor -> small implementation -> invariant enforcer -> side-effect test auditor -> skeptical reviewer -> release risk gate
+[oracle extractor] | [small implementation] | [invariant enforcer] | [side-effect test auditor] | [skeptical reviewer] | [release risk gate]
 ```
 
 Use sub-agents as narrow critics and evidence gatherers. Keep actual code changes small and owned by one implementer at a time.
@@ -610,11 +610,11 @@ The safer rule for Bridge is:
 One flow. One divergence. One oracle. One small patch. One side-effect test. One invariant review.
 ```
 
-## 9. Practical Task Template
+## 9. Fallback Intake Template for Non-Standard Tasks
 
-Evaluation: this section is still relevant, but only as a manual intake template for custom Bridge payment/provider work that is not already covered by a narrower skill. It should not be pasted at the end of every task, and it should not replace the dedicated Amp skills above.
+This section serves as a manual intake template only for ambiguous, custom, or cross-cutting Bridge payment/provider work that is not already covered by a narrower skill (such as `bridge-hiha-parity` or `bridge-release-gate`). It should not be pasted at the end of every task, and must not replace the dedicated Amp skills.
 
-Use it when a task is too ambiguous to safely classify, or when the request mixes parity, provider behavior, side effects, and release risk.
+Use this template to force-clarify scope and boundaries before starting any implementation if a task cannot be cleanly classified or if it mixes provider behaviors, side effects, and custom logic.
 
 ```text
 Task type: PARITY / BRIDGE-ONLY / UNKNOWN
