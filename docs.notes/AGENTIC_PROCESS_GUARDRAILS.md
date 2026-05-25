@@ -519,6 +519,77 @@ Run bridge-release-gate from the latest tag.
 Run bridge-release-gate for v0.3.2..HEAD.
 ```
 
+#### 7.3.1 Sample Skill: bridge-release-gate
+
+Below is the sample definition for the orchestrator skill `bridge-release-gate` that automates this loop:
+
+File path: `.agents/skills/bridge-release-gate/SKILL.md`
+
+```md
+---
+name: bridge-release-gate
+description: "Bridge release readiness gate. Use before tagging or releasing Bridge to classify diff risk, map changed areas to focused checks, audit release notes, and require skeptical review for high-risk payment/provider changes."
+---
+
+# Bridge Release Gate
+
+This skill does not commit, tag, push, or run `cargo release --execute`.
+
+Use this skill before tagging or releasing Bridge. It owns the Release Loop: inspect the diff, classify release risk, choose focused checks, run/fix checks, audit release notes, and require skeptical review for medium/high-risk payment changes.
+
+## Workflow
+
+1. Resolve the base:
+   - If the user gives a tag/SHA, use it.
+   - Otherwise run `git describe --tags --abbrev=0`.
+2. Collect release evidence:
+   - `git log --oneline BASE..HEAD`
+   - `git diff --name-only BASE..HEAD`
+   - `git diff --stat BASE..HEAD`
+3. Classify changed risk areas:
+   - provider behavior
+   - payment identity
+   - subscription lifecycle
+   - webhook semantics
+   - callback payload
+   - migration
+   - tenant/RLS behavior
+   - logging-only
+   - docs-only
+4. Map risk to required focused checks.
+5. Run the narrowest meaningful checks first. On Windows, use:
+   - `cargo check 2>&1 && echo EXIT: %ERRORLEVEL%`
+   If a required check fails, fix the failure, rerun the relevant check, and keep the verdict `NOT READY` until required checks pass.
+6. Audit `Release Notes.md` against changed risk areas.
+7. If risk is MEDIUM or HIGH, run the skeptical reviewer workflow before declaring readiness. Record its verdict and keep the release verdict `NOT READY` unless the reviewer accepts.
+
+## Output
+
+Release risk: LOW / MEDIUM / HIGH
+
+Changed risk areas:
+- ...
+
+Required checks:
+- ...
+
+Checks run:
+- ...
+
+Failures:
+- ...
+
+Release notes coverage:
+- sufficient / missing
+
+Skeptical reviewer:
+- required / not required
+- verdict:
+
+Verdict:
+- READY / NOT READY
+```
+
 ## 8. Anti-Patterns
 
 Avoid these agentic patterns:
