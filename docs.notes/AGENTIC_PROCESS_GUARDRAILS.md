@@ -25,7 +25,7 @@ A loop is a repeatable workflow recipe. An orchestrator is the Amp skill form of
 Do not treat "loop" or "orchestrator" as separate Amp runtime objects. They are not hooks, schedulers, background daemons, or coding swarms. If a loop is reusable, make or use one orchestrator skill for it. If no skill exists, the loop can still be followed manually by pasting/adapting the recipe into the task prompt, but that manual use is not an orchestrator.
 
 | Section | Role / loop | Suitable as Amp skill? | Practical form |
-|---|---:|---|---|
+|---|---|---|---|
 | 2 | Oracle Extractor | Yes | Strengthen/use `bridge-hiha-parity` as the oracle-extraction skill. |
 | 3 | Invariant Enforcer | Maybe | Prefer a shared checklist/resource consumed by reviewer/gate skills; promote to standalone skill only if invoked directly often. |
 | 4 | Side-Effect Test Auditor | Yes | Standalone `bridge-side-effect-test-auditor` skill. |
@@ -91,7 +91,7 @@ PARITY: For Google Play subscription renewal, find the old HiHa source of truth 
 
 ## 3. Invariant Enforcers
 
-An invariant enforcer reviews a proposed change only against Bridge invariants. It should be strict, repetitive, and boring.
+An invariant enforcer reviews a proposed change only against Bridge invariants. It should be strict, repetitive, and boring. This checklist is consumed by the skeptical reviewer and release gate skills; promote to standalone skill only if invoked independently.
 
 Use this role after any change touching:
 
