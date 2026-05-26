@@ -170,23 +170,28 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
 
             // Extract purchase_token (checkout_id for OTP, order_id for refunds)
             let purchase_token = match normalized_event_type.as_str() {
-                "purchase.one_time" | "purchase.one_time_refunded" => object_checkout_id
+                "purchase.one_time" | "purchase.one_time_refunded" => object_checkout_id.clone()
                     .or_else(|| object_order_id.clone())
                     .or_else(|| object_id.clone()),
-                "payment.refunded" => object_order_id
-                    .or(object_checkout_id)
+                "payment.refunded" => object_order_id.clone()
+                    .or_else(|| object_checkout_id.clone())
                     .or_else(|| object_subscription_id.clone())
                     .or_else(|| object_id.clone()),
-                "payment.partially_refunded" => object_order_id
-                    .or(object_checkout_id)
+                "payment.partially_refunded" => object_order_id.clone()
+                    .or_else(|| object_checkout_id.clone())
                     .or_else(|| object_id.clone()),
                 _ => None,
             };
 
-            // Extract provider_transaction_id (last_transaction_id, fallback to object.id)
-            let provider_transaction_id = obj.get("last_transaction_id")
-                .and_then(|v| v.as_str()).map(|s| s.to_string())
-                .or_else(|| object_id.clone());
+            let provider_transaction_id = match normalized_event_type.as_str() {
+                "purchase.one_time" => object_order_id
+                    .clone()
+                    .or_else(|| object_checkout_id.clone())
+                    .or_else(|| object_id.clone()),
+                _ => obj.get("last_transaction_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+            };
 
             WebhookFields {
                 subscription_id,

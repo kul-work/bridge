@@ -377,6 +377,26 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 (false, 86400)
             };
 
+            let payment_provider_transaction_id = if ctx.provider == "creem" {
+                ctx.fields.provider_transaction_id.as_deref()
+            } else {
+                Some(ctx.fields.provider_transaction_id.as_deref()
+                    .unwrap_or(&ctx.webhook.provider_webhook_id))
+            };
+            let payment = payment_provider_transaction_id.map(|provider_transaction_id| {
+                WebhookPaymentRecordRequest {
+                    app_id: ctx.app_id,
+                    external_user_id: user_id,
+                    provider: ctx.provider,
+                    provider_transaction_id,
+                    subscription_id: ctx.fields.subscription_id.as_deref(),
+                    product_id: ctx.fields.product_id.as_deref(),
+                    amount_cents: ctx.fields.amount_cents.unwrap_or(0),
+                    currency: ctx.fields.currency.as_deref(),
+                    status: "success",
+                }
+            });
+
             let subscription = repo
                 .commit_webhook_subscription(WebhookSubscriptionCommitRequest {
                     app_id: ctx.app_id,
@@ -391,18 +411,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     provider_customer_id: ctx.fields.provider_customer_id.as_deref(),
                     event_time_ms: ctx.timestamp_epoch_ms,
                     recurring_amount_cents: ctx.fields.amount_cents.map(i64::from),
-                    payment: Some(WebhookPaymentRecordRequest {
-                        app_id: ctx.app_id,
-                        external_user_id: user_id,
-                        provider: ctx.provider,
-                        provider_transaction_id: ctx.fields.provider_transaction_id.as_deref()
-                            .unwrap_or(&ctx.webhook.provider_webhook_id),
-                        subscription_id: ctx.fields.subscription_id.as_deref(),
-                        product_id: ctx.fields.product_id.as_deref(),
-                        amount_cents: ctx.fields.amount_cents.unwrap_or(0),
-                        currency: ctx.fields.currency.as_deref(),
-                        status: "success",
-                    }),
+                    payment,
                     adopt_stale_payment,
                     stale_payment_window_secs,
                 })

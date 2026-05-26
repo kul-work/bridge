@@ -158,6 +158,7 @@ fn test_creem_field_extraction_subscription_active() {
     assert_eq!(fields.product_id, Some("prod_premium".to_string()));
     assert_eq!(fields.status, Some("paid".to_string()));
     assert_eq!(fields.amount_cents, Some(9999));
+    assert_eq!(fields.provider_transaction_id, None);
 }
 
 #[test]
@@ -201,6 +202,87 @@ fn test_creem_field_extraction_checkout_completed_recurring() {
     assert_eq!(fields.product_id, Some("prod_monthly".to_string()));
     assert_eq!(fields.status, Some("paid".to_string()));
     assert_eq!(fields.current_period_end, Some("2026-05-20T10:00:00Z".to_string()));
+    assert_eq!(fields.provider_transaction_id, Some("txn_001".to_string()));
+}
+
+#[test]
+fn test_creem_recurring_checkout_without_last_transaction_is_state_only() {
+    let payload = serde_json::json!({
+        "id": "evt_checkout_recurring_002",
+        "eventType": "checkout.completed",
+        "object": {
+            "id": "ch_4fXOCBlh6QuOjqdyOhfkWf",
+            "billing_type": "recurring",
+            "order": {
+                "id": "ord_5fBLcubXQKPHJHBA7KbuVr",
+                "amount": 450
+            },
+            "product": {
+                "id": "prod_monthly"
+            },
+            "subscription": {
+                "id": "sub_3UJmiDyIzY1uQJsH4a2jpQ",
+                "status": "active",
+                "current_period_end_date": "2026-06-26T14:51:01Z"
+            }
+        }
+    });
+
+    let webhook = WebhookProviderSnapshot {
+        provider: "creem".to_string(),
+        provider_webhook_id: "evt_checkout_recurring_002".to_string(),
+        event_type: "checkout.completed".to_string(),
+        subscription_id: Some("sub_3UJmiDyIzY1uQJsH4a2jpQ".to_string()),
+        purchase_token: Some("ch_4fXOCBlh6QuOjqdyOhfkWf".to_string()),
+        payload,
+        processed: false,
+        timestamp_epoch_ms: None,
+        suppressed: false,
+        suppressed_reason: None,
+    };
+
+    let fields = extract_webhook_fields(&webhook);
+    assert_eq!(fields.subscription_id, Some("sub_3UJmiDyIzY1uQJsH4a2jpQ".to_string()));
+    assert_eq!(fields.amount_cents, Some(450));
+    assert_eq!(fields.provider_transaction_id, None);
+}
+
+#[test]
+fn test_creem_subscription_paid_uses_last_transaction_id() {
+    let payload = serde_json::json!({
+        "id": "evt_paid_001",
+        "eventType": "subscription.paid",
+        "object": {
+            "id": "sub_3UJmiDyIzY1uQJsH4a2jpQ",
+            "last_transaction_id": "tran_5kxqVwXF85IN29I42TDHon",
+            "last_transaction": {
+                "id": "tran_5kxqVwXF85IN29I42TDHon",
+                "amount": 450
+            },
+            "product": {
+                "id": "prod_monthly"
+            },
+            "status": "active"
+        }
+    });
+
+    let webhook = WebhookProviderSnapshot {
+        provider: "creem".to_string(),
+        provider_webhook_id: "evt_paid_001".to_string(),
+        event_type: "subscription.paid".to_string(),
+        subscription_id: Some("sub_3UJmiDyIzY1uQJsH4a2jpQ".to_string()),
+        purchase_token: None,
+        payload,
+        processed: false,
+        timestamp_epoch_ms: None,
+        suppressed: false,
+        suppressed_reason: None,
+    };
+
+    let fields = extract_webhook_fields(&webhook);
+    assert_eq!(fields.subscription_id, Some("sub_3UJmiDyIzY1uQJsH4a2jpQ".to_string()));
+    assert_eq!(fields.amount_cents, Some(450));
+    assert_eq!(fields.provider_transaction_id, Some("tran_5kxqVwXF85IN29I42TDHon".to_string()));
 }
 
 #[test]
@@ -236,6 +318,7 @@ fn test_creem_field_extraction_checkout_completed_one_time() {
     assert_eq!(fields.product_id, Some("prod_lifetime".to_string()));
     assert_eq!(fields.purchase_token, Some("co_otp_001".to_string()));
     assert_eq!(fields.amount_cents, Some(9999));
+    assert_eq!(fields.provider_transaction_id, Some("co_otp_001".to_string()));
 }
 
 #[test]
