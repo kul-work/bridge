@@ -21,5 +21,4 @@ pub struct CheckoutResponse {
 
 pub(crate) struct CheckoutRedirectUrls {
     pub(crate) success_url: String,
-    pub(crate) cancel_url: String,
 }

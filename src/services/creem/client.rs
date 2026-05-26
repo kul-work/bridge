@@ -38,7 +38,6 @@ impl CreemClient {
         email: &str,
         metadata: serde_json::Value,
         success_url: &str,
-        cancel_url: &str,
     ) -> Result<(String, String), BridgeError> {
         let request = CreateCheckoutRequest {
             product_id: product_id.to_string(),
@@ -47,7 +46,6 @@ impl CreemClient {
             },
             metadata,
             success_url: success_url.to_string(),
-            cancel_url: cancel_url.to_string(),
         };
 
         let response = self

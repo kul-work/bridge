@@ -7,7 +7,6 @@ pub struct CreateCheckoutRequest {
     pub customer: CustomerData,
     pub metadata: serde_json::Value,
     pub success_url: String,
-    pub cancel_url: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

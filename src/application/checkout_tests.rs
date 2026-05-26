@@ -157,6 +157,7 @@ async fn creem_checkout_uses_requested_product_id_when_no_explicit_selector_is_p
 
     assert_eq!(recorded["product_id"], "prod_requested");
     assert_eq!(recorded["metadata"]["product_id"], "prod_requested");
+    assert!(recorded.get("cancel_url").is_none());
 }
 
 #[tokio::test]

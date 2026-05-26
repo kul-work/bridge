@@ -122,8 +122,7 @@ pub(crate) fn resolve_checkout_redirect_urls(app_url: Option<&str>) -> CheckoutR
         .unwrap_or_else(|| "http://localhost:3000".to_string());
 
     CheckoutRedirectUrls {
-        success_url: base_url.clone(),
-        cancel_url: base_url,
+        success_url: base_url,
     }
 }
 

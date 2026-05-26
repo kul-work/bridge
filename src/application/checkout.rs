@@ -95,7 +95,6 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
                     &email,
                     metadata,
                     &checkout_urls.success_url,
-                    &checkout_urls.cancel_url,
                 )
                 .await?;
 
