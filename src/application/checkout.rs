@@ -71,15 +71,20 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
             let creem_config = CreemConfig::from_json(&provider_config.config)?;
             let creem_client = CreemClient::new(creem_config.clone())?;
 
-            let selected_product_id = match product_type.as_deref().unwrap_or("") {
+            let product_selector = product_type.as_deref().unwrap_or(product_id.as_str());
+            let selected_product_id = match product_selector {
                 "offer" => creem_config
                     .offer_id
                     .as_deref()
                     .ok_or_else(|| BridgeError::ConfigError("Missing Creem offer_id".to_string()))?,
-                "otp" => creem_config
+                "otp" | "inapp" => creem_config
                     .otp_id
                     .as_deref()
                     .ok_or_else(|| BridgeError::ConfigError("Missing Creem otp_id".to_string()))?,
+                "subscription" | "subs" => creem_config
+                    .product_id
+                    .as_deref()
+                    .unwrap_or(product_id.as_str()),
                 _ => product_id.as_str(),
             };
 

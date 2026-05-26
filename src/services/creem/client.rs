@@ -56,14 +56,17 @@ impl CreemClient {
             .json(&request)
             .send()
             .await
-            .map_err(|e| BridgeError::ProviderError(format!("Creem checkout failed: {}", e)))?;
+            .map_err(|e| BridgeError::ProviderError(format!(
+                "Creem checkout failed for product_id '{}': {}",
+                product_id, e
+            )))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             return Err(BridgeError::ProviderError(format!(
-                "Creem checkout failed: {} - {}",
-                status, body
+                "Creem checkout failed for product_id '{}': {} - {}",
+                product_id, status, body
             )));
         }
 

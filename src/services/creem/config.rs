@@ -6,6 +6,7 @@ use serde_json::Value;
 pub struct CreemConfig {
     pub api_key: String,
     pub api_url: String,
+    pub product_id: Option<String>,
     pub offer_id: Option<String>,
     pub otp_id: Option<String>,
     pub connect_timeout_secs: u64,
@@ -26,6 +27,11 @@ impl CreemConfig {
             .and_then(|v| v.as_str())
             .unwrap_or("https://api.creem.com")
             .to_string();
+
+        let product_id = config
+            .get("product_id")
+            .and_then(|v| v.as_str())
+            .map(|value| value.to_string());
 
         let offer_id = config
             .get("offer_id")
@@ -60,6 +66,7 @@ impl CreemConfig {
         Ok(Self {
             api_key,
             api_url,
+            product_id,
             offer_id,
             otp_id,
             connect_timeout_secs,
@@ -84,19 +91,22 @@ mod tests {
         });
 
         let parsed = CreemConfig::from_json(&config).expect("config should parse");
+        assert_eq!(parsed.product_id, None);
         assert_eq!(parsed.offer_id, None);
         assert_eq!(parsed.otp_id, None);
     }
 
     #[test]
-    fn supports_offer_and_otp_ids_without_default_product_id() {
+    fn supports_product_offer_and_otp_ids() {
         let config = serde_json::json!({
             "api_key": "sk_test_123",
+            "product_id": "standard_monthly",
             "offer_id": "offer_monthly",
             "otp_id": "otp_lifetime"
         });
 
         let parsed = CreemConfig::from_json(&config).expect("config should parse");
+        assert_eq!(parsed.product_id.as_deref(), Some("standard_monthly"));
         assert_eq!(parsed.offer_id.as_deref(), Some("offer_monthly"));
         assert_eq!(parsed.otp_id.as_deref(), Some("otp_lifetime"));
     }

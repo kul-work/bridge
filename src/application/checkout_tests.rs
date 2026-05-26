@@ -99,6 +99,7 @@ fn build_test_repo(app_id: Uuid, api_url: &str) -> TestRepo {
             config: json!({
                 "api_key": "sk_test_creem",
                 "api_url": api_url,
+                "product_id": "prod_subscription",
                 "offer_id": "prod_offer",
                 "otp_id": "prod_otp"
             }),
