@@ -167,6 +167,10 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                     .and_then(|v| v.as_i64()))
                 .or_else(|| obj.get("amount").and_then(|v| v.as_i64()))
                 .map(|a| a as i32);
+            let currency = obj.get("product")
+                .and_then(|v| v.get("currency"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
             // Extract purchase_token (checkout_id for OTP, order_id for refunds)
             let purchase_token = match normalized_event_type.as_str() {
@@ -205,7 +209,7 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                     .and_then(|v| v.as_str()).map(|s| s.to_string()),
                 product_id: object_product_id,
                 cancel_reason: None,
-                currency: None,
+                currency,
                 status,
                 google_subscription_state: None,
                 google_cancellation_context: None,

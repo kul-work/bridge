@@ -260,7 +260,8 @@ fn test_creem_subscription_paid_uses_last_transaction_id() {
                 "amount": 450
             },
             "product": {
-                "id": "prod_monthly"
+                "id": "prod_monthly",
+                "currency": "USD"
             },
             "status": "active"
         }
@@ -282,6 +283,7 @@ fn test_creem_subscription_paid_uses_last_transaction_id() {
     let fields = extract_webhook_fields(&webhook);
     assert_eq!(fields.subscription_id, Some("sub_3UJmiDyIzY1uQJsH4a2jpQ".to_string()));
     assert_eq!(fields.amount_cents, Some(450));
+    assert_eq!(fields.currency, Some("USD".to_string()));
     assert_eq!(fields.provider_transaction_id, Some("tran_5kxqVwXF85IN29I42TDHon".to_string()));
 }
 
