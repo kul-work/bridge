@@ -55,7 +55,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - Failed auth attempts: 10 req/min per IP
 
 **Endpoints** (all scoped to authenticated `app_id`):
-- `POST /api/v1/checkout` — create payment session
+- `POST /api/v1/payment/checkout` — create payment session
 - `POST /api/v1/verify-purchase` — verify mobile purchase token
 - `POST /api/v1/purchase/register` — register external purchase attempt
 - `GET /api/v1/subscriptions` — list subscriptions

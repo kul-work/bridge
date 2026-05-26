@@ -82,7 +82,7 @@ Backend serves on port `3000` (default).
 ## API Snapshot Overview
 
 ### Subscriptions & Payments
-- `POST /api/v1/checkout` — Initiate session with provider
+- `POST /api/v1/payment/checkout` — Initiate session with provider
 - `POST /api/v1/verify-purchase` — Mobile receipt verification
 - `GET /api/v1/subscriptions` — List recurring billing status 
 - `GET /api/v1/subscriptions/:id` — Get specific subscription details
@@ -102,4 +102,3 @@ Backend serves on port `3000` (default).
 ### System
 - `GET /health` — Diagnostics
 - `/admin/*` — Administration restricted routes
-

@@ -70,7 +70,7 @@ Response `200`:
 
 ## Checkout
 
-### `POST /api/v1/checkout`
+### `POST /api/v1/payment/checkout`
 
 Creates provider checkout data.
 

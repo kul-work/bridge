@@ -152,7 +152,7 @@ This document captures **every behavioral action** that Bridge must perform. Eac
 
 ## 4. Checkout Flow
 
-**Endpoint**: `POST /api/v1/checkout`  
+**Endpoint**: `POST /api/v1/payment/checkout`
 **Request body**:
 ```json
 {

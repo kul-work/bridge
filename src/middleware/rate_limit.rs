@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn client_ip_prefers_x_forwarded_for() {
         let mut request = Request::builder()
-            .uri("/api/v1/checkout")
+            .uri("/api/v1/payment/checkout")
             .header("x-forwarded-for", "198.51.100.5, 203.0.113.10")
             .header("x-real-ip", "203.0.113.10")
             .body(Body::empty())
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn client_ip_falls_back_to_x_real_ip() {
         let request = Request::builder()
-            .uri("/api/v1/checkout")
+            .uri("/api/v1/payment/checkout")
             .header("x-real-ip", "203.0.113.10")
             .body(Body::empty())
             .unwrap();
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn client_ip_falls_back_to_connect_info() {
         let request = Request::builder()
-            .uri("/api/v1/checkout")
+            .uri("/api/v1/payment/checkout")
             .body(Body::empty())
             .unwrap();
         let mut request = request;

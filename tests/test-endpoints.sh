@@ -12,9 +12,9 @@ echo "1. Health Check"
 curl -s -X GET "$API_URL/health" | jq .
 echo ""
 
-# Test 2: POST /api/v1/checkout (requires auth)
+# Test 2: POST /api/v1/payment/checkout (requires auth)
 echo "2. Create Checkout"
-curl -s -X POST "$API_URL/api/v1/checkout" \
+curl -s -X POST "$API_URL/api/v1/payment/checkout" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
