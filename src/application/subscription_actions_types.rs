@@ -12,6 +12,8 @@ pub struct CancelSubscriptionRequest {
     pub mode: Option<String>,
     #[serde(default)]
     pub purchase_token: Option<String>,
+    #[serde(default)]
+    pub on_execute: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

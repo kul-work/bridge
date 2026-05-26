@@ -16,12 +16,13 @@ pub async fn cancel_subscription(
     subscription_id: &str,
     purchase_token: Option<&str>,
     mode: Option<&str>,
+    on_execute: Option<&str>,
     config: &Value,
 ) -> Result<(), BridgeError> {
     match provider {
         "creem" => {
             let creem_client = CreemClient::from_json(config)?;
-            creem_client.cancel_subscription(subscription_id, mode).await?;
+            creem_client.cancel_subscription(subscription_id, mode, on_execute).await?;
             info!("Creem subscription {} cancelled via API", subscription_id);
             Ok(())
         }

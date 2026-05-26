@@ -84,6 +84,7 @@ async fn cancel_subscription_at_provider<R>(
         &subscription.subscription_id,
         subscription.purchase_token.as_deref(),
         Some("scheduled"),
+        None,
         &provider_config.config,
     )
     .await

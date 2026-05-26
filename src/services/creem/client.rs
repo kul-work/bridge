@@ -90,9 +90,11 @@ impl CreemClient {
         &self,
         subscription_id: &str,
         mode: Option<&str>,
+        on_execute: Option<&str>,
     ) -> Result<(), BridgeError> {
         let request = ModifySubscriptionRequest {
             mode: mode.map(|m| m.to_string()),
+            on_execute: on_execute.map(|o| o.to_string()),
         };
 
         let response = self

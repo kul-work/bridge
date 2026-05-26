@@ -382,6 +382,7 @@ async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), cr
                 &subscription_id,
                 purchase_token.as_deref(),
                 None,
+                None,
                 &config.config,
             )
             .await

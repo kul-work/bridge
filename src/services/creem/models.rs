@@ -113,6 +113,25 @@ mod tests {
         assert_eq!(parsed.get_session_id(), Some("co_attr"));
         assert_eq!(parsed.get_checkout_url(), Some("https://checkout.creem.io/attributes"));
     }
+
+    #[test]
+    fn modify_subscription_request_serializes_on_execute_correctly() {
+        let req = ModifySubscriptionRequest {
+            mode: Some("scheduled".to_string()),
+            on_execute: Some("pause".to_string()),
+        };
+        let serialized = serde_json::to_value(req).expect("should serialize");
+        assert_eq!(serialized["mode"], "scheduled");
+        assert_eq!(serialized["onExecute"], "pause");
+
+        let req_none = ModifySubscriptionRequest {
+            mode: None,
+            on_execute: None,
+        };
+        let serialized_none = serde_json::to_value(req_none).expect("should serialize");
+        assert!(serialized_none.get("mode").is_none());
+        assert!(serialized_none.get("onExecute").is_none());
+    }
 }
 
 /// Creem cancel/resume request
@@ -120,6 +139,8 @@ mod tests {
 pub struct ModifySubscriptionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    #[serde(rename = "onExecute", skip_serializing_if = "Option::is_none")]
+    pub on_execute: Option<String>,
 }
 
 /// Creem billing portal response

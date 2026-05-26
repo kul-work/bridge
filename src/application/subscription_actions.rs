@@ -68,11 +68,14 @@ pub async fn cancel_subscription<R: SubscriptionActionsHandlerRepository + ?Size
 
     let provider_config = repo.get_provider_config(app_id, &sub.provider).await?;
 
+    let on_execute = request.on_execute.as_deref();
+
     provider_api::cancel_subscription(
         &sub.provider,
         &sub.subscription_id,
         purchase_token,
         Some(mode),
+        on_execute,
         &provider_config.config,
     )
     .await?;
@@ -369,6 +372,7 @@ pub async fn decline_price_step_up<R: SubscriptionActionsHandlerRepository + ?Si
         &sub.subscription_id,
         Some(purchase_token),
         Some("scheduled"),
+        None,
         &provider_config.config,
     )
     .await?;
