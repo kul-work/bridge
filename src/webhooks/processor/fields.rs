@@ -105,6 +105,15 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                 .or_else(|| obj.get("order")
                     .and_then(|v| v.get("id"))
                     .and_then(|v| v.as_str()).map(|s| s.to_string()));
+            let object_transaction_id = obj.get("transaction")
+                .and_then(|v| {
+                    v.as_str()
+                        .or_else(|| v.get("id").and_then(|id| id.as_str()))
+                })
+                .map(|s| s.to_string())
+                .or_else(|| obj.get("order")
+                    .and_then(|v| v.get("transaction"))
+                    .and_then(|v| v.as_str()).map(|s| s.to_string()));
 
             // Extract product_id with fallbacks (direct, nested.id, checkout product)
             let object_product_id = obj.get("product_id")
@@ -192,6 +201,11 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                     .clone()
                     .or_else(|| object_checkout_id.clone())
                     .or_else(|| object_id.clone()),
+                "payment.refunded" | "payment.partially_refunded" => object_transaction_id
+                    .clone()
+                    .or_else(|| obj.get("last_transaction_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())),
                 _ => obj.get("last_transaction_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),

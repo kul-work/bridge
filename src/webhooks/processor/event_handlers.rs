@@ -1177,11 +1177,28 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
 
         "payment.refunded" => {
             if let Some(_user_id) = ctx.external_user_id.as_deref() {
-                if let Some(token) = ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()) {
-                    let existing = repo.get_payment_status_for_provider(ctx.app_id, ctx.provider, token).await?;
-                    if existing.as_deref() != Some("refunded") {
-                        repo.update_payment_status_for_provider(ctx.app_id, ctx.provider, token, "refunded").await?;
+                let payment_tokens = [
+                    ctx.fields.provider_transaction_id.as_deref(),
+                    ctx.fields.purchase_token.as_deref(),
+                    ctx.webhook.purchase_token.as_deref(),
+                ];
+                let mut matched_payment_token = None;
+                for token in payment_tokens.into_iter().flatten() {
+                    if let Some(existing) = repo.get_payment_status_for_provider(ctx.app_id, ctx.provider, token).await? {
+                        if existing != "refunded" {
+                            repo.update_payment_status_for_provider(ctx.app_id, ctx.provider, token, "refunded").await?;
+                        }
+                        matched_payment_token = Some(token);
+                        break;
                     }
+                }
+
+                let subscription_tokens = [
+                    ctx.fields.purchase_token.as_deref(),
+                    ctx.webhook.purchase_token.as_deref(),
+                    matched_payment_token,
+                ];
+                for token in subscription_tokens.into_iter().flatten() {
                     if let Some(sub) = repo.get_subscription_by_purchase_token_for_provider(ctx.app_id, ctx.provider, token).await? {
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
@@ -1203,7 +1220,9 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                             }));
                         }
                     }
-                } else if let Some(sub_id) = ctx.fields.subscription_id.as_deref() {
+                }
+
+                if let Some(sub_id) = ctx.fields.subscription_id.as_deref() {
                     let updated = repo.apply_subscription_transition(
                         ctx.app_id,
                         _user_id,
@@ -1235,11 +1254,17 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
 
         "payment.partially_refunded" => {
             if let Some(_user_id) = ctx.external_user_id.as_deref() {
-                // For Creem OTP: checkout_id in the payload maps to purchase_token
-                if let Some(token) = ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()) {
-                    let existing = repo.get_payment_status_for_provider(ctx.app_id, ctx.provider, token).await?;
-                    if !matches!(existing.as_deref(), Some("partially_refunded") | Some("refunded")) {
-                        repo.update_payment_status_for_provider(ctx.app_id, ctx.provider, token, "partially_refunded").await?;
+                let payment_tokens = [
+                    ctx.fields.provider_transaction_id.as_deref(),
+                    ctx.fields.purchase_token.as_deref(),
+                    ctx.webhook.purchase_token.as_deref(),
+                ];
+                for token in payment_tokens.into_iter().flatten() {
+                    if let Some(existing) = repo.get_payment_status_for_provider(ctx.app_id, ctx.provider, token).await? {
+                        if !matches!(existing.as_str(), "partially_refunded" | "refunded") {
+                            repo.update_payment_status_for_provider(ctx.app_id, ctx.provider, token, "partially_refunded").await?;
+                        }
+                        break;
                     }
                 }
             }
