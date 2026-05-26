@@ -44,12 +44,12 @@ fn spawn_process_and_forward_webhook(
                 .await
                 {
                     error!("Failed to forward webhook for {}: {}", event_id, e);
-                }
-                debug!("END processing {} webhook: {}", provider_name, event_id);
+                }                
             }
             Ok(None) => info!("{} webhook suppressed: {}", provider_name, event_id),
             Err(e) => error!("{} webhook processing failed {}: {}", provider_name, event_id, e),
         }
+        debug!("END processing {} webhook: {}", provider_name, event_id);
     });
 }
 
