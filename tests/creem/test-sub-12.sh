@@ -98,6 +98,7 @@ PAYLOAD=$(cat <<EOF
   "object": {
     "id": "$REFUND_ID",
     "order_id": "$CHARGE_ID",
+    "transaction": "$CHARGE_ID",
     "amount": 2999,
     "status": "succeeded",
     "checkout": {

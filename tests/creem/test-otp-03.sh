@@ -78,6 +78,7 @@ PAYLOAD=$(cat <<EOF
   "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "object": {
     "id": "$CHECKOUT_ID",
+    "transaction": "$CHECKOUT_ID",
     "customer": {
       "email": "$EMAIL",
       "id": "cust_creem_03"

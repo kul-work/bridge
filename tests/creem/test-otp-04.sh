@@ -97,6 +97,7 @@ PAYLOAD=$(cat <<EOF
   "object": {
     "id": "pref_$TEST_RUN_ID",
     "checkout_id": "$CHECKOUT_ID",
+    "transaction": "$CHECKOUT_ID",
     "customer": {
       "email": "$EMAIL",
       "id": "cust_creem_04"
