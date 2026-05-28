@@ -61,6 +61,17 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
         }
     }
 
+    if provider == "creem"
+        && !matches!(product_type.as_deref(), Some("otp" | "inapp"))
+        && repo
+            .has_live_subscription_for_product(app_id, &external_user_id, &provider, &product_id)
+            .await?
+    {
+        return Err(BridgeError::Conflict(
+            "user already has an active subscription for this product".to_string(),
+        ));
+    }
+
     let provider_config = repo.get_provider_config(app_id, &provider).await?;
 
     let checkout_id = Uuid::new_v4().to_string();

@@ -568,6 +568,43 @@ pub async fn get_user_subscriptions(
     Ok(subscriptions)
 }
 
+pub async fn has_live_subscription_for_product(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+    provider: &str,
+    product_id: &str,
+) -> Result<bool, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM pay.subscriptions s
+             JOIN pay.payments p
+               ON p.app_id = s.app_id
+              AND p.external_user_id = s.external_user_id
+              AND p.provider = s.provider
+              AND p.subscription_id = s.subscription_id
+             WHERE s.app_id = $1
+               AND s.external_user_id = $2
+               AND s.provider = $3
+               AND p.product_id = $4
+               AND lower(s.status) IN ('active', 'trial', 'trialing')
+         )"
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .bind(provider)
+    .bind(product_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(exists)
+}
+
 pub async fn list_reconciliation_subscriptions(
     pool: &PgPool,
     app_id: Uuid,

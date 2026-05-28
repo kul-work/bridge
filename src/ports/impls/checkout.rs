@@ -33,4 +33,21 @@ impl CheckoutRepository for db::Database {
         )
         .await
     }
+
+    async fn has_live_subscription_for_product(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        provider: &str,
+        product_id: &str,
+    ) -> Result<bool, BridgeError> {
+        db::subscriptions::has_live_subscription_for_product(
+            self.pool(),
+            app_id,
+            external_user_id,
+            provider,
+            product_id,
+        )
+        .await
+    }
 }

@@ -71,6 +71,9 @@ pub enum BridgeError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("Configuration error: {0}")]
     ConfigError(String),
 
@@ -141,6 +144,11 @@ impl IntoResponse for BridgeError {
             BridgeError::BadRequest(msg) => (
                 StatusCode::BAD_REQUEST,
                 "bad_request",
+                msg.clone(),
+            ),
+            BridgeError::Conflict(msg) => (
+                StatusCode::CONFLICT,
+                "conflict",
                 msg.clone(),
             ),
             BridgeError::ConfigError(msg) => {

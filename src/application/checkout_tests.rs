@@ -23,6 +23,7 @@ use crate::{
 struct TestRepo {
     app: AppSnapshot,
     provider_config: ProviderConfigSnapshot,
+    live_subscription_exists: bool,
 }
 
 #[async_trait]
@@ -67,6 +68,20 @@ impl CheckoutRepository for TestRepo {
     ) -> Result<(), BridgeError> {
         Ok(())
     }
+
+    async fn has_live_subscription_for_product(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        provider: &str,
+        product_id: &str,
+    ) -> Result<bool, BridgeError> {
+        assert_eq!(app_id, self.app.id);
+        assert_eq!(external_user_id, "user_123");
+        assert_eq!(provider, "creem");
+        assert_eq!(product_id, "prod_requested");
+        Ok(self.live_subscription_exists)
+    }
 }
 
 async fn record_checkout_request(
@@ -104,6 +119,7 @@ fn build_test_repo(app_id: Uuid, api_url: &str) -> TestRepo {
                 "otp_id": "prod_otp"
             }),
         },
+        live_subscription_exists: false,
     }
 }
 

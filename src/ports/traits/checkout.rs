@@ -21,4 +21,12 @@ pub trait CheckoutRepository: Send + Sync {
         request_fingerprint: &str,
         response_payload: &serde_json::Value,
     ) -> Result<(), BridgeError>;
+
+    async fn has_live_subscription_for_product(
+        &self,
+        app_id: Uuid,
+        external_user_id: &str,
+        provider: &str,
+        product_id: &str,
+    ) -> Result<bool, BridgeError>;
 }
