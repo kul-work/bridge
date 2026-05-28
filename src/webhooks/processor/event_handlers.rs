@@ -74,6 +74,15 @@ fn effects_from_google_lifecycle_outcome(outcome: GooglePlayLifecycleOutcome) ->
     }
 }
 
+pub(super) fn activation_subscription_status(provider: &str, raw_status: Option<&str>) -> String {
+    if provider == "creem" {
+        raw_status.map(|status| normalize_status(Some(status)))
+            .unwrap_or_else(|| "active".to_string())
+    } else {
+        "active".to_string()
+    }
+}
+
 async fn lookup_lifecycle_email(ctx: &EventContext<'_>, event_type: &str) -> Option<String> {
     let user_id = ctx.external_user_id.as_deref()?;
 
@@ -364,6 +373,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 .map(|dt| dt.with_timezone(&chrono::Utc));
             let sub_id_fallback = ctx.webhook.subscription_id.clone().unwrap_or_default();
             let sub_id_str = ctx.fields.subscription_id.as_deref().unwrap_or(&sub_id_fallback);
+            let subscription_status = activation_subscription_status(ctx.provider, ctx.fields.status.as_deref());
 
             let (adopt_stale_payment, stale_payment_window_secs) = if ctx.provider == "creem" {
                 let window_secs = repo
@@ -403,7 +413,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     external_user_id: user_id,
                     subscription_id: sub_id_str,
                     provider: ctx.provider,
-                    status: "active",
+                    status: &subscription_status,
                     current_period_end: period_end,
                     purchase_token: ctx.fields.purchase_token.as_deref(),
                     auto_renewing: ctx.fields.auto_renewing,
@@ -436,7 +446,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
 
             Ok(EventHandling::Handled(EventEffects {
                 callback_event_type: Some("subscription.activated".to_string()),
-                callback_status_override: Some("active".to_string()),
+                callback_status_override: Some(subscription_status),
                 canonical_subscription: Some(subscription),
                 ..Default::default()
             }))
