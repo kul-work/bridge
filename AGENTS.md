@@ -1,6 +1,6 @@
 # Bridge - Agent Guide
 
-If you're running in Crush, also read the rules from `.\.crush\AGENTS.md`.
+If you did not load the user-level AGENTS.md from `~\.config\AGENTS.md`, load it now.
 
 ## Project Overview
 
