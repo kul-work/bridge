@@ -176,6 +176,36 @@ pub async fn get_payment_status_for_provider(
     Ok(row.map(|r| r.0))
 }
 
+pub async fn get_payment_subscription_id_for_provider(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    provider: &str,
+    provider_transaction_id: &str,
+) -> Result<Option<String>, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT subscription_id
+         FROM pay.payments
+         WHERE app_id = $1
+           AND provider = $2
+           AND (provider_transaction_id = $3 OR provider_purchase_token = $3)
+         ORDER BY created_at ASC
+         LIMIT 1"
+    )
+    .bind(app_id)
+    .bind(provider)
+    .bind(provider_transaction_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(row.and_then(|r| r.0))
+}
+
 pub async fn get_payment_currency_for_subscription(
     pool: &sqlx::PgPool,
     app_id: Uuid,

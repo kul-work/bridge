@@ -1183,11 +1183,15 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     ctx.webhook.purchase_token.as_deref(),
                 ];
                 let mut matched_payment_token = None;
+                let mut matched_payment_subscription_id = None;
                 for token in payment_tokens.into_iter().flatten() {
                     if let Some(existing) = repo.get_payment_status_for_provider(ctx.app_id, ctx.provider, token).await? {
                         if existing != "refunded" {
                             repo.update_payment_status_for_provider(ctx.app_id, ctx.provider, token, "refunded").await?;
                         }
+                        matched_payment_subscription_id = repo
+                            .get_payment_subscription_id_for_provider(ctx.app_id, ctx.provider, token)
+                            .await?;
                         matched_payment_token = Some(token);
                         break;
                     }
@@ -1222,7 +1226,12 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     }
                 }
 
-                if let Some(sub_id) = ctx.fields.subscription_id.as_deref() {
+                let subscription_ids = [
+                    matched_payment_subscription_id.as_deref(),
+                    ctx.fields.subscription_id.as_deref(),
+                    ctx.webhook.subscription_id.as_deref(),
+                ];
+                for sub_id in subscription_ids.into_iter().flatten() {
                     let updated = repo.apply_subscription_transition(
                         ctx.app_id,
                         _user_id,

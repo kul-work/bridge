@@ -38,6 +38,13 @@ pub trait PaymentReadRepository: Send + Sync {
         provider_transaction_id: &str,
     ) -> Result<Option<String>, BridgeError>;
 
+    async fn get_payment_subscription_id_for_provider(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        provider_transaction_id: &str,
+    ) -> Result<Option<String>, BridgeError>;
+
     async fn get_payment_currency_for_subscription(
         &self,
         app_id: Uuid,

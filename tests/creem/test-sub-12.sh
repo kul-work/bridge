@@ -140,6 +140,19 @@ else
     exit 1
 fi
 
+# Step 4: Verify subscription access is revoked
+echo -e "${YELLOW}[4/4] Verifying subscription status is 'revoked'${NC}"
+SUB_STATE=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
+  -At -F '|' -c "SELECT status, COALESCE(revocation_reason, '') FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$SUBSCRIPTION_ID';" \
+  | tr -d '\r' | head -n 1 || echo "")
+
+if [[ "$SUB_STATE" == "revoked|REFUND" ]]; then
+    echo -e "${GREEN}✓ Subscription revoked due to refund${NC}"
+else
+    echo -e "${RED}✗ Unexpected subscription state: $SUB_STATE (Expected: revoked|REFUND)${NC}"
+    exit 1
+fi
+
 # Generate JSON report
 TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > "$REPORT_FILE" <<EOF
@@ -155,7 +168,8 @@ cat > "$REPORT_FILE" <<EOF
   "refund_id": "$REFUND_ID",
   "results": {
     "webhook_accepted": true,
-    "payment_refunded": true
+    "payment_refunded": true,
+    "subscription_revoked": true
   }
 }
 EOF
