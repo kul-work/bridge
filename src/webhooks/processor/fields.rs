@@ -164,9 +164,10 @@ pub(super) fn extract_webhook_fields(webhook: &WebhookProviderSnapshot) -> Webho
                 .or_else(|| subscription_obj.get("renews_at").and_then(|v| v.as_str()))
                 .map(|s| s.to_string());
 
-            // Extract amount with multiple fallbacks (last_transaction.amount, order.amount, product.price, amount)
+            // Prefer actual cash collected when Creem sends a transaction object.
+            // Trial invoices can have amount_paid = 0 while amount is the recurring list price.
             let amount_cents = obj.get("last_transaction")
-                .and_then(|v| v.get("amount"))
+                .and_then(|v| v.get("amount_paid").or_else(|| v.get("amount")))
                 .and_then(|v| v.as_i64())
                 .or_else(|| obj.get("order")
                     .and_then(|v| v.get("amount"))
