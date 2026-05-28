@@ -51,12 +51,12 @@ The DB therefore shows a full-price successful payment even though the Creem tra
 - Admin/accounting views can show successful paid transactions during free trial signup.
 - Downstream analytics may treat trial starts as paid conversions.
 
-### Likely Fix Direction
+### Fix Direction
 
 For Creem `last_transaction` payloads, prefer actual paid/captured amount when present:
 
 - Use `last_transaction.amount_paid` for payment rows when available.
-- Treat `amount_paid = 0` as a real zero, not as missing data.
+- Treat `amount_paid = 0` as a real zero, not as missing data, and record a zero-amount payment row for trial invoices.
 - Keep product/recurring price separately as recurring amount if needed.
 
 ## Bug 2: Trial Status Is Overwritten To Active
@@ -96,13 +96,13 @@ This causes Bridge to convert a trial into an active paid subscription state too
 
 Old HiHa preserved normalized provider status when activating/updating the subscription. Bridge currently hard-codes the activation handler to `active`, which is a Creem trial-flow drift.
 
-### Likely Fix Direction
+### Fix Direction
 
 For Creem activation-like events, normalize and preserve `ctx.fields.status`:
 
-- `trialing` should commit subscription status `trial`.
+- `trialing` should commit subscription status `Trialing` (or `trial`).
 - `active`/`paid` should commit status `active`.
-- Callback event can remain `subscription.activated` if HiHa entitlement semantics require it, but callback `status` should accurately indicate `trial`.
+- The callback event to HiHa MUST use `subscription.activated` to properly grant access, but the callback payload `status` must accurately indicate `Trialing`.
 
 ## Bug 3: Duplicate Creem Subscriptions For Same User/Product Are Allowed
 
@@ -133,16 +133,19 @@ This is not webhook idempotency failure; webhook event IDs were unique, and prov
 - Cancelling one subscription does not necessarily cancel the other active subscription.
 - HiHa may receive multiple activation callbacks for what the user experiences as one free-trial signup attempt.
 
-### Likely Fix Direction
+### Fix Direction
 
-Add a product/user-level guard for Creem subscription checkout or webhook adoption:
+Add a product/user-level guard for Creem subscription checkout and webhook handling:
 
-- Prefer preventing duplicate checkout creation for an already active/trial Creem subscription for the same app/user/product.
-- Also consider webhook-side protection: when a new Creem subscription arrives for the same app/user/product while another active/trial subscription exists, either reject/suppress, mark conflict for admin review, or cancel/adopt according to a deliberate policy.
+- **Block Checkout**: Prevent checkout creation if the user already has an active or trialing subscription for the same app/user/product.
+- **Admin Conflict on Webhook**: If a duplicate subscription arrives via webhook (e.g., race condition), do not automatically cancel it. Accept it to preserve provider state, but surface an admin conflict for manual review.
 - Preserve the existing provider webhook idempotency model; this bug is about semantic duplicate subscriptions, not duplicate provider event delivery.
 
 ## Open Questions
 
 - Should a Creem trial callback to HiHa use event type `subscription.activated` with status `trial`, or a distinct callback event type?
+  - **Answer**: It should use `subscription.activated` to grant access, but with `status` set to `Trialing` (the actual Creem status) to avoid overwriting the trial state.
 - Should Bridge record a zero-amount payment row for trial invoices, or skip payment rows until actual money is collected?
+  - **Answer**: Bridge should record a zero-amount payment row for trial invoices.
 - What is the intended policy when Creem creates a second subscription for the same user/product: block checkout, cancel the older subscription, cancel the newer subscription, or keep both but surface an admin conflict?
+  - **Answer**: The primary defense should be to **block checkout creation** if the user already has an active or trialing subscription for that product. If a duplicate still bypasses this and arrives via webhook (e.g., due to a race condition), Bridge should accept it to maintain an accurate record of provider state, but surface an admin conflict rather than automatically cancelling, allowing support to handle potential refunds appropriately.
