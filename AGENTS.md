@@ -119,6 +119,42 @@ When updating `Release Notes.md`:
 - **Keep it short** - 1-2 lines per feature, not a full document
 - **Format**: `- **Feature**: Brief description (what changed, not how it works)`
 
+## Bridge-Specific Checks
+
+Use Bridge-specific checks when the user asks to "run the Bridge checks", "run payment checks", or "run provider checks", or when a change touches payment/provider risk areas. Choose the smallest tier that matches the diff risk; do not run every checker for every small change.
+
+### Tier 1 — Normal payment/provider fix
+
+Use for narrow changes to one provider/payment flow.
+
+- touched-area checker
+- `.agents/checks/bridge-payment-side-effects.md`
+
+### Tier 2 — Identity/lifecycle/webhook-sensitive fix
+
+Use when the change affects money identity, subscription state, webhook semantics, callback payloads, or app/user scoping.
+
+- touched-area checker
+- `.agents/checks/bridge-payment-side-effects.md`
+- `.agents/checks/bridge-payment-identity.md` if transaction IDs, purchase tokens, amount, or currency are involved
+- `.agents/checks/bridge-subscription-lifecycle.md` if subscription status, periods, renewal, cancel, refund, revoke, pause, resume, defer, or price consent are involved
+- `.agents/checks/bridge-webhook-idempotency.md` if webhook ingress, signature, dedupe, stale suppression, forwarding, callback enqueue, or callback payloads are involved
+
+### Tier 3 — Pre-release or scary diff
+
+Use before release/tag, for broad payment/provider diffs, for migrations touching payment/provider tables, or when risk remains uncertain after initial investigation.
+
+- `.agents/checks/bridge-payment-identity.md`
+- `.agents/checks/bridge-payment-side-effects.md`
+- `.agents/checks/bridge-subscription-lifecycle.md`
+- `.agents/checks/bridge-webhook-idempotency.md`
+- `.agents/checks/bridge-payment-antipatterns.md`
+- `.agents/checks/bridge-release-risk.md`
+
+### Reviewing a release
+
+For release review, include `.agents/checks/bridge-release-risk.md`.
+
 ## Database - PostgreSQL Commands
 
 First try to access the database via an available MCP.
