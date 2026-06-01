@@ -97,9 +97,11 @@ Creem changed:
 
 Webhook changed:
 - provider signature validation tests
-- ingress idempotency tests
+- explicit configured signature-skip tests if the change touches `verify_webhook_signature`
+- ingress idempotency tests against `webhook_provider`
 - forwarding enqueue idempotency tests
 - duplicate provider event tests
+- renewal tests proving dedupe is not purchase token + event type
 - stale event tests
 
 Subscription DB/lifecycle changed:
@@ -154,9 +156,10 @@ Lifecycle:
 - partial provider events cannot erase durable subscription fields
 
 Webhooks:
-- provider signature validation happens before mutation
-- idempotency is checked before mutation
+- provider signature validation, or an explicit configured signature-skip decision, happens before mutation
+- idempotency is checked in `webhook_provider` before mutation
 - deduplication does not suppress valid renewal/economic events
+- primary dedupe is app-scoped `(app_id, provider, provider_webhook_id)`, not purchase token + event type
 - delivery enqueue is idempotent
 - duplicate callbacks are not emitted for one logical event
 

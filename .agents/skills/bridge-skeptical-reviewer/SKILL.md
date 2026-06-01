@@ -53,6 +53,7 @@ If the diff is docs-only or clearly unrelated to payment/provider behavior, stat
 3. If payment/provider files are touched, read:
    - `INVARIANTS.md`
    - `DESIGN.md`
+   - `docs/BEHAVIORAL_SPEC.md` or `docs/WEBHOOK_ARCHITECTURE.md` when webhook/storage behavior is touched
    - relevant tests for the touched flow
 4. Review only the risky behavior. Do not broaden into unrelated refactors.
 5. Reject vague confidence. Every acceptance or blocker must cite evidence from files, tests, invariants, or the diff.
@@ -70,8 +71,8 @@ Can a purchase token be confused with an economic transaction ID?
 Can currency or amount silently default?
 Can this cross app/user boundaries?
 Can this make logs noisier without making diagnosis better?
-Is provider signature validation before mutation?
-Is webhook idempotency checked before mutation?
+Is provider signature validation, or an explicit configured signature-skip decision, resolved before mutation?
+Is webhook idempotency checked in `webhook_provider` before mutation?
 Does newer timestamp win over stale events?
 Are terminal states respected?
 Does the test assert durable side effects, not just success?
@@ -96,9 +97,10 @@ Lifecycle:
 - partial provider events cannot erase durable subscription fields
 
 Webhooks:
-- provider signature validation happens before mutation
-- idempotency is checked before mutation
+- provider signature validation, or an explicit configured signature-skip decision, happens before mutation
+- idempotency is checked in `webhook_provider` before mutation
 - deduplication does not suppress valid renewal/economic events
+- primary dedupe is app-scoped `(app_id, provider, provider_webhook_id)`, not purchase token + event type
 - delivery enqueue is idempotent
 - duplicate callbacks are not emitted for one logical event
 
@@ -128,7 +130,7 @@ status
 period_start / period_end
 callback event type
 callback body fields
-webhook dedup key
+webhook_provider dedup key
 app_id / external_user_id scoping
 ```
 
@@ -144,7 +146,7 @@ Return `REJECT` if any of these are true:
 - duplicate or missing semantic callbacks are plausible from the diff
 - stale/partial provider events can overwrite durable state
 - app scope is missing from payment/subscription/provider lookups
-- idempotency or signature validation happens after mutation
+- idempotency or signature validation/signature-skip decision happens after mutation
 - tests do not assert critical durable side effects for the changed risky flow
 
 Return `ACCEPT` only when the diff is either out of scope or the relevant risks are checked with evidence.
