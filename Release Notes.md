@@ -1,5 +1,15 @@
 # Release Notes
 
+## [0.3.3] - 2026-06-02
+### Fixes
+- **Creem**: Block duplicate subscription checkout, resolve checkout product selectors, and avoid sending unsupported checkout cancel URLs.
+- **Creem**: Correct trial invoice amount/currency extraction and treat subscription lifecycle object IDs as state-only unless a real transaction ID is provided.
+- **Subscriptions**: Revoke Creem subscriptions when refunded payments arrive and pass cancellation `onExecute` through to Creem.
+
+### Improvements
+- **Agent Checks**: Add Bridge payment review checkers and release-loop skills for safer provider changes.
+- **Documentation**: Refresh release-loop, checker, and Creem fix notes.
+
 ## [0.3.2] - 2026-05-24
 ### Features
 - **Google Play**: Track ordinary pending price changes from v2 `priceChangeDetails` and expose them in callbacks and subscription APIs.
