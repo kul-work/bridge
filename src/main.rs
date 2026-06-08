@@ -27,6 +27,31 @@ use db::Database;
 use handlers::health_check;
 use state::AppState;
 
+/// Initialize Google Play service account credentials from environment variables.
+///
+/// In production-like environments, some hosts provide secret files as env var
+/// contents. GOOGLE_PLAY_KEY contains the service account JSON and
+/// GOOGLE_SERVICE_ACCOUNT_PATH is the file path existing Google Play clients read.
+fn init_google_play_credentials(environment: &str) -> anyhow::Result<()> {
+    let env_lower = environment.to_ascii_lowercase();
+    if !matches!(env_lower.as_str(), "production" | "staging" | "demo") {
+        return Ok(());
+    }
+
+    if let Ok(key) = std::env::var("GOOGLE_PLAY_KEY") {
+        if let Ok(path) = std::env::var("GOOGLE_SERVICE_ACCOUNT_PATH") {
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            std::fs::write(&path, key)?;
+            info!("Initialized Google Play service account credentials");
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
@@ -66,6 +91,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Load config
     let config = Config::from_env()?;
+    init_google_play_credentials(&config.environment)?;
+
     let env_lower = config.environment.to_ascii_lowercase();
     let is_production = env_lower == "production" || env_lower == "prod";
 
