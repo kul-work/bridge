@@ -92,6 +92,9 @@ pub async fn retry_webhook(
     info!("Manual retry requested for webhook: {}", webhook_uuid);
 
     // TODO: Queue the webhook for retry
+    //Smallest sane fix: make the admin handler accept State<AppState>, load the delivery, rebuild its canonical payload via build_canonical_payload, and call
+    //forward_webhook immediately. That matches existing retry behavior without inventing a new queue. If manual retry is meant to resurrect dead-lettered
+    //deliveries, it also needs an explicit DB helper to clear dead_lettered / reset attempts; current forwarding code refuses dead-lettered or >= 3 rows.
 
     Ok(StatusCode::OK)
 }
