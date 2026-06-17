@@ -497,7 +497,7 @@ Response `200`:
 }
 ```
 
-If no records are found, the current implementation returns `400 validation_error` with message `User not found`.
+If no Bridge billing records are found, the endpoint still returns `200` with zero counts so account deletion remains idempotent.
 
 ### `GET /api/v1/users/:external_user_id/data-export`
 

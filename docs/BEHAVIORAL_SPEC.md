@@ -859,7 +859,7 @@ if webhook_provider.timestamp_epoch_ms < subscription.last_event_time →
 4. **Scramble identifiers**: replace `external_user_id` on all `subscriptions` and `payments` rows with hashed value (e.g., `deleted_<hash>`).
 5. **Retain purchase tokens** (for "Restore Purchases" fraud prevention — per data retention policy).
 6. **Retain payment records** (7-year tax/audit requirement — but with scrambled user ID).
-7. Return `{ "anonymized": true, "subscriptions_cancelled": N }`.
+7. Return `{ "anonymized": true, "subscriptions_cancelled": N }`. If there are no Bridge billing rows for the user, return success with zero counts so callers can safely complete account deletion.
 
 **Note**: Bridge does NOT send separate callbacks for anonymization-triggered cancellations. The app already knows the outcome from this endpoint's synchronous response.
 

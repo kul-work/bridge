@@ -39,10 +39,6 @@ pub async fn anonymize(
     )
     .await?;
 
-    if result.subscriptions_cancelled == 0 && result.payments_anonymized == 0 {
-        return Err(BridgeError::ValidationError("User not found".to_string()));
-    }
-
     Ok(Json(json!({
         "anonymized": true,
         "subscriptions_cancelled": result.subscriptions_cancelled,
