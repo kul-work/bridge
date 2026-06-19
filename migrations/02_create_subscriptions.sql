@@ -1,31 +1,31 @@
 SET search_path TO pay, public;
 
--- Bridge: Subscriptions
--- Source of truth for subscription lifecycle. external_user_id is opaque (e.g., clerk_id from app).
+-- Bridge: subscription lifecycle source of truth.
 
 CREATE TABLE subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    
-    external_user_id TEXT NOT NULL,             -- opaque, from the app (e.g. clerk_id)
+
+    external_user_id TEXT NOT NULL,
     subscription_id TEXT NOT NULL,
-    provider TEXT NOT NULL,                     -- 'google_play', 'creem', 'apple'
-    
-    purchase_token TEXT UNIQUE,                 -- one-token-one-owner: required for restore purchases & fraud prevention
-    
-    status TEXT NOT NULL DEFAULT 'pending',     -- pending, active, trial, past_due, cancelled, expired, revoked, paused, on_hold
+    provider TEXT NOT NULL,
+
+    purchase_token TEXT UNIQUE,
+
+    status TEXT NOT NULL DEFAULT 'pending',
     current_period_end TIMESTAMPTZ,
     auto_renewing BOOLEAN,
     payment_state INT,
     cancel_reason INT,
     provider_customer_id TEXT,
-    
-    -- Cancellation / Revocation
+    payment_failure_notification BOOLEAN NOT NULL DEFAULT false,
+
+    -- Cancellation / revocation.
     cancellation_initiated_at TIMESTAMPTZ,
     revocation_reason TEXT,
     revoked_at TIMESTAMPTZ,
-    
-    -- Google Play specific (prefixed)
+
+    -- Google Play specific.
     google_subscription_state INT,
     google_obfuscated_account_id TEXT,
     google_obfuscated_profile_id TEXT,
@@ -51,21 +51,24 @@ CREATE TABLE subscriptions (
     google_pause_scheduled_reason TEXT,
     google_paused_at TIMESTAMPTZ,
     google_is_manual_resume BOOLEAN,
-    
-    -- Apple specific (future, prefixed)
+    google_pending_price_change_new_price_cents BIGINT,
+    google_pending_price_change_currency TEXT,
+    google_pending_price_change_mode TEXT,
+    google_pending_price_change_state TEXT,
+    google_pending_price_change_expected_at TIMESTAMPTZ,
+
+    -- Apple specific (future).
     apple_original_transaction_id TEXT,
     apple_web_order_line_item_id TEXT,
     apple_environment TEXT,
-    
-    -- Concurrency
+
+    -- Concurrency.
     version INT NOT NULL DEFAULT 1,
-    last_event_time BIGINT NOT NULL DEFAULT 0, -- epoch milliseconds, derived from webhook callback timestamp for event ordering and deduplication
-    
-    -- Timestamps
+    last_event_time BIGINT NOT NULL DEFAULT 0,
+
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    
-    -- Constraints
+
     CONSTRAINT uq_sub_app_user_sub_provider UNIQUE (app_id, external_user_id, subscription_id, provider)
 );
 
@@ -74,9 +77,11 @@ CREATE INDEX idx_subs_app_user ON subscriptions(app_id, external_user_id);
 CREATE INDEX idx_subs_status ON subscriptions(app_id, status) WHERE status = 'active';
 CREATE INDEX idx_subs_provider_status ON subscriptions(app_id, provider, status);
 CREATE INDEX idx_subs_event_time ON subscriptions(app_id, external_user_id, subscription_id, last_event_time);
+
 COMMENT ON TABLE subscriptions IS 'Source of truth for subscription lifecycle. external_user_id is opaque; Bridge does not interpret it.';
-COMMENT ON COLUMN subscriptions.external_user_id IS 'Opaque user ID from the app (e.g., Clerk user ID).';
+COMMENT ON COLUMN subscriptions.external_user_id IS 'Opaque user ID from the app.';
 COMMENT ON COLUMN subscriptions.purchase_token IS 'One-token-one-owner for fraud prevention and restore purchases.';
+COMMENT ON COLUMN subscriptions.payment_failure_notification IS 'Marks subscriptions that have had a payment failure webhook for admin/app follow-up.';
 COMMENT ON COLUMN subscriptions.last_event_time IS 'Epoch milliseconds from provider event timestamp. Used for ordering, deduplication, and stale event detection.';
 COMMENT ON COLUMN subscriptions.version IS 'Optimistic locking for concurrent updates.';
-COMMENT ON COLUMN subscriptions.google_subscription_state IS 'Raw subscription_state from Google API v3 (0-6 enum).';
+COMMENT ON COLUMN subscriptions.google_subscription_state IS 'Raw subscription_state from Google API v3.';

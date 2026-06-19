@@ -48,7 +48,8 @@ $$;
 GRANT CONNECT ON DATABASE appgen TO bridge_admin, bridge_app;
 GRANT CONNECT ON DATABASE appgen TO hiha_admin, hiha_app, household_admin, household_app;
 
-GRANT USAGE, CREATE ON SCHEMA pay TO bridge_admin, bridge_app;
+GRANT USAGE, CREATE ON SCHEMA pay TO bridge_admin;
+GRANT USAGE ON SCHEMA pay TO bridge_app;
 GRANT USAGE, CREATE ON SCHEMA hiha TO hiha_admin, hiha_app;
 GRANT USAGE, CREATE ON SCHEMA household TO household_admin, household_app;
 
@@ -66,13 +67,16 @@ COMMIT;
 -- ============================================================
 BEGIN;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA pay TO bridge_admin, bridge_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA pay TO bridge_admin, bridge_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA pay TO bridge_admin;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA pay TO bridge_admin;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA pay
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bridge_admin, bridge_app;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bridge_admin;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pay
-  GRANT USAGE, SELECT ON SEQUENCES TO bridge_admin, bridge_app;
+  GRANT USAGE, SELECT ON SEQUENCES TO bridge_admin;
+
+-- bridge_app table/function privileges are intentionally narrowed by Bridge
+-- migrations after all pay objects exist. Do not grant broad runtime access here.
 
 COMMIT;
 
