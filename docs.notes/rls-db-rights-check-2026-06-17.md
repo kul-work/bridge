@@ -148,59 +148,6 @@ The `appgen` database grants `PUBLIC`:
 
 This is PostgreSQL's common default, but for strict production hardening it can be revoked and replaced with explicit role grants.
 
-## Findings
-
-### Finding 2 — Bootstrap policies allow cross-tenant reads when app context is unset
-
-Severity: medium/high, depending on whether all relevant code paths reliably set app context before reads.
-
-The bootstrap policy shape:
-
-```sql
-pay.current_app_id() IS NULL OR app_id = pay.current_app_id()
-```
-
-allows all rows to be read by `bridge_app` when `bridge.current_app_id` is unset.
-
-This is probably necessary for API-key lookup, because the API key identifies the app before the app context is known. It is riskier on provider/webhook tables unless there is a proven bootstrap need.
-
-Recommended fix:
-
-- Keep bootstrap `SELECT` on `pay.api_keys` if needed for API-key authentication.
-- Remove bootstrap `SELECT` from `pay.provider_configs`, `pay.webhook_provider`, and `pay.webhook_delivery` unless code proves it is required.
-
-```sql
-DROP POLICY IF EXISTS tenant_isolation_provider_configs_bootstrap_select
-ON pay.provider_configs;
-
-DROP POLICY IF EXISTS tenant_isolation_webhook_provider_bootstrap_select
-ON pay.webhook_provider;
-
-DROP POLICY IF EXISTS tenant_isolation_webhook_delivery_bootstrap_select
-ON pay.webhook_delivery;
-```
-
-### Finding 5 — Admin and inspection roles bypass RLS
-
-Severity: expected but sensitive.
-
-`bridge_admin` and `agent` have `BYPASSRLS`. This is acceptable for migrations/admin/inspection if credentials are tightly controlled. The runtime `bridge_app` role does not bypass RLS.
-
-## Proposed next migration
-
-Recommended bootstrap-policy hardening migration after the code paths are updated:
-
-```sql
-DROP POLICY IF EXISTS tenant_isolation_provider_configs_bootstrap_select
-ON pay.provider_configs;
-
-DROP POLICY IF EXISTS tenant_isolation_webhook_provider_bootstrap_select
-ON pay.webhook_provider;
-
-DROP POLICY IF EXISTS tenant_isolation_webhook_delivery_bootstrap_select
-ON pay.webhook_delivery;
-```
-
 ## Verification recommended after bootstrap-policy hardening
 
 After applying the migration, verify:
