@@ -1,5 +1,16 @@
 # Release Notes
 
+## [0.3.4] - 2026-06-19
+### Fixes
+- **Security**: Harden request deserialization and Creem API URL validation, including mock-only Google Play test price header handling.
+- **RLS/Auth**: Tighten bootstrap reads, runtime privileges, API-key/webhook-token lookup paths, and app-scoped admin/scheduler access.
+- **Testing**: Align GPBI purchase/register scripts with strict request payload validation.
+
+### Improvements
+- **Database**: Consolidate baseline migrations and add internal app notes support.
+- **Deployment**: Add Docker image support and environment-based Google Play service account credential loading.
+- **Documentation**: Refresh hardened deployment, RLS audit, API contract, and security notes.
+
 ## [0.3.3] - 2026-06-02
 ### Fixes
 - **Creem**: Block duplicate subscription checkout, resolve checkout product selectors, and avoid sending unsupported checkout cancel URLs.
