@@ -36,6 +36,13 @@ BEGIN
 END
 $$;
 
+-- Role attributes survive schema nukes. Repair them explicitly so existing
+-- roles match the RLS model after rebuilds.
+ALTER ROLE bridge_admin BYPASSRLS;
+ALTER ROLE bridge_app NOBYPASSRLS;
+ALTER ROLE household_admin BYPASSRLS;
+ALTER ROLE household_app NOBYPASSRLS;
+
 GRANT CONNECT ON DATABASE neondb TO bridge_admin, bridge_app;
 GRANT CONNECT ON DATABASE neondb TO household_admin, household_app;
 

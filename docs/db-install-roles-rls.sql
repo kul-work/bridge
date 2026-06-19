@@ -44,6 +44,15 @@ BEGIN
 END
 $$;
 
+-- Role attributes survive schema nukes. Repair them explicitly so existing
+-- roles match the RLS model after rebuilds.
+ALTER ROLE bridge_admin BYPASSRLS;
+ALTER ROLE bridge_app NOBYPASSRLS;
+ALTER ROLE hiha_admin BYPASSRLS;
+ALTER ROLE hiha_app NOBYPASSRLS;
+ALTER ROLE household_admin BYPASSRLS;
+ALTER ROLE household_app NOBYPASSRLS;
+
 -- Replace "appgen" if your DB name is different.
 GRANT CONNECT ON DATABASE appgen TO bridge_admin, bridge_app;
 GRANT CONNECT ON DATABASE appgen TO hiha_admin, hiha_app, household_admin, household_app;
