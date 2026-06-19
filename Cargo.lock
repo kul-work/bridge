@@ -260,6 +260,7 @@ dependencies = [
  "tracing-appender",
  "tracing-attributes",
  "tracing-subscriber",
+ "url",
  "uuid",
  "walkdir",
 ]

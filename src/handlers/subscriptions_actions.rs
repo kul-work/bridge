@@ -54,6 +54,7 @@ pub async fn resume_subscription(
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AcknowledgeRequest {
     pub external_user_id: String,
 }

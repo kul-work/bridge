@@ -23,6 +23,7 @@ pub struct ListSubscriptionsQuery {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct SubscriptionCursor {
     created_at: DateTime<Utc>,
     id: Uuid,

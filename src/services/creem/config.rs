@@ -27,6 +27,7 @@ impl CreemConfig {
             .and_then(|v| v.as_str())
             .unwrap_or("https://api.creem.com")
             .to_string();
+        validate_creem_api_url(&api_url)?;
 
         let product_id = config
             .get("product_id")
@@ -80,6 +81,46 @@ impl CreemConfig {
     }
 }
 
+fn validate_creem_api_url(url_str: &str) -> Result<(), BridgeError> {
+    let parsed = url::Url::parse(url_str).map_err(|e| {
+        BridgeError::ConfigError(format!("Invalid Creem api_url '{}': {}", url_str, e))
+    })?;
+
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(BridgeError::ConfigError(format!(
+            "Invalid Creem api_url '{}': userinfo is not allowed", url_str
+        )));
+    }
+
+    let host = parsed.host_str().unwrap_or("");
+    let is_localhost = host == "localhost" || host == "127.0.0.1";
+    let is_creem = host == "api.creem.com"
+        || host == "api.creem.io"
+        || host.ends_with(".creem.com")
+        || host.ends_with(".creem.io");
+
+    if !is_localhost && !is_creem {
+        return Err(BridgeError::ConfigError(format!(
+            "Invalid Creem api_url '{}': host must be a creem.com or creem.io domain", url_str
+        )));
+    }
+
+    if is_localhost {
+        let localhost_allowed = cfg!(test) || crate::config::mock_external_apis_enabled();
+        if !localhost_allowed {
+            return Err(BridgeError::ConfigError(format!(
+                "Invalid Creem api_url '{}': localhost is only allowed in mock/test mode", url_str
+            )));
+        }
+    } else if parsed.scheme() != "https" {
+        return Err(BridgeError::ConfigError(format!(
+            "Invalid Creem api_url '{}': must use HTTPS", url_str
+        )));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +150,58 @@ mod tests {
         assert_eq!(parsed.product_id.as_deref(), Some("standard_monthly"));
         assert_eq!(parsed.offer_id.as_deref(), Some("offer_monthly"));
         assert_eq!(parsed.otp_id.as_deref(), Some("otp_lifetime"));
+    }
+
+    #[test]
+    fn rejects_http_api_url() {
+        let config = serde_json::json!({
+            "api_key": "sk_test_123",
+            "api_url": "http://api.creem.com"
+        });
+        assert!(CreemConfig::from_json(&config).is_err());
+    }
+
+    #[test]
+    fn allows_http_localhost_in_test_builds() {
+        let config = serde_json::json!({
+            "api_key": "sk_test_123",
+            "api_url": "http://127.0.0.1:8080"
+        });
+        assert!(CreemConfig::from_json(&config).is_ok());
+    }
+
+    #[test]
+    fn rejects_userinfo_bypass() {
+        let config = serde_json::json!({
+            "api_key": "sk_test_123",
+            "api_url": "https://api.creem.com:443@evil.example.com/v1"
+        });
+        assert!(CreemConfig::from_json(&config).is_err());
+    }
+
+    #[test]
+    fn rejects_non_creem_host() {
+        let config = serde_json::json!({
+            "api_key": "sk_test_123",
+            "api_url": "https://evil.example.com"
+        });
+        assert!(CreemConfig::from_json(&config).is_err());
+    }
+
+    #[test]
+    fn accepts_subdomain_of_creem() {
+        let config = serde_json::json!({
+            "api_key": "sk_test_123",
+            "api_url": "https://eu.api.creem.com"
+        });
+        assert!(CreemConfig::from_json(&config).is_ok());
+    }
+
+    #[test]
+    fn accepts_default_api_url() {
+        let config = serde_json::json!({
+            "api_key": "sk_test_123"
+        });
+        assert!(CreemConfig::from_json(&config).is_ok());
     }
 }

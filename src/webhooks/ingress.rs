@@ -257,9 +257,11 @@ pub async fn handle_google_play(
     }
 
     // Inject test price override into payload for mock-mode enrichment
-    if let Some(price_str) = headers.get("X-Test-Price-Cents").and_then(|h| h.to_str().ok()) {
-        if let Ok(cents) = price_str.parse::<i64>() {
-            google_play_event["_test_price_cents"] = serde_json::Value::Number(cents.into());
+    if crate::config::mock_external_apis_enabled() {
+        if let Some(price_str) = headers.get("X-Test-Price-Cents").and_then(|h| h.to_str().ok()) {
+            if let Ok(cents) = price_str.parse::<i64>() {
+                google_play_event["_test_price_cents"] = serde_json::Value::Number(cents.into());
+            }
         }
     }
 
@@ -320,6 +322,15 @@ pub async fn handle_google_play(
             .map(|value| value.to_string())
             .unwrap_or_else(|| "missing".to_string())
     );
+
+    if subscription_id.is_none() && purchase_token.is_none() {
+        tracing::warn!(
+            app_id = %app.id,
+            event_id = event_id,
+            event_type = %event_type,
+            "Google Play webhook payload missing both subscription_id and purchase_token — likely malformed or unrecognized schema"
+        );
+    }
 
     let (webhook_id, is_new) = database
         .as_ref()
@@ -464,6 +475,15 @@ pub async fn handle_creem(
             .map(|value| value.to_string())
             .unwrap_or_else(|| "missing".to_string())
     );
+
+    if subscription_id.is_none() && purchase_token.is_none() {
+        tracing::warn!(
+            app_id = %app.id,
+            event_id = event_id,
+            event_type = %event_type,
+            "Creem webhook payload missing both subscription_id and purchase_token — likely malformed or unrecognized schema"
+        );
+    }
 
     let (webhook_id, is_new) = database
         .as_ref()

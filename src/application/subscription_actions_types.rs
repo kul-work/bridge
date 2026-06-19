@@ -7,6 +7,7 @@ pub struct SubscriptionActionQuery {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CancelSubscriptionRequest {
     #[serde(default)]
     pub mode: Option<String>,
@@ -41,6 +42,7 @@ pub struct BillingPortalResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PriceStepUpRequest {
     pub external_user_id: String,
 }

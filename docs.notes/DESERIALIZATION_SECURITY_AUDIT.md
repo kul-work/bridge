@@ -2,6 +2,7 @@
 
 **Date:** 2026-06-19
 **Scope:** All deserialization paths in the Bridge codebase — webhook ingress, request bodies, provider API responses, JWT tokens, cursor params, DB rows.
+**Status:** Findings #1, #2, #3, #4 implemented. #5, #6 need no action.
 
 ---
 

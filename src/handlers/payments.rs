@@ -49,6 +49,7 @@ pub struct PaymentsResponse {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct PaymentsCursor {
     created_at: DateTime<Utc>,
     id: Uuid,
@@ -148,6 +149,7 @@ fn encode_cursor(cursor: &PaymentsCursor) -> Result<String, BridgeError> {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegisterPurchaseRequest {
     pub external_user_id: String,
     pub subscription_id: String,
