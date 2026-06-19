@@ -1,6 +1,6 @@
 [package]
 name = "bridge"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 description = "A multi-payments middle-gateway application"
 license-file = "LICENSE"
