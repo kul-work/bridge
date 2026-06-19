@@ -112,32 +112,10 @@ This is the correct general pattern, but any query to bootstrap-protected tables
 
 ## DB rights observed
 
-### Schema rights
-
-`pay` schema grants:
-
-- `bridge_app`: `USAGE`, `CREATE`
-- `bridge_admin`: `USAGE`, `CREATE`
-- `postgres`: `USAGE`, `CREATE`
-- `agent`: `USAGE`
-
-`bridge_app` having `CREATE` on `pay` is over-privileged for a runtime role.
-
-This was confirmed with a rolled-back transactional probe:
-
-```sql
-BEGIN;
-CREATE TABLE pay._rls_rights_probe(id int);
-ROLLBACK;
-```
-
-The create succeeded before rollback.
-
 ### Table rights
 
 `bridge_app` has broad `SELECT`, `INSERT`, `UPDATE`, and `DELETE` rights across `pay` tables and views, including:
 
-- `pay._sqlx_migrations`
 - `pay.apps`
 - `pay.api_keys`
 - `pay.checkout_idempotency`
@@ -151,8 +129,6 @@ The create succeeded before rollback.
 
 RLS reduces the blast radius on tenant tables, but this is not least-privilege.
 
-`bridge_app` should not need access to `_sqlx_migrations`; migrations are run with `bridge_admin` when `ADMIN_DATABASE_URL` is configured.
-
 ### Default privileges
 
 Default privileges grant broad rights on future objects:
@@ -162,18 +138,6 @@ Default privileges grant broad rights on future objects:
 - For future functions in `pay`, `bridge_app` receives `EXECUTE`.
 
 This may be intentional for operational convenience, but it keeps future runtime privileges broad by default.
-
-### Function rights
-
-Functions observed in `pay`:
-
-- `pay.current_app_id()`
-- `pay.cleanup_old_webhook_provider()`
-- `pay.cleanup_purged_fraud_prevention()`
-
-All showed `PUBLIC EXECUTE`, plus explicit grants to `bridge_admin` and `bridge_app`.
-
-`PUBLIC` does not have `USAGE` on the `pay` schema, which limits exploitability, but the cleaner posture is to revoke `PUBLIC EXECUTE` and grant only the roles that need each function.
 
 ### Database rights
 
@@ -185,24 +149,6 @@ The `appgen` database grants `PUBLIC`:
 This is PostgreSQL's common default, but for strict production hardening it can be revoked and replaced with explicit role grants.
 
 ## Findings
-
-### Finding 1 — Runtime role can create objects in `pay`
-
-Severity: medium/high hardening issue.
-
-`bridge_app` can create tables/functions/etc. in the payment schema. Runtime roles should generally not have schema `CREATE` in an application-owned schema.
-
-Recommended fix:
-
-```sql
-REVOKE CREATE ON SCHEMA pay FROM bridge_app;
-```
-
-Keep `USAGE`:
-
-```sql
-GRANT USAGE ON SCHEMA pay TO bridge_app;
-```
 
 ### Finding 2 — Bootstrap policies allow cross-tenant reads when app context is unset
 
@@ -238,36 +184,9 @@ ON pay.webhook_delivery;
 
 Severity: medium hardening issue.
 
-`bridge_app` has broad table privileges, including on `_sqlx_migrations`, `apps`, and `v_data_retention_stats`.
+`bridge_app` has broad table privileges, including on `apps` and `v_data_retention_stats`.
 
-Recommended immediate fix:
-
-```sql
-REVOKE ALL ON TABLE pay._sqlx_migrations FROM bridge_app;
-```
-
-Recommended later fix: map actual runtime SQL operations and reduce grants table-by-table. Do this as a separate phase to avoid breaking live flows blindly.
-
-### Finding 4 — Functions are executable by `PUBLIC`
-
-Severity: low/medium hardening issue.
-
-`PUBLIC EXECUTE` exists for `pay.current_app_id()` and cleanup functions. Schema `USAGE` limits practical access, but explicit grants are cleaner.
-
-Recommended fix:
-
-```sql
-REVOKE EXECUTE ON FUNCTION pay.cleanup_old_webhook_provider() FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION pay.cleanup_purged_fraud_prevention() FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION pay.current_app_id() FROM PUBLIC;
-
-GRANT EXECUTE ON FUNCTION pay.current_app_id() TO bridge_app;
-GRANT EXECUTE ON FUNCTION pay.current_app_id() TO bridge_admin;
-GRANT EXECUTE ON FUNCTION pay.cleanup_old_webhook_provider() TO bridge_admin;
-GRANT EXECUTE ON FUNCTION pay.cleanup_purged_fraud_prevention() TO bridge_admin;
-```
-
-Only grant cleanup functions to `bridge_app` too if the runtime service actually calls them under the runtime role.
+Recommended fix: map actual runtime SQL operations and reduce grants table-by-table. Do this as a separate phase to avoid breaking live flows blindly.
 
 ### Finding 5 — Admin and inspection roles bypass RLS
 
@@ -275,15 +194,11 @@ Severity: expected but sensitive.
 
 `bridge_admin` and `agent` have `BYPASSRLS`. This is acceptable for migrations/admin/inspection if credentials are tightly controlled. The runtime `bridge_app` role does not bypass RLS.
 
-## Proposed phase 1 migration
+## Proposed next migration
 
-Recommended small first hardening migration:
+Recommended bootstrap-policy hardening migration after the code paths are updated:
 
 ```sql
-REVOKE CREATE ON SCHEMA pay FROM bridge_app;
-
-REVOKE ALL ON TABLE pay._sqlx_migrations FROM bridge_app;
-
 DROP POLICY IF EXISTS tenant_isolation_provider_configs_bootstrap_select
 ON pay.provider_configs;
 
@@ -292,18 +207,9 @@ ON pay.webhook_provider;
 
 DROP POLICY IF EXISTS tenant_isolation_webhook_delivery_bootstrap_select
 ON pay.webhook_delivery;
-
-REVOKE EXECUTE ON FUNCTION pay.cleanup_old_webhook_provider() FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION pay.cleanup_purged_fraud_prevention() FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION pay.current_app_id() FROM PUBLIC;
-
-GRANT EXECUTE ON FUNCTION pay.current_app_id() TO bridge_app;
-GRANT EXECUTE ON FUNCTION pay.current_app_id() TO bridge_admin;
-GRANT EXECUTE ON FUNCTION pay.cleanup_old_webhook_provider() TO bridge_admin;
-GRANT EXECUTE ON FUNCTION pay.cleanup_purged_fraud_prevention() TO bridge_admin;
 ```
 
-## Verification recommended after phase 1
+## Verification recommended after bootstrap-policy hardening
 
 After applying the migration, verify:
 
@@ -312,8 +218,6 @@ After applying the migration, verify:
 3. Checkout/payment/subscription/webhook flows still work.
 4. A `bridge_app` session without `bridge.current_app_id` cannot read provider/webhook tenant rows.
 5. A `bridge_app` session with `bridge.current_app_id` can still read/write only that tenant's rows.
-6. `bridge_app` cannot create objects in `pay`.
-7. `bridge_app` cannot access or mutate `pay._sqlx_migrations`.
 
 ## Bottom line
 
@@ -321,9 +225,7 @@ No evidence was found that normal tenant-scoped flows leak rows when `bridge.cur
 
 However, the current DB posture has real hardening bugs/footguns:
 
-- runtime schema `CREATE` permission,
 - bootstrap policies that expose cross-tenant reads when app context is missing,
-- broad runtime DML grants,
-- unnecessary `PUBLIC EXECUTE` on functions.
+- broad runtime DML grants.
 
-The recommended approach is to apply the small phase 1 migration above, then do a second least-privilege pass after mapping actual runtime SQL usage.
+The recommended approach is to update the bootstrap-dependent code paths, apply the bootstrap-policy migration above, then do a least-privilege pass after mapping actual runtime SQL usage.
