@@ -95,10 +95,7 @@ curl -s -o /dev/null -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
     \"external_user_id\": \"$USER_ID\",
     \"provider\": \"$PROVIDER\",
     \"subscription_id\": \"$PRODUCT_ID\",
-    \"reason\": \"test-net-03-setup\",
-    \"product_type\": \"subscription\",
-    \"amount_cents\": 0,
-    \"transaction_id\": \"test-reg-03-$(date +%s)\"
+    \"reason\": \"test-net-03-setup\"
   }"
 
 curl -s -o /dev/null -X POST \

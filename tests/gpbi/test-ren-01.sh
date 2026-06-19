@@ -217,10 +217,7 @@ REGISTER_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/api/v1/purchas
       \"external_user_id\": \"$USER_ID\",
       \"provider\": \"$PROVIDER\",
       \"subscription_id\": \"$PRODUCT_ID\",
-      \"reason\": \"ren-01-setup\",
-      \"product_type\": \"subscription\",
-      \"amount_cents\": 0,
-      \"transaction_id\": \"$TEST_RUN_ID\"
+      \"reason\": \"ren-01-setup\"
     }")
 REGISTER_HTTP=$(echo "$REGISTER_RESPONSE" | tail -n1)
 if [[ "$REGISTER_HTTP" != "200" && "$REGISTER_HTTP" != "201" && "$REGISTER_HTTP" != "204" ]]; then

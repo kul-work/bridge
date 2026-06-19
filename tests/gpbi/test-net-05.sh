@@ -54,10 +54,7 @@ curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
     \"external_user_id\": \"$USER_ID\",
     \"provider\": \"$PROVIDER\",
     \"subscription_id\": \"$PRODUCT_ID\",
-    \"reason\": \"test-net-05\",
-    \"product_type\": \"subscription\",
-    \"amount_cents\": 0,
-    \"transaction_id\": \"$TEST_RUN_ID\"
+    \"reason\": \"test-net-05\"
   }" > /dev/null
 
 # Verify purchase (this triggers the asynchronous webhook forwarding)

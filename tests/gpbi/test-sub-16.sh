@@ -87,10 +87,7 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"external_user_id\": \"$USER_ID\",
     \"provider\": \"$PROVIDER\",
     \"subscription_id\": \"$PRODUCT_ID\",
-    \"reason\": \"test-resub-16\",
-    \"product_type\": \"subscription\",
-    \"amount_cents\": 0,
-    \"transaction_id\": \"$TEST_RUN_ID\"
+    \"reason\": \"test-resub-16\"
   }" )
 
 # Verify purchase with NEW token and mock header for linked token

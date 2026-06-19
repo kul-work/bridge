@@ -78,10 +78,7 @@ curl -s -o /dev/null -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
     \"external_user_id\": \"$USER_ID\",
     \"provider\": \"$PROVIDER\",
     \"subscription_id\": \"$PRODUCT_ID\",
-    \"reason\": \"test-notif-01-setup\",
-    \"product_type\": \"subscription\",
-    \"amount_cents\": 0,
-    \"transaction_id\": \"test-notif-01-reg-$TEST_RUN_ID\"
+    \"reason\": \"test-notif-01-setup\"
   }"
 
 curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \

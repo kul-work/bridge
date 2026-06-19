@@ -82,10 +82,7 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"external_user_id\": \"$USER_ID\",
     \"provider\": \"$PROVIDER\",
     \"subscription_id\": \"$PRODUCT_ID\",
-    \"reason\": \"test-price-change-setup-20\",
-    \"product_type\": \"subscription\",
-    \"amount_cents\": 499,
-    \"transaction_id\": \"$TEST_RUN_ID\"
+    \"reason\": \"test-price-change-setup-20\"
   }" )
 
 # Verify purchase

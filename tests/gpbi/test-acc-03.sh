@@ -81,10 +81,7 @@ REGISTER_HTTP_CODE_A=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_A
     \"external_user_id\": \"$USER_A_ID\",
     \"provider\": \"$PROVIDER\",
     \"subscription_id\": \"$PRODUCT_ID\",
-    \"reason\": \"test-acc-03-user-a\",
-    \"product_type\": \"subscription\",
-    \"amount_cents\": 0,
-    \"transaction_id\": \"test-acc-03-user-a-$TEST_RUN_ID\"
+    \"reason\": \"test-acc-03-user-a\"
   }")
 
 echo "  Register response code: $REGISTER_HTTP_CODE_A"
