@@ -51,8 +51,11 @@ cp .env.sample .env
 Set at minimum:
 ```env
 # Database configuration
-DATABASE_URL=postgresql://user:password@localhost/appgen
+DATABASE_URL=postgresql://bridge_app:password@localhost/appgen
+ADMIN_DATABASE_URL=postgresql://bridge_admin:password@localhost/appgen
 ```
+
+`DATABASE_URL` is the runtime app role. `ADMIN_DATABASE_URL` is required in production so startup migrations run with the admin role instead of the least-privilege runtime role.
 
 ### 2. Run Database Migrations
 

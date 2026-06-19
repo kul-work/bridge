@@ -13,8 +13,8 @@ Bridge should not use app-specific provider env vars such as `CREEM_API_KEY` or 
 
 ### Core App
 
-- `DATABASE_URL` (default: `postgresql://localhost/bridge`) - Runtime PostgreSQL connection string.
-- `ADMIN_DATABASE_URL` (default: unset) - Optional elevated PostgreSQL connection string used only to run migrations at startup. When unset, migrations run with `DATABASE_URL`.
+- `DATABASE_URL` (default: `postgresql://localhost/bridge`) - Runtime PostgreSQL connection string. In production this should use the least-privilege `bridge_app` role.
+- `ADMIN_DATABASE_URL` (default: unset) - Elevated PostgreSQL connection string used only to run migrations at startup. Required in production and in any environment where the runtime role is hardened, because `bridge_app` must not own migration-table or schema-change privileges. When unset, migrations run with `DATABASE_URL`; keep that fallback for local development only.
 - `SERVER_ADDR` (default: `0.0.0.0`) - Bind address.
 - `PORT` (default: `3000`) - Bind port. Must parse as `u16`.
 - `LOGGING_LEVEL` (default: `info`) - Loaded into `Config`, but current tracing setup is controlled by `RUST_LOG`/default filters.
