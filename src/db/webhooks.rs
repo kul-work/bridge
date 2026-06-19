@@ -63,7 +63,7 @@ async fn begin_app_tx<'a>(
 }
 
 async fn get_webhook_provider_app_id(pool: &PgPool, webhook_id: Uuid) -> Result<Uuid, BridgeError> {
-    sqlx::query_scalar("SELECT app_id FROM pay.webhook_provider WHERE id = $1")
+    sqlx::query_scalar("SELECT pay.get_webhook_provider_app_id_bootstrap($1)")
         .bind(webhook_id)
         .fetch_optional(pool)
         .await
@@ -72,7 +72,7 @@ async fn get_webhook_provider_app_id(pool: &PgPool, webhook_id: Uuid) -> Result<
 }
 
 async fn get_webhook_delivery_app_id(pool: &PgPool, delivery_id: Uuid) -> Result<Uuid, BridgeError> {
-    sqlx::query_scalar("SELECT app_id FROM pay.webhook_delivery WHERE id = $1")
+    sqlx::query_scalar("SELECT pay.get_webhook_delivery_app_id_bootstrap($1)")
         .bind(delivery_id)
         .fetch_optional(pool)
         .await
@@ -83,7 +83,7 @@ async fn get_webhook_delivery_app_id(pool: &PgPool, delivery_id: Uuid) -> Result
 /// Get webhook provider by ID
 pub async fn get_webhook_provider(pool: &PgPool, id: Uuid) -> Result<WebhookProvider, BridgeError> {
     sqlx::query_as::<_, WebhookProvider>(
-        "SELECT * FROM pay.webhook_provider WHERE id = $1"
+        "SELECT * FROM pay.get_webhook_provider_bootstrap($1)"
     )
     .bind(id)
     .fetch_optional(pool)
@@ -138,7 +138,7 @@ pub async fn mark_webhook_processed(
 /// Get webhook delivery by ID
 pub async fn get_webhook_delivery(pool: &PgPool, id: Uuid) -> Result<WebhookDelivery, BridgeError> {
     sqlx::query_as::<_, WebhookDelivery>(
-        "SELECT * FROM pay.webhook_delivery WHERE id = $1"
+        "SELECT * FROM pay.get_webhook_delivery_bootstrap($1)"
     )
     .bind(id)
     .fetch_optional(pool)
@@ -152,11 +152,7 @@ pub async fn webhook_delivery_exists(
     webhook_provider_id: Uuid,
 ) -> Result<bool, BridgeError> {
     sqlx::query_scalar(
-        "SELECT EXISTS(
-             SELECT 1
-             FROM pay.webhook_delivery
-             WHERE webhook_provider_id = $1
-         )"
+        "SELECT pay.webhook_delivery_exists_bootstrap($1)"
     )
     .bind(webhook_provider_id)
     .fetch_one(pool)
@@ -169,7 +165,9 @@ pub async fn list_pending_webhook_deliveries(
     app_id: Uuid,
     limit: i64,
 ) -> Result<Vec<WebhookDelivery>, BridgeError> {
-    sqlx::query_as::<_, WebhookDelivery>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let deliveries = sqlx::query_as::<_, WebhookDelivery>(
         "SELECT * FROM pay.webhook_delivery
          WHERE app_id = $1 AND forwarded = false AND dead_lettered = false AND forward_attempts < 3
          ORDER BY created_at ASC
@@ -177,9 +175,13 @@ pub async fn list_pending_webhook_deliveries(
     )
     .bind(app_id)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(deliveries)
 }
 
 /// Update webhook delivery after forward attempt
@@ -238,6 +240,8 @@ pub async fn list_app_webhooks(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<(WebhookDelivery, WebhookProvider)>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
     // Get deliveries first
     let deliveries = sqlx::query_as::<_, WebhookDelivery>(
         "SELECT * FROM pay.webhook_delivery 
@@ -248,31 +252,46 @@ pub async fn list_app_webhooks(
     .bind(app_id)
     .bind(limit)
     .bind(offset)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     // For each delivery, get the provider webhook
     let mut results = Vec::new();
     for delivery in deliveries {
-        if let Ok(provider) = get_webhook_provider(pool, delivery.webhook_provider_id).await {
+        let provider = sqlx::query_as::<_, WebhookProvider>(
+            "SELECT * FROM pay.webhook_provider WHERE id = $1"
+        )
+        .bind(delivery.webhook_provider_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+        if let Some(provider) = provider {
             results.push((delivery, provider));
         }
     }
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(results)
 }
 
 /// Count failed webhook deliveries for app
 pub async fn count_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM pay.webhook_delivery 
          WHERE app_id = $1 AND (forwarded = false OR last_http_status >= 400)"
     )
     .bind(app_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
     Ok(count.0)
 }
 
@@ -291,7 +310,9 @@ pub async fn list_user_webhook_records(
     subscription_ids: &[String],
     purchase_tokens: &[String],
 ) -> Result<Vec<WebhookRecord>, BridgeError> {
-    sqlx::query_as::<_, WebhookRecord>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let records = sqlx::query_as::<_, WebhookRecord>(
         "SELECT provider, event_type, payload, created_at
          FROM pay.webhook_provider
          WHERE app_id = $1
@@ -301,9 +322,13 @@ pub async fn list_user_webhook_records(
     .bind(app_id)
     .bind(subscription_ids)
     .bind(purchase_tokens)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(records)
 }
 
 /// Create webhook provider record (idempotent via unique index)

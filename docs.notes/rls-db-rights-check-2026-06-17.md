@@ -180,14 +180,6 @@ DROP POLICY IF EXISTS tenant_isolation_webhook_delivery_bootstrap_select
 ON pay.webhook_delivery;
 ```
 
-### Finding 3 — Runtime role has broad DML on all objects
-
-Severity: medium hardening issue.
-
-`bridge_app` has broad table privileges, including on `apps` and `v_data_retention_stats`.
-
-Recommended fix: map actual runtime SQL operations and reduce grants table-by-table. Do this as a separate phase to avoid breaking live flows blindly.
-
 ### Finding 5 — Admin and inspection roles bypass RLS
 
 Severity: expected but sensitive.
