@@ -11,8 +11,8 @@ use crate::{
 
 #[async_trait]
 impl SchedulerRepository for db::Database {
-    async fn list_enabled_apps(&self) -> Result<Vec<crate::db::apps::App>, BridgeError> {
-        db::apps::list_enabled_apps(self.pool()).await
+    async fn list_enabled_app_ids(&self) -> Result<Vec<Uuid>, BridgeError> {
+        db::apps::list_enabled_app_ids(self.pool()).await
     }
 
     async fn list_pending_webhook_deliveries(

@@ -36,9 +36,15 @@ pub(super) struct EventContext<'a> {
 }
 
 pub(super) enum EventHandling {
-    Handled(EventEffects),
+    Handled(Box<EventEffects>),
     ReturnNone,
     NotHandled,
+}
+
+impl EventHandling {
+    pub(super) fn handled(effects: EventEffects) -> Self {
+        Self::Handled(Box::new(effects))
+    }
 }
 
 pub(super) struct EventEffects {
@@ -365,7 +371,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
     match ctx.canonical_event {
         "subscription.activated" | "subscription.renewed" | "subscription.recovered" | "subscription.created" => {
             let Some(user_id) = ctx.external_user_id.as_deref() else {
-                return Ok(EventHandling::Handled(EventEffects::default()));
+                return Ok(EventHandling::handled(EventEffects::default()));
             };
 
             let period_end = ctx.fields.current_period_end.as_deref()
@@ -444,7 +450,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     .await;
             }
 
-            Ok(EventHandling::Handled(EventEffects {
+            Ok(EventHandling::handled(EventEffects {
                 callback_event_type: Some("subscription.activated".to_string()),
                 callback_status_override: Some(subscription_status),
                 canonical_subscription: Some(subscription),
@@ -471,7 +477,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 }
             }
 
-            Ok(EventHandling::Handled(EventEffects {
+            Ok(EventHandling::handled(EventEffects {
                 should_forward: false,
                 ..Default::default()
             }))
@@ -479,7 +485,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
 
         "subscription.trial_started" => {
             let Some(user_id) = ctx.external_user_id.as_deref() else {
-                return Ok(EventHandling::Handled(EventEffects::default()));
+                return Ok(EventHandling::handled(EventEffects::default()));
             };
 
             let period_end = ctx.fields.current_period_end.as_deref()
@@ -517,7 +523,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 return Ok(EventHandling::ReturnNone);
             };
 
-            Ok(EventHandling::Handled(EventEffects {
+            Ok(EventHandling::handled(EventEffects {
                 callback_event_type: Some("subscription.activated".to_string()),
                 callback_status_override: Some("trial".to_string()),
                 canonical_subscription: Some(subscription),
@@ -541,7 +547,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 ).await?;
 
                 if let Some(sub) = updated {
-                    return Ok(EventHandling::Handled(EventEffects {
+                    return Ok(EventHandling::handled(EventEffects {
                         callback_event_type: Some("subscription.grace_period".to_string()),
                         callback_status_override: Some("past_due".to_string()),
                         canonical_subscription: Some(sub.into()),
@@ -553,7 +559,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 return Ok(EventHandling::ReturnNone);
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.revoked" => {
@@ -569,9 +575,9 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     return Ok(EventHandling::ReturnNone);
                 };
 
-                return Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)));
+                return Ok(EventHandling::handled(effects_from_google_lifecycle_outcome(outcome)));
             }
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.on_hold" => {
@@ -589,7 +595,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 ).await?;
 
                 if let Some(sub) = updated {
-                    return Ok(EventHandling::Handled(EventEffects {
+                    return Ok(EventHandling::handled(EventEffects {
                         callback_event_type: Some("subscription.on_hold".to_string()),
                         callback_status_override: Some("on_hold".to_string()),
                         canonical_subscription: Some(sub.into()),
@@ -601,7 +607,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 return Ok(EventHandling::ReturnNone);
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.paused" => {
@@ -620,7 +626,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
 
                         if let Some(updated_sub) = updated {
                             send_paused_email(ctx, &sub_id).await;
-                            return Ok(EventHandling::Handled(EventEffects {
+                            return Ok(EventHandling::handled(EventEffects {
                                 callback_event_type: Some("subscription.paused".to_string()),
                                 callback_status_override: Some("paused".to_string()),
                                 canonical_subscription: Some(updated_sub.into()),
@@ -640,7 +646,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 }
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.resumed" => {
@@ -664,10 +670,10 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     }
                 }
 
-                return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
+                return Ok(EventHandling::handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.cancellation_scheduled" => {
@@ -681,10 +687,10 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     ctx.timestamp_epoch_ms,
                 ).await?;
 
-                return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
+                return Ok(EventHandling::handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.expired" => {
@@ -701,7 +707,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         ).await?;
 
                         if let Some(updated_sub) = updated {
-                            return Ok(EventHandling::Handled(EventEffects {
+                            return Ok(EventHandling::handled(EventEffects {
                                 callback_event_type: Some("subscription.expired".to_string()),
                                 callback_status_override: Some("expired".to_string()),
                                 canonical_subscription: Some(updated_sub.into()),
@@ -720,7 +726,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         ).await?;
 
                         if let Some(updated_sub) = updated {
-                            return Ok(EventHandling::Handled(EventEffects {
+                            return Ok(EventHandling::handled(EventEffects {
                                 callback_event_type: Some("subscription.expired".to_string()),
                                 callback_status_override: Some("expired".to_string()),
                                 canonical_subscription: Some(updated_sub.into()),
@@ -743,7 +749,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     ).await?;
 
                     if let Some(updated_sub) = updated {
-                        return Ok(EventHandling::Handled(EventEffects {
+                        return Ok(EventHandling::handled(EventEffects {
                             callback_event_type: Some("subscription.expired".to_string()),
                             callback_status_override: Some("expired".to_string()),
                             canonical_subscription: Some(updated_sub.into()),
@@ -756,7 +762,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 }
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.cancelled" => {
@@ -770,10 +776,10 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     ctx.timestamp_epoch_ms,
                 ).await?;
 
-                return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
+                return Ok(EventHandling::handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.pending_purchase_cancelled" => {
@@ -789,10 +795,10 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     return Ok(EventHandling::ReturnNone);
                 };
 
-                return Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)));
+                return Ok(EventHandling::handled(effects_from_google_lifecycle_outcome(outcome)));
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.updated" => {
@@ -826,7 +832,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     return Ok(EventHandling::ReturnNone);
                 };
 
-                return Ok(EventHandling::Handled(EventEffects {
+                return Ok(EventHandling::handled(EventEffects {
                     callback_event_type: status_to_canonical_event(&status),
                     callback_status_override: Some(status),
                     canonical_subscription: Some(subscription),
@@ -834,7 +840,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 }));
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.price_step_up" => {
@@ -854,10 +860,10 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     }
                 }
 
-                return Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
+                return Ok(EventHandling::handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()));
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.pause_scheduled" => {
@@ -880,7 +886,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         ).await?;
 
                         if let Some(updated_sub) = updated {
-                            return Ok(EventHandling::Handled(EventEffects {
+                            return Ok(EventHandling::handled(EventEffects {
                                 callback_status_override: Some("active".to_string()),
                                 canonical_subscription: Some(updated_sub.into()),
                                 ..Default::default()
@@ -892,7 +898,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 }
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.deferred" => {
@@ -915,7 +921,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
 
                         if let Some(updated_sub) = updated {
                             send_deferred_email(ctx, sub_id, until).await;
-                            return Ok(EventHandling::Handled(EventEffects {
+                            return Ok(EventHandling::handled(EventEffects {
                                 canonical_subscription: Some(updated_sub.into()),
                                 ..Default::default()
                             }));
@@ -926,7 +932,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 }
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.price_changed" => {
@@ -966,7 +972,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     .await;
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.price_change_updated" => {
@@ -995,7 +1001,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 ).await?;
 
                 if let Some(updated_sub) = updated {
-                    return Ok(EventHandling::Handled(EventEffects {
+                    return Ok(EventHandling::handled(EventEffects {
                         callback_event_type: Some("subscription.price_change_updated".to_string()),
                         callback_status_override: Some(updated_sub.status.clone()),
                         canonical_subscription: Some(updated_sub.into()),
@@ -1007,7 +1013,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 return Ok(EventHandling::ReturnNone);
             }
 
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         "subscription.expired_voided" => {
@@ -1016,7 +1022,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 ctx.canonical_event,
                 ctx.webhook.provider
             );
-            Ok(EventHandling::Handled(EventEffects::default()))
+            Ok(EventHandling::handled(EventEffects::default()))
         }
 
         _ => Ok(EventHandling::NotHandled),
@@ -1047,7 +1053,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 .await?;
             }
 
-            Ok(EventHandling::Handled(EventEffects {
+            Ok(EventHandling::handled(EventEffects {
                 callback_event_type: Some("payment.pending".to_string()),
                 callback_status_override: Some("pending".to_string()),
                 ..Default::default()
@@ -1077,7 +1083,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 .await?;
 
                 if sub_id.is_empty() {
-                    return Ok(EventHandling::Handled(EventEffects {
+                    return Ok(EventHandling::handled(EventEffects {
                         callback_event_type: Some("payment.failed".to_string()),
                         callback_status_override: Some("failed".to_string()),
                         ..Default::default()
@@ -1091,7 +1097,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                         sub_id,
                         user_id
                     );
-                    return Ok(EventHandling::Handled(EventEffects {
+                    return Ok(EventHandling::handled(EventEffects {
                         callback_event_type: Some("payment.failed".to_string()),
                         callback_status_override: Some("failed".to_string()),
                         ..Default::default()
@@ -1114,7 +1120,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                         "Skipping stale order.failed update for subscription {}",
                         sub_id
                     );
-                    return Ok(EventHandling::Handled(EventEffects {
+                    return Ok(EventHandling::handled(EventEffects {
                         callback_event_type: Some("payment.failed".to_string()),
                         callback_status_override: Some("failed".to_string()),
                         ..Default::default()
@@ -1123,7 +1129,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
 
                 send_payment_failed_email(ctx, sub_id).await;
 
-                return Ok(EventHandling::Handled(EventEffects {
+                return Ok(EventHandling::handled(EventEffects {
                     callback_event_type: Some("payment.failed".to_string()),
                     callback_status_override: Some("failed".to_string()),
                     canonical_subscription: Some(updated_sub.into()),
@@ -1131,7 +1137,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 }));
             }
 
-            Ok(EventHandling::Handled(EventEffects {
+            Ok(EventHandling::handled(EventEffects {
                 callback_event_type: Some("payment.failed".to_string()),
                 callback_status_override: Some("failed".to_string()),
                 ..Default::default()
@@ -1152,7 +1158,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 acknowledge_google_play_one_time_from_webhook(repo, ctx).await?;
             }
 
-            Ok(EventHandling::Handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()))
+            Ok(EventHandling::handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()))
         }
 
         "purchase.one_time_cancelled" => {
@@ -1167,7 +1173,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 return Ok(EventHandling::ReturnNone);
             };
 
-            Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)))
+            Ok(EventHandling::handled(effects_from_google_lifecycle_outcome(outcome)))
         }
 
         "purchase.one_time_refunded" => {
@@ -1182,7 +1188,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 return Ok(EventHandling::ReturnNone);
             };
 
-            Ok(EventHandling::Handled(effects_from_google_lifecycle_outcome(outcome)))
+            Ok(EventHandling::handled(effects_from_google_lifecycle_outcome(outcome)))
         }
 
         "payment.refunded" => {
@@ -1226,7 +1232,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                         ).await?;
                         if let Some(updated_sub) = updated {
                             send_refunded_email(ctx, &sub.subscription_id).await;
-                            return Ok(EventHandling::Handled(EventEffects {
+                            return Ok(EventHandling::handled(EventEffects {
                                 callback_event_type: Some("payment.refunded".to_string()),
                                 callback_status_override: Some("refunded".to_string()),
                                 canonical_subscription: Some(updated_sub.into()),
@@ -1254,7 +1260,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     ).await?;
                     if let Some(_updated_sub) = updated {
                         send_refunded_email(ctx, sub_id).await;
-                        return Ok(EventHandling::Handled(EventEffects {
+                        return Ok(EventHandling::handled(EventEffects {
                             callback_event_type: Some("payment.refunded".to_string()),
                             callback_status_override: Some("refunded".to_string()),
                             canonical_subscription: Some(_updated_sub.into()),
@@ -1264,7 +1270,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 }
             }
 
-            Ok(EventHandling::Handled(EventEffects {
+            Ok(EventHandling::handled(EventEffects {
                 callback_event_type: Some("payment.refunded".to_string()),
                 callback_status_override: Some("refunded".to_string()),
                 ..Default::default()
@@ -1288,7 +1294,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 }
             }
 
-            Ok(EventHandling::Handled(EventEffects {
+            Ok(EventHandling::handled(EventEffects {
                 callback_event_type: Some("payment.partially_refunded".to_string()),
                 callback_status_override: Some("partially_refunded".to_string()),
                 ..Default::default()
@@ -1322,7 +1328,7 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 .await?;
             }
 
-            Ok(EventHandling::Handled(EventEffects {
+            Ok(EventHandling::handled(EventEffects {
                 callback_event_type: Some("dispute.created".to_string()),
                 ..Default::default()
             }))

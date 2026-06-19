@@ -754,11 +754,8 @@ fn consistent_line_item_currency(line_items: &[serde_json::Value]) -> Option<Str
     let mut currency: Option<String> = None;
 
     for line_item in line_items {
-        let Some(line_currency) = line_item["total"]["currencyCode"].as_str()
-            .filter(|value| !value.is_empty())
-        else {
-            return None;
-        };
+        let line_currency = line_item["total"]["currencyCode"].as_str()
+            .filter(|value| !value.is_empty())?;
 
         match currency.as_deref() {
             Some(existing) if existing != line_currency => return None,

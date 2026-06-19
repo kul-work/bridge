@@ -44,11 +44,8 @@ pub async fn authenticate_api_key(
     }
 
     let candidates = sqlx::query_as::<_, ApiKeyCandidate>(
-        "SELECT k.id, k.app_id, k.key_hash, a.enabled AS app_enabled
-         FROM pay.api_keys k
-         JOIN pay.apps a ON a.id = k.app_id
-         WHERE k.enabled = true
-           AND k.key_prefix = $1",
+        "SELECT id, app_id, key_hash, app_enabled
+         FROM pay.get_api_key_auth_candidates_bootstrap($1)",
     )
     .bind(&key_prefix)
     .fetch_all(pool)

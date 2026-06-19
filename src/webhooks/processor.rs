@@ -325,15 +325,17 @@ fn google_subscription_recurring_currency(
         .and_then(|money| money.currency_code.clone())
 }
 
-fn google_subscription_pending_price_change(
-    resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
-) -> (
+type GooglePendingPriceChange = (
     Option<i64>,
     Option<String>,
     Option<String>,
     Option<String>,
     Option<String>,
-) {
+);
+
+fn google_subscription_pending_price_change(
+    resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
+) -> GooglePendingPriceChange {
     let details = resource
         .line_items
         .first()
@@ -1100,7 +1102,7 @@ pub async fn process_webhook(
 
     match handling {
         EventHandling::Handled(effects) => apply_event_effects(
-            effects,
+            *effects,
             &mut callback_event_type,
             &mut callback_status_override,
             &mut callback_revocation_reason_override,

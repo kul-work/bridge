@@ -1,4 +1,5 @@
 use crate::error::BridgeError;
+use crate::db::database::set_local_app_id;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, FromRow};
 use uuid::Uuid;
@@ -19,29 +20,42 @@ pub struct App {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct AppSummary {
+    pub id: Uuid,
+    pub slug: String,
+    pub display_name: String,
+    pub app_url: Option<String>,
+}
+
 pub async fn get_app(pool: &PgPool, app_id: Uuid) -> Result<App, BridgeError> {
-    sqlx::query_as::<_, App>(
+    let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    set_local_app_id(&mut tx, app_id).await?;
+
+    let app = sqlx::query_as::<_, App>(
         "SELECT * FROM pay.apps WHERE id = $1"
     )
     .bind(app_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?
-    .ok_or_else(|| BridgeError::ValidationError("App not found".to_string()))
+    .ok_or_else(|| BridgeError::ValidationError("App not found".to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(app)
 }
 
-pub async fn list_enabled_apps(pool: &PgPool) -> Result<Vec<App>, BridgeError> {
-    sqlx::query_as::<_, App>(
-        "SELECT * FROM pay.apps WHERE enabled = true"
-    )
+pub async fn list_enabled_app_ids(pool: &PgPool) -> Result<Vec<Uuid>, BridgeError> {
+    sqlx::query_scalar("SELECT id FROM pay.list_enabled_app_ids_bootstrap()")
     .fetch_all(pool)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
-pub async fn list_apps(pool: &PgPool) -> Result<Vec<App>, BridgeError> {
-    sqlx::query_as::<_, App>(
-        "SELECT * FROM pay.apps ORDER BY display_name"
+pub async fn list_app_summaries(pool: &PgPool) -> Result<Vec<AppSummary>, BridgeError> {
+    sqlx::query_as::<_, AppSummary>(
+        "SELECT id, slug, display_name, app_url FROM pay.list_app_summaries_bootstrap()"
     )
     .fetch_all(pool)
     .await
@@ -49,10 +63,9 @@ pub async fn list_apps(pool: &PgPool) -> Result<Vec<App>, BridgeError> {
 }
 
 /// Get app by webhook ingress token
-/// TODO: Used by webhook ingress handlers (not yet implemented) to map incoming webhooks to apps.
 pub async fn get_app_by_webhook_token(pool: &PgPool, token: Uuid) -> Result<App, BridgeError> {
     sqlx::query_as::<_, App>(
-        "SELECT * FROM pay.apps WHERE webhook_ingress_token = $1 AND enabled = true"
+        "SELECT * FROM pay.get_app_by_webhook_token_bootstrap($1)"
     )
     .bind(token)
     .fetch_optional(pool)

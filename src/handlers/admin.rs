@@ -25,7 +25,7 @@ pub async fn list_apps(
     State(state): State<AppState>,
 ) -> Result<axum::Json<Vec<AppSummary>>, BridgeError> {
     let database = state.database();
-    let apps = database.as_ref().list_apps().await?;
+    let apps = database.as_ref().list_app_summaries().await?;
 
     let mut summaries = Vec::new();
     for app in apps {

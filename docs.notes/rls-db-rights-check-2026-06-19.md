@@ -1,8 +1,8 @@
-﻿# RLS & DB Rights Audit - 2026-06-19
+# RLS & DB Rights Audit - 2026-06-19
 
 Scope: Bridge `pay` schema in the local `appgen` database from `.env`, checked against the current Bridge code and migrations.
 
-This is not a Railway/production audit. This note lists only currently open, production-relevant issues. Fixed, invalid, and dev-only findings are intentionally omitted.
+This note previously tracked open, production-relevant RLS/runtime-rights issues. The RLS hardening pass is now implemented in migrations `96` and `97`, with the matching Rust access-layer changes.
 
 ## Audit Target
 
@@ -17,79 +17,42 @@ Relevant applied migrations:
 
 - `94` - `harden bridge app privileges`
 - `95` - `harden bootstrap select policies`
+- `96` - `harden runtime rls privileges`
+- `97` - `force rls on apps`
+- `98` - `harden retention cleanup functions`
 
 ## Current Findings
 
-### Critical - `apps` Has No RLS And Stores Tenant Secrets
+No open production-relevant RLS findings remain from this audit.
 
-`pay.apps` holds `webhook_callback_secret` and `webhook_ingress_token`, but RLS is disabled and `bridge_app` has broad access.
+## Closed Items
 
-Risk:
+### `apps` RLS And Runtime Rights
 
-- `bridge_app` can read every tenant's webhook credentials.
-- Those credentials are enough to forge callbacks or inject fake provider webhooks across apps.
-- Runtime write access is also too broad; app provisioning should stay admin-owned.
+Closed by migrations `96` and `97` plus Rust access-layer changes.
 
-Fix:
+- `pay.apps` now has RLS enabled.
+- `pay.apps` now has `FORCE ROW LEVEL SECURITY`.
+- `bridge_app` has `SELECT` only on `pay.apps`; no runtime `INSERT`, `UPDATE`, or `DELETE`.
+- Normal app lookup now runs in a transaction after `bridge.current_app_id` is set.
+- Webhook-token bootstrap lookup uses `pay.get_app_by_webhook_token_bootstrap(...)`.
 
-```sql
-ALTER TABLE pay.apps ENABLE ROW LEVEL SECURITY;
+### `api_keys` Broad Bootstrap Policy
 
-CREATE POLICY tenant_isolation_apps_bootstrap_select ON pay.apps
-    FOR SELECT
-    TO bridge_app
-    USING (pay.current_app_id() IS NULL OR id = pay.current_app_id());
+Closed by migration `96` plus Rust access-layer changes.
 
-REVOKE INSERT, UPDATE, DELETE ON pay.apps FROM bridge_app;
-```
+- `tenant_isolation_api_keys_bootstrap_select` is dropped.
+- API-key auth now calls `pay.get_api_key_auth_candidates_bootstrap(key_prefix)`.
+- Hash verification still happens in Rust.
+- `last_used_at` is updated inside an app-scoped transaction.
 
-Keep only the runtime access that is actually needed for app/bootstrap lookup.
+### RLS Not Forced On Tenant Tables
 
-### High - `api_keys` Bootstrap Policy Still Reads All Keys When Context Is Unset
+Closed by migrations `96` and `97`.
 
-`tenant_isolation_api_keys_bootstrap_select` uses:
+`FORCE ROW LEVEL SECURITY` is enabled for:
 
-```sql
-pay.current_app_id() IS NULL OR app_id = pay.current_app_id()
-```
-
-That is needed for initial API-key authentication, but it means any direct pool query to `api_keys` without tenant context sees all app keys.
-
-Fix: replace the blanket bootstrap policy with a narrow `SECURITY DEFINER` lookup function that returns only the columns needed for authentication by key hash. This should follow the same pattern as migration `95`'s webhook bootstrap helpers.
-
-### High - RLS Is Not Forced On Tenant Tables
-
-`relforcerowsecurity = false` on the RLS-enabled tenant tables. Runtime is not the owner today, so this is not an active tenant leak, but `FORCE ROW LEVEL SECURITY` prevents a future owner change from silently bypassing RLS.
-
-Fix:
-
-```sql
-ALTER TABLE pay.api_keys FORCE ROW LEVEL SECURITY;
-ALTER TABLE pay.checkout_idempotency FORCE ROW LEVEL SECURITY;
-ALTER TABLE pay.fraud_prevention FORCE ROW LEVEL SECURITY;
-ALTER TABLE pay.payments FORCE ROW LEVEL SECURITY;
-ALTER TABLE pay.provider_configs FORCE ROW LEVEL SECURITY;
-ALTER TABLE pay.subscriptions FORCE ROW LEVEL SECURITY;
-ALTER TABLE pay.webhook_delivery FORCE ROW LEVEL SECURITY;
-ALTER TABLE pay.webhook_provider FORCE ROW LEVEL SECURITY;
-```
-
-### Medium - `v_data_retention_stats` Bypasses Tenant Semantics
-
-`pay.v_data_retention_stats` aggregates `webhook_provider` and `fraud_prevention` without an `app_id` filter. `bridge_app` can read cross-tenant counts/dates through the view even though the base tables are RLS-protected.
-
-Risk is lower because this is aggregate metadata, not raw tenant rows, but it is still a tenancy leak channel.
-
-Fix: either add `WHERE app_id = pay.current_app_id()` to each branch of the view, or revoke `bridge_app` access and keep it admin-only.
-
-### Medium - Remaining Broad Runtime DML Grants
-
-Apart from the separately called-out `apps` and `v_data_retention_stats` issues, `bridge_app` still has broad table privileges on many runtime objects.
-
-This is not the same as the `apps` secret leak and not the same as the view leak. This item is about least-privilege cleanup after mapping actual runtime SQL.
-
-Objects to map and narrow include:
-
+- `pay.apps`
 - `pay.api_keys`
 - `pay.checkout_idempotency`
 - `pay.fraud_prevention`
@@ -99,54 +62,55 @@ Objects to map and narrow include:
 - `pay.webhook_delivery`
 - `pay.webhook_provider`
 
-Fix: map runtime SQL by table and reduce grants table-by-table. Do not blindly revoke until checkout, purchase verification, subscription actions, webhook ingress, forwarding, retry, reconciliation, and admin reads are covered.
+### `v_data_retention_stats` Tenant Leak
 
-### Medium - Default Privileges Reintroduce Broad Runtime Access
+Closed by migration `96`.
 
-Default privileges in schema `pay` still grant broad future access to `bridge_app`.
+- `bridge_app` no longer has `SELECT` on `pay.v_data_retention_stats`.
+- The view remains admin-only unless a future app-scoped replacement is added.
 
-Observed shape:
+### Broad Runtime DML Grants
 
-```text
-future tables:    bridge_app gets SELECT, INSERT, UPDATE, DELETE
-future functions: bridge_app gets EXECUTE
-future sequences: bridge_app gets USAGE / SELECT
-```
+Closed by migration `96`.
 
-Fix: tighten default privileges after deciding how future migrations will grant required runtime access explicitly.
+Current `bridge_app` table grants are intentionally limited to:
 
-### Low/Medium - PUBLIC Database Rights
+- `pay.apps`: `SELECT`
+- `pay.api_keys`: `SELECT`, `UPDATE`
+- `pay.provider_configs`: `SELECT`
+- `pay.checkout_idempotency`: `SELECT`, `INSERT`
+- `pay.payments`: `SELECT`, `INSERT`, `UPDATE`
+- `pay.subscriptions`: `SELECT`, `INSERT`, `UPDATE`, `DELETE`
+- `pay.webhook_provider`: `SELECT`, `INSERT`, `UPDATE`
+- `pay.webhook_delivery`: `SELECT`, `INSERT`, `UPDATE`
+- `pay.fraud_prevention`: `SELECT`, `INSERT`, `UPDATE`
+- `pay.v_data_retention_stats`: no `bridge_app` access
 
-The `appgen` database grants `PUBLIC`:
+Sequence access remains granted where runtime inserts need generated IDs. Runtime retention cleanup uses narrow `SECURITY DEFINER` functions instead of direct `DELETE` grants on `pay.webhook_provider` or `pay.fraud_prevention`.
 
-```text
-CONNECT
-TEMPORARY
-```
+### Default Privileges
 
-This is PostgreSQL's common default. It is not an active tenant RLS leak, but strict production hardening can replace it with explicit grants to known roles.
+Closed for the production migration owner by migration `96`.
 
-## Recommended Action Order
+Future table and function access for `bridge_app` should now be granted explicitly by migrations instead of inherited broadly by default privileges. Local databases that previously ran migrations as another owner, such as `postgres`, can still show old owner-specific default ACLs until rebuilt; that is local drift and is expected to disappear when the DB is recreated with the production migration role.
 
-1. Enable RLS on `apps` and remove runtime write grants there.
-2. Replace the `api_keys` blanket bootstrap policy with a narrow `SECURITY DEFINER` auth lookup.
-3. Force RLS on the tenant tables.
-4. Fix or restrict `v_data_retention_stats`.
-5. Map runtime SQL and reduce remaining broad `bridge_app` table grants.
-6. Tighten default privileges for future objects.
-7. Optionally tighten `PUBLIC CONNECT/TEMPORARY` if all legitimate database roles are known.
+### PUBLIC Database Rights
 
-## Verification Checklist
+No production-relevant RLS finding remains here.
 
-After applying future hardening migrations in another environment, verify:
+The prior note about `PUBLIC CONNECT/TEMPORARY` is general PostgreSQL hardening, not a tenant RLS leak. It was intentionally left out of this RLS pass to avoid changing database-level connectivity semantics without a dedicated role inventory.
 
-```sql
-SELECT tablename, policyname
-FROM pg_policies
-WHERE schemaname = 'pay'
-ORDER BY tablename, policyname;
-```
+## Verification Performed
 
-As `bridge_app` with no app context, tenant data tables should return zero rows except whichever narrow bootstrap lookup is intentionally used for authentication.
+Local verification after applying migrations `96` and `97`:
 
-As `bridge_app` with a valid `bridge.current_app_id`, tenant tables should return only rows for that app.
+- `cargo check` passed.
+- `cargo test` passed: 97 tests.
+- `bridge_app` with no `bridge.current_app_id` saw zero rows from tenant tables.
+- `pay.apps` direct read returned zero rows without app context.
+- No `pay` policies with `bootstrap` in the policy name remain.
+- All listed tenant tables report `relforcerowsecurity = true`.
+- `bridge_app` receives `permission denied` on `pay.v_data_retention_stats`.
+- `pay.get_app_by_webhook_token_bootstrap(...)` returned the expected single row for a valid token.
+- `pay.get_api_key_auth_candidates_bootstrap(...)` returned the expected single candidate for a valid key prefix.
+- `pay.list_enabled_app_ids_bootstrap()` and `pay.list_app_summaries_bootstrap()` returned expected worker/admin rows.

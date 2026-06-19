@@ -52,16 +52,16 @@ pub async fn retry_webhooks(
         + WebhookProcessingRepository
     ),
 ) -> Result<(), crate::error::BridgeError> {
-    let apps_result = SchedulerRepository::list_enabled_apps(repo).await?;
+    let apps_result = SchedulerRepository::list_enabled_app_ids(repo).await?;
 
     // 2. Iterate apps and retry
-    for app in apps_result {
-        let deliveries = match SchedulerRepository::list_pending_webhook_deliveries(repo, app.id, 50).await {
+    for app_id in apps_result {
+        let deliveries = match SchedulerRepository::list_pending_webhook_deliveries(repo, app_id, 50).await {
             Ok(deliveries) => deliveries,
             Err(e) => {
                 error!(
                     "Failed to load pending webhook deliveries for app {}: {}",
-                    app.id,
+                    app_id,
                     e
                 );
                 continue;
@@ -72,14 +72,14 @@ pub async fn retry_webhooks(
             match crate::webhooks::processor::build_canonical_payload(
                 repo,
                 delivery.webhook_provider_id,
-                app.id,
+                app_id,
             )
             .await
             {
                 Ok(Some(canonical)) => {
                     let _ = crate::webhooks::forwarding::forward_webhook(
                         repo,
-                        app.id,
+                        app_id,
                         delivery.id,
                         canonical,
                     ).await;
@@ -107,17 +107,17 @@ pub async fn retry_webhooks(
 async fn retry_google_play_subscription_acknowledgements(
     database: &Database,
 ) -> Result<(), crate::error::BridgeError> {
-    let apps = SchedulerRepository::list_enabled_apps(database).await?;
+    let apps = SchedulerRepository::list_enabled_app_ids(database).await?;
 
-    for app in apps {
-        let provider_config = match database.get_provider_config(app.id, "google_play").await {
+    for app_id in apps {
+        let provider_config = match database.get_provider_config(app_id, "google_play").await {
             Ok(config) => config,
             Err(_) => continue,
         };
 
         let candidates = crate::db::payments::list_google_play_subscription_ack_candidates(
             database.pool(),
-            app.id,
+            app_id,
             50,
         )
         .await?;
@@ -133,7 +133,7 @@ async fn retry_google_play_subscription_acknowledgements(
             {
                 warn!(
                     "Retrying Google Play subscription acknowledgement failed for app {} subscription {} token {}: {}",
-                    app.id,
+                    app_id,
                     candidate.subscription_id,
                     redact_with_prefix(&candidate.purchase_token),
                     err
@@ -143,7 +143,7 @@ async fn retry_google_play_subscription_acknowledgements(
 
             crate::db::payments::mark_payment_acknowledged(
                 database.pool(),
-                app.id,
+                app_id,
                 "google_play",
                 &candidate.purchase_token,
             )
@@ -157,11 +157,11 @@ async fn retry_google_play_subscription_acknowledgements(
 pub async fn reconcile_subscriptions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
     info!("Starting subscription reconciliation job");
     
-    let apps_result = SchedulerRepository::list_enabled_apps(database.as_ref()).await?;
+    let apps_result = SchedulerRepository::list_enabled_app_ids(database.as_ref()).await?;
 
-    for app in apps_result {
-        if let Err(e) = reconcile_app_subscriptions(database.as_ref(), app.id).await {
-            error!("Reconciliation failed for app {}: {}", app.id, e);
+    for app_id in apps_result {
+        if let Err(e) = reconcile_app_subscriptions(database.as_ref(), app_id).await {
+            error!("Reconciliation failed for app {}: {}", app_id, e);
             // Continue with next app, don't fail entire job
         }
     }

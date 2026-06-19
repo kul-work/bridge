@@ -8,7 +8,7 @@ use crate::{
 
 #[async_trait]
 pub trait SchedulerRepository: Send + Sync {
-    async fn list_enabled_apps(&self) -> Result<Vec<crate::db::apps::App>, BridgeError>;
+    async fn list_enabled_app_ids(&self) -> Result<Vec<Uuid>, BridgeError>;
 
     async fn list_pending_webhook_deliveries(
         &self,
