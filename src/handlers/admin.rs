@@ -60,12 +60,13 @@ fn admin_security_headers(csp_nonce: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     let csp = format!(
         "default-src 'self'; \
-         script-src 'self' 'nonce-{0}' https://cdn.jsdelivr.net https://*.clerk.accounts.dev https://*.clerk.com; \
-         style-src 'self' 'nonce-{0}'; \
-         connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://api.clerk.com; \
-         frame-src https://*.clerk.accounts.dev https://*.clerk.com; \
-         img-src 'self' data: https://img.clerk.com https://images.clerk.dev https://*.clerk.com; \
-         font-src 'self' data:; \
+         script-src 'self' 'nonce-{0}' https://cdn.jsdelivr.net https://*.clerk.accounts.dev https://*.clerk.com https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
+         style-src 'self' 'unsafe-inline' https://hcaptcha.com https://*.hcaptcha.com; \
+         connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://api.clerk.com https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
+         frame-src https://*.clerk.accounts.dev https://*.clerk.com https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
+         img-src 'self' data: blob: https://img.clerk.com https://images.clerk.dev https://*.clerk.com https://*.clerk.accounts.dev https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
+         font-src 'self' data: https://*.clerk.com https://*.clerk.accounts.dev; \
+         worker-src 'self' blob:; \
          object-src 'none'; \
          base-uri 'none'; \
          frame-ancestors 'none'",
