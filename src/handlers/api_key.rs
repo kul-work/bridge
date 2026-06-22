@@ -55,7 +55,6 @@ pub async fn verify_expected_app(
     let database = state.database();
     let pool = database.pool();
 
-    // Fetch all app summaries to resolve the expected slug to its ID, bypassing tenant RLS.
     let summaries = sqlx::query!(
         r#"SELECT id, slug FROM pay.list_app_summaries_bootstrap()"#
     )
@@ -68,38 +67,44 @@ pub async fn verify_expected_app(
         .find(|s| s.slug.as_deref() == Some(expected_slug))
         .and_then(|s| s.id);
 
-    // Retrieve full app configuration using RLS-compliant get_app if the slug matches a registered app.
     let expected_app = if let Some(app_id) = expected_app_id {
-        database.as_ref().get_app(app_id).await.ok()
+        Some(database.as_ref().get_app(app_id).await?)
     } else {
         None
     };
 
     let api_key_matches_expected_app = auth.is_valid && Some(auth.app_id) == expected_app_id;
+    let authenticated_app_id = if auth.is_valid { auth.app_id.to_string() } else { "none".to_string() };
+    let authenticated_api_key_id = if auth.is_valid { auth.api_key_id.to_string() } else { "none".to_string() };
+    let expected_app_id_for_log = expected_app_id
+        .map(|app_id| app_id.to_string())
+        .unwrap_or_else(|| "not_found".to_string());
 
     let mut webhook_secret_matches_expected_app = false;
     if let Some(ref app) = expected_app {
-        if let Ok(mut mac) = HmacSha256::new_from_slice(app.webhook_callback_secret.as_bytes()) {
-            let signed_message = format!("{}:{}", webhook_secret_nonce, expected_slug);
-            mac.update(signed_message.as_bytes());
-            webhook_secret_matches_expected_app = mac.verify_slice(&provided_proof_bytes).is_ok();
-        }
+        let mut mac = HmacSha256::new_from_slice(app.webhook_callback_secret.as_bytes())
+            .map_err(|_| BridgeError::InternalServerError("HMAC init failed".to_string()))?;
+        let signed_message = format!("{}:{}", webhook_secret_nonce, expected_slug);
+        mac.update(signed_message.as_bytes());
+        webhook_secret_matches_expected_app = mac.verify_slice(&provided_proof_bytes).is_ok();
     }
 
     if !api_key_matches_expected_app {
         tracing::error!(
-            app_id = %auth.app_id,
-            api_key_id = %auth.api_key_id,
+            authenticated_app_id = %authenticated_app_id,
+            authenticated_api_key_id = %authenticated_api_key_id,
+            expected_app_id = %expected_app_id_for_log,
             expected_slug = %expected_slug,
-            is_valid = %auth.is_valid,
+            api_key_valid = %auth.is_valid,
             "Bridge API key app mismatch or invalid key"
         );
     }
 
     if !webhook_secret_matches_expected_app {
         tracing::error!(
-            app_id = %auth.app_id,
-            api_key_id = %auth.api_key_id,
+            authenticated_app_id = %authenticated_app_id,
+            authenticated_api_key_id = %authenticated_api_key_id,
+            expected_app_id = %expected_app_id_for_log,
             expected_slug = %expected_slug,
             "Bridge webhook callback secret mismatch"
         );
@@ -151,11 +156,11 @@ pub async fn api_key_auth(
                         is_valid: false,
                     });
                     return Ok(next.run(request).await);
-                } else {
-                    return Err(BridgeError::UnauthorizedError(
-                        "Invalid authorization header format".to_string(),
-                    ));
                 }
+
+                return Err(BridgeError::UnauthorizedError(
+                    "Invalid authorization header format".to_string(),
+                ));
             }
             parts[1]
         }
@@ -167,9 +172,9 @@ pub async fn api_key_auth(
                     is_valid: false,
                 });
                 return Ok(next.run(request).await);
-            } else {
-                return Err(BridgeError::UnauthorizedError("Missing authorization header".to_string()));
             }
+
+            return Err(BridgeError::UnauthorizedError("Missing authorization header".to_string()));
         }
     };
 
@@ -182,17 +187,14 @@ pub async fn api_key_auth(
                 is_valid: true,
             });
         }
-        Err(e) => {
-            if is_verify_path {
-                request.extensions_mut().insert(AppAuth {
-                    app_id: Uuid::nil(),
-                    api_key_id: Uuid::nil(),
-                    is_valid: false,
-                });
-            } else {
-                return Err(e);
-            }
+        Err(BridgeError::UnauthorizedError(_)) if is_verify_path => {
+            request.extensions_mut().insert(AppAuth {
+                app_id: Uuid::nil(),
+                api_key_id: Uuid::nil(),
+                is_valid: false,
+            });
         }
+        Err(e) => return Err(e),
     }
 
     Ok(next.run(request).await)
@@ -266,7 +268,6 @@ mod tests {
 
         let state = AppState::new(Arc::new(database));
 
-        // Case 1: API key is invalid (is_valid: false), but webhook secret proof matches the expected app (which is valid in database).
         let auth = AppAuth {
             app_id: Uuid::nil(),
             api_key_id: Uuid::nil(),
@@ -317,7 +318,6 @@ mod tests {
 
         let state = AppState::new(Arc::new(database));
 
-        // Case 2: Both API key is invalid (is_valid: false) and webhook secret proof is incorrect.
         let auth = AppAuth {
             app_id: Uuid::nil(),
             api_key_id: Uuid::nil(),
