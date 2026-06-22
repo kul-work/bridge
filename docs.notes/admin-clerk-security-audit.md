@@ -8,12 +8,14 @@ Scope: admin area and Clerk-backed admin API changes introduced after the baseli
 
 The admin page being public is not the main issue; a Clerk publishable key is public by design, and the HTML can be served without authentication if all sensitive data/actions are protected server-side.
 
-The current admin API is **not ready for production admin use** because it can accept too broad a class of Clerk sessions and does not attribute sensitive/mutating admin actions to a durable admin principal. The highest-risk gaps are:
+This audit assumes the intended deployment model is a **dedicated Bridge-admin Clerk instance with exactly one admin user**. Under that model, user-vs-admin authorization and Clerk organization membership are not the primary risks right now.
 
-1. Admin auth can fail open to any valid Clerk user when `ADMIN_CLERK_ORG_ID` is missing.
-2. Org membership alone is treated as admin authorization.
-3. Admin actions are not auditable to a Clerk user/session/IP.
-4. `ADMIN_CLERK_AUTHORIZED_PARTIES` is bypassable when JWTs omit `azp`.
+The current admin API still has security and operations gaps worth fixing before relying on it for production payment operations:
+
+1. `ADMIN_CLERK_AUTHORIZED_PARTIES`, if configured, is bypassable when JWTs omit `azp`.
+2. Sensitive admin actions have weak server-side provenance if the single admin session is compromised or behaves unexpectedly.
+3. Manual webhook retry can race and re-open an already forwarded delivery.
+4. Webhook payload viewing and manual job triggering need tighter operational controls.
 
 ## Scope Reviewed
 
@@ -24,6 +26,10 @@ The current admin API is **not ready for production admin use** because it can a
 - `src/db/webhooks.rs`
 - `.env.sample`
 - admin-related database changes in the diff from the baseline commit
+
+## Deployment Assumption
+
+The findings below are scoped to the current plan: Bridge admin uses a dedicated Clerk instance with one admin user. If Bridge later shares a Clerk instance with app users, enables public signup for the admin Clerk instance, or adds multiple admins/operators, the discarded org/role concerns should be reopened and treated as higher severity.
 
 ## Findings
 
@@ -47,9 +53,9 @@ Recommended fix:
 - Trim/filter CSV parts before URL normalization; blank entries should not normalize into `https://`.
 - Consider adding and verifying a dedicated `aud` claim for the Bridge admin API.
 
-### P1 — Admin actions are not auditable to a user/session/IP
+### P2 — Admin action provenance is weak
 
-The middleware validates the JWT and then discards the identity. Handlers cannot reliably log which admin performed an action.
+The middleware validates the JWT and then discards the identity. With the current dedicated one-user Clerk instance, this is not a user-vs-admin authorization problem. The risk is weaker incident/debug provenance: Bridge cannot tie sensitive admin operations to the authenticated Clerk session, IP, user-agent, target object, and result.
 
 Evidence:
 
@@ -57,26 +63,25 @@ Evidence:
 - `src/middleware/admin_auth.rs:413-418` calls `next.run(request)` without inserting a principal into request extensions.
 - `src/handlers/admin.rs:61-78` updates app notes with no actor audit.
 - `src/handlers/admin.rs:116-135` returns webhook payload data with no actor audit.
-- `src/handlers/admin.rs:151-164` logs manual retry details but not the Clerk actor.
-- `src/handlers/admin.rs:207-265` logs manually triggered job names but not the Clerk actor/session/IP.
+- `src/handlers/admin.rs:151-164` logs manual retry details but not the Clerk session/IP/user-agent.
+- `src/handlers/admin.rs:207-265` logs manually triggered job names but not the Clerk session/IP/user-agent.
 
 Impact:
 
-Bridge cannot answer basic incident questions such as:
+Bridge cannot answer basic incident/debug questions such as:
 
-- Which admin viewed this webhook payload?
-- Which admin retried this webhook delivery?
-- Which admin triggered reconciliation or cleanup?
-- Which session/IP/user-agent performed the action?
+- Was this action performed by the expected Clerk session?
+- Which IP/user-agent viewed this webhook payload?
+- Which session retried this webhook delivery?
+- Which session triggered reconciliation or cleanup?
+- What target object was touched, and did the action succeed or fail?
 
 Recommended fix:
 
 - Return `AdminPrincipal` from token verification.
 - Insert the principal into request extensions in `admin_auth_middleware`.
 - Extract the principal in all admin handlers.
-- Add structured audit events for:
-  - `admin.auth.success`
-  - `admin.auth.denied`
+- Add structured provenance/audit events for:
   - `admin.apps.notes.update`
   - `admin.webhook.payload.view`
   - `admin.webhook.retry.request`
@@ -84,13 +89,12 @@ Recommended fix:
 - Include at minimum:
   - Clerk `sub`
   - session ID / JWT ID if available
-  - org ID and role
   - method/path
   - target app/webhook/job
   - result success/failure
   - remote IP
   - user-agent
-- Prefer a durable `pay.admin_audit_log` table over tracing logs only.
+- Structured tracing logs are acceptable as the first step for this one-user internal admin. A durable `pay.admin_audit_log` table is optional unless stronger forensics/compliance is needed.
 - Never log raw bearer tokens or raw webhook payloads.
 
 ### P1 — Manual webhook retry can race and re-open an already forwarded delivery
@@ -144,7 +148,7 @@ The current model cannot guarantee PII minimization.
 Recommended fix:
 
 - Default endpoint should return curated metadata only.
-- Require stronger admin role / break-glass action for raw payload access.
+- Require an explicit break-glass/confirmation action for raw payload access.
 - Audit every payload view.
 - Prefer schema-aware redaction per provider/event.
 - For unknown keys, either redact all string leaves by default or allowlist known-safe fields.
@@ -163,7 +167,7 @@ Evidence:
 
 Impact:
 
-A valid admin, or a compromised admin session, can repeatedly trigger expensive/provider-touching jobs and tie up request workers, database work, or provider calls. Without actor audit, post-incident investigation is weak.
+A valid admin, or a compromised admin session, can repeatedly trigger expensive/provider-touching jobs and tie up request workers, database work, or provider calls. Without action provenance, post-incident investigation is weak.
 
 Recommended fix:
 
@@ -172,7 +176,7 @@ Recommended fix:
 - Add admin/API rate limits.
 - Add per-job concurrency locks so reconciliation/cleanup cannot overlap themselves.
 - Prefer enqueueing a job and returning `202 Accepted` instead of running synchronously.
-- Audit requested jobs and per-job results with the admin principal.
+- Log requested jobs and per-job results with the admin principal/session metadata.
 
 ### P3 — Admin UI renders `app_url` into `href` without URL scheme validation
 
@@ -211,4 +215,3 @@ Recommended fix:
 - Prefer Clerk's recommended script loading path with pinned version guidance.
 - If using a CDN, consider SRI where practical.
 - At minimum, constrain `script-src`, `connect-src`, `frame-src`, and `frame-ancestors` for Clerk and Bridge admin needs.
-
