@@ -51,7 +51,9 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
     \"external_user_id\": \"$USER_ID\",
+    \"email\": \"test_contract_01@example.com\",
     \"product_id\": \"$PRODUCT_ID\",
+    \"product_type\": \"subscription\",
     \"provider\": \"creem\",
     \"idempotency_key\": \"contract-01-$TEST_RUN_ID\"
   }" 2>/dev/null || echo "error")
