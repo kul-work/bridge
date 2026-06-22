@@ -42,7 +42,7 @@ Admin routes under `/admin` require a Clerk session JWT from the configured Cler
 - `ADMIN_CLERK_FRONTEND_API` (default: unset) - Preferred Clerk issuer for admin JWT validation.
 - `CLERK_FRONTEND_API` (default: unset) - Fallback Clerk issuer when `ADMIN_CLERK_FRONTEND_API` is unset.
 - `CLERK_PUBLISHABLE_KEY` - Used only to derive the Clerk issuer when both issuer URL vars are unset.
-- `ADMIN_CLERK_AUTHORIZED_PARTIES` (default: unset) - Optional comma-separated allowed `azp` origins, for example `http://localhost:3000,https://admin.tyde.app`.
+- `ADMIN_CLERK_AUTHORIZED_PARTIES` (default: unset) - Optional comma-separated allowed browser origins, for example `http://localhost:3000,https://admin.tyde.app`. When set, admin JWTs must include an `azp` claim matching one of these origins; JWTs without `azp` are rejected.
 
 Issuer fallback order is:
 
@@ -257,6 +257,8 @@ For admin UI locally, also configure Clerk admin auth:
 ADMIN_CLERK_ORG_ID=org_your_internal_tyde_org
 CLERK_FRONTEND_API=https://your-clerk-instance.clerk.accounts.dev
 CLERK_PUBLISHABLE_KEY=pk_test_xxx
+# Optional; only set when Clerk session JWTs include matching azp origins.
+# ADMIN_CLERK_AUTHORIZED_PARTIES=http://localhost:3000,https://admin.tyde.app
 ```
 
 For local provider simulation:

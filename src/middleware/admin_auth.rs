@@ -200,14 +200,7 @@ impl AdminClerkVerifier {
             return Err("Clerk JWT subject claim is empty".to_string());
         }
 
-        if !self.allowed_azp.is_empty() {
-            if let Some(azp) = claims.azp.as_deref() {
-                let azp = normalize_url_like_value(azp);
-                if !self.allowed_azp.iter().any(|allowed| allowed == &azp) {
-                    return Err(format!("Clerk JWT azp is not allowed: {}", azp));
-                }
-            }
-        }
+        validate_authorized_party(&claims, self.allowed_azp.as_ref())?;
 
         if let Some(ref required_org_id) = self.required_org_id {
             let org_id = claims
@@ -284,6 +277,26 @@ fn validate_claim_timestamps(claims: &AdminClerkClaims, now: i64) -> Result<(), 
     Ok(())
 }
 
+fn validate_authorized_party(
+    claims: &AdminClerkClaims,
+    allowed_azp: &[String],
+) -> Result<(), String> {
+    if allowed_azp.is_empty() {
+        return Ok(());
+    }
+
+    let azp = claims
+        .azp
+        .as_deref()
+        .ok_or_else(|| "Clerk JWT is missing azp claim".to_string())?;
+    let azp = normalize_url_like_value(azp);
+    if !allowed_azp.iter().any(|allowed| allowed == &azp) {
+        return Err(format!("Clerk JWT azp is not allowed: {}", azp));
+    }
+
+    Ok(())
+}
+
 fn load_expected_issuer() -> Result<String, String> {
     if let Some(issuer) = env::var("ADMIN_CLERK_FRONTEND_API")
         .ok()
@@ -354,8 +367,9 @@ fn normalize_url_like_value(value: &str) -> String {
 fn parse_csv_env(value: &str) -> Vec<String> {
     value
         .split(',')
-        .map(normalize_url_like_value)
+        .map(str::trim)
         .filter(|part| !part.is_empty())
+        .map(normalize_url_like_value)
         .collect()
 }
 
@@ -424,8 +438,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        derive_issuer_from_publishable_key, parse_minimal_jwt_header,
-        validate_claim_timestamps, validate_minimal_jwt_header, AdminClerkClaims, LegacyOrgClaims,
+        derive_issuer_from_publishable_key, parse_csv_env, parse_minimal_jwt_header,
+        validate_authorized_party, validate_claim_timestamps, validate_minimal_jwt_header,
+        AdminClerkClaims, LegacyOrgClaims,
     };
 
     fn jwt_part(value: serde_json::Value) -> String {
@@ -486,6 +501,46 @@ mod tests {
 
         assert_eq!(top_level.active_org_id(), Some("org_2QXw7YnKzR4p"));
         assert_eq!(legacy_only.active_org_id(), Some("org_1PvM3cLhQsBz"));
+    }
+
+    #[test]
+    fn authorized_party_requires_azp_when_allowlist_is_configured() {
+        let claims = valid_claims();
+        let allowed = vec!["https://admin.tyde.app".to_string()];
+
+        let err = validate_authorized_party(&claims, &allowed).unwrap_err();
+
+        assert_eq!(err, "Clerk JWT is missing azp claim");
+    }
+
+    #[test]
+    fn authorized_party_accepts_normalized_allowed_azp() {
+        let mut claims = valid_claims();
+        claims.azp = Some("https://admin.tyde.app/".to_string());
+        let allowed = vec!["https://admin.tyde.app".to_string()];
+
+        validate_authorized_party(&claims, &allowed).unwrap();
+    }
+
+    #[test]
+    fn authorized_party_rejects_unlisted_azp() {
+        let mut claims = valid_claims();
+        claims.azp = Some("https://evil.example".to_string());
+        let allowed = vec!["https://admin.tyde.app".to_string()];
+
+        let err = validate_authorized_party(&claims, &allowed).unwrap_err();
+
+        assert_eq!(err, "Clerk JWT azp is not allowed: https://evil.example");
+    }
+
+    #[test]
+    fn parse_csv_env_ignores_blank_entries_before_normalizing_urls() {
+        let values = parse_csv_env(" https://admin.tyde.app/, , http://localhost:3000 ,, ");
+
+        assert_eq!(values, vec![
+            "https://admin.tyde.app".to_string(),
+            "http://localhost:3000".to_string(),
+        ]);
     }
 
     #[test]

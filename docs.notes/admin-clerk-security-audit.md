@@ -10,11 +10,9 @@ The admin page being public is not the main issue; a Clerk publishable key is pu
 
 This audit assumes the intended deployment model is a **dedicated Bridge-admin Clerk instance with exactly one admin user**. Under that model, user-vs-admin authorization and Clerk organization membership are not the primary risks right now.
 
-The current admin API still has a small set of security and correctness gaps worth fixing before relying on it for production payment operations:
+The current admin API has one remaining correctness gap worth fixing before relying on it for production payment operations:
 
-1. `ADMIN_CLERK_AUTHORIZED_PARTIES`, if configured, is bypassable when JWTs omit `azp`.
-2. Manual webhook retry can race and re-open an already forwarded delivery.
-3. Admin UI browser hardening has a few low-priority gaps.
+1. Manual webhook retry can race and re-open an already forwarded delivery.
 
 ## Scope Reviewed
 
@@ -31,26 +29,6 @@ The current admin API still has a small set of security and correctness gaps wor
 The findings below are scoped to the current plan: Bridge admin uses a dedicated Clerk instance with one admin user. If Bridge later shares a Clerk instance with app users, enables public signup for the admin Clerk instance, or adds multiple admins/operators, the discarded org/role concerns should be reopened and treated as higher severity.
 
 ## Findings
-
-### P1 — `ADMIN_CLERK_AUTHORIZED_PARTIES` is bypassable when `azp` is missing
-
-If `ADMIN_CLERK_AUTHORIZED_PARTIES` is configured, the verifier checks `azp` only when the claim exists. A token with no `azp` claim is accepted.
-
-Evidence:
-
-- `src/middleware/admin_auth.rs:96-99` loads allowed authorized parties from env.
-- `src/middleware/admin_auth.rs:203-210` validates `azp` only inside `if let Some(azp)`.
-
-Impact:
-
-The authorized-party allowlist is not fail-closed. If a token from the same issuer omits `azp`, it bypasses this restriction.
-
-Recommended fix:
-
-- If `ADMIN_CLERK_AUTHORIZED_PARTIES` is non-empty, require the `azp` claim.
-- Reject tokens whose normalized `azp` is not in the allowlist.
-- Trim/filter CSV parts before URL normalization; blank entries should not normalize into `https://`.
-- Consider adding and verifying a dedicated `aud` claim for the Bridge admin API.
 
 ### P1 — Manual webhook retry can race and re-open an already forwarded delivery
 
@@ -73,4 +51,3 @@ Recommended fix:
 - Return whether a row was actually reset.
 - Audit both successful and skipped retry attempts.
 - Consider allowing manual reset only for dead-lettered deliveries, not all pending deliveries.
-
