@@ -26,6 +26,7 @@ tests/gpbi/
 | **Subscriptions** | `run-all-sub-tests.sh` | Core subscription lifecycle (Purchase, Renewal, Cancellation) |
 | **One-Time Purchases** | `run-all-otp-tests.sh` | OTP verification and refund handling |
 | **Webhooks** | `run-all-whk-tests.sh` | Ingress validation, signature checks, and idempotency |
+| **Dead-Letter** | `run-all-dlq-tests.sh` | Dead-letter exhaustion and admin retry recovery |
 | **Account Linking** | `run-all-acc-tests.sh` | Identity mapping and account reconciliation |
 | **Error Handling** | `run-all-err-tests.sh` | Network failures, invalid data, and provider API errors |
 
@@ -41,6 +42,8 @@ tests/gpbi/
 | **SUB-09** | Revocation (Refund) | Verifies status `revoked` and payment `refunded` on voided purchase webhook. |
 | **WHK-01** | Invalid Signature | Verifies rejection of webhooks with bad authorization headers. |
 | **WHK-02** | Duplicate Webhook | Verifies idempotent handling (returns success, but no duplicate record). |
+| **DLQ-01** | Dead-Letter Exhaustion | Verifies `webhook_delivery` transitions to `dead_lettered=true` after 3 failed attempts. |
+| **DLQ-02** | Admin Retry Recovery | Verifies dead-lettered delivery is reset and already-forwarded delivery is NOT reopened. |
 | **NET-05** | Delivery Verification | Verifies Bridge → App callback forwarding success. |
 
 ## Usage
