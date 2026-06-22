@@ -243,6 +243,48 @@
     </div>
 
     <div class="section">
+      <h2>Background Jobs</h2>
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Job</th>
+              <th>Description</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>webhook_retry</code></td>
+              <td>Retry pending/dead-lettered webhook deliveries + Google Play ack retries</td>
+              <td><button class="primary" onclick="triggerJob('webhook_retry')">Trigger</button></td>
+            </tr>
+            <tr>
+              <td><code>reconciliation</code></td>
+              <td>Check subscription status drift against provider APIs</td>
+              <td><button class="primary" onclick="triggerJob('reconciliation')">Trigger</button></td>
+            </tr>
+            <tr>
+              <td><code>price_step_up</code></td>
+              <td>Process expired Google Play price step-up consents</td>
+              <td><button class="primary" onclick="triggerJob('price_step_up')">Trigger</button></td>
+            </tr>
+            <tr>
+              <td><code>pause_scheduler</code></td>
+              <td>Process scheduled subscription pauses + cleanup orphaned pending subs</td>
+              <td><button class="primary" onclick="triggerJob('pause_scheduler')">Trigger</button></td>
+            </tr>
+            <tr>
+              <td><code>cleanup</code></td>
+              <td>Clean up old webhook logs and purged fraud prevention data</td>
+              <td><button class="primary" onclick="triggerJob('cleanup')">Trigger</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section">
       <h2>Applications</h2>
       <div class="card">
         <div id="apps-loading" class="loading">Loading...</div>
@@ -539,6 +581,32 @@ async function retryWebhook(webhookId) {
 
     alert("Webhook retry queued - the background worker will attempt delivery on its next tick.");
     location.reload();
+  } catch (err) {
+    alert("Error: " + err.message);
+  }
+}
+
+async function triggerJob(job) {
+  if (!confirm("Trigger '" + job + "' job? It will run synchronously — the page will wait until it finishes.")) return;
+  try {
+    const res = await authedFetch("/admin/trigger-jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobs: [job] })
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error("Failed to trigger job (" + res.status + ")" + (body ? ": " + body : ""));
+    }
+    const result = await res.json();
+    const failed = result.results.filter(r => r.error);
+    if (failed.length > 0) {
+      const msgs = failed.map(r => r.job + ": " + r.error).join("\n");
+      alert("Job completed with errors:\n" + msgs);
+    } else {
+      const names = result.results.map(r => r.job).join(", ");
+      alert("Job completed successfully: " + names);
+    }
   } catch (err) {
     alert("Error: " + err.message);
   }

@@ -104,7 +104,7 @@ pub async fn retry_webhooks(
     Ok(())
 }
 
-async fn retry_google_play_subscription_acknowledgements(
+pub async fn retry_google_play_subscription_acknowledgements(
     database: &Database,
 ) -> Result<(), crate::error::BridgeError> {
     let apps = SchedulerRepository::list_enabled_app_ids(database).await?;
@@ -361,7 +361,7 @@ pub fn spawn_price_step_up_expiry_worker(database: Arc<Database>) {
     });
 }
 
-async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
+pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
     let expired = SchedulerRepository::list_price_step_up_expired_subscriptions(database.as_ref(), 100).await?;
 
     for sub in expired {
@@ -441,7 +441,7 @@ pub fn spawn_pause_scheduler_worker(database: Arc<Database>) {
     });
 }
 
-async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
+pub async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
     let pending_pause = SchedulerRepository::list_pending_pause_subscriptions(database.as_ref(), 100).await?;
 
     for sub in pending_pause {
@@ -599,7 +599,7 @@ pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {
     });
 }
 
-async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
+pub async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
     info!("Starting data retention cleanup");
 
     SchedulerRepository::cleanup_old_webhook_provider(database.as_ref()).await?;

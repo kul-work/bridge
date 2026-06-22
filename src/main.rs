@@ -181,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/admin/apps/:app_id/webhooks", axum::routing::get(handlers::admin::get_app_webhooks))
         .route("/admin/webhooks/:webhook_id/payload", axum::routing::get(handlers::admin::get_webhook_payload))
         .route("/admin/webhooks/:webhook_id/retry", axum::routing::post(handlers::admin::retry_webhook))
+        .route("/admin/trigger-jobs", axum::routing::post(handlers::admin::trigger_jobs))
         .layer(axum::middleware::from_fn(middleware::admin_auth::admin_auth_middleware))
         .with_state(app_state.clone());
 

@@ -4,7 +4,7 @@ use axum::{
     response::Html,
 };
 use uuid::Uuid;
-use tracing::info;
+use tracing::{info, error};
 
 use crate::{
     config::ADMIN_WEBHOOK_LIST_LIMIT,
@@ -163,6 +163,123 @@ pub async fn retry_webhook(
     database.as_ref().reset_webhook_delivery(webhook_uuid).await?;
 
     Ok(StatusCode::OK)
+}
+
+/// Manually trigger background jobs on demand.
+/// Works even when ENABLE_BACKGROUND_JOBS=false.
+/// Jobs run inline (not spawned) so the response reflects actual success or failure.
+pub async fn trigger_jobs(
+    State(state): State<AppState>,
+    Json(payload): Json<TriggerJobsRequest>,
+) -> Result<Json<TriggerJobsResponse>, BridgeError> {
+    const VALID_JOBS: &[&str] = &[
+        "webhook_retry",
+        "reconciliation",
+        "price_step_up",
+        "pause_scheduler",
+        "cleanup",
+    ];
+
+    let jobs: Vec<String> = if payload.jobs.iter().any(|j| j == "all") {
+        VALID_JOBS.iter().map(|s| s.to_string()).collect()
+    } else {
+        payload.jobs
+    };
+
+    if jobs.is_empty() {
+        return Err(BridgeError::ValidationError(
+            "No jobs specified. Valid jobs: webhook_retry, reconciliation, price_step_up, pause_scheduler, cleanup, all".to_string(),
+        ));
+    }
+
+    for job in &jobs {
+        if job != "all" && !VALID_JOBS.contains(&job.as_str()) {
+            return Err(BridgeError::ValidationError(format!(
+                "Unknown job: '{}'. Valid jobs: webhook_retry, reconciliation, price_step_up, pause_scheduler, cleanup, all",
+                job
+            )));
+        }
+    }
+
+    let db = state.database();
+    let mut results = Vec::new();
+
+    for job in jobs {
+        info!("Manual trigger: {} job", job);
+        let result = match job.as_str() {
+            "webhook_retry" => {
+                let mut err = None;
+                if let Err(e) = crate::webhooks::scheduler::retry_webhooks(db.as_ref()).await {
+                    error!("Manual webhook retry job failed: {}", e);
+                    err = Some(e.to_string());
+                }
+                if let Err(e) = crate::webhooks::scheduler::retry_google_play_subscription_acknowledgements(db.as_ref()).await {
+                    error!("Manual Google Play acknowledgement retry failed: {}", e);
+                    err = Some(e.to_string());
+                }
+                err
+            }
+            "reconciliation" => {
+                match crate::webhooks::scheduler::reconcile_subscriptions(&db).await {
+                    Ok(()) => None,
+                    Err(e) => {
+                        error!("Manual reconciliation job failed: {}", e);
+                        Some(e.to_string())
+                    }
+                }
+            }
+            "price_step_up" => {
+                match crate::webhooks::scheduler::process_price_step_up_expiry(&db).await {
+                    Ok(()) => None,
+                    Err(e) => {
+                        error!("Manual price step-up expiry job failed: {}", e);
+                        Some(e.to_string())
+                    }
+                }
+            }
+            "pause_scheduler" => {
+                match crate::webhooks::scheduler::process_pause_transitions(&db).await {
+                    Ok(()) => None,
+                    Err(e) => {
+                        error!("Manual pause scheduler job failed: {}", e);
+                        Some(e.to_string())
+                    }
+                }
+            }
+            "cleanup" => {
+                match crate::webhooks::scheduler::cleanup_old_data(&db).await {
+                    Ok(()) => None,
+                    Err(e) => {
+                        error!("Manual cleanup job failed: {}", e);
+                        Some(e.to_string())
+                    }
+                }
+            }
+            _ => unreachable!("validated above"),
+        };
+        results.push(JobResult { job, error: result });
+    }
+
+    info!("Admin trigger-jobs completed: {:?}", results.iter().map(|r| &r.job).collect::<Vec<_>>());
+
+    Ok(Json(TriggerJobsResponse { results }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct TriggerJobsRequest {
+    #[serde(default)]
+    pub jobs: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct TriggerJobsResponse {
+    pub results: Vec<JobResult>,
+}
+
+#[derive(serde::Serialize)]
+pub struct JobResult {
+    pub job: String,
+    pub error: Option<String>,
 }
 
 #[derive(serde::Serialize)]
