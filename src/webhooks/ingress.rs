@@ -204,7 +204,14 @@ pub async fn handle_google_play(
         let service_account_path_owned = service_account_path.to_string();
         let verify_audience = crate::config::parse_bool_env("GOOGLE_VERIFY_AUDIENCE", false)
             .map_err(|e| BridgeError::ConfigError(e.to_string()))?;
-        let pub_sub_audience = std::env::var("GOOGLE_PUB_SUB_AUDIENCE").unwrap_or_default();
+        let pub_sub_audience = std::env::var("GOOGLE_PUB_SUB_AUDIENCE").unwrap_or_else(|_| {
+            provider_config
+                .config
+                .get("pub_sub_audience")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()
+        });
         let skip_rsa_verification = crate::config::parse_bool_env("GOOGLE_SKIP_RSA_VERIFICATION", false)
             .map_err(|e| BridgeError::ConfigError(e.to_string()))?;
 
