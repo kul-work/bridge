@@ -69,7 +69,7 @@
   }
 
   /* Layout */
-  .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
   .section { margin-bottom: 32px; }
   .section h2 { font-size: 15px; margin-bottom: 12px; color: var(--text); }
 
@@ -104,12 +104,20 @@
   }
   td.actions {
     white-space: nowrap;
+    min-width: 190px;
   }
   td.actions button {
     margin-right: 4px;
   }
+  td.app-actions {
+    white-space: nowrap;
+    min-width: 220px;
+  }
   td.app-actions button + button {
     margin-left: 4px;
+  }
+  .created-at {
+    white-space: nowrap;
   }
 
   /* Badges */
@@ -679,7 +687,7 @@ async function viewWebhooks(appId, page = 1) {
         "<td>" + escapeHtml(wh.event_type) + "</td>" +
         "<td>" + statusBadge + "</td>" +
         "<td>" + wh.forward_attempts + "</td>" +
-        "<td><small>" + new Date(wh.created_at).toLocaleString() + "</small></td>";
+        "<td class=\"created-at\"><small>" + new Date(wh.created_at).toLocaleString() + "</small></td>";
 
       const actionsCell = row.insertCell();
       actionsCell.className = "actions";
