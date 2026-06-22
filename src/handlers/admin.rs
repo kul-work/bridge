@@ -1,7 +1,9 @@
 use axum::{
     extract::{Extension, Json, Path, State},
-    http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode},
+    middleware::Next,
     response::{Html, IntoResponse},
+    response::Response,
 };
 use std::{collections::HashSet, sync::OnceLock};
 use tokio::sync::Mutex;
@@ -19,6 +21,22 @@ use crate::{
 };
 
 static ADMIN_OPERATION_LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+pub async fn admin_no_store_middleware(
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("no-store"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("pragma"),
+        HeaderValue::from_static("no-cache"),
+    );
+    response
+}
 
 /// Get admin dashboard page.
 /// Serves the HTML with the Clerk publishable key injected for client-side auth.

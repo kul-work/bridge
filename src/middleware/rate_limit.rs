@@ -20,12 +20,18 @@ use crate::state::AppState;
 
 const UNAUTHENTICATED_IP_LIMIT: usize = 10;
 const UNAUTHENTICATED_IP_WINDOW_SECS: u64 = 60;
+const ADMIN_AUTH_IP_LIMIT_DEFAULT: usize = 10;
+const ADMIN_AUTH_IP_WINDOW_SECS: u64 = 60;
 const ADMIN_READ_LIMIT_DEFAULT: usize = 120;
 const ADMIN_MUTATION_LIMIT_DEFAULT: usize = 10;
 
 struct AdminRateLimits {
     read: usize,
     mutation: usize,
+}
+
+struct AdminAuthIpRateLimit {
+    limit: usize,
 }
 
 /// In-memory rate limit store
@@ -121,6 +127,8 @@ impl Default for RateLimitStore {
 }
 
 fn extract_client_ip(request: &Request) -> Option<String> {
+    // Deployment must strip and replace forwarded IP headers at the trusted
+    // reverse proxy. If Bridge is exposed directly, clients can spoof these.
     request
         .headers()
         .get("x-forwarded-for")
@@ -422,6 +430,55 @@ pub async fn unauthenticated_ip_rate_limit_middleware(
 
         let _ = store
             .record_event(&key, UNAUTHENTICATED_IP_WINDOW_SECS)
+            .await;
+    }
+
+    Ok(response)
+}
+
+/// Per-IP guard for admin auth attempts. This runs before Clerk JWT parsing so
+/// repeated bad admin tokens cannot force unbounded signature/JWKS work.
+pub async fn admin_auth_ip_rate_limit_middleware(
+    request: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let client_ip = match extract_client_ip(&request) {
+        Some(ip) => ip,
+        None => {
+            return Ok(next.run(request).await);
+        }
+    };
+
+    let key = format!("admin-auth-ip:{}", client_ip);
+
+    static CONFIG: std::sync::OnceLock<AdminAuthIpRateLimit> = std::sync::OnceLock::new();
+    let config = CONFIG.get_or_init(|| AdminAuthIpRateLimit {
+        limit: configured_limit("ADMIN_AUTH_IP_LIMIT", ADMIN_AUTH_IP_LIMIT_DEFAULT),
+    });
+
+    static STORE: std::sync::OnceLock<RateLimitStore> = std::sync::OnceLock::new();
+    let store = STORE.get_or_init(RateLimitStore::new);
+
+    let (current_count, reset_at) = store
+        .current_usage(&key, ADMIN_AUTH_IP_WINDOW_SECS)
+        .await;
+
+    if current_count >= config.limit {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "error": "rate_limit_exceeded",
+                "message": "Too many admin authentication failures",
+                "reset_at": reset_at
+            })),
+        ));
+    }
+
+    let response = next.run(request).await;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        let _ = store
+            .record_event(&key, ADMIN_AUTH_IP_WINDOW_SECS)
             .await;
     }
 

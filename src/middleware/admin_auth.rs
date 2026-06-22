@@ -16,13 +16,16 @@ use serde_json::json;
 use std::{
     env,
     sync::{Arc, OnceLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio::sync::RwLock;
 use tracing::{error, info};
 
-const JWKS_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+const JWKS_CACHE_TTL_SECS: u64 = 60 * 60;
+const JWKS_KID_MISS_REFRESH_BACKOFF_SECS: u64 = 60;
 const JWT_CLOCK_SKEW_SECS: i64 = 60;
+const MAX_ADMIN_BEARER_TOKEN_BYTES: usize = 8 * 1024;
+const MAX_LOG_VALUE_CHARS: usize = 120;
 static ADMIN_AUTH_VERIFIER: OnceLock<Result<AdminClerkVerifier, String>> = OnceLock::new();
 
 #[derive(Clone, Debug)]
@@ -88,6 +91,7 @@ struct AdminClerkVerifier {
     required_org_id: Option<Arc<str>>,
     allowed_azp: Arc<[String]>,
     jwks_cache: Arc<RwLock<Option<(Jwks, Instant)>>>,
+    last_kid_miss_refresh: Arc<RwLock<Option<Instant>>>,
     http_client: Client,
 }
 
@@ -113,12 +117,13 @@ impl AdminClerkVerifier {
             required_org_id,
             allowed_azp: allowed_azp.into(),
             jwks_cache: Arc::new(RwLock::new(None)),
+            last_kid_miss_refresh: Arc::new(RwLock::new(None)),
             http_client: Client::new(),
         })
     }
 
-    async fn fetch_jwks(&self) -> Result<Jwks, String> {
-        {
+    async fn fetch_jwks(&self, force_refresh: bool) -> Result<Jwks, String> {
+        if !force_refresh {
             let cache = self.jwks_cache.read().await;
             if let Some((jwks, fetched_at)) = cache.as_ref() {
                 if fetched_at.elapsed().as_secs() < JWKS_CACHE_TTL_SECS {
@@ -154,6 +159,19 @@ impl AdminClerkVerifier {
         Ok(jwks)
     }
 
+    async fn fetch_jwks_after_kid_miss(&self) -> Result<Option<Jwks>, String> {
+        let mut last_refresh = self.last_kid_miss_refresh.write().await;
+        if last_refresh.as_ref().is_some_and(|instant| {
+            instant.elapsed() < Duration::from_secs(JWKS_KID_MISS_REFRESH_BACKOFF_SECS)
+        }) {
+            return Ok(None);
+        }
+
+        let jwks = self.fetch_jwks(true).await?;
+        *last_refresh = Some(Instant::now());
+        Ok(Some(jwks))
+    }
+
     async fn verify_token(&self, token: &str) -> Result<AdminAuthContext, String> {
         let (header_part, payload_part, signature_part) = split_jwt(token)?;
         let header = parse_minimal_jwt_header(header_part)?;
@@ -165,16 +183,22 @@ impl AdminClerkVerifier {
         if issuer != self.expected_issuer.as_ref() {
             return Err(format!(
                 "Clerk JWT issuer mismatch: expected {}, got {}",
-                self.expected_issuer, issuer
+                self.expected_issuer,
+                log_safe_value(&issuer)
             ));
         }
 
-        let jwks = self.fetch_jwks().await?;
-        let key = jwks
-            .keys
-            .iter()
-            .find(|key| key.kid == header.kid && key.kty.eq_ignore_ascii_case("RSA"))
-            .ok_or_else(|| format!("Clerk JWKS does not contain key {}", header.kid))?;
+        let jwks = self.fetch_jwks(false).await?;
+        let refreshed_jwks = if find_jwks_key(&jwks, &header.kid).is_none() {
+            self.fetch_jwks_after_kid_miss().await?
+        } else {
+            None
+        };
+        let key = find_jwks_key(&jwks, &header.kid)
+            .or_else(|| refreshed_jwks.as_ref().and_then(|jwks| find_jwks_key(jwks, &header.kid)));
+        let key = key.ok_or_else(|| {
+            format!("Clerk JWKS does not contain key {}", log_safe_value(&header.kid))
+        })?;
 
         let decoding_key = DecodingKey::from_rsa_components(&key.n, &key.e)
             .map_err(|e| format!("Failed to build Clerk decoding key: {}", e))?;
@@ -198,7 +222,8 @@ impl AdminClerkVerifier {
         if normalize_url_like_value(&claims.iss) != self.expected_issuer.as_ref() {
             return Err(format!(
                 "Clerk JWT issuer mismatch after validation: expected {}, got {}",
-                self.expected_issuer, claims.iss
+                self.expected_issuer,
+                log_safe_value(&claims.iss)
             ));
         }
 
@@ -215,7 +240,8 @@ impl AdminClerkVerifier {
             if org_id != required_org_id.as_ref() {
                 return Err(format!(
                     "Clerk JWT org mismatch: expected {}, got {}",
-                    required_org_id, org_id
+                    required_org_id,
+                    log_safe_value(org_id)
                 ));
             }
         }
@@ -244,6 +270,12 @@ fn split_jwt(token: &str) -> Result<(&str, &str, &str), String> {
     Ok((header, payload, signature))
 }
 
+fn find_jwks_key<'a>(jwks: &'a Jwks, kid: &str) -> Option<&'a JwksKey> {
+    jwks.keys
+        .iter()
+        .find(|key| key.kid == kid && key.kty.eq_ignore_ascii_case("RSA"))
+}
+
 fn parse_minimal_jwt_header(header_part: &str) -> Result<MinimalJwtHeader, String> {
     let header_bytes = base64_url_decode(header_part)
         .ok_or_else(|| "Failed to base64-decode Clerk JWT header".to_string())?;
@@ -253,7 +285,7 @@ fn parse_minimal_jwt_header(header_part: &str) -> Result<MinimalJwtHeader, Strin
 
 fn validate_minimal_jwt_header(header: &MinimalJwtHeader) -> Result<(), String> {
     if header.alg != "RS256" {
-        return Err(format!("Unsupported Clerk JWT algorithm: {}", header.alg));
+        return Err(format!("Unsupported Clerk JWT algorithm: {}", log_safe_value(&header.alg)));
     }
 
     if header.kid.trim().is_empty() {
@@ -302,7 +334,7 @@ fn validate_authorized_party(
         .ok_or_else(|| "Clerk JWT is missing azp claim".to_string())?;
     let azp = normalize_url_like_value(azp);
     if !allowed_azp.iter().any(|allowed| allowed == &azp) {
-        return Err(format!("Clerk JWT azp is not allowed: {}", azp));
+        return Err(format!("Clerk JWT azp is not allowed: {}", log_safe_value(&azp)));
     }
 
     Ok(())
@@ -384,6 +416,30 @@ fn parse_csv_env(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn log_safe_value(value: &str) -> String {
+    let mut safe = String::new();
+    let mut truncated = false;
+
+    for (idx, ch) in value.chars().enumerate() {
+        if idx >= MAX_LOG_VALUE_CHARS {
+            truncated = true;
+            break;
+        }
+
+        if ch.is_control() {
+            safe.push('?');
+        } else {
+            safe.push(ch);
+        }
+    }
+
+    if truncated {
+        safe.push_str("...");
+    }
+
+    safe
+}
+
 fn unauthorized_response(message: &str) -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::UNAUTHORIZED,
@@ -410,15 +466,29 @@ pub async fn admin_auth_middleware(
     mut request: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    let token = match request
+    let authorization = match request
         .headers()
         .get("authorization")
         .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
     {
-        Some(token) if !token.trim().is_empty() => token,
+        Some(value) => value,
         _ => {
             error!("Admin endpoint accessed without auth token");
+            return Err(unauthorized_response(
+                "Admin endpoints require authentication",
+            ));
+        }
+    };
+
+    if authorization.len() > "Bearer ".len() + MAX_ADMIN_BEARER_TOKEN_BYTES {
+        error!("Admin auth rejected oversized Authorization header");
+        return Err(unauthorized_response("Invalid admin session"));
+    }
+
+    let token = match authorization.strip_prefix("Bearer ") {
+        Some(token) if !token.trim().is_empty() => token,
+        _ => {
+            error!("Admin endpoint accessed without bearer auth token");
             return Err(unauthorized_response(
                 "Admin endpoints require authentication",
             ));

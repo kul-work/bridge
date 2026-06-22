@@ -184,9 +184,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/admin/trigger-jobs", axum::routing::post(handlers::admin::trigger_jobs))
         .layer(axum::middleware::from_fn(middleware::rate_limit::admin_rate_limit_middleware))
         .layer(axum::middleware::from_fn(middleware::admin_auth::admin_auth_middleware))
+        .layer(axum::middleware::from_fn(middleware::rate_limit::admin_auth_ip_rate_limit_middleware))
         .with_state(app_state.clone());
 
-    let admin_routes = admin_page.merge(admin_api);
+    let admin_routes = admin_page
+        .merge(admin_api)
+        .layer(axum::middleware::from_fn(handlers::admin::admin_no_store_middleware));
 
     // Build app
     let mut app = Router::new()
