@@ -66,6 +66,7 @@ run_clean "cleanup-all-otp.sh"
 run_clean "cleanup-all-acc.sh"
 run_clean "cleanup-all-whk.sh"
 run_clean "cleanup-all-net.sh"
+run_clean "cleanup-all-dlq.sh"
 run_clean "cleanup-all-err.sh"
 
 # 3. Clean Report Files (JSON)

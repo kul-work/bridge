@@ -26,6 +26,7 @@ tests/creem/
 | **Subscriptions** | `run-all-sub-tests.sh` | Full lifecycle (Purchase, Renewal, Cancellation, Pause, Recovery) |
 | **One-Time Purchases** | `run-all-otp-tests.sh` | OTP fulfillment and refund/failure handling |
 | **Webhooks** | `run-all-whk-tests.sh` | Signature verification, normalization, and idempotency |
+| **Dead-Letter** | `run-all-dlq-tests.sh` | Dead-letter exhaustion and admin retry recovery |
 | **Access Control** | `run-all-acc-tests.sh` | Entitlement validation for active and blocked states |
 | **Network & Errors** | `run-all-net-tests.sh` / `run-all-err-tests.sh` | Concurrent deliveries and malformed payload handling |
 
@@ -42,6 +43,8 @@ tests/creem/
 | **WHK-03** | Idempotency | Ensures duplicate webhooks don't create duplicate records. |
 | **WHK-05** | Normalization | Maps provider-specific payloads to canonical Bridge states. |
 | **WHK-06** | Verification Mode Override | Tests X-Webhook-Verification-Mode header bypass (requires MOCK_EXTERNAL_APIS=true). |
+| **DLQ-01** | Dead-Letter Exhaustion | Verifies `webhook_delivery` transitions to `dead_lettered=true` after 3 failed attempts. |
+| **DLQ-02** | Admin Retry Recovery | Verifies dead-lettered delivery is reset and already-forwarded delivery is NOT reopened. |
 | **NET-02** | Race Conditions | Tests concurrent deliveries of the same event. |
 | **NET-03** | Delivery Verification | Verifies Bridge → App callback forwarding success. |
 
