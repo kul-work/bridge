@@ -247,10 +247,12 @@ GET /admin/apps/:app_id/webhooks
 Admin clicks "Retry"
     ↓
 POST /admin/webhooks/:webhook_id/retry
-    └─ (TODO) Queue webhook for immediate retry
-       ├─ Reset forward_attempts to 0
-       ├─ Set forwarded = false
-       └─ Trigger forward_webhook() again
+    └─ Reset delivery (clear dead-letter, reset attempts)
+       ├─ forward_attempts = 0
+       ├─ forwarded = false
+       ├─ dead_lettered = false
+       └─ Background worker picks up on next tick & forwards
+          (suppressed webhooks are marked complete by the worker)
 ```
 
 ---

@@ -600,7 +600,7 @@ GET /admin/apps/:app_id/webhooks
 POST /admin/webhooks/:webhook_id/retry
 ```
 
-`POST /admin/webhooks/:webhook_id/retry` currently validates the webhook ID and returns `200`; the handler contains a TODO for queueing the retry.
+`POST /admin/webhooks/:webhook_id/retry` resets the delivery (clears dead-letter state, resets forward attempts) so the background retry worker picks it up on its next tick. Returns `200` on success.
 
 ## Errors
 

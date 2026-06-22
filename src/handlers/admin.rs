@@ -9,7 +9,7 @@ use tracing::info;
 use crate::{
     config::ADMIN_WEBHOOK_LIST_LIMIT,
     error::BridgeError,
-    ports::AdminRepository,
+    ports::{AdminRepository, WebhookForwardRepository},
     state::AppState,
 };
 
@@ -82,19 +82,32 @@ pub async fn get_app_webhooks(
     Ok(axum::Json(summaries))
 }
 
-/// Retry webhook delivery manually
+/// Retry webhook delivery manually.
+/// Resets dead-lettered/pending deliveries so the background retry worker
+/// picks them up on its next tick. Does not forward directly to avoid racing
+/// the worker and to ensure suppressed webhooks are handled correctly.
 pub async fn retry_webhook(
+    State(state): State<AppState>,
     Path(webhook_id): Path<String>,
 ) -> Result<StatusCode, BridgeError> {
     let webhook_uuid = Uuid::parse_str(&webhook_id)
         .map_err(|_| BridgeError::ValidationError("Invalid webhook ID".to_string()))?;
 
-    info!("Manual retry requested for webhook: {}", webhook_uuid);
+    let database = state.database();
 
-    // TODO: Queue the webhook for retry
-    //Smallest sane fix: make the admin handler accept State<AppState>, load the delivery, rebuild its canonical payload via build_canonical_payload, and call
-    //forward_webhook immediately. That matches existing retry behavior without inventing a new queue. If manual retry is meant to resurrect dead-lettered
-    //deliveries, it also needs an explicit DB helper to clear dead_lettered / reset attempts; current forwarding code refuses dead-lettered or >= 3 rows.
+    let delivery = database.as_ref().get_webhook_delivery(webhook_uuid).await?;
+
+    if delivery.forwarded {
+        info!("Skipping manual retry for already-forwarded webhook {}", webhook_uuid);
+        return Ok(StatusCode::OK);
+    }
+
+    info!(
+        "Manual retry queued for webhook delivery {} (app={}, attempts={}, dead_lettered={})",
+        webhook_uuid, delivery.app_id, delivery.forward_attempts, delivery.dead_lettered
+    );
+
+    database.as_ref().reset_webhook_delivery(webhook_uuid).await?;
 
     Ok(StatusCode::OK)
 }

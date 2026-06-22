@@ -205,7 +205,7 @@
                         <td>${webhook.forward_attempts}</td>
                         <td><small>${new Date(webhook.created_at).toLocaleString()}</small></td>
                         <td>
-                            ${!webhook.forwarded && webhook.forward_attempts < 3
+                            ${!webhook.forwarded
                                 ? `<button class="btn btn-sm btn-primary" onclick="retryWebhook('${webhook.id}')">Retry</button>`
                                 : ''
                             }

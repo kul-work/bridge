@@ -184,6 +184,34 @@ pub async fn list_pending_webhook_deliveries(
     Ok(deliveries)
 }
 
+/// Reset a webhook delivery for manual retry.
+/// Clears dead-letter state and forward attempts so forward_webhook will accept it.
+pub async fn reset_webhook_delivery(pool: &PgPool, delivery_id: Uuid) -> Result<(), BridgeError> {
+    let app_id = get_webhook_delivery_app_id(pool, delivery_id).await?;
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    sqlx::query(
+        "UPDATE pay.webhook_delivery
+         SET forward_attempts = 0,
+             forwarded = false,
+             forwarded_at = NULL,
+             dead_lettered = false,
+             dead_lettered_at = NULL,
+             dead_letter_reason = NULL,
+             last_error = NULL,
+             updated_at = NOW()
+         WHERE id = $1"
+    )
+    .bind(delivery_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(format!("Failed to reset webhook delivery: {}", e)))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
 /// Update webhook delivery after forward attempt
 pub async fn update_webhook_delivery_attempt(
     pool: &PgPool,

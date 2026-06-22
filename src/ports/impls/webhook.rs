@@ -97,6 +97,10 @@ impl WebhookForwardRepository for db::Database {
         )
         .await
     }
+
+    async fn reset_webhook_delivery(&self, delivery_id: Uuid) -> Result<(), BridgeError> {
+        db::webhooks::reset_webhook_delivery(self.pool(), delivery_id).await
+    }
 }
 
 #[async_trait]
