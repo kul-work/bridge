@@ -1,5 +1,18 @@
 # Release Notes
 
+## [0.4.0] - 2026-06-22
+### Features
+- **Admin Dashboard**: Add a minimal Clerk-protected admin interface with notes, webhook actions, and manual job triggers.
+- **Webhooks**: Add manual retry support for dead-lettered deliveries through the admin flow.
+
+### Fixes
+- **Admin Security**: Harden Clerk admin auth, CSP, security headers, authorized-party checks, token handling, audit logging, and admin rate limits.
+- **Webhooks**: Prevent manual retry from reopening already-forwarded deliveries and make dead-letter retry reset atomic.
+- **Security Testing**: Add cross-app tenant isolation coverage and tighten RLS/security regression tests.
+
+### Improvements
+- **Documentation**: Refresh admin, webhook retry, and security audit notes for the remediated findings.
+
 ## [0.3.4] - 2026-06-19
 ### Fixes
 - **Security**: Harden request deserialization and Creem API URL validation, including mock-only Google Play test price header handling.
