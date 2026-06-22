@@ -71,6 +71,9 @@ pub enum BridgeError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     #[error("Conflict: {0}")]
     Conflict(String),
 
@@ -144,6 +147,11 @@ impl IntoResponse for BridgeError {
             BridgeError::BadRequest(msg) => (
                 StatusCode::BAD_REQUEST,
                 "bad_request",
+                msg.clone(),
+            ),
+            BridgeError::Forbidden(msg) => (
+                StatusCode::FORBIDDEN,
+                "forbidden",
                 msg.clone(),
             ),
             BridgeError::Conflict(msg) => (

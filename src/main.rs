@@ -138,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Build protected routes with API key middleware
     let protected_routes = Router::new()
+        .route("/app/verify", axum::routing::post(handlers::api_key::verify_expected_app))
         .route("/payment/checkout", axum::routing::post(handlers::checkout::create_checkout))
         .route("/verify-purchase", axum::routing::post(handlers::verify_purchase::verify_purchase))
         .route("/subscriptions", axum::routing::get(handlers::subscriptions::list_subscriptions))
