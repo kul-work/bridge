@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Json, Path, State},
+    extract::{Extension, Json, Path, Query, State},
     http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode},
     middleware::Next,
     response::{Html, IntoResponse},
@@ -181,18 +181,38 @@ pub async fn update_app_notes(
     Ok(Json(UpdateAppNotesResponse { id: app_id, notes }))
 }
 
+#[derive(serde::Deserialize)]
+pub struct WebhooksQuery {
+    pub page: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+pub struct PaginatedWebhooks {
+    pub webhooks: Vec<WebhookSummary>,
+    pub total_count: i64,
+    pub page: i64,
+    pub pages: i64,
+}
+
 /// Get webhooks for an app
 pub async fn get_app_webhooks(
     State(state): State<AppState>,
     Path(app_id): Path<String>,
-) -> Result<axum::Json<Vec<WebhookSummary>>, BridgeError> {
+    Query(query): Query<WebhooksQuery>,
+) -> Result<axum::Json<PaginatedWebhooks>, BridgeError> {
     let database = state.database();
     let app_uuid = Uuid::parse_str(&app_id)
         .map_err(|_| BridgeError::ValidationError("Invalid app ID".to_string()))?;
 
+    let page = query.page.unwrap_or(1).max(1);
+    let limit = ADMIN_WEBHOOK_LIST_LIMIT;
+    let offset = (page - 1) * limit;
+
+    let total_count = database.as_ref().count_app_webhooks(app_uuid).await?;
+
     let webhooks = database
         .as_ref()
-        .list_app_webhooks(app_uuid, ADMIN_WEBHOOK_LIST_LIMIT, 0)
+        .list_app_webhooks(app_uuid, limit, offset)
         .await?;
 
     let summaries = webhooks
@@ -213,8 +233,16 @@ pub async fn get_app_webhooks(
         })
         .collect();
 
-    Ok(axum::Json(summaries))
+    let pages = if total_count == 0 { 1 } else { (total_count + limit - 1) / limit };
+
+    Ok(axum::Json(PaginatedWebhooks {
+        webhooks: summaries,
+        total_count,
+        page,
+        pages,
+    }))
 }
+
 
 pub async fn get_webhook_payload(
     State(state): State<AppState>,

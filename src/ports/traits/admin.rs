@@ -12,6 +12,8 @@ pub trait AdminRepository: Send + Sync {
 
     async fn count_failed_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError>;
 
+    async fn count_app_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError>;
+
     async fn list_app_webhooks(
         &self,
         app_id: Uuid,

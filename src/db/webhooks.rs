@@ -350,6 +350,25 @@ pub async fn count_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, B
     Ok(count.0)
 }
 
+/// Count all webhook deliveries for app
+pub async fn count_app_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM pay.webhook_delivery 
+         WHERE app_id = $1"
+    )
+    .bind(app_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(count.0)
+}
+
+
 pub async fn cleanup_old_webhook_provider(pool: &PgPool) -> Result<(), BridgeError> {
     sqlx::query("SELECT pay.cleanup_old_webhook_provider()")
         .execute(pool)

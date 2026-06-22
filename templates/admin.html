@@ -204,6 +204,37 @@
   }
 
   .hidden { display: none !important; }
+
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 12px;
+    border-top: 1px solid var(--border);
+    background: #fafafa;
+  }
+  .pagination span {
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .pagination button {
+    padding: 4px 10px;
+    min-width: 80px;
+    transition: transform 0.1s ease, border-color 0.1s ease;
+  }
+  .pagination button:hover:not(:disabled) {
+    transform: scale(1.03);
+    border-color: var(--accent);
+  }
+  .pagination button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .table-container {
+    overflow-x: auto;
+    width: 100%;
+  }
 </style>
 </head>
 <body>
@@ -286,19 +317,21 @@
       <div class="card">
         <div id="apps-loading" class="loading">Loading...</div>
         <div id="apps-error" class="error hidden"></div>
-        <table id="apps-table" class="hidden">
-          <thead>
-            <tr>
-              <th>App Name</th>
-              <th>Slug</th>
-              <th>URL</th>
-              <th>Notes</th>
-              <th>Failed Webhooks</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+        <div class="table-container">
+          <table id="apps-table" class="hidden">
+            <thead>
+              <tr>
+                <th>App Name</th>
+                <th>Slug</th>
+                <th>URL</th>
+                <th>Notes</th>
+                <th>Failed Webhooks</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
         <div id="apps-empty" class="empty hidden">No applications found.</div>
       </div>
     </div>
@@ -316,21 +349,28 @@
       <div class="card">
         <div id="webhooks-loading" class="loading">Select an app to view webhooks</div>
         <div id="webhooks-error" class="error hidden"></div>
-        <table id="webhooks-table" class="hidden">
-          <thead>
-            <tr>
-              <th>Event ID</th>
-              <th>Provider</th>
-              <th>Event Type</th>
-              <th>Status</th>
-              <th>Attempts</th>
-              <th>Created</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+        <div class="table-container">
+          <table id="webhooks-table" class="hidden">
+            <thead>
+              <tr>
+                <th>Event ID</th>
+                <th>Provider</th>
+                <th>Event Type</th>
+                <th>Status</th>
+                <th>Attempts</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
         <div id="webhooks-empty" class="empty hidden">No webhooks for this app.</div>
+        <div id="webhooks-pagination" class="pagination hidden">
+          <button id="wh-prev-btn">Previous</button>
+          <span id="wh-page-info">Page 1 of 1</span>
+          <button id="wh-next-btn">Next</button>
+        </div>
       </div>
     </div>
   </div>
@@ -344,6 +384,8 @@
 let adminApps = [];
 let editingNotesAppId = null;
 let adminEventsBound = false;
+let currentWebhookAppId = null;
+let currentWebhookPage = 1;
 
 async function onClerkReady() {
   await Clerk.load();
@@ -408,6 +450,22 @@ function bindAdminHandlers() {
   document
     .getElementById("payload-close-btn")
     ?.addEventListener("click", hidePayload);
+
+  document
+    .getElementById("wh-prev-btn")
+    ?.addEventListener("click", () => {
+      if (currentWebhookAppId && currentWebhookPage > 1) {
+        viewWebhooks(currentWebhookAppId, currentWebhookPage - 1);
+      }
+    });
+
+  document
+    .getElementById("wh-next-btn")
+    ?.addEventListener("click", () => {
+      if (currentWebhookAppId) {
+        viewWebhooks(currentWebhookAppId, currentWebhookPage + 1);
+      }
+    });
 
   document.querySelectorAll(".job-trigger").forEach((button) => {
     button.addEventListener("click", () => {
@@ -571,17 +629,24 @@ async function saveNotes() {
   }
 }
 
-async function viewWebhooks(appId) {
+async function viewWebhooks(appId, page = 1) {
+  currentWebhookAppId = appId;
+  currentWebhookPage = page;
+
   document.getElementById("webhooks-loading").textContent = "Loading...";
   document.getElementById("webhooks-loading").classList.remove("hidden");
   document.getElementById("webhooks-table").classList.add("hidden");
   document.getElementById("webhooks-empty").classList.add("hidden");
   document.getElementById("webhooks-error").classList.add("hidden");
+  document.getElementById("webhooks-pagination").classList.add("hidden");
 
   try {
-    const res = await authedFetch("/admin/apps/" + appId + "/webhooks");
+    const res = await authedFetch("/admin/apps/" + appId + "/webhooks?page=" + page);
     if (!res.ok) throw new Error("Failed to load webhooks (" + res.status + ")");
-    const webhooks = await res.json();
+    const data = await res.json();
+    const webhooks = data.webhooks;
+    const totalCount = data.total_count;
+    const totalPages = data.pages;
 
     document.getElementById("webhooks-loading").classList.add("hidden");
 
@@ -636,12 +701,20 @@ async function viewWebhooks(appId) {
 
       const copyButton = document.createElement("button");
       copyButton.type = "button";
-      copyButton.textContent = "Copy ID";
+      copyButton.textContent = "Copy";
       copyButton.addEventListener("click", () => copyId(wh.id));
       actionsCell.appendChild(copyButton);
     });
 
     document.getElementById("webhooks-table").classList.remove("hidden");
+
+    // Render pagination controls
+    if (totalPages > 1) {
+      document.getElementById("wh-page-info").textContent = "Page " + page + " of " + totalPages;
+      document.getElementById("wh-prev-btn").disabled = (page === 1);
+      document.getElementById("wh-next-btn").disabled = (page >= totalPages);
+      document.getElementById("webhooks-pagination").classList.remove("hidden");
+    }
   } catch (err) {
     document.getElementById("webhooks-loading").classList.add("hidden");
     const errEl = document.getElementById("webhooks-error");

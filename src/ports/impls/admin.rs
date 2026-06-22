@@ -17,6 +17,10 @@ impl AdminRepository for db::Database {
         db::webhooks::count_failed_webhooks(self.pool(), app_id).await
     }
 
+    async fn count_app_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError> {
+        db::webhooks::count_app_webhooks(self.pool(), app_id).await
+    }
+
     async fn list_app_webhooks(
         &self,
         app_id: Uuid,
