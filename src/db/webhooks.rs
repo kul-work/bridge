@@ -184,32 +184,34 @@ pub async fn list_pending_webhook_deliveries(
     Ok(deliveries)
 }
 
-/// Reset a webhook delivery for manual retry.
-/// Clears dead-letter state and forward attempts so forward_webhook will accept it.
-pub async fn reset_webhook_delivery(pool: &PgPool, delivery_id: Uuid) -> Result<(), BridgeError> {
+/// Reset a dead-lettered webhook delivery for manual retry.
+/// Returns false if the delivery is no longer eligible by the time the reset runs.
+pub async fn reset_webhook_delivery(pool: &PgPool, delivery_id: Uuid) -> Result<bool, BridgeError> {
     let app_id = get_webhook_delivery_app_id(pool, delivery_id).await?;
     let mut tx = begin_app_tx(pool, app_id).await?;
 
-    sqlx::query(
+    let result = sqlx::query(
         "UPDATE pay.webhook_delivery
          SET forward_attempts = 0,
-             forwarded = false,
-             forwarded_at = NULL,
              dead_lettered = false,
              dead_lettered_at = NULL,
              dead_letter_reason = NULL,
              last_error = NULL,
              updated_at = NOW()
-         WHERE id = $1"
+         WHERE id = $1
+           AND app_id = $2
+           AND forwarded = false
+           AND dead_lettered = true"
     )
     .bind(delivery_id)
+    .bind(app_id)
     .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to reset webhook delivery: {}", e)))?;
 
     tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    Ok(())
+    Ok(result.rows_affected() == 1)
 }
 
 /// Update webhook delivery after forward attempt
@@ -469,4 +471,249 @@ pub async fn create_webhook_delivery(
     tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(delivery)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        error::Error,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+
+    use axum::{extract::State, http::StatusCode, routing::post, Router};
+    use sqlx::PgPool;
+    use tokio::{net::TcpListener, task::JoinHandle};
+
+    use super::*;
+    use crate::webhooks::processor::CanonicalWebhookPayload;
+
+    #[tokio::test]
+    async fn manual_retry_reset_does_not_reopen_forwarded_deliveries() -> Result<(), Box<dyn Error>> {
+        let Some(database) = test_database().await? else {
+            eprintln!(
+                "skipping DB-backed webhook retry regression; set BRIDGE_TEST_DATABASE_URL or DATABASE_URL"
+            );
+            return Ok(());
+        };
+
+        let pool = database.pool();
+        let (callback_url, callback_count, server) = spawn_callback_server().await?;
+        let app_id = insert_test_app(pool, &callback_url).await?;
+        let result = run_manual_retry_reset_regression(&database, pool, app_id, callback_count).await;
+
+        delete_test_app(pool, app_id).await;
+        server.abort();
+
+        result
+    }
+
+    async fn run_manual_retry_reset_regression(
+        database: &crate::db::Database,
+        pool: &PgPool,
+        app_id: Uuid,
+        callback_count: Arc<AtomicUsize>,
+    ) -> Result<(), Box<dyn Error>> {
+        let forwarded_delivery_id = insert_test_delivery(pool, app_id, 2, true, false).await?;
+        let forwarded_before = super::get_webhook_delivery(pool, forwarded_delivery_id).await?;
+        let reset_forwarded = super::reset_webhook_delivery(pool, forwarded_delivery_id).await?;
+        let forwarded_after = super::get_webhook_delivery(pool, forwarded_delivery_id).await?;
+
+        assert!(!reset_forwarded);
+        assert!(forwarded_after.forwarded);
+        assert_eq!(forwarded_after.forward_attempts, forwarded_before.forward_attempts);
+        assert_eq!(forwarded_after.forwarded_at, forwarded_before.forwarded_at);
+        assert_eq!(forwarded_after.dead_lettered, forwarded_before.dead_lettered);
+
+        let dead_lettered_delivery_id = insert_test_delivery(pool, app_id, 3, false, true).await?;
+        let reset_dead_lettered = super::reset_webhook_delivery(pool, dead_lettered_delivery_id).await?;
+        let dead_lettered_after = super::get_webhook_delivery(pool, dead_lettered_delivery_id).await?;
+
+        assert!(reset_dead_lettered);
+        assert!(!dead_lettered_after.forwarded);
+        assert_eq!(dead_lettered_after.forward_attempts, 0);
+        assert!(!dead_lettered_after.dead_lettered);
+        assert!(dead_lettered_after.dead_lettered_at.is_none());
+        assert!(dead_lettered_after.dead_letter_reason.is_none());
+        assert!(dead_lettered_after.last_error.is_none());
+
+        let pending_delivery_id = insert_test_delivery(pool, app_id, 0, false, false).await?;
+        let payload = test_canonical_payload();
+
+        let (forward_result, retry_result) = tokio::join!(
+            crate::webhooks::forwarding::forward_webhook(
+                database,
+                app_id,
+                pending_delivery_id,
+                payload,
+            ),
+            super::reset_webhook_delivery(pool, pending_delivery_id),
+        );
+
+        forward_result?;
+        assert!(!retry_result?);
+        assert_eq!(callback_count.load(Ordering::SeqCst), 1);
+
+        let pending_after = super::get_webhook_delivery(pool, pending_delivery_id).await?;
+        assert!(pending_after.forwarded);
+        assert!(pending_after.forwarded_at.is_some());
+        assert_eq!(pending_after.forward_attempts, 1);
+        assert!(!pending_after.dead_lettered);
+        assert_eq!(pending_after.last_http_status, Some(200));
+
+        Ok(())
+    }
+
+    async fn test_database() -> Result<Option<crate::db::Database>, Box<dyn Error>> {
+        let database_url = std::env::var("BRIDGE_TEST_DATABASE_URL")
+            .or_else(|_| std::env::var("DATABASE_URL"));
+        let Ok(database_url) = database_url else {
+            return Ok(None);
+        };
+
+        Ok(Some(crate::db::Database::new(&database_url, None).await?))
+    }
+
+    async fn insert_test_app(pool: &PgPool, callback_url: &str) -> Result<Uuid, sqlx::Error> {
+        let app_id = Uuid::new_v4();
+        let slug = format!("manual-retry-reset-{}", app_id);
+
+        sqlx::query(
+            "INSERT INTO pay.apps (id, slug, display_name, webhook_callback_url, webhook_callback_secret)
+             VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(app_id)
+        .bind(slug)
+        .bind("Manual Retry Reset Regression")
+        .bind(callback_url)
+        .bind("test_callback_secret")
+        .execute(pool)
+        .await?;
+
+        Ok(app_id)
+    }
+
+    async fn insert_test_delivery(
+        pool: &PgPool,
+        app_id: Uuid,
+        forward_attempts: i32,
+        forwarded: bool,
+        dead_lettered: bool,
+    ) -> Result<Uuid, sqlx::Error> {
+        let provider_id = Uuid::new_v4();
+        let delivery_id = Uuid::new_v4();
+        let forwarded_at = forwarded.then(Utc::now);
+        let dead_lettered_at = dead_lettered.then(Utc::now);
+        let dead_letter_reason = dead_lettered.then(|| "Retry limit exceeded".to_string());
+        let last_http_status = if forwarded {
+            Some(200)
+        } else if dead_lettered {
+            Some(500)
+        } else {
+            None
+        };
+        let last_error = dead_lettered.then(|| "previous delivery failure".to_string());
+
+        sqlx::query(
+            "INSERT INTO pay.webhook_provider
+             (id, app_id, provider, provider_webhook_id, event_type, payload, processed)
+             VALUES ($1, $2, $3, $4, $5, $6, true)"
+        )
+        .bind(provider_id)
+        .bind(app_id)
+        .bind("test_provider")
+        .bind(format!("evt_{}", provider_id))
+        .bind("subscription.test")
+        .bind(serde_json::json!({ "test": true }))
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO pay.webhook_delivery
+             (id, app_id, webhook_provider_id, forward_attempts, forwarded, forwarded_at,
+              dead_lettered, dead_lettered_at, dead_letter_reason, last_http_status, last_error)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+        )
+        .bind(delivery_id)
+        .bind(app_id)
+        .bind(provider_id)
+        .bind(forward_attempts)
+        .bind(forwarded)
+        .bind(forwarded_at)
+        .bind(dead_lettered)
+        .bind(dead_lettered_at)
+        .bind(dead_letter_reason)
+        .bind(last_http_status)
+        .bind(last_error)
+        .execute(pool)
+        .await?;
+
+        Ok(delivery_id)
+    }
+
+    async fn delete_test_app(pool: &PgPool, app_id: Uuid) {
+        let _ = sqlx::query("DELETE FROM pay.apps WHERE id = $1")
+            .bind(app_id)
+            .execute(pool)
+            .await;
+    }
+
+    async fn callback_handler(State(count): State<Arc<AtomicUsize>>) -> StatusCode {
+        count.fetch_add(1, Ordering::SeqCst);
+        StatusCode::OK
+    }
+
+    async fn spawn_callback_server() -> Result<(String, Arc<AtomicUsize>, JoinHandle<()>), Box<dyn Error>> {
+        let count = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/callback", post(callback_handler))
+            .with_state(count.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("test callback server should stay healthy");
+        });
+
+        Ok((format!("http://{}/callback", address), count, server))
+    }
+
+    fn test_canonical_payload() -> CanonicalWebhookPayload {
+        let now = Utc::now();
+
+        CanonicalWebhookPayload {
+            event_id: format!("test-event-{}", Uuid::new_v4()),
+            event_type: "subscription.test".to_string(),
+            timestamp: now.to_rfc3339(),
+            timestamp_epoch_ms: now.timestamp_millis(),
+            app_slug: "manual-retry-reset-regression".to_string(),
+            product_id: None,
+            subscription_id: None,
+            external_user_id: Some("user_manual_retry_reset".to_string()),
+            amount_cents: None,
+            new_price_cents: None,
+            auto_renewing: None,
+            purchase_token: None,
+            current_period_end: None,
+            status: None,
+            provider: "test_provider".to_string(),
+            provider_event_id: format!("evt_{}", Uuid::new_v4()),
+            previous_status: None,
+            corrected_status: None,
+            reconciliation_source: None,
+            revocation_reason: None,
+            cancellation_mode: None,
+            google_price_step_up_consent_deadline: None,
+            google_pause_scheduled_at: None,
+            google_deferred_until: None,
+            google_pending_price_change_new_price_cents: None,
+            google_pending_price_change_currency: None,
+            google_pending_price_change_mode: None,
+            google_pending_price_change_state: None,
+            google_pending_price_change_expected_at: None,
+        }
+    }
 }

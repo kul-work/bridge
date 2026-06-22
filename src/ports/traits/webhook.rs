@@ -57,7 +57,7 @@ pub trait WebhookForwardRepository:
         forwarded: bool,
     ) -> Result<(), BridgeError>;
 
-    async fn reset_webhook_delivery(&self, delivery_id: Uuid) -> Result<(), BridgeError>;
+    async fn reset_webhook_delivery(&self, delivery_id: Uuid) -> Result<bool, BridgeError>;
 }
 
 #[async_trait]

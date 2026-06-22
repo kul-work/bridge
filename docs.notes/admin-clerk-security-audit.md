@@ -10,9 +10,9 @@ The admin page being public is not the main issue; a Clerk publishable key is pu
 
 This audit assumes the intended deployment model is a **dedicated Bridge-admin Clerk instance with exactly one admin user**. Under that model, user-vs-admin authorization and Clerk organization membership are not the primary risks right now.
 
-The current admin API has one remaining correctness gap worth fixing before relying on it for production payment operations:
+The admin API had one remaining correctness gap worth fixing before relying on it for production payment operations. This is now addressed in the working tree:
 
-1. Manual webhook retry can race and re-open an already forwarded delivery.
+1. Manual webhook retry no longer re-opens an already forwarded delivery.
 
 ## Scope Reviewed
 
@@ -32,14 +32,16 @@ The findings below are scoped to the current plan: Bridge admin uses a dedicated
 
 ### P1 — Manual webhook retry can race and re-open an already forwarded delivery
 
-The retry handler reads the delivery, checks `forwarded`, and then later resets the delivery. The reset SQL unconditionally sets `forwarded = false`.
+Status: fixed in the working tree.
 
-Evidence:
+Original finding: the retry handler read the delivery, checked `forwarded`, and then later reset the delivery. The reset SQL unconditionally set `forwarded = false`.
+
+Original evidence:
 
 - `src/handlers/admin.rs:151-164` checks whether the delivery is already forwarded.
 - `src/db/webhooks.rs:187-203` resets `forwarded`, `forwarded_at`, attempt counts, and dead-letter fields without `forwarded = false` in the `WHERE` clause.
 
-Impact:
+Original impact:
 
 If the background worker forwards the delivery between the handler's read and reset, the admin retry can mark an already-forwarded delivery as pending again, creating duplicate delivery risk.
 
@@ -51,3 +53,10 @@ Recommended fix:
 - Return whether a row was actually reset.
 - Audit both successful and skipped retry attempts.
 - Consider allowing manual reset only for dead-lettered deliveries, not all pending deliveries.
+
+Implemented fix:
+
+- `reset_webhook_delivery` now performs one conditional `UPDATE` with `WHERE` predicates for the delivery `id`, resolved `app_id`, `forwarded = false`, and `dead_lettered = true`.
+- The reset no longer writes `forwarded = false` or clears `forwarded_at`.
+- The reset returns whether a row was actually queued, and the admin handler logs both queued and skipped attempts.
+- The admin UI only exposes manual retry for dead-lettered, unforwarded deliveries.

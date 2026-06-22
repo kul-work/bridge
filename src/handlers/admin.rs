@@ -172,7 +172,7 @@ pub async fn get_webhook_payload(
 }
 
 /// Retry webhook delivery manually.
-/// Resets dead-lettered/pending deliveries so the background retry worker
+/// Resets dead-lettered deliveries so the background retry worker
 /// picks them up on its next tick. Does not forward directly to avoid racing
 /// the worker and to ensure suppressed webhooks are handled correctly.
 pub async fn retry_webhook(
@@ -184,19 +184,16 @@ pub async fn retry_webhook(
 
     let database = state.database();
 
-    let delivery = database.as_ref().get_webhook_delivery(webhook_uuid).await?;
+    let queued = database.as_ref().reset_webhook_delivery(webhook_uuid).await?;
 
-    if delivery.forwarded {
-        info!("Skipping manual retry for already-forwarded webhook {}", webhook_uuid);
-        return Ok(StatusCode::OK);
+    if queued {
+        info!("Manual retry queued for dead-lettered webhook delivery {}", webhook_uuid);
+    } else {
+        info!(
+            "Manual retry skipped for webhook delivery {} because it is not currently dead-lettered and unforwarded",
+            webhook_uuid
+        );
     }
-
-    info!(
-        "Manual retry queued for webhook delivery {} (app={}, attempts={}, dead_lettered={})",
-        webhook_uuid, delivery.app_id, delivery.forward_attempts, delivery.dead_lettered
-    );
-
-    database.as_ref().reset_webhook_delivery(webhook_uuid).await?;
 
     Ok(StatusCode::OK)
 }

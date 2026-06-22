@@ -175,6 +175,14 @@ INCOMING WEBHOOK
 
 ### 1. INGRESS (Provider → Bridge)
 
+Assumptions at the ingress boundary:
+
+- Provider webhook URLs are `/webhooks/{webhook_ingress_token}/{provider}`. Bridge parses `{webhook_ingress_token}` as a UUID and uses it only to resolve the target app. Invalid or unknown tokens return `404` and are not processed.
+- The ingress token is not considered a provider-authentication signature. Provider signature verification still runs before payload persistence or state mutation unless signature verification is explicitly disabled for mock/local testing.
+- Google Play webhook verification uses the Pub/Sub `Authorization` JWT. Production should enable audience checking with `GOOGLE_VERIFY_AUDIENCE=true` and set `GOOGLE_PUB_SUB_AUDIENCE` to the exact webhook endpoint.
+- Creem webhook verification uses HMAC-SHA256 over the raw request body and the configured `webhook_secret`; the supplied signature must match before processing.
+- `X-Webhook-Verification-Mode` and other test override headers are honored only when `MOCK_EXTERNAL_APIS=true`.
+
 ```
 Provider webhook
     ↓
@@ -247,11 +255,11 @@ GET /admin/apps/:app_id/webhooks
 Admin clicks "Retry"
     ↓
 POST /admin/webhooks/:webhook_id/retry
-    └─ Reset delivery (clear dead-letter, reset attempts)
+    └─ Atomically reset only an unforwarded dead-lettered delivery
        ├─ forward_attempts = 0
-       ├─ forwarded = false
        ├─ dead_lettered = false
-       └─ Background worker picks up on next tick & forwards
+       ├─ forwarded/forwarded_at are not cleared
+       └─ Background worker picks up eligible reset rows on next tick & forwards
           (suppressed webhooks are marked complete by the worker)
 ```
 
