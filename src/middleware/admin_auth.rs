@@ -25,6 +25,12 @@ const JWKS_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 const JWT_CLOCK_SKEW_SECS: i64 = 60;
 static ADMIN_AUTH_VERIFIER: OnceLock<Result<AdminClerkVerifier, String>> = OnceLock::new();
 
+#[derive(Clone, Debug)]
+pub struct AdminAuthContext {
+    pub subject: String,
+    pub org_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct AdminClerkClaims {
     sub: String,
@@ -148,7 +154,7 @@ impl AdminClerkVerifier {
         Ok(jwks)
     }
 
-    async fn verify_token(&self, token: &str) -> Result<(), String> {
+    async fn verify_token(&self, token: &str) -> Result<AdminAuthContext, String> {
         let (header_part, payload_part, signature_part) = split_jwt(token)?;
         let header = parse_minimal_jwt_header(header_part)?;
         validate_minimal_jwt_header(&header)?;
@@ -216,7 +222,12 @@ impl AdminClerkVerifier {
 
         let _ = (claims.exp, claims.iat);
 
-        Ok(())
+        let org_id = claims.active_org_id().map(str::to_string);
+
+        Ok(AdminAuthContext {
+            subject: claims.sub,
+            org_id,
+        })
     }
 }
 
@@ -396,7 +407,7 @@ fn internal_error_response(message: &str) -> (StatusCode, Json<serde_json::Value
 /// Clerk admin authentication middleware
 /// Validates that request is from Tyde's internal Clerk organization
 pub async fn admin_auth_middleware(
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let token = match request
@@ -424,10 +435,15 @@ pub async fn admin_auth_middleware(
         }
     };
 
-    if let Err(message) = verifier.verify_token(token).await {
-        error!("Admin auth rejected request: {}", message);
-        return Err(unauthorized_response("Invalid admin session"));
-    }
+    let admin = match verifier.verify_token(token).await {
+        Ok(admin) => admin,
+        Err(message) => {
+            error!("Admin auth rejected request: {}", message);
+            return Err(unauthorized_response("Invalid admin session"));
+        }
+    };
+
+    request.extensions_mut().insert(admin);
 
     Ok(next.run(request).await)
 }

@@ -1,8 +1,10 @@
 use axum::{
-    extract::{Json, Path, State},
+    extract::{Extension, Json, Path, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{Html, IntoResponse},
 };
+use std::{collections::HashSet, sync::OnceLock};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 use tracing::{info, error};
 
@@ -10,10 +12,13 @@ use crate::{
     config::ADMIN_WEBHOOK_LIST_LIMIT,
     db::apps as app_queries,
     error::BridgeError,
+    middleware::admin_auth::AdminAuthContext,
     ports::{AdminRepository, WebhookForwardRepository},
     state::AppState,
     utils::redact_with_prefix,
 };
+
+static ADMIN_OPERATION_LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 /// Get admin dashboard page.
 /// Serves the HTML with the Clerk publishable key injected for client-side auth.
@@ -66,6 +71,19 @@ fn admin_security_headers() -> HeaderMap {
     headers
 }
 
+async fn try_start_admin_operation(key: &str) -> bool {
+    let locks = ADMIN_OPERATION_LOCKS.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut locks = locks.lock().await;
+    locks.insert(key.to_string())
+}
+
+async fn finish_admin_operation(key: &str) {
+    if let Some(locks) = ADMIN_OPERATION_LOCKS.get() {
+        let mut locks = locks.lock().await;
+        locks.remove(key);
+    }
+}
+
 /// Get list of apps (JSON)
 pub async fn list_apps(
     State(state): State<AppState>,
@@ -97,6 +115,7 @@ pub async fn list_apps(
 pub async fn update_app_notes(
     State(state): State<AppState>,
     Path(app_id): Path<String>,
+    Extension(admin): Extension<AdminAuthContext>,
     Json(payload): Json<UpdateAppNotesRequest>,
 ) -> Result<Json<UpdateAppNotesResponse>, BridgeError> {
     let app_uuid = Uuid::parse_str(&app_id)
@@ -109,7 +128,30 @@ pub async fn update_app_notes(
     }
 
     let database = state.database();
-    let notes = app_queries::update_app_notes(database.pool(), app_uuid, &payload.notes).await?;
+    let notes = match app_queries::update_app_notes(database.pool(), app_uuid, &payload.notes).await {
+        Ok(notes) => notes,
+        Err(e) => {
+            error!(
+                admin_subject = %admin.subject,
+                admin_org = ?admin.org_id,
+                action = "update_app_notes",
+                target_app_id = %app_uuid,
+                result = "error",
+                error = %e,
+                "Admin mutation failed"
+            );
+            return Err(e);
+        }
+    };
+
+    info!(
+        admin_subject = %admin.subject,
+        admin_org = ?admin.org_id,
+        action = "update_app_notes",
+        target_app_id = %app_uuid,
+        result = "success",
+        "Admin mutation completed"
+    );
 
     Ok(Json(UpdateAppNotesResponse { id: app_id, notes }))
 }
@@ -178,20 +220,64 @@ pub async fn get_webhook_payload(
 pub async fn retry_webhook(
     State(state): State<AppState>,
     Path(webhook_id): Path<String>,
+    Extension(admin): Extension<AdminAuthContext>,
 ) -> Result<StatusCode, BridgeError> {
     let webhook_uuid = Uuid::parse_str(&webhook_id)
         .map_err(|_| BridgeError::ValidationError("Invalid webhook ID".to_string()))?;
 
+    let lock_key = format!("retry_webhook:{}", webhook_uuid);
+    if !try_start_admin_operation(&lock_key).await {
+        info!(
+            admin_subject = %admin.subject,
+            admin_org = ?admin.org_id,
+            action = "retry_webhook",
+            target_webhook_id = %webhook_uuid,
+            result = "already_running",
+            "Admin mutation skipped"
+        );
+        return Err(BridgeError::Conflict(
+            "A retry for this webhook delivery is already running".to_string(),
+        ));
+    }
+
     let database = state.database();
 
-    let queued = database.as_ref().reset_webhook_delivery(webhook_uuid).await?;
+    let queued = match database.as_ref().reset_webhook_delivery(webhook_uuid).await {
+        Ok(queued) => queued,
+        Err(e) => {
+            finish_admin_operation(&lock_key).await;
+            error!(
+                admin_subject = %admin.subject,
+                admin_org = ?admin.org_id,
+                action = "retry_webhook",
+                target_webhook_id = %webhook_uuid,
+                result = "error",
+                error = %e,
+                "Admin mutation failed"
+            );
+            return Err(e);
+        }
+    };
+
+    finish_admin_operation(&lock_key).await;
 
     if queued {
-        info!("Manual retry queued for dead-lettered webhook delivery {}", webhook_uuid);
+        info!(
+            admin_subject = %admin.subject,
+            admin_org = ?admin.org_id,
+            action = "retry_webhook",
+            target_webhook_id = %webhook_uuid,
+            result = "queued",
+            "Admin mutation completed"
+        );
     } else {
         info!(
-            "Manual retry skipped for webhook delivery {} because it is not currently dead-lettered and unforwarded",
-            webhook_uuid
+            admin_subject = %admin.subject,
+            admin_org = ?admin.org_id,
+            action = "retry_webhook",
+            target_webhook_id = %webhook_uuid,
+            result = "not_dead_lettered",
+            "Admin mutation skipped"
         );
     }
 
@@ -203,6 +289,7 @@ pub async fn retry_webhook(
 /// Jobs run inline (not spawned) so the response reflects actual success or failure.
 pub async fn trigger_jobs(
     State(state): State<AppState>,
+    Extension(admin): Extension<AdminAuthContext>,
     Json(payload): Json<TriggerJobsRequest>,
 ) -> Result<Json<TriggerJobsResponse>, BridgeError> {
     const VALID_JOBS: &[&str] = &[
@@ -234,11 +321,37 @@ pub async fn trigger_jobs(
         }
     }
 
+    let mut seen_jobs = HashSet::new();
+    for job in &jobs {
+        if !seen_jobs.insert(job.as_str()) {
+            return Err(BridgeError::ValidationError(format!(
+                "Duplicate job: '{}'. Submit each job only once",
+                job
+            )));
+        }
+    }
+
     let db = state.database();
     let mut results = Vec::new();
 
     for job in jobs {
-        info!("Manual trigger: {} job", job);
+        let lock_key = format!("trigger_job:{}", job);
+        if !try_start_admin_operation(&lock_key).await {
+            info!(
+                admin_subject = %admin.subject,
+                admin_org = ?admin.org_id,
+                action = "trigger_job",
+                target_job = %job,
+                result = "already_running",
+                "Admin job trigger skipped"
+            );
+            results.push(JobResult {
+                job,
+                error: Some("Job is already running".to_string()),
+            });
+            continue;
+        }
+
         let result = match job.as_str() {
             "webhook_retry" => {
                 let mut err = None;
@@ -290,6 +403,29 @@ pub async fn trigger_jobs(
             }
             _ => unreachable!("validated above"),
         };
+
+        finish_admin_operation(&lock_key).await;
+
+        if let Some(error) = result.as_deref() {
+            error!(
+                admin_subject = %admin.subject,
+                admin_org = ?admin.org_id,
+                action = "trigger_job",
+                target_job = %job,
+                result = "error",
+                error = %error,
+                "Admin job trigger failed"
+            );
+        } else {
+            info!(
+                admin_subject = %admin.subject,
+                admin_org = ?admin.org_id,
+                action = "trigger_job",
+                target_job = %job,
+                result = "success",
+                "Admin job trigger completed"
+            );
+        }
         results.push(JobResult { job, error: result });
     }
 

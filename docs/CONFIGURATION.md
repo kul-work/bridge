@@ -43,6 +43,8 @@ Admin routes under `/admin` require a Clerk session JWT from the configured Cler
 - `CLERK_FRONTEND_API` (default: unset) - Fallback Clerk issuer when `ADMIN_CLERK_FRONTEND_API` is unset.
 - `CLERK_PUBLISHABLE_KEY` - Used only to derive the Clerk issuer when both issuer URL vars are unset.
 - `ADMIN_CLERK_AUTHORIZED_PARTIES` (default: unset) - Optional comma-separated allowed browser origins, for example `http://localhost:3000,https://admin.tyde.app`. When set, admin JWTs must include an `azp` claim matching one of these origins; JWTs without `azp` are rejected.
+- `ADMIN_READ_RATE_LIMIT_PER_MINUTE` (default: `120`) - Per-admin-actor rate limit for admin `GET`/read requests.
+- `ADMIN_MUTATION_RATE_LIMIT_PER_MINUTE` (default: `10`) - Per-admin-actor rate limit for admin mutating requests such as `POST` and `PATCH`.
 
 Issuer fallback order is:
 

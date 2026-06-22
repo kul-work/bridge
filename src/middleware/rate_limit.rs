@@ -8,15 +8,25 @@ use axum::{
 use serde_json::json;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
+use std::env;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::handlers::api_key::AppAuth;
+use crate::middleware::admin_auth::AdminAuthContext;
 use crate::ports::AppLookupRepository;
 use crate::state::AppState;
 
 const UNAUTHENTICATED_IP_LIMIT: usize = 10;
 const UNAUTHENTICATED_IP_WINDOW_SECS: u64 = 60;
+const ADMIN_READ_LIMIT_DEFAULT: usize = 120;
+const ADMIN_MUTATION_LIMIT_DEFAULT: usize = 10;
+
+struct AdminRateLimits {
+    read: usize,
+    mutation: usize,
+}
 
 /// In-memory rate limit store
 pub struct RateLimitStore {
@@ -205,6 +215,42 @@ fn endpoint_group(method: &Method, path: &str) -> &'static str {
     "default"
 }
 
+fn admin_endpoint_group(method: &Method) -> &'static str {
+    match *method {
+        Method::POST | Method::PATCH | Method::PUT | Method::DELETE => "mutation",
+        _ => "read",
+    }
+}
+
+fn admin_limit_for_group(group: &str) -> usize {
+    static ADMIN_RATE_LIMITS: OnceLock<AdminRateLimits> = OnceLock::new();
+    let limits = ADMIN_RATE_LIMITS.get_or_init(|| AdminRateLimits {
+        read: configured_limit("ADMIN_READ_RATE_LIMIT_PER_MINUTE", ADMIN_READ_LIMIT_DEFAULT),
+        mutation: configured_limit("ADMIN_MUTATION_RATE_LIMIT_PER_MINUTE", ADMIN_MUTATION_LIMIT_DEFAULT),
+    });
+
+    admin_limit_for_group_with_values(
+        group,
+        limits.read,
+        limits.mutation,
+    )
+}
+
+fn admin_limit_for_group_with_values(group: &str, read_limit: usize, mutation_limit: usize) -> usize {
+    match group {
+        "mutation" => mutation_limit,
+        _ => read_limit,
+    }
+}
+
+fn configured_limit(name: &str, default: usize) -> usize {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
 /// Per-API-key rate limit middleware (runs after auth)
 pub async fn api_rate_limit_middleware(
     State(state): State<AppState>,
@@ -256,6 +302,62 @@ pub async fn api_rate_limit_middleware(
     response.headers_mut().insert(
         "X-RateLimit-Limit",
         effective_limit.to_string().parse().unwrap(),
+    );
+    response.headers_mut().insert(
+        "X-RateLimit-Remaining",
+        remaining.to_string().parse().unwrap(),
+    );
+    response.headers_mut().insert(
+        "X-RateLimit-Reset",
+        reset_at.to_string().parse().unwrap(),
+    );
+
+    Ok(response)
+}
+
+/// Per-admin-user rate limit middleware. Runs after Clerk auth so mutating
+/// admin routes are limited by verified actor instead of client-supplied IP.
+pub async fn admin_rate_limit_middleware(
+    request: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let admin = match request.extensions().get::<AdminAuthContext>() {
+        Some(admin) => admin,
+        None => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "admin_context_missing",
+                    "message": "Admin authentication context is missing"
+                })),
+            ));
+        }
+    };
+
+    let group = admin_endpoint_group(request.method());
+    let limit = admin_limit_for_group(group);
+    let key = format!("admin:{}:{}", admin.subject, group);
+
+    static STORE: std::sync::OnceLock<RateLimitStore> = std::sync::OnceLock::new();
+    let store = STORE.get_or_init(RateLimitStore::new);
+
+    let (allowed, remaining, reset_at) = store.check_rate_limit(&key, limit, 60).await;
+
+    if !allowed {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "error": "rate_limit_exceeded",
+                "message": "Too many admin requests",
+                "reset_at": reset_at
+            })),
+        ));
+    }
+
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        "X-RateLimit-Limit",
+        limit.to_string().parse().unwrap(),
     );
     response.headers_mut().insert(
         "X-RateLimit-Remaining",
@@ -328,7 +430,7 @@ pub async fn unauthenticated_ip_rate_limit_middleware(
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_limit_for_group, endpoint_group, extract_client_ip};
+    use super::{admin_endpoint_group, admin_limit_for_group_with_values, effective_limit_for_group, endpoint_group, extract_client_ip};
     use axum::extract::ConnectInfo;
     use axum::body::Body;
     use axum::http::Request;
@@ -406,5 +508,13 @@ mod tests {
 
         assert_eq!(effective_limit_for_group("checkout", 60, Some(&rules)), 60);
         assert_eq!(effective_limit_for_group("checkout", 120, Some(&rules)), 90);
+    }
+
+    #[test]
+    fn admin_mutations_use_tighter_rate_limit_bucket() {
+        assert_eq!(admin_endpoint_group(&Method::PATCH), "mutation");
+        assert_eq!(admin_limit_for_group_with_values("mutation", 240, 30), 30);
+        assert_eq!(admin_endpoint_group(&Method::GET), "read");
+        assert_eq!(admin_limit_for_group_with_values("read", 240, 30), 240);
     }
 }

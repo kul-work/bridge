@@ -84,6 +84,15 @@ The UI only exposes retry for dead-lettered, unforwarded deliveries:
 
 ### Medium - Powerful admin operations lack rate limiting, concurrency guards, and actor audit trails
 
+Status: Fixed after audit.
+
+Remediation:
+
+- Admin Clerk auth now attaches verified subject/org context to request extensions.
+- Admin API routes now have configurable admin-specific per-actor rate limits, with tighter defaults for mutating methods.
+- Manual webhook retry and manual job triggers now use in-process concurrency guards to prevent duplicate concurrent runs for the same target.
+- Mutating admin actions now emit structured audit logs with actor, action, target, and result.
+
 Evidence:
 
 - Normal API routes have rate-limit middleware: `src/main.rs:157-167`
