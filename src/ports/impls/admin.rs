@@ -25,4 +25,11 @@ impl AdminRepository for db::Database {
     ) -> Result<Vec<(WebhookDelivery, WebhookProvider)>, BridgeError> {
         db::webhooks::list_app_webhooks(self.pool(), app_id, limit, offset).await
     }
+
+    async fn get_webhook_provider_for_delivery(
+        &self,
+        delivery_id: Uuid,
+    ) -> Result<WebhookProvider, BridgeError> {
+        db::webhooks::get_webhook_provider_for_delivery(self.pool(), delivery_id).await
+    }
 }

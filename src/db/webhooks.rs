@@ -305,6 +305,31 @@ pub async fn list_app_webhooks(
     Ok(results)
 }
 
+pub async fn get_webhook_provider_for_delivery(
+    pool: &PgPool,
+    delivery_id: Uuid,
+) -> Result<WebhookProvider, BridgeError> {
+    let app_id = get_webhook_delivery_app_id(pool, delivery_id).await?;
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let provider = sqlx::query_as::<_, WebhookProvider>(
+        "SELECT wp.*
+         FROM pay.webhook_delivery wd
+         JOIN pay.webhook_provider wp ON wp.id = wd.webhook_provider_id
+         WHERE wd.id = $1 AND wd.app_id = $2"
+    )
+    .bind(delivery_id)
+    .bind(app_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?
+    .ok_or_else(|| BridgeError::ValidationError("Webhook delivery not found".to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(provider)
+}
+
 /// Count failed webhook deliveries for app
 pub async fn count_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;

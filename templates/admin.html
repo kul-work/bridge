@@ -102,6 +102,12 @@
     padding: 1px 4px;
     border-radius: 3px;
   }
+  td.actions {
+    white-space: nowrap;
+  }
+  td.actions button {
+    margin-right: 4px;
+  }
 
   /* Badges */
   .badge {
@@ -128,6 +134,24 @@
     border-radius: var(--radius);
     margin-bottom: 12px;
     font-size: 13px;
+  }
+  .payload-viewer {
+    margin-bottom: 24px;
+  }
+  .payload-viewer .payload-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .payload-viewer pre {
+    max-height: 420px;
+    overflow: auto;
+    padding: 12px;
+    font-family: "SF Mono", Monaco, Consolas, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
   }
 
   /* Auth screen */
@@ -166,6 +190,13 @@
 
   <div class="container">
     <div id="global-error"></div>
+    <div id="payload-viewer" class="payload-viewer card hidden">
+      <div class="payload-header">
+        <strong id="payload-title">Webhook payload</strong>
+        <button onclick="hidePayload()">Close</button>
+      </div>
+      <pre id="payload-content"></pre>
+    </div>
 
     <div class="section">
       <h2>Applications</h2>
@@ -345,12 +376,15 @@ async function viewWebhooks(appId) {
       } else if (wh.dead_lettered) {
         statusBadge = '<span class="badge danger">Dead-lettered</span>';
       } else {
-        statusBadge = '<span class="badge warning">Pending (' + wh.forward_attempts + "/3)</span>";
+        statusBadge = '<span class="badge warning">Pending (' + wh.forward_attempts + '/3)</span>';
       }
 
       const retryBtn = !wh.forwarded
         ? '<button class="primary" onclick="retryWebhook(\'' + wh.id + '\')">Retry</button>'
         : "";
+      const actions = retryBtn +
+        '<button onclick="viewPayload(\'' + wh.id + '\')">&#128065; Raw</button>' +
+        '<button onclick="copyId(\'' + wh.id + '\')">⧉ ID</button>';
 
       const eventId = wh.provider_webhook_id.length > 20
         ? wh.provider_webhook_id.substring(0, 20) + "..."
@@ -363,7 +397,7 @@ async function viewWebhooks(appId) {
         "<td>" + statusBadge + "</td>" +
         "<td>" + wh.forward_attempts + "</td>" +
         "<td><small>" + new Date(wh.created_at).toLocaleString() + "</small></td>" +
-        "<td>" + retryBtn + "</td>";
+        '<td class="actions">' + actions + "</td>";
     });
 
     document.getElementById("webhooks-table").classList.remove("hidden");
@@ -375,6 +409,35 @@ async function viewWebhooks(appId) {
   }
 }
 
+async function viewPayload(webhookId) {
+  try {
+    const res = await authedFetch("/admin/webhooks/" + webhookId + "/payload");
+    if (!res.ok) throw new Error("Failed to load payload (" + res.status + ")");
+    const payload = await res.json();
+
+    document.getElementById("payload-title").textContent =
+      payload.provider + " " + payload.event_type + " - " + payload.provider_webhook_id;
+    document.getElementById("payload-content").textContent =
+      JSON.stringify(payload.redacted_payload, null, 2);
+    document.getElementById("payload-viewer").classList.remove("hidden");
+  } catch (err) {
+    alert("Error: " + err.message);
+  }
+}
+
+function hidePayload() {
+  document.getElementById("payload-viewer").classList.add("hidden");
+}
+
+async function copyId(webhookId) {
+  try {
+    await navigator.clipboard.writeText(webhookId);
+    alert("Webhook ID copied");
+  } catch (_) {
+    window.prompt("Copy webhook ID", webhookId);
+  }
+}
+
 async function retryWebhook(webhookId) {
   try {
     const res = await authedFetch("/admin/webhooks/" + webhookId + "/retry", {
@@ -382,7 +445,7 @@ async function retryWebhook(webhookId) {
     });
     if (!res.ok) throw new Error("Failed to retry webhook (" + res.status + ")");
 
-    alert("Webhook retry queued — the background worker will attempt delivery on its next tick.");
+    alert("Webhook retry queued - the background worker will attempt delivery on its next tick.");
     location.reload();
   } catch (err) {
     alert("Error: " + err.message);

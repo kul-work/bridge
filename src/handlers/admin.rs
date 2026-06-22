@@ -11,6 +11,7 @@ use crate::{
     error::BridgeError,
     ports::{AdminRepository, WebhookForwardRepository},
     state::AppState,
+    utils::redact_with_prefix,
 };
 
 /// Get admin dashboard page.
@@ -90,6 +91,28 @@ pub async fn get_app_webhooks(
     Ok(axum::Json(summaries))
 }
 
+pub async fn get_webhook_payload(
+    State(state): State<AppState>,
+    Path(webhook_id): Path<String>,
+) -> Result<axum::Json<WebhookPayloadSummary>, BridgeError> {
+    let webhook_uuid = Uuid::parse_str(&webhook_id)
+        .map_err(|_| BridgeError::ValidationError("Invalid webhook ID".to_string()))?;
+
+    let database = state.database();
+    let provider = database
+        .as_ref()
+        .get_webhook_provider_for_delivery(webhook_uuid)
+        .await?;
+
+    Ok(axum::Json(WebhookPayloadSummary {
+        id: webhook_id,
+        provider: provider.provider,
+        provider_webhook_id: provider.provider_webhook_id,
+        event_type: provider.event_type,
+        redacted_payload: redact_payload(provider.payload),
+    }))
+}
+
 /// Retry webhook delivery manually.
 /// Resets dead-lettered/pending deliveries so the background retry worker
 /// picks them up on its next tick. Does not forward directly to avoid racing
@@ -143,4 +166,99 @@ pub struct WebhookSummary {
     pub last_http_status: Option<i32>,
     pub last_error: Option<String>,
     pub created_at: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct WebhookPayloadSummary {
+    pub id: String,
+    pub provider: String,
+    pub provider_webhook_id: String,
+    pub event_type: String,
+    pub redacted_payload: serde_json::Value,
+}
+
+fn redact_payload(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    if should_redact_payload_key(&key) {
+                        (key, redact_payload_value(value))
+                    } else {
+                        (key, redact_payload(value))
+                    }
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(redact_payload).collect())
+        }
+        other => other,
+    }
+}
+
+fn redact_payload_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(value) => serde_json::Value::String(redact_with_prefix(&value)),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            serde_json::Value::String("[redacted]".to_string())
+        }
+        serde_json::Value::Null => serde_json::Value::Null,
+        _ => serde_json::Value::String("[redacted]".to_string()),
+    }
+}
+
+fn should_redact_payload_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    let contains_sensitive = [
+        "authorization",
+        "checkout_id",
+        "customer_email",
+        "email",
+        "password",
+        "purchase_token",
+        "purchasetoken",
+        "secret",
+        "token",
+    ]
+    .iter()
+    .any(|sensitive| key.contains(sensitive));
+    let exact_sensitive = [
+        "customer_name",
+        "first_name",
+        "firstname",
+        "last_name",
+        "lastname",
+        "name",
+    ]
+    .iter()
+    .any(|sensitive| key == *sensitive);
+
+    contains_sensitive || exact_sensitive
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::redact_payload;
+
+    #[test]
+    fn redact_payload_masks_sensitive_keys_recursively() {
+        let redacted = redact_payload(json!({
+            "id": "evt_123",
+            "customer_email": "admin@example.com",
+            "object": {
+                "purchaseToken": "long_purchase_token_1234567890",
+                "amount": 499,
+                "packageName": "com.tyde.bridge"
+            }
+        }));
+
+        assert_eq!(redacted["id"], "evt_123");
+        assert_eq!(redacted["customer_email"], "[redacted]...mple.com");
+        assert_eq!(redacted["object"]["purchaseToken"], "[redacted]...34567890");
+        assert_eq!(redacted["object"]["amount"], 499);
+        assert_eq!(redacted["object"]["packageName"], "com.tyde.bridge");
+    }
 }

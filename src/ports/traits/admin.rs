@@ -18,4 +18,9 @@ pub trait AdminRepository: Send + Sync {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<(WebhookDelivery, WebhookProvider)>, BridgeError>;
+
+    async fn get_webhook_provider_for_delivery(
+        &self,
+        delivery_id: Uuid,
+    ) -> Result<WebhookProvider, BridgeError>;
 }
