@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Json, Path, State},
     http::StatusCode,
     response::Html,
 };
@@ -8,6 +8,7 @@ use tracing::info;
 
 use crate::{
     config::ADMIN_WEBHOOK_LIST_LIMIT,
+    db::apps as app_queries,
     error::BridgeError,
     ports::{AdminRepository, WebhookForwardRepository},
     state::AppState,
@@ -49,11 +50,32 @@ pub async fn list_apps(
             slug: app.slug.clone(),
             display_name: app.display_name.clone(),
             app_url: app.app_url.clone(),
+            notes: app.notes.clone(),
             failed_webhooks,
         });
     }
 
     Ok(axum::Json(summaries))
+}
+
+pub async fn update_app_notes(
+    State(state): State<AppState>,
+    Path(app_id): Path<String>,
+    Json(payload): Json<UpdateAppNotesRequest>,
+) -> Result<Json<UpdateAppNotesResponse>, BridgeError> {
+    let app_uuid = Uuid::parse_str(&app_id)
+        .map_err(|_| BridgeError::ValidationError("Invalid app ID".to_string()))?;
+
+    if payload.notes.len() > 4_000 {
+        return Err(BridgeError::ValidationError(
+            "Notes cannot exceed 4000 characters".to_string(),
+        ));
+    }
+
+    let database = state.database();
+    let notes = app_queries::update_app_notes(database.pool(), app_uuid, &payload.notes).await?;
+
+    Ok(Json(UpdateAppNotesResponse { id: app_id, notes }))
 }
 
 /// Get webhooks for an app
@@ -149,7 +171,19 @@ pub struct AppSummary {
     pub slug: String,
     pub display_name: String,
     pub app_url: Option<String>,
+    pub notes: Option<String>,
     pub failed_webhooks: i64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateAppNotesRequest {
+    pub notes: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct UpdateAppNotesResponse {
+    pub id: String,
+    pub notes: Option<String>,
 }
 
 #[derive(serde::Serialize)]

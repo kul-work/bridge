@@ -26,6 +26,7 @@ pub struct AppSummary {
     pub slug: String,
     pub display_name: String,
     pub app_url: Option<String>,
+    pub notes: Option<String>,
 }
 
 pub async fn get_app(pool: &PgPool, app_id: Uuid) -> Result<App, BridgeError> {
@@ -55,11 +56,25 @@ pub async fn list_enabled_app_ids(pool: &PgPool) -> Result<Vec<Uuid>, BridgeErro
 
 pub async fn list_app_summaries(pool: &PgPool) -> Result<Vec<AppSummary>, BridgeError> {
     sqlx::query_as::<_, AppSummary>(
-        "SELECT id, slug, display_name, app_url FROM pay.list_app_summaries_bootstrap()"
+        "SELECT id, slug, display_name, app_url, notes FROM pay.list_app_summaries_bootstrap()"
     )
     .fetch_all(pool)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))
+}
+
+pub async fn update_app_notes(
+    pool: &PgPool,
+    app_id: Uuid,
+    notes: &str,
+) -> Result<Option<String>, BridgeError> {
+    sqlx::query_scalar("SELECT notes FROM pay.update_app_notes_bootstrap($1, $2)")
+        .bind(app_id)
+        .bind(notes)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?
+        .ok_or_else(|| BridgeError::ValidationError("App not found".to_string()))
 }
 
 /// Get app by webhook ingress token

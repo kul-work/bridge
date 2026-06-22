@@ -108,6 +108,9 @@
   td.actions button {
     margin-right: 4px;
   }
+  td.app-actions button + button {
+    margin-left: 4px;
+  }
 
   /* Badges */
   .badge {
@@ -153,6 +156,35 @@
     font-size: 12px;
     white-space: pre-wrap;
   }
+  .notes-preview {
+    max-width: 220px;
+    color: var(--muted);
+  }
+  .notes-editor {
+    margin-bottom: 24px;
+  }
+  .notes-editor .notes-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .notes-editor .notes-body {
+    padding: 12px;
+  }
+  .notes-editor textarea {
+    width: 100%;
+    min-height: 140px;
+    resize: vertical;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font: inherit;
+  }
+  .notes-editor .notes-actions {
+    margin-top: 8px;
+  }
 
   /* Auth screen */
   #auth-screen {
@@ -173,7 +205,7 @@
 <body>
 
 <div id="auth-screen">
-  <h1>Bridge</h1>
+  <h1>Admin</h1>
   <p>Sign in to access the dashboard</p>
   <div id="clerk-signin"></div>
 </div>
@@ -197,6 +229,18 @@
       </div>
       <pre id="payload-content"></pre>
     </div>
+    <div id="notes-editor" class="notes-editor card hidden">
+      <div class="notes-header">
+        <strong id="notes-title">App notes</strong>
+        <button onclick="hideNotesEditor()">Close</button>
+      </div>
+      <div class="notes-body">
+        <textarea id="notes-text" maxlength="4000"></textarea>
+        <div class="notes-actions">
+          <button class="primary" onclick="saveNotes()">Save notes</button>
+        </div>
+      </div>
+    </div>
 
     <div class="section">
       <h2>Applications</h2>
@@ -209,6 +253,7 @@
               <th>App Name</th>
               <th>Slug</th>
               <th>URL</th>
+              <th>Notes</th>
               <th>Failed Webhooks</th>
               <th>Actions</th>
             </tr>
@@ -249,6 +294,9 @@
         src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
         type="text/javascript"></script>
 <script>
+let adminApps = [];
+let editingNotesAppId = null;
+
 async function onClerkReady() {
   await Clerk.load();
 
@@ -310,6 +358,7 @@ async function loadApps() {
     const res = await authedFetch("/admin/apps");
     if (!res.ok) throw new Error("Failed to load apps (" + res.status + ")");
     const apps = await res.json();
+    adminApps = apps;
 
     document.getElementById("apps-loading").classList.add("hidden");
 
@@ -333,8 +382,10 @@ async function loadApps() {
         "<td>" + (app.app_url
           ? '<a href="' + escapeHtml(app.app_url) + '" target="_blank">' + escapeHtml(app.app_url) + "</a>"
           : "N/A") + "</td>" +
+        '<td class="notes-preview">' + escapeHtml(previewNotes(app.notes)) + "</td>" +
         "<td>" + failedBadge + "</td>" +
-        '<td><button onclick="viewWebhooks(\'' + app.id + '\')">View Webhooks</button></td>';
+        '<td class="app-actions"><button onclick="viewWebhooks(\'' + app.id + '\')">View Webhooks</button>' +
+        '<button onclick="editNotes(\'' + app.id + '\')">Edit Notes</button></td>';
     });
 
     document.getElementById("apps-table").classList.remove("hidden");
@@ -343,6 +394,47 @@ async function loadApps() {
     const errEl = document.getElementById("apps-error");
     errEl.textContent = err.message;
     errEl.classList.remove("hidden");
+  }
+}
+
+function previewNotes(notes) {
+  if (!notes) return "-";
+  return notes.length > 48 ? notes.substring(0, 48) + "..." : notes;
+}
+
+function editNotes(appId) {
+  const app = adminApps.find(app => app.id === appId);
+  if (!app) return;
+
+  editingNotesAppId = appId;
+  document.getElementById("notes-title").textContent = "Notes - " + app.display_name;
+  document.getElementById("notes-text").value = app.notes || "";
+  document.getElementById("notes-editor").classList.remove("hidden");
+}
+
+function hideNotesEditor() {
+  editingNotesAppId = null;
+  document.getElementById("notes-editor").classList.add("hidden");
+}
+
+async function saveNotes() {
+  if (!editingNotesAppId) return;
+
+  try {
+    const notes = document.getElementById("notes-text").value;
+    const res = await authedFetch("/admin/apps/" + editingNotesAppId + "/notes", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes })
+    });
+    if (!res.ok) throw new Error("Failed to save notes (" + res.status + ")");
+    const updated = await res.json();
+    const app = adminApps.find(app => app.id === updated.id);
+    if (app) app.notes = updated.notes;
+    hideNotesEditor();
+    await loadApps();
+  } catch (err) {
+    alert("Error: " + err.message);
   }
 }
 
