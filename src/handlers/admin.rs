@@ -1,7 +1,7 @@
 use axum::{
     extract::{Json, Path, State},
-    http::StatusCode,
-    response::Html,
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
+    response::{Html, IntoResponse},
 };
 use uuid::Uuid;
 use tracing::{info, error};
@@ -19,7 +19,7 @@ use crate::{
 /// Serves the HTML with the Clerk publishable key injected for client-side auth.
 pub async fn admin_dashboard(
     State(_state): State<AppState>,
-) -> Result<Html<String>, BridgeError> {
+) -> Result<impl IntoResponse, BridgeError> {
     let publishable_key = std::env::var("CLERK_PUBLISHABLE_KEY")
         .map_err(|_| BridgeError::ConfigError(
             "CLERK_PUBLISHABLE_KEY must be set for admin auth.".to_string()
@@ -27,7 +27,43 @@ pub async fn admin_dashboard(
 
     let html = include_str!("../../templates/admin.html");
     let html = html.replace("{{CLERK_PUBLISHABLE_KEY}}", &publishable_key);
-    Ok(Html(html))
+    Ok((admin_security_headers(), Html(html)))
+}
+
+fn admin_security_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static(
+            "default-src 'self'; \
+             script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://*.clerk.accounts.dev https://*.clerk.com; \
+             style-src 'self' 'unsafe-inline'; \
+             connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://api.clerk.com; \
+             frame-src https://*.clerk.accounts.dev https://*.clerk.com; \
+             img-src 'self' data: https://img.clerk.com https://images.clerk.dev https://*.clerk.com; \
+             font-src 'self' data:; \
+             object-src 'none'; \
+             base-uri 'none'; \
+             frame-ancestors 'none'",
+        ),
+    );
+    headers.insert(
+        HeaderName::from_static("x-frame-options"),
+        HeaderValue::from_static("DENY"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=()"),
+    );
+    headers
 }
 
 /// Get list of apps (JSON)

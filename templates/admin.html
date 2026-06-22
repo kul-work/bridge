@@ -414,20 +414,40 @@ async function loadApps() {
 
     apps.forEach(app => {
       const row = tbody.insertRow();
-      const failedBadge = app.failed_webhooks > 0
-        ? '<span class="badge danger">' + app.failed_webhooks + "</span>"
-        : '<span class="badge success">0</span>';
 
-      row.innerHTML =
-        "<td><strong>" + escapeHtml(app.display_name) + "</strong></td>" +
-        "<td><code>" + escapeHtml(app.slug) + "</code></td>" +
-        "<td>" + (app.app_url
-          ? '<a href="' + escapeHtml(app.app_url) + '" target="_blank">' + escapeHtml(app.app_url) + "</a>"
-          : "N/A") + "</td>" +
-        '<td class="notes-preview">' + escapeHtml(previewNotes(app.notes)) + "</td>" +
-        "<td>" + failedBadge + "</td>" +
-        '<td class="app-actions"><button onclick="viewWebhooks(\'' + app.id + '\')">View Webhooks</button>' +
-        '<button onclick="editNotes(\'' + app.id + '\')">Edit Notes</button></td>';
+      const nameCell = row.insertCell();
+      const name = document.createElement("strong");
+      name.textContent = app.display_name;
+      nameCell.appendChild(name);
+
+      const slugCell = row.insertCell();
+      const slug = document.createElement("code");
+      slug.textContent = app.slug;
+      slugCell.appendChild(slug);
+
+      appendAppUrl(row.insertCell(), app.app_url);
+
+      const notesCell = row.insertCell();
+      notesCell.className = "notes-preview";
+      notesCell.textContent = previewNotes(app.notes);
+
+      const failedCell = row.insertCell();
+      const failedBadge = document.createElement("span");
+      failedBadge.className = "badge " + (app.failed_webhooks > 0 ? "danger" : "success");
+      failedBadge.textContent = app.failed_webhooks > 0 ? String(app.failed_webhooks) : "0";
+      failedCell.appendChild(failedBadge);
+
+      const actionsCell = row.insertCell();
+      actionsCell.className = "app-actions";
+      const viewButton = document.createElement("button");
+      viewButton.textContent = "View Webhooks";
+      viewButton.addEventListener("click", () => viewWebhooks(app.id));
+      actionsCell.appendChild(viewButton);
+
+      const editButton = document.createElement("button");
+      editButton.textContent = "Edit Notes";
+      editButton.addEventListener("click", () => editNotes(app.id));
+      actionsCell.appendChild(editButton);
     });
 
     document.getElementById("apps-table").classList.remove("hidden");
@@ -437,6 +457,38 @@ async function loadApps() {
     errEl.textContent = err.message;
     errEl.classList.remove("hidden");
   }
+}
+
+function appendAppUrl(cell, appUrl) {
+  if (!appUrl) {
+    cell.textContent = "N/A";
+    return;
+  }
+
+  const safeUrl = safeHttpUrl(appUrl);
+  if (!safeUrl) {
+    cell.textContent = "Invalid URL";
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.href = safeUrl;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = appUrl;
+  cell.appendChild(link);
+}
+
+function safeHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return url.href;
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
 }
 
 function previewNotes(notes) {
