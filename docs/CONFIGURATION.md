@@ -36,9 +36,9 @@ Logs are also written to daily files under `logs/server.YYYY-MM-DD.log`.
 
 ### Admin Dashboard Auth (`src/middleware/admin_auth.rs`)
 
-Admin routes under `/admin` require a Clerk session JWT for Tyde's internal organization.
+Admin routes under `/admin` require a Clerk session JWT from the configured Clerk instance.
 
-- `ADMIN_CLERK_ORG_ID` - Required when `/admin` is used. The active Clerk organization must match this value.
+- `ADMIN_CLERK_ORG_ID` (default: unset) - Optional. When set, the JWT's active organization must match this value (requires Clerk organizations/paid plan). When omitted, any valid JWT from the configured Clerk instance is accepted without org membership enforcement. Set this in production to restrict access to your internal Tyde org.
 - `ADMIN_CLERK_FRONTEND_API` (default: unset) - Preferred Clerk issuer for admin JWT validation.
 - `CLERK_FRONTEND_API` (default: unset) - Fallback Clerk issuer when `ADMIN_CLERK_FRONTEND_API` is unset.
 - `CLERK_PUBLISHABLE_KEY` - Used only to derive the Clerk issuer when both issuer URL vars are unset.

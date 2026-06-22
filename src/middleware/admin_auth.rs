@@ -19,7 +19,7 @@ use std::{
     time::Instant,
 };
 use tokio::sync::RwLock;
-use tracing::error;
+use tracing::{error, info};
 
 const JWKS_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 static ADMIN_AUTH_VERIFIER: OnceLock<Result<AdminClerkVerifier, String>> = OnceLock::new();
@@ -32,8 +32,6 @@ struct AdminClerkClaims {
     iss: String,
     #[serde(default)]
     azp: Option<String>,
-    #[serde(default)]
-    sts: Option<String>,
     #[serde(default)]
     org_id: Option<String>,
     #[serde(default)]
@@ -70,7 +68,7 @@ struct Jwks {
 #[derive(Clone)]
 struct AdminClerkVerifier {
     expected_issuer: Arc<str>,
-    required_org_id: Arc<str>,
+    required_org_id: Option<Arc<str>>,
     allowed_azp: Arc<[String]>,
     jwks_cache: Arc<RwLock<Option<(Jwks, Instant)>>>,
     http_client: Client,
@@ -83,15 +81,19 @@ impl AdminClerkVerifier {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| "ADMIN_CLERK_ORG_ID must be set for admin auth".to_string())?;
+            .map(|value| value.into());
         let allowed_azp = env::var("ADMIN_CLERK_AUTHORIZED_PARTIES")
             .ok()
             .map(|value| parse_csv_env(&value))
             .unwrap_or_default();
 
+        if required_org_id.is_none() {
+            info!("ADMIN_CLERK_ORG_ID is not set — admin auth will accept any valid JWT from the configured Clerk instance without org membership enforcement");
+        }
+
         Ok(Self {
             expected_issuer: expected_issuer.into(),
-            required_org_id: required_org_id.into(),
+            required_org_id,
             allowed_azp: allowed_azp.into(),
             jwks_cache: Arc::new(RwLock::new(None)),
             http_client: Client::new(),
@@ -184,10 +186,6 @@ impl AdminClerkVerifier {
             return Err("Clerk JWT subject claim is empty".to_string());
         }
 
-        if claims.sts.as_deref() == Some("pending") {
-            return Err("Clerk JWT session is pending organization enrollment".to_string());
-        }
-
         if !self.allowed_azp.is_empty() {
             if let Some(azp) = claims.azp.as_deref() {
                 let azp = normalize_url_like_value(azp);
@@ -197,14 +195,16 @@ impl AdminClerkVerifier {
             }
         }
 
-        let org_id = claims
-            .active_org_id()
-            .ok_or_else(|| "Clerk JWT does not contain an active organization".to_string())?;
-        if org_id != self.required_org_id.as_ref() {
-            return Err(format!(
-                "Clerk JWT org mismatch: expected {}, got {}",
-                self.required_org_id, org_id
-            ));
+        if let Some(ref required_org_id) = self.required_org_id {
+            let org_id = claims
+                .active_org_id()
+                .ok_or_else(|| "Clerk JWT does not contain an active organization".to_string())?;
+            if org_id != required_org_id.as_ref() {
+                return Err(format!(
+                    "Clerk JWT org mismatch: expected {}, got {}",
+                    required_org_id, org_id
+                ));
+            }
         }
 
         let _ = (claims.exp, claims.iat);
@@ -354,43 +354,41 @@ mod tests {
     #[test]
     fn derives_issuer_from_publishable_key() {
         let issuer = derive_issuer_from_publishable_key(
-            "pk_test_bWFpbi1jaXZldC04LmNsZXJrLmFjY291bnRzLmRldiQ",
+            "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA",
         );
 
         assert_eq!(
             issuer.as_deref(),
-            Some("https://main-civet-8.clerk.accounts.dev")
+            Some("https://test-bridge-admin.clerk.accounts.dev")
         );
     }
 
     #[test]
     fn active_org_id_prefers_top_level_and_falls_back_to_legacy_shape() {
         let top_level = AdminClerkClaims {
-            sub: "user_123".to_string(),
-            exp: 1,
-            iat: 1,
-            iss: "https://example.clerk.accounts.dev".to_string(),
+            sub: "user_2OX4Z9LfHpKq3rBw".to_string(),
+            exp: 1735689600,
+            iat: 1735686000,
+            iss: "https://test-bridge-admin.clerk.accounts.dev".to_string(),
             azp: None,
-            sts: None,
-            org_id: Some("org_top".to_string()),
+            org_id: Some("org_2QXw7YnKzR4p".to_string()),
             o: Some(LegacyOrgClaims {
-                id: Some("org_legacy".to_string()),
+                id: Some("org_1PvM3cLhQsBz".to_string()),
             }),
         };
         let legacy_only = AdminClerkClaims {
-            sub: "user_123".to_string(),
-            exp: 1,
-            iat: 1,
-            iss: "https://example.clerk.accounts.dev".to_string(),
+            sub: "user_2OX4Z9LfHpKq3rBw".to_string(),
+            exp: 1735689600,
+            iat: 1735686000,
+            iss: "https://test-bridge-admin.clerk.accounts.dev".to_string(),
             azp: None,
-            sts: None,
             org_id: None,
             o: Some(LegacyOrgClaims {
-                id: Some("org_legacy".to_string()),
+                id: Some("org_1PvM3cLhQsBz".to_string()),
             }),
         };
 
-        assert_eq!(top_level.active_org_id(), Some("org_top"));
-        assert_eq!(legacy_only.active_org_id(), Some("org_legacy"));
+        assert_eq!(top_level.active_org_id(), Some("org_2QXw7YnKzR4p"));
+        assert_eq!(legacy_only.active_org_id(), Some("org_1PvM3cLhQsBz"));
     }
 }
