@@ -50,6 +50,8 @@ Issuer fallback order is:
 2. `CLERK_FRONTEND_API`
 3. Derived from `CLERK_PUBLISHABLE_KEY`
 
+The admin dashboard uses `CLERK_PUBLISHABLE_KEY` to initialize the Clerk JS SDK for client-side sign-in.
+
 ### Email (`src/main.rs`, `src/services/email.rs`)
 
 - `EMAIL_PROVIDER` (default: `mock`) - Supported values: `mock`, `clerk`, `resend`.

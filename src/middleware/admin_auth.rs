@@ -9,7 +9,7 @@ use base64::{
     engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
     Engine as _,
 };
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{crypto, get_current_timestamp, Algorithm, DecodingKey};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
@@ -22,6 +22,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 
 const JWKS_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+const JWT_CLOCK_SKEW_SECS: i64 = 60;
 static ADMIN_AUTH_VERIFIER: OnceLock<Result<AdminClerkVerifier, String>> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +30,8 @@ struct AdminClerkClaims {
     sub: String,
     exp: i64,
     iat: i64,
+    #[serde(default)]
+    nbf: Option<i64>,
     iss: String,
     #[serde(default)]
     azp: Option<String>,
@@ -63,6 +66,14 @@ struct JwksKey {
 #[derive(Debug, Clone, Deserialize)]
 struct Jwks {
     keys: Vec<JwksKey>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MinimalJwtHeader {
+    alg: String,
+    kid: String,
+    #[serde(default)]
+    crit: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -138,16 +149,10 @@ impl AdminClerkVerifier {
     }
 
     async fn verify_token(&self, token: &str) -> Result<(), String> {
-        let header = decode_header(token)
-            .map_err(|e| format!("Failed to decode Clerk JWT header: {}", e))?;
+        let (header_part, payload_part, signature_part) = split_jwt(token)?;
+        let header = parse_minimal_jwt_header(header_part)?;
+        validate_minimal_jwt_header(&header)?;
 
-        if header.alg != Algorithm::RS256 {
-            return Err(format!("Unsupported Clerk JWT algorithm: {:?}", header.alg));
-        }
-
-        let kid = header
-            .kid
-            .ok_or_else(|| "Clerk JWT is missing kid header".to_string())?;
         let issuer = extract_unverified_issuer(token)
             .ok_or_else(|| "Clerk JWT is missing issuer claim".to_string())?;
 
@@ -162,19 +167,28 @@ impl AdminClerkVerifier {
         let key = jwks
             .keys
             .iter()
-            .find(|key| key.kid == kid && key.kty.eq_ignore_ascii_case("RSA"))
-            .ok_or_else(|| format!("Clerk JWKS does not contain key {}", kid))?;
+            .find(|key| key.kid == header.kid && key.kty.eq_ignore_ascii_case("RSA"))
+            .ok_or_else(|| format!("Clerk JWKS does not contain key {}", header.kid))?;
 
         let decoding_key = DecodingKey::from_rsa_components(&key.n, &key.e)
             .map_err(|e| format!("Failed to build Clerk decoding key: {}", e))?;
-        let token_data = decode::<AdminClerkClaims>(
-            token,
-            &decoding_key,
-            &Validation::new(Algorithm::RS256),
-        )
-        .map_err(|e| format!("Clerk JWT validation failed: {}", e))?;
 
-        let claims = token_data.claims;
+        let signing_input = format!("{}.{}", header_part, payload_part);
+        let signature_is_valid = crypto::verify(
+            signature_part,
+            signing_input.as_bytes(),
+            &decoding_key,
+            Algorithm::RS256,
+        )
+        .map_err(|e| format!("Clerk JWT signature verification failed: {}", e))?;
+
+        if !signature_is_valid {
+            return Err("Clerk JWT signature is invalid".to_string());
+        }
+
+        let claims = decode_claims(payload_part)?;
+        validate_claim_timestamps(&claims, get_current_timestamp() as i64)?;
+
         if normalize_url_like_value(&claims.iss) != self.expected_issuer.as_ref() {
             return Err(format!(
                 "Clerk JWT issuer mismatch after validation: expected {}, got {}",
@@ -211,6 +225,63 @@ impl AdminClerkVerifier {
 
         Ok(())
     }
+}
+
+fn split_jwt(token: &str) -> Result<(&str, &str, &str), String> {
+    let mut parts = token.split('.');
+    let header = parts.next().ok_or_else(|| "Clerk JWT is missing header".to_string())?;
+    let payload = parts.next().ok_or_else(|| "Clerk JWT is missing payload".to_string())?;
+    let signature = parts.next().ok_or_else(|| "Clerk JWT is missing signature".to_string())?;
+
+    if parts.next().is_some() || header.is_empty() || payload.is_empty() || signature.is_empty() {
+        return Err("Clerk JWT must contain exactly three non-empty parts".to_string());
+    }
+
+    Ok((header, payload, signature))
+}
+
+fn parse_minimal_jwt_header(header_part: &str) -> Result<MinimalJwtHeader, String> {
+    let header_bytes = base64_url_decode(header_part)
+        .ok_or_else(|| "Failed to base64-decode Clerk JWT header".to_string())?;
+    serde_json::from_slice(&header_bytes)
+        .map_err(|e| format!("Failed to parse Clerk JWT header: {}", e))
+}
+
+fn validate_minimal_jwt_header(header: &MinimalJwtHeader) -> Result<(), String> {
+    if header.alg != "RS256" {
+        return Err(format!("Unsupported Clerk JWT algorithm: {}", header.alg));
+    }
+
+    if header.kid.trim().is_empty() {
+        return Err("Clerk JWT kid header is empty".to_string());
+    }
+
+    if header.crit.as_ref().is_some_and(|crit| !crit.is_empty()) {
+        return Err("Clerk JWT contains unsupported critical headers".to_string());
+    }
+
+    Ok(())
+}
+
+fn decode_claims(payload_part: &str) -> Result<AdminClerkClaims, String> {
+    let payload_bytes = base64_url_decode(payload_part)
+        .ok_or_else(|| "Failed to base64-decode Clerk JWT payload".to_string())?;
+    serde_json::from_slice(&payload_bytes)
+        .map_err(|e| format!("Failed to parse Clerk JWT claims: {}", e))
+}
+
+fn validate_claim_timestamps(claims: &AdminClerkClaims, now: i64) -> Result<(), String> {
+    if claims.exp < 0 || claims.exp.saturating_add(JWT_CLOCK_SKEW_SECS) < now {
+        return Err("Clerk JWT is expired".to_string());
+    }
+
+    if let Some(nbf) = claims.nbf {
+        if nbf > now.saturating_add(JWT_CLOCK_SKEW_SECS) {
+            return Err("Clerk JWT is not valid yet".to_string());
+        }
+    }
+
+    Ok(())
 }
 
 fn load_expected_issuer() -> Result<String, String> {
@@ -349,7 +420,30 @@ pub async fn admin_auth_middleware(
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_issuer_from_publishable_key, AdminClerkClaims, LegacyOrgClaims};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use serde_json::json;
+
+    use super::{
+        derive_issuer_from_publishable_key, parse_minimal_jwt_header,
+        validate_claim_timestamps, validate_minimal_jwt_header, AdminClerkClaims, LegacyOrgClaims,
+    };
+
+    fn jwt_part(value: serde_json::Value) -> String {
+        URL_SAFE_NO_PAD.encode(value.to_string())
+    }
+
+    fn valid_claims() -> AdminClerkClaims {
+        AdminClerkClaims {
+            sub: "user_2OX4Z9LfHpKq3rBw".to_string(),
+            exp: 1_735_689_600,
+            iat: 1_735_686_000,
+            nbf: None,
+            iss: "https://test-bridge-admin.clerk.accounts.dev".to_string(),
+            azp: None,
+            org_id: None,
+            o: None,
+        }
+    }
 
     #[test]
     fn derives_issuer_from_publishable_key() {
@@ -369,6 +463,7 @@ mod tests {
             sub: "user_2OX4Z9LfHpKq3rBw".to_string(),
             exp: 1735689600,
             iat: 1735686000,
+            nbf: None,
             iss: "https://test-bridge-admin.clerk.accounts.dev".to_string(),
             azp: None,
             org_id: Some("org_2QXw7YnKzR4p".to_string()),
@@ -380,6 +475,7 @@ mod tests {
             sub: "user_2OX4Z9LfHpKq3rBw".to_string(),
             exp: 1735689600,
             iat: 1735686000,
+            nbf: None,
             iss: "https://test-bridge-admin.clerk.accounts.dev".to_string(),
             azp: None,
             org_id: None,
@@ -390,5 +486,76 @@ mod tests {
 
         assert_eq!(top_level.active_org_id(), Some("org_2QXw7YnKzR4p"));
         assert_eq!(legacy_only.active_org_id(), Some("org_1PvM3cLhQsBz"));
+    }
+
+    #[test]
+    fn header_parser_accepts_numeric_unknown_fields() {
+        let header = parse_minimal_jwt_header(&jwt_part(json!({
+            "alg": "RS256",
+            "kid": "test-key",
+            "some_numeric_extra": 1782121102
+        })))
+        .unwrap();
+
+        assert_eq!(header.alg, "RS256");
+        assert_eq!(header.kid, "test-key");
+    }
+
+    #[test]
+    fn header_parser_rejects_numeric_kid() {
+        let err = parse_minimal_jwt_header(&jwt_part(json!({
+            "alg": "RS256",
+            "kid": 1782121102
+        })))
+        .unwrap_err();
+
+        assert!(err.contains("Failed to parse Clerk JWT header"));
+    }
+
+    #[test]
+    fn header_validation_rejects_wrong_algorithm() {
+        let header = parse_minimal_jwt_header(&jwt_part(json!({
+            "alg": "HS256",
+            "kid": "test-key"
+        })))
+        .unwrap();
+
+        let err = validate_minimal_jwt_header(&header).unwrap_err();
+
+        assert_eq!(err, "Unsupported Clerk JWT algorithm: HS256");
+    }
+
+    #[test]
+    fn header_validation_rejects_non_empty_crit() {
+        let header = parse_minimal_jwt_header(&jwt_part(json!({
+            "alg": "RS256",
+            "kid": "test-key",
+            "crit": ["custom"]
+        })))
+        .unwrap();
+
+        let err = validate_minimal_jwt_header(&header).unwrap_err();
+
+        assert_eq!(err, "Clerk JWT contains unsupported critical headers");
+    }
+
+    #[test]
+    fn claim_timestamp_validation_rejects_expired_tokens() {
+        let mut claims = valid_claims();
+        claims.exp = 1_000;
+
+        let err = validate_claim_timestamps(&claims, 1_061).unwrap_err();
+
+        assert_eq!(err, "Clerk JWT is expired");
+    }
+
+    #[test]
+    fn claim_timestamp_validation_rejects_future_nbf() {
+        let mut claims = valid_claims();
+        claims.nbf = Some(1_061);
+
+        let err = validate_claim_timestamps(&claims, 1_000).unwrap_err();
+
+        assert_eq!(err, "Clerk JWT is not valid yet");
     }
 }

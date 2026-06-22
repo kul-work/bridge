@@ -28,10 +28,10 @@ It operates as a private, centralized gateway (e.g., `pay.tydecode.com`) serving
 
 ## Administration
 
-Bridge includes a built-in **Admin Dashboard** (secured by Tyde's internal auth) for monitoring:
+Bridge includes a built-in **Admin Dashboard** at `/admin/` (secured by Clerk authentication) for monitoring:
 - Registered applications and their configurations.
 - Webhook ingress logs and delivery status.
-- Manual webhook retry and reconciliation triggers.
+- Manual webhook retry for dead-lettered deliveries.
 - Global system health and background worker status.
 
 ## Prerequisites
@@ -104,4 +104,7 @@ Backend serves on port `3000` (default).
 
 ### System
 - `GET /health` — Diagnostics
-- `/admin/*` — Administration restricted routes
+- `GET /admin/` — Admin Dashboard (Clerk sign-in)
+- `GET /admin/apps` — List registered apps (auth required)
+- `GET /admin/apps/:app_id/webhooks` — List webhooks for an app (auth required)
+- `POST /admin/webhooks/:webhook_id/retry` — Reset a dead-lettered webhook for retry (auth required)

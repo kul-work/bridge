@@ -1,245 +1,413 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bridge Admin Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body {
-            background-color: #f5f5f5;
-            padding: 20px 0;
-        }
-        .navbar-brand {
-            font-weight: bold;
-        }
-        .card {
-            border: none;
-            box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,.075);
-            margin-bottom: 20px;
-        }
-        .table-hover tbody tr:hover {
-            background-color: #f5f5f5;
-        }
-        .badge-failed {
-            background-color: #dc3545;
-        }
-        .badge-success {
-            background-color: #28a745;
-        }
-        .status-indicator {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 8px;
-        }
-        .status-indicator.success {
-            background-color: #28a745;
-        }
-        .status-indicator.failed {
-            background-color: #dc3545;
-        }
-        .status-indicator.pending {
-            background-color: #ffc107;
-        }
-        .admin-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px 0;
-            margin-bottom: 30px;
-        }
-        .metric {
-            text-align: center;
-            padding: 20px;
-        }
-        .metric-number {
-            font-size: 32px;
-            font-weight: bold;
-            color: #667eea;
-        }
-        .metric-label {
-            color: #666;
-            font-size: 14px;
-            margin-top: 8px;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bridge</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f4f4f5;
+    --card: #fff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+    --danger: #dc2626;
+    --success: #16a34a;
+    --warning: #ca8a04;
+    --radius: 6px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    padding: 4px 12px;
+    border-radius: var(--radius);
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  button.primary:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+
+  /* Header */
+  .header {
+    background: var(--text);
+    color: #fff;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .header .brand { font-weight: 700; font-size: 16px; }
+  .header .spacer { flex: 1; }
+  .header .user-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: #d4d4d8;
+  }
+
+  /* Layout */
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  .section { margin-bottom: 32px; }
+  .section h2 { font-size: 15px; margin-bottom: 12px; color: var(--text); }
+
+  /* Table */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: #fafafa;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+  }
+  tr:last-child td { border-bottom: none; }
+  td code {
+    font-family: "SF Mono", Monaco, Consolas, monospace;
+    font-size: 12px;
+    background: #f4f4f5;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge.success { background: #dcfce7; color: var(--success); }
+  .badge.warning { background: #fef9c3; color: var(--warning); }
+  .badge.danger  { background: #fee2e2; color: var(--danger); }
+
+  /* States */
+  .loading, .empty {
+    text-align: center;
+    padding: 32px;
+    color: var(--muted);
+  }
+  .error {
+    padding: 12px 16px;
+    background: #fee2e2;
+    color: var(--danger);
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+    font-size: 13px;
+  }
+
+  /* Auth screen */
+  #auth-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    gap: 16px;
+  }
+  #auth-screen h1 { font-size: 20px; }
+  #auth-screen p { color: var(--muted); }
+  #clerk-signin { min-height: 400px; }
+
+  .hidden { display: none !important; }
+</style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container-lg">
-            <span class="navbar-brand">🌉 Bridge Admin</span>
-            <span class="text-muted ms-auto">Payment Gateway</span>
-        </div>
-    </nav>
 
-    <div class="admin-header">
-        <div class="container-lg">
-            <h1>Admin Dashboard</h1>
-            <p class="lead mb-0">Monitor apps, webhooks, and payments</p>
-        </div>
+<div id="auth-screen">
+  <h1>Bridge</h1>
+  <p>Sign in to access the dashboard</p>
+  <div id="clerk-signin"></div>
+</div>
+
+<div id="app" class="hidden">
+  <div class="header">
+    <span class="brand">Bridge Admin</span>
+    <span class="spacer"></span>
+    <div class="user-info">
+      <span id="user-name"></span>
+      <button onclick="signOut()">Sign out</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div id="global-error"></div>
+
+    <div class="section">
+      <h2>Applications</h2>
+      <div class="card">
+        <div id="apps-loading" class="loading">Loading...</div>
+        <div id="apps-error" class="error hidden"></div>
+        <table id="apps-table" class="hidden">
+          <thead>
+            <tr>
+              <th>App Name</th>
+              <th>Slug</th>
+              <th>URL</th>
+              <th>Failed Webhooks</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="apps-empty" class="empty hidden">No applications found.</div>
+      </div>
     </div>
 
-    <div class="container-lg">
-        <!-- Apps Section -->
-        <div class="row mb-30">
-            <div class="col-12">
-                <h2 class="mb-3">Applications</h2>
-                <div class="card">
-                    <div class="card-body">
-                        <div id="apps-loading" class="text-center py-5">
-                            <div class="spinner-border" role="status">
-                                <span class="visually-hidden">Loading...</span>
-                            </div>
-                        </div>
-                        <table id="apps-table" class="table table-hover mb-0" style="display: none;">
-                            <thead>
-                                <tr>
-                                    <th>App Name</th>
-                                    <th>Slug</th>
-                                    <th>URL</th>
-                                    <th>Failed Webhooks</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                        <div id="apps-error" class="alert alert-danger d-none"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Recent Webhooks Section -->
-        <div class="row">
-            <div class="col-12">
-                <h2 class="mb-3">Recent Webhooks</h2>
-                <div class="card">
-                    <div class="card-body">
-                        <div id="webhooks-loading" class="text-center py-5">
-                            <div class="spinner-border" role="status">
-                                <span class="visually-hidden">Loading...</span>
-                            </div>
-                        </div>
-                        <table id="webhooks-table" class="table table-hover mb-0" style="display: none;">
-                            <thead>
-                                <tr>
-                                    <th>Event ID</th>
-                                    <th>Provider</th>
-                                    <th>Event Type</th>
-                                    <th>Status</th>
-                                    <th>Attempts</th>
-                                    <th>Created</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                        <div id="webhooks-error" class="alert alert-danger d-none"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
+    <div class="section">
+      <h2>Recent Webhooks</h2>
+      <div class="card">
+        <div id="webhooks-loading" class="loading">Select an app to view webhooks</div>
+        <div id="webhooks-error" class="error hidden"></div>
+        <table id="webhooks-table" class="hidden">
+          <thead>
+            <tr>
+              <th>Event ID</th>
+              <th>Provider</th>
+              <th>Event Type</th>
+              <th>Status</th>
+              <th>Attempts</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="webhooks-empty" class="empty hidden">No webhooks for this app.</div>
+      </div>
     </div>
+  </div>
+</div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // Load apps
-        async function loadApps() {
-            try {
-                const response = await fetch('/admin/apps');
-                if (!response.ok) throw new Error('Failed to load apps');
-                
-                const apps = await response.json();
-                const tbody = document.querySelector('#apps-table tbody');
-                tbody.innerHTML = '';
+<script crossorigin="anonymous"
+        data-clerk-publishable-key="{{CLERK_PUBLISHABLE_KEY}}"
+        src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
+        type="text/javascript"></script>
+<script>
+async function onClerkReady() {
+  await Clerk.load();
 
-                apps.forEach(app => {
-                    const row = tbody.insertRow();
-                    row.innerHTML = `
-                        <td><strong>${app.display_name}</strong></td>
-                        <td><code>${app.slug}</code></td>
-                        <td>${app.app_url ? `<a href="${app.app_url}" target="_blank">${app.app_url}</a>` : 'N/A'}</td>
-                        <td>
-                            ${app.failed_webhooks > 0 
-                                ? `<span class="badge badge-failed">${app.failed_webhooks}</span>` 
-                                : `<span class="badge bg-success">0</span>`
-                            }
-                        </td>
-                        <td>
-                            <button class="btn btn-sm btn-info" onclick="viewWebhooks('${app.id}')">View Webhooks</button>
-                        </td>
-                    `;
-                });
+  if (Clerk.isSignedIn) {
+    await showDashboard();
+  } else {
+    showSignIn();
+  }
+}
 
-                document.getElementById('apps-loading').style.display = 'none';
-                document.getElementById('apps-table').style.display = 'table';
-            } catch (error) {
-                document.getElementById('apps-loading').style.display = 'none';
-                document.getElementById('apps-error').classList.remove('d-none');
-                document.getElementById('apps-error').textContent = `Error: ${error.message}`;
-            }
-        }
+function waitForClerk() {
+  if (window.Clerk && typeof window.Clerk.load === 'function') {
+    onClerkReady();
+  } else {
+    setTimeout(waitForClerk, 50);
+  }
+}
+waitForClerk();
 
-        // View webhooks for app
-        async function viewWebhooks(appId) {
-            try {
-                const response = await fetch(`/admin/apps/${appId}/webhooks`);
-                if (!response.ok) throw new Error('Failed to load webhooks');
-                
-                const webhooks = await response.json();
-                const tbody = document.querySelector('#webhooks-table tbody');
-                tbody.innerHTML = '';
+function showSignIn() {
+  document.getElementById("auth-screen").classList.remove("hidden");
+  document.getElementById("app").classList.add("hidden");
+  Clerk.mountSignIn(document.getElementById("clerk-signin"), {
+    forceRedirectUrl: "/admin",
+    fallbackRedirectUrl: "/admin",
+    signUpForceRedirectUrl: "/admin",
+    signUpFallbackRedirectUrl: "/admin",
+  });
+}
 
-                webhooks.forEach(webhook => {
-                    const row = tbody.insertRow();
-                    const statusBadge = webhook.forwarded 
-                        ? '<span class="badge bg-success">Delivered</span>'
-                        : `<span class="badge bg-warning">Pending (${webhook.forward_attempts}/3)</span>`;
-                    
-                    row.innerHTML = `
-                        <td><code>${webhook.provider_webhook_id.substring(0, 20)}...</code></td>
-                        <td><code>${webhook.provider}</code></td>
-                        <td>${webhook.event_type}</td>
-                        <td>${statusBadge}</td>
-                        <td>${webhook.forward_attempts}</td>
-                        <td><small>${new Date(webhook.created_at).toLocaleString()}</small></td>
-                        <td>
-                            ${!webhook.forwarded
-                                ? `<button class="btn btn-sm btn-primary" onclick="retryWebhook('${webhook.id}')">Retry</button>`
-                                : ''
-                            }
-                        </td>
-                    `;
-                });
+async function showDashboard() {
+  document.getElementById("auth-screen").classList.add("hidden");
+  document.getElementById("app").classList.remove("hidden");
 
-                document.getElementById('webhooks-loading').style.display = 'none';
-                document.getElementById('webhooks-table').style.display = 'table';
-            } catch (error) {
-                document.getElementById('webhooks-loading').style.display = 'none';
-                document.getElementById('webhooks-error').classList.remove('d-none');
-                document.getElementById('webhooks-error').textContent = `Error: ${error.message}`;
-            }
-        }
+  const nameEl = document.getElementById("user-name");
+  const name = Clerk.user?.firstName || Clerk.user?.username || Clerk.user?.id || "Admin";
+  nameEl.textContent = name;
 
-        // Retry webhook
-        async function retryWebhook(webhookId) {
-            try {
-                const response = await fetch(`/admin/webhooks/${webhookId}/retry`, {
-                    method: 'POST'
-                });
-                if (!response.ok) throw new Error('Failed to retry webhook');
-                
-                alert('Webhook retry queued');
-                // Reload webhooks
-                location.reload();
-            } catch (error) {
-                alert(`Error: ${error.message}`);
-            }
-        }
+  await loadApps();
+}
 
-        // Initialize
-        loadApps();
-    </script>
+async function refreshToken() {
+  if (Clerk.session) {
+    return Clerk.session.getToken({ skipCache: true });
+  }
+  return null;
+}
+
+async function authedFetch(url, options = {}) {
+  const authToken = await refreshToken();
+  if (!authToken) throw new Error("Admin session is not available");
+  options.headers = options.headers || {};
+  options.headers["Authorization"] = "Bearer " + authToken;
+  return fetch(url, options);
+}
+
+async function loadApps() {
+  try {
+    const res = await authedFetch("/admin/apps");
+    if (!res.ok) throw new Error("Failed to load apps (" + res.status + ")");
+    const apps = await res.json();
+
+    document.getElementById("apps-loading").classList.add("hidden");
+
+    if (apps.length === 0) {
+      document.getElementById("apps-empty").classList.remove("hidden");
+      return;
+    }
+
+    const tbody = document.querySelector("#apps-table tbody");
+    tbody.innerHTML = "";
+
+    apps.forEach(app => {
+      const row = tbody.insertRow();
+      const failedBadge = app.failed_webhooks > 0
+        ? '<span class="badge danger">' + app.failed_webhooks + "</span>"
+        : '<span class="badge success">0</span>';
+
+      row.innerHTML =
+        "<td><strong>" + escapeHtml(app.display_name) + "</strong></td>" +
+        "<td><code>" + escapeHtml(app.slug) + "</code></td>" +
+        "<td>" + (app.app_url
+          ? '<a href="' + escapeHtml(app.app_url) + '" target="_blank">' + escapeHtml(app.app_url) + "</a>"
+          : "N/A") + "</td>" +
+        "<td>" + failedBadge + "</td>" +
+        '<td><button onclick="viewWebhooks(\'' + app.id + '\')">View Webhooks</button></td>';
+    });
+
+    document.getElementById("apps-table").classList.remove("hidden");
+  } catch (err) {
+    document.getElementById("apps-loading").classList.add("hidden");
+    const errEl = document.getElementById("apps-error");
+    errEl.textContent = err.message;
+    errEl.classList.remove("hidden");
+  }
+}
+
+async function viewWebhooks(appId) {
+  document.getElementById("webhooks-loading").textContent = "Loading...";
+  document.getElementById("webhooks-loading").classList.remove("hidden");
+  document.getElementById("webhooks-table").classList.add("hidden");
+  document.getElementById("webhooks-empty").classList.add("hidden");
+  document.getElementById("webhooks-error").classList.add("hidden");
+
+  try {
+    const res = await authedFetch("/admin/apps/" + appId + "/webhooks");
+    if (!res.ok) throw new Error("Failed to load webhooks (" + res.status + ")");
+    const webhooks = await res.json();
+
+    document.getElementById("webhooks-loading").classList.add("hidden");
+
+    if (webhooks.length === 0) {
+      document.getElementById("webhooks-empty").classList.remove("hidden");
+      return;
+    }
+
+    const tbody = document.querySelector("#webhooks-table tbody");
+    tbody.innerHTML = "";
+
+    webhooks.forEach(wh => {
+      const row = tbody.insertRow();
+      let statusBadge;
+      if (wh.forwarded) {
+        statusBadge = '<span class="badge success">Delivered</span>';
+      } else if (wh.dead_lettered) {
+        statusBadge = '<span class="badge danger">Dead-lettered</span>';
+      } else {
+        statusBadge = '<span class="badge warning">Pending (' + wh.forward_attempts + "/3)</span>";
+      }
+
+      const retryBtn = !wh.forwarded
+        ? '<button class="primary" onclick="retryWebhook(\'' + wh.id + '\')">Retry</button>'
+        : "";
+
+      const eventId = wh.provider_webhook_id.length > 20
+        ? wh.provider_webhook_id.substring(0, 20) + "..."
+        : wh.provider_webhook_id;
+
+      row.innerHTML =
+        "<td><code>" + escapeHtml(eventId) + "</code></td>" +
+        "<td><code>" + escapeHtml(wh.provider) + "</code></td>" +
+        "<td>" + escapeHtml(wh.event_type) + "</td>" +
+        "<td>" + statusBadge + "</td>" +
+        "<td>" + wh.forward_attempts + "</td>" +
+        "<td><small>" + new Date(wh.created_at).toLocaleString() + "</small></td>" +
+        "<td>" + retryBtn + "</td>";
+    });
+
+    document.getElementById("webhooks-table").classList.remove("hidden");
+  } catch (err) {
+    document.getElementById("webhooks-loading").classList.add("hidden");
+    const errEl = document.getElementById("webhooks-error");
+    errEl.textContent = err.message;
+    errEl.classList.remove("hidden");
+  }
+}
+
+async function retryWebhook(webhookId) {
+  try {
+    const res = await authedFetch("/admin/webhooks/" + webhookId + "/retry", {
+      method: "POST"
+    });
+    if (!res.ok) throw new Error("Failed to retry webhook (" + res.status + ")");
+
+    alert("Webhook retry queued — the background worker will attempt delivery on its next tick.");
+    location.reload();
+  } catch (err) {
+    alert("Error: " + err.message);
+  }
+}
+
+async function signOut() {
+  await Clerk.signOut({ redirectUrl: "/admin" });
+  window.location.assign("/admin");
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+window.addEventListener('error', (e) => {
+  if (e.message && e.message.includes('clerk')) {
+    document.getElementById("auth-screen").innerHTML =
+      '<h1>Bridge</h1>' +
+      '<p style="color: var(--danger)">Failed to initialize authentication: ' + escapeHtml(e.message) + "</p>";
+  }
+});
+</script>
+
 </body>
 </html>

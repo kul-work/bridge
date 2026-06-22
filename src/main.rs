@@ -11,6 +11,8 @@ mod middleware;
 mod state;
 
 use axum::{
+    http::StatusCode,
+    response::Redirect,
     routing::get,
     Router,
 };
@@ -164,19 +166,30 @@ async fn main() -> anyhow::Result<()> {
             middleware::rate_limit::unauthenticated_ip_rate_limit_middleware,
         ));
 
-    // Build admin routes with auth middleware
-    let admin_routes = Router::new()
-        .route("/", axum::routing::get(handlers::admin::admin_dashboard))
-        .route("/apps", axum::routing::get(handlers::admin::list_apps))
-        .route("/apps/:app_id/webhooks", axum::routing::get(handlers::admin::get_app_webhooks))
-        .route("/webhooks/:webhook_id/retry", axum::routing::post(handlers::admin::retry_webhook))
+    // Admin dashboard page is public (Clerk handles auth client-side).
+    // Admin dashboard page is public (Clerk handles auth client-side).
+    // Admin API routes require Clerk JWT middleware.
+    let admin_page = Router::new()
+        .route("/admin", axum::routing::get(handlers::admin::admin_dashboard))
+        .route("/admin/", axum::routing::get(handlers::admin::admin_dashboard))
+        .route("/admin/favicon.ico", axum::routing::get(|| async { StatusCode::NO_CONTENT }))
+        .with_state(app_state.clone());
+
+    let admin_api = Router::new()
+        .route("/admin/apps", axum::routing::get(handlers::admin::list_apps))
+        .route("/admin/apps/:app_id/webhooks", axum::routing::get(handlers::admin::get_app_webhooks))
+        .route("/admin/webhooks/:webhook_id/retry", axum::routing::post(handlers::admin::retry_webhook))
         .layer(axum::middleware::from_fn(middleware::admin_auth::admin_auth_middleware))
         .with_state(app_state.clone());
+
+    let admin_routes = admin_page.merge(admin_api);
 
     // Build app
     let mut app = Router::new()
         .route("/health", get(health_check))
-        .nest("/admin", admin_routes)
+        .route("/", axum::routing::get(|| async { Redirect::temporary("/admin") }))
+        .route("/favicon.ico", axum::routing::get(|| async { StatusCode::NO_CONTENT }))
+        .merge(admin_routes)
         .nest("/api/v1", protected_routes)
         .nest("/webhooks", webhooks::webhook_routes())
         .layer(ServiceBuilder::new()

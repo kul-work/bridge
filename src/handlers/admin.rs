@@ -13,11 +13,19 @@ use crate::{
     state::AppState,
 };
 
-/// Get admin dashboard page
-pub async fn admin_dashboard() -> Result<Html<String>, BridgeError> {
-    // For now, return a simple placeholder
+/// Get admin dashboard page.
+/// Serves the HTML with the Clerk publishable key injected for client-side auth.
+pub async fn admin_dashboard(
+    State(_state): State<AppState>,
+) -> Result<Html<String>, BridgeError> {
+    let publishable_key = std::env::var("CLERK_PUBLISHABLE_KEY")
+        .map_err(|_| BridgeError::ConfigError(
+            "CLERK_PUBLISHABLE_KEY must be set for admin auth.".to_string()
+        ))?;
+
     let html = include_str!("../../templates/admin.html");
-    Ok(Html(html.to_string()))
+    let html = html.replace("{{CLERK_PUBLISHABLE_KEY}}", &publishable_key);
+    Ok(Html(html))
 }
 
 /// Get list of apps (JSON)
