@@ -199,6 +199,17 @@ The following tests are **deferred** for Phase 2. See [GOOGLE_PLAY_BILLING_DEFER
 | **NET-02** | **`verify_purchase` Call Fails / Network Timeout** | 1. User completes purchase on device.<br>2. App calls `/api/v1/verify-purchase` but request times out or server returns 5xx. | - App should display error toast and allow retry.<br>- User can manually retry verification in app. | - No DB entry created on first attempt.<br>- Webhook arrives; cannot find user (yet).<br>- When retry succeeds: Token registered, subsequent webhooks process correctly. | **Client-side resilience needed**: App must retry `/api/v1/verify-purchase` on failure; backend supports retries via idempotency (purchase_token + subscription_id). |
 | **NET-03** | **Webhook Processing Times Out** | 1. Legitimate webhook sent to `/webhooks/google_play`.<br>2. Backend processing stalls or times out (e.g., Google API call hangs). | - Webhook request should timeout and be retried by Google (with backoff). | - Incomplete webhook processing: State may be partially updated or rolled back.<br>- Google retries with same `message_id`; backend idempotency key prevents double-processing on retry. | Ensure webhook handler has timeouts on Google API calls; implement circuit breaker if Google API is flaky. |
 | **NET-04** | **Webhook Arrives While `verify_purchase` In-Flight** | 1. User completes purchase.<br>2. App calls `/api/v1/verify-purchase` (request in-flight).<br>3. Google simultaneously sends webhook.<br>4. Both requests compete in backend. | - One request succeeds, the other may conflict or be idempotent.<br>- Final state: Subscription is `Active`, no duplication or data loss. | - Both requests call `get_subscription()` concurrently.<br>- DB update uses subscription_id + user_id as unique key; last-write-wins or conflict resolution ensures consistency.<br>- Idempotency key (`event_id` for webhook, purchase_token for verify_purchase) prevents double-state-change. | **Backend must handle concurrency**: Use database transaction isolation or idempotency keys to ensure safety. |
+
+---
+
+### H.2 Dead-Letter and Admin Retry (Cross-Provider)
+
+These scenarios are shared with the [Creem testplan](../creem/CREEM_BILLING_TESTPLAN.md) and the [Bridge Admin testplan](../BRIDGE_ADMIN_TESTPLAN.md). They are listed here for completeness so the Google Play acceptance can verify the full lifecycle including operator intervention.
+
+| ID | Scenario | Steps | Expected Result | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **DLQ-01** | **Webhook Forwarding Exhausts Retries → Dead-Lettered** | 1. Configure app with a `webhook_callback_url` that returns HTTP 500 for all requests.<br>2. Trigger a legitimate Google Play webhook (e.g., `subscription.paid`).<br>3. Wait for all retry attempts to exhaust (3 attempts per `WEBHOOK_ARCHITECTURE.md`).<br>4. Query `webhook_delivery` table. | - `webhook_delivery` row has `dead_lettered=true`, `dead_lettered_at` NOT NULL, `dead_letter_reason` set.<br>- `forward_attempts=3`, `forwarded=false`.<br>- `last_http_status=500`, `last_error` contains response detail. | - `pay.webhook_delivery` row transitions through retry cycle: `forward_attempts` 0→1→2→3, then `dead_lettered=true`.<br>- `webhook_provider` row remains `processed=true` (ingestion succeeded, forwarding failed).<br>- No `payments`/`subscriptions` duplication from retry attempts. | **DB-side dead-letter assertion**. Complements NET-03 (which covers the *timeout* case). This covers the *exhaustion* case where the app is consistently unreachable. See migration `04_create_webhooks.sql` columns `dead_lettered`, `dead_lettered_at`, `dead_letter_reason`. |
+| **DLQ-02** | **Dead-Lettered Webhook Recovered via Admin Retry** | 1. Complete DLQ-01 (dead-lettered delivery exists).<br>2. Fix the app callback URL (make it return 200).<br>3. Call `POST /admin/webhooks/:webhook_id/retry` with valid admin JWT (see [Bridge Admin testplan](../BRIDGE_ADMIN_TESTPLAN.md) ADMIN-WHK-01).<br>4. Verify delivery succeeds. | - HTTP 200 from admin endpoint.<br>- App receives signed callback.<br>- `webhook_delivery.forwarded=true`, `dead_lettered=false`. | - Retry clears `dead_lettered` and resets forwarding state.<br>- Idempotency maintained: no duplicate `payments`/`subscriptions` rows.<br>- Audit log records admin actor. | Tests operator recovery path. Full scenario details in [BRIDGE_ADMIN_TESTPLAN.md](../BRIDGE_ADMIN_TESTPLAN.md). |
 | **NET-05** | **Bridge-to-App Delivery Verification** | 1. Trigger purchase event.<br>2. Wait for async webhook forwarding.<br>3. Verify `pay.webhook_delivery` record shows success. | - Webhook successfully forwarded to downstream app.<br>- Backend logs 2xx response from app. | - Background worker processes `webhook_queue`.<br>- Calls app callback URL with canonical payload.<br>- Updates `webhook_delivery` table with `forwarded=true`. | **End-to-End Integrity**: Ensures Bridge doesn't just ingest webhooks but successfully relays them to the final destination. |
 
 ---
@@ -318,6 +329,12 @@ All test scenarios must pass before production deployment:
 - ✅ Structured billing event logging (LOG-01): All key events logged in JSON format with consistent fields
 - ✅ Webhook verification failure logging (LOG-02): Invalid webhooks logged with traceable details
 - ✅ ACK failure & retry logging (LOG-03): ACK attempts, failures, and retries tracked in logs
+
+### Dead-Letter and Admin Retry (Required)
+
+- ✅ Webhook forwarding exhausts retries and dead-letters correctly (DLQ-01): `webhook_delivery` row has `dead_lettered=true` with reason after 3 failed attempts
+- ✅ Dead-lettered webhook recovered via admin retry (DLQ-02): No duplicate DB entries; see [BRIDGE_ADMIN_TESTPLAN.md](../BRIDGE_ADMIN_TESTPLAN.md) ADMIN-WHK-01/ADMIN-WHK-02
+- ✅ Admin actions authenticated and audited: See [BRIDGE_ADMIN_TESTPLAN.md](../BRIDGE_ADMIN_TESTPLAN.md) acceptance criteria
 
 ### Price Changes (Optional, if app targets Korea)
 

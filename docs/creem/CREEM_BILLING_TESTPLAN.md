@@ -79,6 +79,17 @@ This document outlines comprehensive test scenarios for validating the Creem Bil
 
 ---
 
+### D.2 Dead-Letter and Admin Retry (Cross-Provider)
+
+These scenarios are shared with the [Google Play testplan](../google/GOOGLE_PLAY_BILLING_TESTPLAN.md) and the [Bridge Admin testplan](../BRIDGE_ADMIN_TESTPLAN.md). They are listed here for completeness so the Creem acceptance can verify the full lifecycle including operator intervention.
+
+| ID | Scenario | Steps | Expected Result | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **DLQ-01** | **Webhook Forwarding Exhausts Retries → Dead-Lettered** | 1. Configure app with a `webhook_callback_url` that returns HTTP 500 for all requests.<br>2. Trigger a legitimate Creem webhook (e.g., `checkout.completed`).<br>3. Wait for all retry attempts to exhaust (3 attempts per `WEBHOOK_ARCHITECTURE.md`).<br>4. Query `webhook_delivery` table. | - `webhook_delivery` row has `dead_lettered=true`, `dead_lettered_at` NOT NULL, `dead_letter_reason` set.<br>- `forward_attempts=3`, `forwarded=false`.<br>- `last_http_status=500`, `last_error` contains response detail. | - `pay.webhook_delivery` row transitions through retry cycle: `forward_attempts` 0→1→2→3, then `dead_lettered=true`.<br>- `webhook_provider` row remains `processed=true` (ingestion succeeded, forwarding failed).<br>- No `payments`/`subscriptions` duplication from retry attempts. | **DB-side dead-letter assertion**. Complements NET-01 (which covers the *retry/backoff* case). This covers the *exhaustion* case where the app is consistently unreachable. See migration `04_create_webhooks.sql` columns `dead_lettered`, `dead_lettered_at`, `dead_letter_reason`. |
+| **DLQ-02** | **Dead-Lettered Webhook Recovered via Admin Retry** | 1. Complete DLQ-01 (dead-lettered delivery exists).<br>2. Fix the app callback URL (make it return 200).<br>3. Call `POST /admin/webhooks/:webhook_id/retry` with valid admin JWT (see [Bridge Admin testplan](../BRIDGE_ADMIN_TESTPLAN.md) ADMIN-WHK-01).<br>4. Verify delivery succeeds. | - HTTP 200 from admin endpoint.<br>- App receives signed callback.<br>- `webhook_delivery.forwarded=true`, `dead_lettered=false`. | - Retry clears `dead_lettered` and resets forwarding state.<br>- Idempotency maintained: no duplicate `payments`/`subscriptions` rows.<br>- Audit log records admin actor. | Tests operator recovery path. Full scenario details in [BRIDGE_ADMIN_TESTPLAN.md](../BRIDGE_ADMIN_TESTPLAN.md). |
+
+---
+
 ### E. Access Control & Entitlement Logic
 
 | ID | Scenario | Steps | Expected Behavior | Backend Logic | Notes |
@@ -124,3 +135,6 @@ This document outlines comprehensive test scenarios for validating the Creem Bil
 - ✅ **Idempotency**: Duplicate webhooks do not duplicate database records.
 - ✅ **Portal Access**: Users can successfully access the Customer Portal to manage their plans.
 - ✅ **Logging**: Security and transaction events are properly logged without exposing raw secrets.
+- ✅ **Dead-Letter**: Webhook forwarding exhaustion produces `dead_lettered=true` with reason (DLQ-01).
+- ✅ **Admin Retry**: Dead-lettered webhook recovered via admin retry without duplicate DB entries (DLQ-02); see [BRIDGE_ADMIN_TESTPLAN.md](../BRIDGE_ADMIN_TESTPLAN.md).
+- ✅ **Admin Auth**: Admin endpoints reject mismatched `azp`, wrong issuer, and missing tokens; see [BRIDGE_ADMIN_TESTPLAN.md](../BRIDGE_ADMIN_TESTPLAN.md) acceptance criteria.
