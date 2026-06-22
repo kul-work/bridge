@@ -567,13 +567,19 @@ mod tests {
     }
 
     async fn test_database() -> Result<Option<crate::db::Database>, Box<dyn Error>> {
-        let database_url = std::env::var("BRIDGE_TEST_DATABASE_URL")
-            .or_else(|_| std::env::var("DATABASE_URL"));
-        let Ok(database_url) = database_url else {
+        dotenvy::dotenv().ok();
+        let admin_database_url = std::env::var("ADMIN_DATABASE_URL").ok();
+        let database_url = match std::env::var("BRIDGE_TEST_DATABASE_URL") {
+            Ok(url) => Some(url),
+            Err(_) => admin_database_url.clone().or_else(|| std::env::var("DATABASE_URL").ok()),
+        };
+        let Some(database_url) = database_url else {
             return Ok(None);
         };
 
-        Ok(Some(crate::db::Database::new(&database_url, None).await?))
+        Ok(Some(
+            crate::db::Database::new(&database_url, admin_database_url.as_deref()).await?,
+        ))
     }
 
     async fn insert_test_app(pool: &PgPool, callback_url: &str) -> Result<Uuid, sqlx::Error> {
