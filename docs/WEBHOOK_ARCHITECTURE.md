@@ -178,9 +178,9 @@ INCOMING WEBHOOK
 Assumptions at the ingress boundary:
 
 - Provider webhook URLs are `/webhooks/{webhook_ingress_token}/{provider}`. Bridge parses `{webhook_ingress_token}` as a UUID and uses it only to resolve the target app. Invalid or unknown tokens return `404` and are not processed.
-- The ingress token is not considered a provider-authentication signature. Provider signature verification still runs before payload persistence or state mutation unless signature verification is explicitly disabled for mock/local testing.
-- Google Play webhook verification uses the Pub/Sub `Authorization` JWT. Production should enable audience checking with `GOOGLE_VERIFY_AUDIENCE=true` and set `GOOGLE_PUB_SUB_AUDIENCE` to the exact webhook endpoint.
-- Creem webhook verification uses HMAC-SHA256 over the raw request body and the configured `webhook_secret`; the supplied signature must match before processing.
+- The ingress token is not considered a provider-authentication signature. Provider signature verification must run before payload parsing, persistence, or state mutation. `verify_webhook_signature=false` is for local/mock testing only and should not be used in production.
+- Google Play webhook verification uses the Pub/Sub `Authorization` JWT. Production must enable audience checking with `GOOGLE_VERIFY_AUDIENCE=true` and set `GOOGLE_PUB_SUB_AUDIENCE` to the exact webhook endpoint; the current implementation reads these audience settings from environment variables.
+- Creem webhook verification uses HMAC-SHA256 over the raw request body and the configured `webhook_secret`; the supplied signature must match before processing. Accepted signature headers are `creem-signature`, `Webhook-Signature`, and `x-signature`.
 - `X-Webhook-Verification-Mode` and other test override headers are honored only when `MOCK_EXTERNAL_APIS=true`.
 
 ```

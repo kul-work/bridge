@@ -81,7 +81,7 @@ Backend serves on port `3000` (default).
 
 - **App → Bridge**: Requires API key (`Authorization: Bearer sk_app_...`)
 - **Bridge → App**: HMACS payload using `X-Pay-Signature` for safe callback handling.
-- **Provider → Bridge webhooks**: Provider callbacks use `/webhooks/{webhook_ingress_token}/{provider}`. The token is only an app-routing secret; provider signature verification remains required unless explicitly disabled in mock/local test configuration. Google Play uses Pub/Sub `Authorization` JWT verification, with audience enforcement controlled by `GOOGLE_VERIFY_AUDIENCE` + `GOOGLE_PUB_SUB_AUDIENCE`. Creem uses HMAC-SHA256 over the raw request body with the configured provider webhook secret.
+- **Provider → Bridge webhooks**: Provider callbacks use `/webhooks/{webhook_ingress_token}/{provider}`. The token is only an app-routing secret; production must keep provider signature verification enabled. Google Play uses Pub/Sub `Authorization` JWT verification, with audience enforcement controlled by `GOOGLE_VERIFY_AUDIENCE` + `GOOGLE_PUB_SUB_AUDIENCE`. Creem uses HMAC-SHA256 over the raw request body with the configured provider webhook secret.
 
 ## API Snapshot Overview
 
