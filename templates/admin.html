@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bridge</title>
 <link rel="icon" href="data:,">
-<style>
+<style nonce="{{CSP_NONCE}}">
   :root {
     --bg: #f4f4f5;
     --card: #fff;
@@ -199,6 +199,10 @@
   #auth-screen p { color: var(--muted); }
   #clerk-signin { min-height: 400px; }
 
+  .auth-error {
+    color: var(--danger);
+  }
+
   .hidden { display: none !important; }
 </style>
 </head>
@@ -216,7 +220,7 @@
     <span class="spacer"></span>
     <div class="user-info">
       <span id="user-name"></span>
-      <button onclick="signOut()">Sign out</button>
+      <button id="sign-out-btn">Sign out</button>
     </div>
   </div>
 
@@ -225,12 +229,12 @@
     <div id="notes-editor" class="notes-editor card hidden">
       <div class="notes-header">
         <strong id="notes-title">App notes</strong>
-        <button onclick="hideNotesEditor()">Close</button>
+        <button id="notes-editor-close-btn">Close</button>
       </div>
       <div class="notes-body">
         <textarea id="notes-text" maxlength="4000"></textarea>
         <div class="notes-actions">
-          <button class="primary" onclick="saveNotes()">Save notes</button>
+          <button id="notes-save-btn" class="primary">Save notes</button>
         </div>
       </div>
     </div>
@@ -250,27 +254,27 @@
             <tr>
               <td><code>webhook_retry</code></td>
               <td>Retry pending webhook deliveries + Google Play ack retries</td>
-              <td><button class="primary" onclick="triggerJob('webhook_retry')">Trigger</button></td>
+              <td><button class="primary job-trigger" data-job="webhook_retry">Trigger</button></td>
             </tr>
             <tr>
               <td><code>reconciliation</code></td>
               <td>Check subscription status drift against provider APIs</td>
-              <td><button class="primary" onclick="triggerJob('reconciliation')">Trigger</button></td>
+              <td><button class="primary job-trigger" data-job="reconciliation">Trigger</button></td>
             </tr>
             <tr>
               <td><code>price_step_up</code></td>
               <td>Process expired Google Play price step-up consents</td>
-              <td><button class="primary" onclick="triggerJob('price_step_up')">Trigger</button></td>
+              <td><button class="primary job-trigger" data-job="price_step_up">Trigger</button></td>
             </tr>
             <tr>
               <td><code>pause_scheduler</code></td>
               <td>Process scheduled subscription pauses + cleanup orphaned pending subs</td>
-              <td><button class="primary" onclick="triggerJob('pause_scheduler')">Trigger</button></td>
+              <td><button class="primary job-trigger" data-job="pause_scheduler">Trigger</button></td>
             </tr>
             <tr>
               <td><code>cleanup</code></td>
               <td>Clean up old webhook logs and purged fraud prevention data</td>
-              <td><button class="primary" onclick="triggerJob('cleanup')">Trigger</button></td>
+              <td><button class="primary job-trigger" data-job="cleanup">Trigger</button></td>
             </tr>
           </tbody>
         </table>
@@ -302,7 +306,7 @@
     <div id="payload-viewer" class="payload-viewer card hidden">
       <div class="payload-header">
         <strong id="payload-title">Webhook payload</strong>
-        <button onclick="hidePayload()">Close</button>
+        <button id="payload-close-btn">Close</button>
       </div>
       <pre id="payload-content"></pre>
     </div>
@@ -332,13 +336,14 @@
   </div>
 </div>
 
-<script crossorigin="anonymous"
+<script nonce="{{CSP_NONCE}}" crossorigin="anonymous"
         data-clerk-publishable-key="{{CLERK_PUBLISHABLE_KEY}}"
         src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
         type="text/javascript"></script>
-<script>
+<script nonce="{{CSP_NONCE}}">
 let adminApps = [];
 let editingNotesAppId = null;
+let adminEventsBound = false;
 
 async function onClerkReady() {
   await Clerk.load();
@@ -373,12 +378,45 @@ function showSignIn() {
 async function showDashboard() {
   document.getElementById("auth-screen").classList.add("hidden");
   document.getElementById("app").classList.remove("hidden");
+  bindAdminHandlers();
 
   const nameEl = document.getElementById("user-name");
   const name = Clerk.user?.firstName || Clerk.user?.username || Clerk.user?.id || "Admin";
   nameEl.textContent = name;
 
   await loadApps();
+}
+
+function bindAdminHandlers() {
+  if (adminEventsBound) {
+    return;
+  }
+  adminEventsBound = true;
+
+  document
+    .getElementById("sign-out-btn")
+    ?.addEventListener("click", signOut);
+
+  document
+    .getElementById("notes-editor-close-btn")
+    ?.addEventListener("click", hideNotesEditor);
+
+  document
+    .getElementById("notes-save-btn")
+    ?.addEventListener("click", saveNotes);
+
+  document
+    .getElementById("payload-close-btn")
+    ?.addEventListener("click", hidePayload);
+
+  document.querySelectorAll(".job-trigger").forEach((button) => {
+    button.addEventListener("click", () => {
+      const job = button.getAttribute("data-job");
+      if (job) {
+        triggerJob(job);
+      }
+    });
+  });
 }
 
 async function refreshToken() {
@@ -566,13 +604,6 @@ async function viewWebhooks(appId) {
         statusBadge = '<span class="badge warning">Pending (' + wh.forward_attempts + '/3)</span>';
       }
 
-      const retryBtn = wh.dead_lettered && !wh.forwarded
-        ? '<button class="primary" onclick="retryWebhook(\'' + wh.id + '\')">Retry</button>'
-        : "";
-      const actions = retryBtn +
-        '<button onclick="viewPayload(\'' + wh.id + '\')">&#128065; Raw</button>' +
-        '<button onclick="copyId(\'' + wh.id + '\')">⧉ ID</button>';
-
       const eventId = wh.provider_webhook_id.length > 20
         ? wh.provider_webhook_id.substring(0, 20) + "..."
         : wh.provider_webhook_id;
@@ -583,8 +614,31 @@ async function viewWebhooks(appId) {
         "<td>" + escapeHtml(wh.event_type) + "</td>" +
         "<td>" + statusBadge + "</td>" +
         "<td>" + wh.forward_attempts + "</td>" +
-        "<td><small>" + new Date(wh.created_at).toLocaleString() + "</small></td>" +
-        '<td class="actions">' + actions + "</td>";
+        "<td><small>" + new Date(wh.created_at).toLocaleString() + "</small></td>";
+
+      const actionsCell = row.insertCell();
+      actionsCell.className = "actions";
+
+      if (wh.dead_lettered && !wh.forwarded) {
+        const retryButton = document.createElement("button");
+        retryButton.type = "button";
+        retryButton.className = "primary";
+        retryButton.textContent = "Retry";
+        retryButton.addEventListener("click", () => retryWebhook(wh.id));
+        actionsCell.appendChild(retryButton);
+      }
+
+      const payloadButton = document.createElement("button");
+      payloadButton.type = "button";
+      payloadButton.textContent = "Raw";
+      payloadButton.addEventListener("click", () => viewPayload(wh.id));
+      actionsCell.appendChild(payloadButton);
+
+      const copyButton = document.createElement("button");
+      copyButton.type = "button";
+      copyButton.textContent = "Copy ID";
+      copyButton.addEventListener("click", () => copyId(wh.id));
+      actionsCell.appendChild(copyButton);
     });
 
     document.getElementById("webhooks-table").classList.remove("hidden");
@@ -680,7 +734,7 @@ window.addEventListener('error', (e) => {
   if (e.message && e.message.includes('clerk')) {
     document.getElementById("auth-screen").innerHTML =
       '<h1>Bridge</h1>' +
-      '<p style="color: var(--danger)">Failed to initialize authentication: ' + escapeHtml(e.message) + "</p>";
+      '<p class="auth-error">Failed to initialize authentication: ' + escapeHtml(e.message) + "</p>";
   }
 });
 </script>

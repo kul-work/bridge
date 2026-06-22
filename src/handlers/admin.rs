@@ -47,28 +47,34 @@ pub async fn admin_dashboard(
         .map_err(|_| BridgeError::ConfigError(
             "CLERK_PUBLISHABLE_KEY must be set for admin auth.".to_string()
         ))?;
+    let csp_nonce = Uuid::new_v4().simple().to_string();
 
     let html = include_str!("../../templates/admin.html");
-    let html = html.replace("{{CLERK_PUBLISHABLE_KEY}}", &publishable_key);
-    Ok((admin_security_headers(), Html(html)))
+    let html = html
+        .replace("{{CLERK_PUBLISHABLE_KEY}}", &publishable_key)
+        .replace("{{CSP_NONCE}}", &csp_nonce);
+    Ok((admin_security_headers(&csp_nonce), Html(html)))
 }
 
-fn admin_security_headers() -> HeaderMap {
+fn admin_security_headers(csp_nonce: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
+    let csp = format!(
+        "default-src 'self'; \
+         script-src 'self' 'nonce-{0}' https://cdn.jsdelivr.net https://*.clerk.accounts.dev https://*.clerk.com; \
+         style-src 'self' 'nonce-{0}'; \
+         connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://api.clerk.com; \
+         frame-src https://*.clerk.accounts.dev https://*.clerk.com; \
+         img-src 'self' data: https://img.clerk.com https://images.clerk.dev https://*.clerk.com; \
+         font-src 'self' data:; \
+         object-src 'none'; \
+         base-uri 'none'; \
+         frame-ancestors 'none'",
+        csp_nonce,
+    );
+
     headers.insert(
         HeaderName::from_static("content-security-policy"),
-        HeaderValue::from_static(
-            "default-src 'self'; \
-             script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://*.clerk.accounts.dev https://*.clerk.com; \
-             style-src 'self' 'unsafe-inline'; \
-             connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://api.clerk.com; \
-             frame-src https://*.clerk.accounts.dev https://*.clerk.com; \
-             img-src 'self' data: https://img.clerk.com https://images.clerk.dev https://*.clerk.com; \
-             font-src 'self' data:; \
-             object-src 'none'; \
-             base-uri 'none'; \
-             frame-ancestors 'none'",
-        ),
+        HeaderValue::from_str(&csp).expect("Failed to build CSP header value"),
     );
     headers.insert(
         HeaderName::from_static("x-frame-options"),
