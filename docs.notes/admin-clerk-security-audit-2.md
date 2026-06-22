@@ -82,38 +82,6 @@ The UI only exposes retry for dead-lettered, unforwarded deliveries:
 
 ## Findings
 
-### Medium - Powerful admin operations lack rate limiting, concurrency guards, and actor audit trails
-
-Status: Fixed after audit.
-
-Remediation:
-
-- Admin Clerk auth now attaches verified subject/org context to request extensions.
-- Admin API routes now have configurable admin-specific per-actor rate limits, with tighter defaults for mutating methods.
-- Manual webhook retry and manual job triggers now use in-process concurrency guards to prevent duplicate concurrent runs for the same target.
-- Mutating admin actions now emit structured audit logs with actor, action, target, and result.
-
-Evidence:
-
-- Normal API routes have rate-limit middleware: `src/main.rs:157-167`
-- Admin API routes only layer `admin_auth_middleware`: `src/main.rs:178-186`
-- `trigger_jobs` intentionally runs jobs inline and works even when background jobs are disabled: `src/handlers/admin.rs:201-207`
-- Triggerable jobs include webhook retry, reconciliation, price step-up, pause scheduler, and cleanup: `src/handlers/admin.rs:208-214`, `src/handlers/admin.rs:240-296`
-- Auth verification returns `()` and does not attach the Clerk subject/org to request extensions: `src/middleware/admin_auth.rs:151-219`, `src/middleware/admin_auth.rs:427-432`
-- Mutating action logs do not include an authenticated admin identity: `src/handlers/admin.rs:187-198`, `src/handlers/admin.rs:240-298`
-
-Impact:
-
-A compromised admin token, browser-side script, or over-eager admin can repeatedly trigger expensive provider/database work. Incident response also cannot reliably answer which Clerk user retried a webhook or triggered a lifecycle job.
-
-Recommendation:
-
-- Add admin-specific rate limiting, especially for `POST`/`PATCH` routes.
-- Add per-job concurrency locks or debounce windows so the same job cannot be triggered repeatedly while already running.
-- Attach verified admin context to request extensions, for example `{ role }, if the ADMIN_CLERK_ORG_ID is used
-- Write audit logs for mutating actions with actor, action, target, timestamp, and result.
-- Consider returning `202 Accepted` and enqueueing long-running work instead of running all jobs inline in the request path.
-
 ### Medium - CSP is too permissive for a token-bearing admin page
 
 Evidence:
