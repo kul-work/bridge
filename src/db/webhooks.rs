@@ -494,7 +494,7 @@ mod tests {
     async fn manual_retry_reset_does_not_reopen_forwarded_deliveries() -> Result<(), Box<dyn Error>> {
         let Some(database) = test_database().await? else {
             eprintln!(
-                "skipping DB-backed webhook retry regression; set BRIDGE_TEST_DATABASE_URL or DATABASE_URL"
+                "skipping DB-backed webhook retry regression; set BRIDGE_TEST_DATABASE_URL"
             );
             return Ok(());
         };
@@ -569,9 +569,16 @@ mod tests {
     async fn test_database() -> Result<Option<crate::db::Database>, Box<dyn Error>> {
         dotenvy::dotenv().ok();
         let admin_database_url = std::env::var("ADMIN_DATABASE_URL").ok();
+        let environment = std::env::var("ENVIRONMENT")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let is_production = matches!(environment.as_str(), "production" | "prod");
         let database_url = match std::env::var("BRIDGE_TEST_DATABASE_URL") {
             Ok(url) => Some(url),
-            Err(_) => admin_database_url.clone().or_else(|| std::env::var("DATABASE_URL").ok()),
+            Err(_) if !is_production => {
+                admin_database_url.clone().or_else(|| std::env::var("DATABASE_URL").ok())
+            }
+            Err(_) => None,
         };
         let Some(database_url) = database_url else {
             return Ok(None);
