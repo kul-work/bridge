@@ -192,8 +192,14 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum::middleware::from_fn(handlers::admin::admin_no_store_middleware));
 
     // Build app
-    let mut app = Router::new()
+    let health_routes = Router::new()
         .route("/health", get(health_check))
+        .layer(axum::middleware::from_fn(
+            middleware::rate_limit::health_ip_rate_limit_middleware,
+        ));
+
+    let mut app = Router::new()
+        .merge(health_routes)
         .route("/", axum::routing::get(|| async { Redirect::temporary("/admin") }))
         .route("/favicon.ico", axum::routing::get(|| async { StatusCode::NO_CONTENT }))
         .merge(admin_routes)

@@ -436,6 +436,59 @@ pub async fn unauthenticated_ip_rate_limit_middleware(
     Ok(response)
 }
 
+/// Per-IP rate limit for the public `/health` liveness probe.
+/// Reuses the unauthenticated-IP budget (10/min) since `/health` is the same
+/// threat model: an unauthenticated public endpoint. Docker's HEALTHCHECK
+/// probes from 127.0.0.1 ~2/min, well under this cap.
+pub async fn health_ip_rate_limit_middleware(
+    request: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let client_ip = match extract_client_ip(&request) {
+        Some(ip) => ip,
+        None => {
+            // If we cannot identify the client IP, do not block the request.
+            return Ok(next.run(request).await);
+        }
+    };
+
+    let key = format!("health-ip:{}", client_ip);
+
+    static STORE: std::sync::OnceLock<RateLimitStore> = std::sync::OnceLock::new();
+    let store = STORE.get_or_init(RateLimitStore::new);
+
+    let (allowed, remaining, reset_at) = store
+        .check_rate_limit(&key, UNAUTHENTICATED_IP_LIMIT, UNAUTHENTICATED_IP_WINDOW_SECS)
+        .await;
+
+    if !allowed {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "error": "rate_limit_exceeded",
+                "message": "Too many health check requests",
+                "reset_at": reset_at
+            })),
+        ));
+    }
+
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        "X-RateLimit-Limit",
+        UNAUTHENTICATED_IP_LIMIT.to_string().parse().unwrap(),
+    );
+    response.headers_mut().insert(
+        "X-RateLimit-Remaining",
+        remaining.to_string().parse().unwrap(),
+    );
+    response.headers_mut().insert(
+        "X-RateLimit-Reset",
+        reset_at.to_string().parse().unwrap(),
+    );
+
+    Ok(response)
+}
+
 /// Per-IP guard for admin auth attempts. This runs before Clerk JWT parsing so
 /// repeated bad admin tokens cannot force unbounded signature/JWKS work.
 pub async fn admin_auth_ip_rate_limit_middleware(
