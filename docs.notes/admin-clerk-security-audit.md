@@ -10,12 +10,11 @@ The admin page being public is not the main issue; a Clerk publishable key is pu
 
 This audit assumes the intended deployment model is a **dedicated Bridge-admin Clerk instance with exactly one admin user**. Under that model, user-vs-admin authorization and Clerk organization membership are not the primary risks right now.
 
-The current admin API still has security and operations gaps worth fixing before relying on it for production payment operations:
+The current admin API still has a small set of security and correctness gaps worth fixing before relying on it for production payment operations:
 
 1. `ADMIN_CLERK_AUTHORIZED_PARTIES`, if configured, is bypassable when JWTs omit `azp`.
-2. Sensitive admin actions have weak server-side provenance if the single admin session is compromised or behaves unexpectedly.
-3. Manual webhook retry can race and re-open an already forwarded delivery.
-4. Webhook payload viewing and manual job triggering need tighter operational controls.
+2. Manual webhook retry can race and re-open an already forwarded delivery.
+3. Admin UI browser hardening has a few low-priority gaps.
 
 ## Scope Reviewed
 
@@ -53,50 +52,6 @@ Recommended fix:
 - Trim/filter CSV parts before URL normalization; blank entries should not normalize into `https://`.
 - Consider adding and verifying a dedicated `aud` claim for the Bridge admin API.
 
-### P2 — Admin action provenance is weak
-
-The middleware validates the JWT and then discards the identity. With the current dedicated one-user Clerk instance, this is not a user-vs-admin authorization problem. The risk is weaker incident/debug provenance: Bridge cannot tie sensitive admin operations to the authenticated Clerk session, IP, user-agent, target object, and result.
-
-Evidence:
-
-- `src/middleware/admin_auth.rs:151-227` has `verify_token` return `Result<(), String>`.
-- `src/middleware/admin_auth.rs:413-418` calls `next.run(request)` without inserting a principal into request extensions.
-- `src/handlers/admin.rs:61-78` updates app notes with no actor audit.
-- `src/handlers/admin.rs:116-135` returns webhook payload data with no actor audit.
-- `src/handlers/admin.rs:151-164` logs manual retry details but not the Clerk session/IP/user-agent.
-- `src/handlers/admin.rs:207-265` logs manually triggered job names but not the Clerk session/IP/user-agent.
-
-Impact:
-
-Bridge cannot answer basic incident/debug questions such as:
-
-- Was this action performed by the expected Clerk session?
-- Which IP/user-agent viewed this webhook payload?
-- Which session retried this webhook delivery?
-- Which session triggered reconciliation or cleanup?
-- What target object was touched, and did the action succeed or fail?
-
-Recommended fix:
-
-- Return `AdminPrincipal` from token verification.
-- Insert the principal into request extensions in `admin_auth_middleware`.
-- Extract the principal in all admin handlers.
-- Add structured provenance/audit events for:
-  - `admin.apps.notes.update`
-  - `admin.webhook.payload.view`
-  - `admin.webhook.retry.request`
-  - `admin.jobs.trigger`
-- Include at minimum:
-  - Clerk `sub`
-  - session ID / JWT ID if available
-  - method/path
-  - target app/webhook/job
-  - result success/failure
-  - remote IP
-  - user-agent
-- Structured tracing logs are acceptable as the first step for this one-user internal admin. A durable `pay.admin_audit_log` table is optional unless stronger forensics/compliance is needed.
-- Never log raw bearer tokens or raw webhook payloads.
-
 ### P1 — Manual webhook retry can race and re-open an already forwarded delivery
 
 The retry handler reads the delivery, checks `forwarded`, and then later resets the delivery. The reset SQL unconditionally sets `forwarded = false`.
@@ -118,65 +73,6 @@ Recommended fix:
 - Return whether a row was actually reset.
 - Audit both successful and skipped retry attempts.
 - Consider allowing manual reset only for dead-lettered deliveries, not all pending deliveries.
-
-### P2 — Webhook payload viewer uses blacklist redaction on arbitrary provider JSON
-
-The payload endpoint fetches stored provider payloads and returns a redacted copy. The redaction is based on sensitive-looking key names.
-
-Evidence:
-
-- `src/handlers/admin.rs:116-135` returns `redacted_payload` for a webhook delivery.
-- `src/db/webhooks.rs:308-330` fetches the full stored provider payload.
-- `src/handlers/admin.rs:331-389` performs recursive blacklist-based key redaction.
-
-Impact:
-
-Provider payloads can contain sensitive identifiers under keys not covered by the blacklist, for example:
-
-- `customer_id`
-- `external_user_id`
-- `user_id`
-- `phone`
-- `address`
-- `ip`
-- `billing_details`
-- `order_id`
-- arbitrary `metadata`
-
-The current model cannot guarantee PII minimization.
-
-Recommended fix:
-
-- Default endpoint should return curated metadata only.
-- Require an explicit break-glass/confirmation action for raw payload access.
-- Audit every payload view.
-- Prefer schema-aware redaction per provider/event.
-- For unknown keys, either redact all string leaves by default or allowlist known-safe fields.
-- Fully redact emails/secrets unless there is a specific operational need for suffix-preserving redaction.
-
-### P2 — Manual background job trigger is synchronous, repeatable, and unaudited
-
-The admin endpoint accepts a list of job names and runs each job inline in the HTTP request.
-
-Evidence:
-
-- `src/main.rs:178-185` exposes `/admin/trigger-jobs`.
-- `src/handlers/admin.rs:171-187` accepts a caller-provided `jobs` list.
-- `src/handlers/admin.rs:195-207` validates job names but does not deduplicate or cap repeated valid names.
-- `src/handlers/admin.rs:207-260` runs jobs synchronously.
-
-Impact:
-
-A valid admin, or a compromised admin session, can repeatedly trigger expensive/provider-touching jobs and tie up request workers, database work, or provider calls. Without action provenance, post-incident investigation is weak.
-
-Recommended fix:
-
-- Deduplicate jobs.
-- Reject duplicates and cap requested jobs to the known job set.
-- Add admin/API rate limits.
-- Add per-job concurrency locks so reconciliation/cleanup cannot overlap themselves.
-- Prefer enqueueing a job and returning `202 Accepted` instead of running synchronously.
-- Log requested jobs and per-job results with the admin principal/session metadata.
 
 ### P3 — Admin UI renders `app_url` into `href` without URL scheme validation
 
