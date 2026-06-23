@@ -8,18 +8,18 @@ Status after auditing the Bridge backend codebase:
 
 | Area | Status | Notes |
 |---|---|---|
-| 1. Health checks | Liveness Only | `/health` returns status healthy but does not check DB readiness or provider config availability. |
-| 2. Request IDs | Missing | Bridge has no HTTP middleware to extract or generate request IDs. A local `trace_id` is only generated inside `verify_purchase` for the local `BpTrace`. |
-| 3. Structured HTTP access logs | Missing | Standard tower-http `TraceLayer` is used, which writes unstructured logs. Custom structured HTTP access logs with `request_id`, latency, and `app_id` are missing. |
-| 4. DB failure logging | Missing | SQLx errors are mapped directly to `BridgeError::DbError` strings and returned, but are not logged with structured diagnostic context at the query site. |
-| 5. Webhook ingress failures | Unstructured | Webhook signature/duplicate failures log plain text warnings/errors (e.g., `Creem webhook signature verification failed`) without structured `app_id` or `request_id`. |
-| 6. Provider RPC failures | Unstructured | Google Play / Creem HTTP API failures log raw response bodies or error strings without structured `provider`, `app_id`, or `subscription_id` spans/fields. |
-| 7. Subscription lifecycle | Unstructured | State transition checks (stale suppression, restarts) write plain text warnings/infos in `event_handlers.rs` without consistent structure or correlation fields. |
-| 8. Background worker jobs | Unstructured | Reconciliation, cleanup, price step-up, and pause scheduler workers log plain text startup/failure events without structured job context or retry tracing. |
-| 9. Webhook sub-deliveries | Partially Implemented | Outbound forwarding logs attempt count and status, but lacks structured fields in production (only debug mode logs them) and misses explicit dead-letter logs. |
-| 10. PII-safe correlation | Non-Compliant | Logs use `redact_with_prefix` (exposing last 8 characters of purchase tokens) instead of secure `diagnostic_hash`. `BPT-RAW` logs dump raw response bodies. |
-| 11. PII leakage audit | Audit Done | Audit revealed three major leakage risks: partially redacted purchase tokens in logs, raw response bodies from Google/Creem APIs, and potential email/PII echo on errors. |
-| 12. Troubleshooting runbook | Missing | No operational runbook at `docs/TROUBLESHOOTING.md` exists for Bridge. |
+| 1. Health checks | Implemented | Liveness at `/health`. Readiness `/ready` asserts DB connectivity and returns 503 if enabled provider count is 0. |
+| 2. Request IDs | Implemented | Custom HTTP middleware generates UUIDs or validates safe correlation-ids. |
+| 3. Structured HTTP access logs | Implemented | Access log middleware prints single structured logs, extracting MatchedPath via route_layer. |
+| 4. DB failure logging | Implemented | DB pool acquisition, queries, and readiness checks log structured context on failure. |
+| 5. Webhook ingress failures | Implemented | Logs structured webhook ingress events, signature verification results, and idempotency status. |
+| 6. Provider RPC failures | Implemented | API/client errors log and return sanitized/hashed details (raw response bodies and raw tokens are omitted/redacted). |
+| 7. Subscription lifecycle | Implemented | State transitions and stale-event suppression decisions are logged with correlation IDs. |
+| 8. Background worker jobs | Implemented | Background workers (reconciliation, price step-up, pause scheduler, cleanup) use structured ticks/logs. |
+| 9. Webhook sub-deliveries | Implemented | Webhook forwarding logs retry attempts and emits structured `error!` dead-letter alerts on permanent failure. |
+| 10. PII-safe correlation | Implemented | Enforces denylist; replaced suffix-exposing `redact_with_prefix` with `diagnostic_hash` for purchase tokens. |
+| 11. PII leakage audit | Remedied | Completed PII leakage audit, resolved all leakage risks (emails scrubbed, tokens hashed, app callback bodies omitted). |
+| 12. Troubleshooting runbook | Missing | No operational runbook at `docs/TROUBLESHOOTING.md` exists yet. |
 
 ---
 
