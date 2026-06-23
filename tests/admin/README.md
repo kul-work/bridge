@@ -33,7 +33,11 @@ tests/admin/
    ADMIN_CLERK_AUTHORIZED_PARTIES=https://admin.bridge.example.com
    ADMIN_CLERK_ORG_ID=org_test
    ```
-   Then start Bridge from the repository root with `cargo run`. In local/test environments, Bridge loads these admin Clerk test values from `tests/admin/.env` when they are not already set in the process environment.
+   Then start Bridge from the repository root with:
+   ```bash
+   BRIDGE_ADMIN_TEST_ENV=tests/admin/.env cargo run
+   ```
+   Bridge only loads this admin test env file when `BRIDGE_ADMIN_TEST_ENV` is explicitly set, and values already present in the process environment still win.
 2. **Database Access**:
    Ensure `psql` is in your environment PATH and configured correctly in `tests/cti/.env` or via default settings (localhost:5432, user: bridge_admin).
 3. **App Registered**:

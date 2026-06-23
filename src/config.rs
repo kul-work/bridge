@@ -5,7 +5,7 @@ pub const API_PAGINATION_LIMIT: i64 = 20;
 pub const MAX_PAGINATION_LIMIT: i64 = 100;
 pub const DATA_EXPORT_LIMIT: i64 = 100;
 pub const ADMIN_WEBHOOK_LIST_LIMIT: i64 = 100;
-const ADMIN_TEST_ENV_PATH: &str = "tests/admin/.env";
+const ADMIN_TEST_ENV_VAR: &str = "BRIDGE_ADMIN_TEST_ENV";
 const ADMIN_TEST_ENV_KEYS: &[&str] = &[
     "ADMIN_CLERK_FRONTEND_API",
     "ADMIN_CLERK_AUTHORIZED_PARTIES",
@@ -30,8 +30,8 @@ impl Config {
         dotenvy::dotenv().ok();
         let environment = env::var("ENVIRONMENT")
             .unwrap_or_else(|_| "development".to_string());
-        if should_load_admin_test_env(&environment) {
-            load_admin_test_env();
+        if let Some(path) = admin_test_env_path(env::var(ADMIN_TEST_ENV_VAR).ok().as_deref()) {
+            load_admin_test_env(path);
         }
 
         // Helper for parsing optional u16 with defaults
@@ -58,19 +58,16 @@ impl Config {
     }
 }
 
-fn should_load_admin_test_env(environment: &str) -> bool {
-    matches!(
-        environment.trim().to_ascii_lowercase().as_str(),
-        "development" | "dev" | "local" | "test"
-    )
+fn admin_test_env_path(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn load_admin_test_env() {
-    if !Path::new(ADMIN_TEST_ENV_PATH).exists() {
+fn load_admin_test_env(path: &str) {
+    if !Path::new(path).exists() {
         return;
     }
 
-    let Ok(vars) = dotenvy::from_path_iter(ADMIN_TEST_ENV_PATH) else {
+    let Ok(vars) = dotenvy::from_path_iter(path) else {
         return;
     };
 
@@ -97,19 +94,20 @@ pub fn mock_external_apis_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::should_load_admin_test_env;
+    use super::admin_test_env_path;
 
     #[test]
-    fn admin_test_env_loads_only_for_local_environments() {
-        assert!(should_load_admin_test_env("development"));
-        assert!(should_load_admin_test_env("dev"));
-        assert!(should_load_admin_test_env("local"));
-        assert!(should_load_admin_test_env("test"));
+    fn admin_test_env_requires_explicit_path() {
+        assert_eq!(admin_test_env_path(None), None);
+        assert_eq!(admin_test_env_path(Some("")), None);
+        assert_eq!(admin_test_env_path(Some("   ")), None);
     }
 
     #[test]
-    fn admin_test_env_does_not_load_for_deployed_environments() {
-        assert!(!should_load_admin_test_env("production"));
-        assert!(!should_load_admin_test_env("staging"));
+    fn admin_test_env_accepts_configured_path() {
+        assert_eq!(
+            admin_test_env_path(Some(" tests/admin/.env ")),
+            Some("tests/admin/.env")
+        );
     }
 }
