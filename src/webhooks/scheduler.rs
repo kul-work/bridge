@@ -6,10 +6,12 @@ use crate::ports::{
     WebhookForwardRepository, WebhookProcessingRepository, WebhookWriteRepository,
 };
 use std::sync::Arc;
-use tracing::{info, error, warn};
+use tracing::{info, error, warn, info_span, Instrument};
 use uuid::Uuid;
 
 pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
+    let span = info_span!("background_worker", job = "webhook_retry");
+
     tokio::spawn(async move {
         // Ticks every 5 minutes
         let mut interval = tokio::time::interval(Duration::from_secs(300));
@@ -26,10 +28,12 @@ pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
                 error!(job = "webhook_retry", error = %e, "Google Play acknowledgement retry tick failed");
             }
         }
-    });
+    }.instrument(span));
 }
 
 pub fn spawn_reconciliation_worker(database: Arc<Database>) {
+    let span = info_span!("background_worker", job = "reconciliation");
+
     tokio::spawn(async move {
         // Ticks every 24 hours (86400 seconds)
         let mut interval = tokio::time::interval(Duration::from_secs(86400));
@@ -42,7 +46,7 @@ pub fn spawn_reconciliation_worker(database: Arc<Database>) {
                 error!(job = "reconciliation", error = %e, "Subscription reconciliation worker tick failed");
             }
         }
-    });
+    }.instrument(span));
 }
 
 pub async fn retry_webhooks(
@@ -386,6 +390,8 @@ async fn send_reconciliation_admin_alert_email(
 }
 
 pub fn spawn_price_step_up_expiry_worker(database: Arc<Database>) {
+    let span = info_span!("background_worker", job = "price_step_up");
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
         info!(job = "price_step_up", status = "started", "Price step-up expiry worker started");
@@ -397,7 +403,7 @@ pub fn spawn_price_step_up_expiry_worker(database: Arc<Database>) {
                 error!(job = "price_step_up", error = %e, "Price step-up expiry worker tick failed");
             }
         }
-    });
+    }.instrument(span));
 }
 
 pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
@@ -487,6 +493,8 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
 }
 
 pub fn spawn_pause_scheduler_worker(database: Arc<Database>) {
+    let span = info_span!("background_worker", job = "pause_scheduler");
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1500)); // 25 minutes
         info!(job = "pause_scheduler", status = "started", "Pause scheduler worker started");
@@ -498,7 +506,7 @@ pub fn spawn_pause_scheduler_worker(database: Arc<Database>) {
                 error!(job = "pause_scheduler", error = %e, "Pause scheduler worker failed");
             }
         }
-    });
+    }.instrument(span));
 }
 
 pub async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
@@ -663,6 +671,8 @@ async fn emit_scheduler_callback(
 }
 
 pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {
+    let span = info_span!("background_worker", job = "cleanup");
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(86400)); // daily
         info!(job = "cleanup", status = "started", "Webhook log cleanup worker started");
@@ -674,7 +684,7 @@ pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {
                 error!(job = "cleanup", error = %e, "Webhook log cleanup worker failed");
             }
         }
-    });
+    }.instrument(span));
 }
 
 pub async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {

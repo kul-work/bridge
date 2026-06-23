@@ -4,7 +4,7 @@ use axum::{
 };
 use base64::Engine;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, info_span, Instrument};
 use uuid::Uuid;
 
 use crate::{
@@ -31,8 +31,16 @@ fn spawn_process_and_forward_webhook(
     provider_name: &'static str,
     event_id: String,
 ) {
+    let span = info_span!(
+        "webhook_process_and_forward",
+        app_id = %app_id,
+        provider = provider_name,
+        webhook_provider_id = %webhook_id,
+        event_id = %event_id,
+    );
+
     tokio::spawn(async move {
-        debug!("BEGIN processing {} webhook: {}", provider_name, event_id);
+        debug!("Begin processing webhook");
         match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
                 if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
@@ -43,14 +51,14 @@ fn spawn_process_and_forward_webhook(
                 )
                 .await
                 {
-                    error!("Failed to forward webhook for {}: {}", event_id, e);
+                    error!(error = %e, "Failed to forward webhook");
                 }
             }
-            Ok(None) => info!("{} webhook suppressed: {}", provider_name, event_id),
-            Err(e) => error!("{} webhook processing failed {}: {}", provider_name, event_id, e),
+            Ok(None) => info!("Webhook suppressed"),
+            Err(e) => error!(error = %e, "Webhook processing failed"),
         }
-        debug!("END processing {} webhook: {}", provider_name, event_id);
-    });
+        debug!("End processing webhook");
+    }.instrument(span));
 }
 
 fn spawn_forward_existing_webhook(
@@ -60,6 +68,14 @@ fn spawn_forward_existing_webhook(
     provider_name: &'static str,
     event_id: String,
 ) {
+    let span = info_span!(
+        "webhook_resume_forwarding",
+        app_id = %app_id,
+        provider = provider_name,
+        webhook_provider_id = %webhook_id,
+        event_id = %event_id,
+    );
+
     tokio::spawn(async move {
         match crate::webhooks::processor::build_canonical_payload(database.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
@@ -71,15 +87,15 @@ fn spawn_forward_existing_webhook(
                 )
                 .await
                 {
-                    error!("Failed to resume forwarding for {}: {}", event_id, e);
+                    error!(error = %e, "Failed to resume webhook forwarding");
                 } else {
-                    info!("{} webhook forwarding resumed: {}", provider_name, event_id);
+                    info!("Webhook forwarding resumed");
                 }
             }
-            Ok(None) => info!("{} webhook suppressed while resuming: {}", provider_name, event_id),
-            Err(e) => error!("{} webhook payload rebuild failed {}: {}", provider_name, event_id, e),
+            Ok(None) => info!("Webhook suppressed while resuming"),
+            Err(e) => error!(error = %e, "Webhook payload rebuild failed"),
         }
-    });
+    }.instrument(span));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,7 +287,7 @@ pub async fn handle_google_play(
     }
 
     let payload: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
-        error!("Failed to parse Google Play webhook JSON: {}", e);
+        error!(error = %e, provider = "google_play", "Failed to parse webhook JSON");
         BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
     })?;
 
@@ -342,19 +358,18 @@ pub async fn handle_google_play(
         .or_else(|| google_play_event["eventTimeMillis"].as_i64());
 
     info!(
-        "Google Play webhook received: app_id={}, app_slug={}, event_id={}, event={}, sub_id={}, token_hash={}, event_time_ms={}",
-        app.id,
-        app.slug,
-        event_id,
-        event_type,
-        subscription_id.as_deref().unwrap_or("missing"),
-        purchase_token
+        app_id = %app.id,
+        app_slug = %app.slug,
+        provider = "google_play",
+        event_id = event_id,
+        event_type = %event_type,
+        subscription_id = subscription_id.as_deref().unwrap_or("missing"),
+        purchase_token_hash = %purchase_token
             .as_deref()
             .map(diagnostic_hash)
             .unwrap_or_else(|| "missing".to_string()),
-        timestamp_ms
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "missing".to_string())
+        event_time_ms = timestamp_ms,
+        "Google Play webhook received"
     );
 
     if subscription_id.is_none() && purchase_token.is_none() {
@@ -471,7 +486,7 @@ pub async fn handle_creem(
     }
 
     let payload: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
-        error!("Failed to parse Creem webhook JSON: {}", e);
+        error!(error = %e, provider = "creem", "Failed to parse webhook JSON");
         BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
     })?;
 
@@ -506,16 +521,15 @@ pub async fn handle_creem(
     });
 
     info!(
-        "Creem webhook received: app_id={}, app_slug={}, event_id={}, event={}, sub_id={}, token_hash={}, event_time_ms={}",
-        app.id,
-        app.slug,
-        event_id,
-        event_type,
-        subscription_id.as_deref().unwrap_or("missing"),
-        diagnostic_hash(purchase_token.as_deref().unwrap_or(event_id)),
-        timestamp_ms
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "missing".to_string())
+        app_id = %app.id,
+        app_slug = %app.slug,
+        provider = "creem",
+        event_id = event_id,
+        event_type = event_type,
+        subscription_id = subscription_id.as_deref().unwrap_or("missing"),
+        correlation_hash = %diagnostic_hash(purchase_token.as_deref().unwrap_or(event_id)),
+        event_time_ms = timestamp_ms,
+        "Creem webhook received"
     );
 
     if subscription_id.is_none() && purchase_token.is_none() {
@@ -569,7 +583,7 @@ fn decode_google_play_payload(
 ) -> Result<(serde_json::Value, Option<String>), BridgeError> {
     if payload.get("message").is_some() {
         let message_data = payload["message"]["data"].as_str().ok_or_else(|| {
-            error!("Missing message.data in Google Play webhook");
+            error!(provider = "google_play", "Missing message.data in webhook");
             BridgeError::WebhookError("Missing message.data field".to_string())
         })?;
 
@@ -577,7 +591,7 @@ fn decode_google_play_payload(
             .map_err(|e| BridgeError::WebhookError(format!("Invalid message.data: {}", e)))?;
 
         let google_play_event: serde_json::Value = serde_json::from_slice(&decoded_message).map_err(|e| {
-            error!("Failed to parse Google Play message.data payload: {}", e);
+            error!(error = %e, provider = "google_play", "Failed to parse message.data payload");
             BridgeError::WebhookError(format!("Invalid Google Play message.data payload: {}", e))
         })?;
 
