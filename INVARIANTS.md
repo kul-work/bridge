@@ -25,6 +25,12 @@
 - Stale events suppressed by comparing timestamp_epoch_ms.
 - Callback delivery uses 3-strike retry with exponential backoff.
 
+## Observability / PII
+- Logs and traces stay conservative by default; use hashed diagnostics when sensitive identifiers are needed for correlation.
+- Never log raw purchase tokens, API keys, HMAC secrets or signatures, authorization headers, or raw provider callback bodies.
+- Emails appear in normal logs only when intentionally needed, preferably scrubbed.
+- Admin notification emails may include operational context when required.
+
 ## Error Handling
 - thiserror for typed domain errors.
 - anyhow for context propagation.

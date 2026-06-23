@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::error::BridgeError;
+use crate::utils::scrub_email;
 use async_trait::async_trait;
 use reqwest::Client;
 use std::sync::{Arc, OnceLock};
@@ -28,7 +29,7 @@ async fn send_via_provider(
             .text()
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
-        error!("{} API error: {}", api_label, error_text);
+        error!("{} API error: {}", api_label, scrub_email(&error_text));
         return Err(BridgeError::InternalServerError("Email send failed".into()));
     }
 
@@ -47,8 +48,8 @@ impl EmailService for MockEmailService {
     async fn send_email(&self, _to: &str, subject: &str, body: &str) -> Result<(), BridgeError> {
         warn!(
             "MOCK EMAIL SENT - subject: {}, body: {}",
-            subject,
-            body
+            scrub_email(subject),
+            scrub_email(body)
         );
         Ok(())
     }
@@ -209,7 +210,7 @@ pub async fn send_email(to: &str, subject: &str, body: &str) -> Result<(), Bridg
 pub fn send_email_mock(_to: &str, subject: &str, body: &str) {
     warn!(
         "MOCK EMAIL SENT - subject: {}, body: {}",
-        subject,
-        body
+        scrub_email(subject),
+        scrub_email(body)
     );
 }

@@ -129,6 +129,7 @@ Use for narrow changes to one provider/payment flow.
 
 - touched-area checker
 - `.agents/checks/bridge-payment-side-effects.md`
+- `.agents/checks/bridge-observability-pii.md` if logging, error formatting, diagnostics, provider request/response handling, or PII-sensitive fields are involved
 
 ### Tier 2 — Identity/lifecycle/webhook-sensitive fix
 
@@ -139,6 +140,7 @@ Use when the change affects money identity, subscription state, webhook semantic
 - `.agents/checks/bridge-payment-identity.md` if transaction IDs, purchase tokens, amount, or currency are involved
 - `.agents/checks/bridge-subscription-lifecycle.md` if subscription status, periods, renewal, cancel, refund, revoke, pause, resume, defer, or price consent are involved
 - `.agents/checks/bridge-webhook-idempotency.md` if webhook ingress, signature, dedupe, stale suppression, forwarding, callback enqueue, or callback payloads are involved
+- `.agents/checks/bridge-observability-pii.md` if logging, error formatting, diagnostics, provider request/response handling, or PII-sensitive fields are involved
 
 ### Tier 3 — Pre-release or scary diff
 
@@ -148,6 +150,7 @@ Use before release/tag, for broad payment/provider diffs, for migrations touchin
 - `.agents/checks/bridge-payment-side-effects.md`
 - `.agents/checks/bridge-subscription-lifecycle.md`
 - `.agents/checks/bridge-webhook-idempotency.md`
+- `.agents/checks/bridge-observability-pii.md`
 - `.agents/checks/bridge-payment-antipatterns.md`
 - `.agents/checks/bridge-release-risk.md`
 

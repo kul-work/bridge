@@ -626,7 +626,8 @@ fn sanitize_google_play_payload_for_log(payload: &serde_json::Value) -> String {
         }
     }
 
-    serde_json::to_string(&sanitized).unwrap_or_else(|_| "{}".to_string())
+    let payload = serde_json::to_string(&sanitized).unwrap_or_else(|_| "{}".to_string());
+    crate::utils::scrub_email(&payload)
 }
 
 fn extract_google_event_type(payload: &serde_json::Value) -> String {

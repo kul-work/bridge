@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 
 use crate::error::AppError;
-use crate::utils::diagnostic_hash;
+use crate::utils::{diagnostic_hash, scrub_email};
 use crate::services::payment::{
     CheckoutSession, GooglePlayProviderData, PaymentProvider, ProviderData, PurchaseType,
     SubscriptionDetails, SubscriptionStatus, WebhookEvent,
@@ -24,6 +24,10 @@ pub struct GooglePlayProvider {
     pub package_name: String,
     api_mock: bool,
     verify_webhook_signature: bool,
+}
+
+fn scrub_google_play_fixture_log(body: String) -> String {
+    scrub_email(&body)
 }
 
 impl GooglePlayProvider {
@@ -218,7 +222,7 @@ impl GooglePlayProvider {
                 if let Some(purchase) =
                     Self::load_fixture_from_path::<super::models::ProductPurchase>(path)
                 {
-                    let mock_json = serde_json::to_string(&purchase).unwrap_or_default();
+                    let mock_json = scrub_google_play_fixture_log(serde_json::to_string(&purchase).unwrap_or_default());
                     tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - get_product: {}", mock_json);
 
                     let status = match purchase.purchase_state {
@@ -266,7 +270,7 @@ impl GooglePlayProvider {
             if let Some(purchase) =
                 Self::load_fixture_from_path::<super::models::SubscriptionPurchaseV2>(path)
             {
-                let mock_json = serde_json::to_string(&purchase).unwrap_or_default();
+                let mock_json = scrub_google_play_fixture_log(serde_json::to_string(&purchase).unwrap_or_default());
                 tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - get_subscription (v2): {}", mock_json);
                 return self
                     .verify_subscription_from_purchase(
@@ -439,7 +443,7 @@ impl GooglePlayProvider {
         if self.api_mock {
             if let Some(path) = fixture_path {
                 if let Some(purchase) = Self::load_fixture_from_path::<super::models::SubscriptionPurchaseV2>(&path) {
-                    let json = serde_json::to_string_pretty(&purchase).unwrap_or_default();
+                    let json = scrub_google_play_fixture_log(serde_json::to_string_pretty(&purchase).unwrap_or_default());
                     tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - get_subscription (v2): {}", json);
                     return Ok(purchase);
                 }
@@ -643,7 +647,7 @@ impl GooglePlayProvider {
                         "MOCK_GOOGLE_PURCHASE_RESPONSE",
                     )
                 {
-                    let mock_json = serde_json::to_string(&purchase).unwrap_or_default();
+                    let mock_json = scrub_google_play_fixture_log(serde_json::to_string(&purchase).unwrap_or_default());
                     tracing::debug!(
                         target: "BPT-RAW",
                         "GooglePlay Raw Response - get_product: {}",
@@ -946,7 +950,7 @@ impl GooglePlayProvider {
                 };
 
                 // Log mock response in same format as client.rs
-                let mock_json = serde_json::to_string(&mock_purchase).unwrap_or_default();
+                let mock_json = scrub_google_play_fixture_log(serde_json::to_string(&mock_purchase).unwrap_or_default());
                 tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - get_subscription (v2): {}", mock_json);
 
                 mock_purchase

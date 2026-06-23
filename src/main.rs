@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
 
     let default_filter = match environment.as_str() {
         //"production" | "prod" => "bridge=info,axum=info",
-        "production" | "prod" => "bridge=info,axum=info,BPT-TRACE=info,BPT-RAW=info",
+        "production" | "prod" => "bridge=info,axum=info,BPT-TRACE=info",
         _ => "bridge=debug,axum=debug,BPT-TRACE=debug,BPT-RAW=debug",
     };
 
