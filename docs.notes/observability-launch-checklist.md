@@ -19,7 +19,7 @@ Status after auditing the Bridge backend codebase:
 | 9. Webhook sub-deliveries | Implemented | Webhook forwarding logs retry attempts and emits structured `error!` dead-letter alerts on permanent failure. |
 | 10. PII-safe correlation | Implemented | Enforces denylist; replaced suffix-exposing `redact_with_prefix` with `diagnostic_hash` for purchase tokens. |
 | 11. PII leakage audit | Remedied | Completed PII leakage audit, resolved all leakage risks (emails scrubbed, tokens hashed, app callback bodies omitted). |
-| 12. Troubleshooting runbook | Missing | No operational runbook at `docs/TROUBLESHOOTING.md` exists yet. |
+| 12. Troubleshooting runbook | Implemented | Operational runbook documented at [docs/TROUBLESHOOTING.md](file:///c:/share/tyde/bridge/docs/TROUBLESHOOTING.md). |
 
 ---
 
