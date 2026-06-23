@@ -4,6 +4,7 @@ pub mod database;
 pub mod subscriptions;
 pub mod payments;
 pub mod provider_configs;
+pub mod readiness;
 pub mod webhooks;
 pub mod users;
 pub mod checkout_idempotency;

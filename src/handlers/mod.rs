@@ -22,9 +22,7 @@ pub async fn readiness_check(
     axum::extract::State(state): axum::extract::State<crate::state::AppState>,
 ) -> Result<(axum::http::StatusCode, axum::Json<serde_json::Value>), crate::error::BridgeError> {
     let db = state.database();
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pay.provider_configs WHERE enabled = true")
-        .fetch_one(db.pool())
-        .await
+    let count = crate::db::readiness::count_enabled_provider_configs(db.pool()).await
         .map_err(|err| {
             tracing::error!(error = %err, "Database readiness check failed");
             crate::error::BridgeError::DbError("Database readiness check failed".to_string())
