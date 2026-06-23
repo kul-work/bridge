@@ -78,6 +78,17 @@ Remaining local gaps:
 - Purchase-token hashing: `src/application/verify_purchase.rs`, `src/webhooks/ingress.rs`, `src/webhooks/forwarding.rs`, `src/webhooks/scheduler.rs`
 - PII regression: `tests/pii-leak-regression-test.sh`
 
+## Evidence Appendix
+
+| Area | Static anchor | Runtime evidence |
+|---|---|---|
+| Health/readiness | `src/handlers/mod.rs:14`, `src/handlers/mod.rs:46`, `src/db/readiness.rs:5` | `/health` returned `status:"healthy"`; `/ready` returned `database:"ok"` and `enabled_provider_configs:4`. |
+| Request IDs/access logs | `src/middleware/observability.rs:16`, `src/middleware/observability.rs:64-72` | `request_id=obs-phase1-probe-bridge method=GET path=/api/v1/payments status=401 latency_ms=1 error_code="unauthorized"`. |
+| Webhook ingress | `src/webhooks/ingress.rs:372`, `src/webhooks/ingress.rs:532` | Google/Creem webhook receipt logs include `app_id`, `provider`, `event_id`, `event_type`, and token/correlation hashes. |
+| Webhook sub-delivery | `src/webhooks/forwarding.rs:153-165`, `src/webhooks/forwarding.rs:199-210` | GPBI `NET-05` and Creem `NET-03` delivered with DB status `t|200|`. |
+| Background workers | `src/webhooks/scheduler.rs:13-18`, `src/webhooks/scheduler.rs:35-40`, `src/webhooks/scheduler.rs:674-696` | Admin `trigger-jobs` returned 200; scheduler code has structured `background_worker` spans for retry, reconciliation, and cleanup jobs. |
+| PII-safe correlation | `src\application\verify_purchase.rs:28-29`, `src\webhooks\forwarding.rs:239-242` | Logs showed hashed token fields such as `token_hash` / `purchase_token_hash`; PII regression passed. |
+
 ## Verdict
 
 Phase 1 is locally validated except for DB-down failure behavior, production log aggregation/alert routing, and real external provider outage behavior.
