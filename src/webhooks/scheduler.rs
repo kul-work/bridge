@@ -143,7 +143,7 @@ pub async fn retry_google_play_subscription_acknowledgements(
                 warn!(
                     app_id = %app_id,
                     subscription_id = %candidate.subscription_id,
-                    purchase_token = %diagnostic_hash(&candidate.purchase_token),
+                    purchase_token_hash = %diagnostic_hash(&candidate.purchase_token),
                     error = %err,
                     "Retrying Google Play subscription acknowledgement failed"
                 );
