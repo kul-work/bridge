@@ -179,25 +179,33 @@ pub async fn api_key_auth(
     };
 
     let database = state.database();
-    match database.as_ref().authenticate_api_key(api_key).await {
+    let auth_ctx = match database.as_ref().authenticate_api_key(api_key).await {
         Ok(auth) => {
-            request.extensions_mut().insert(AppAuth {
+            let context = AppAuth {
                 app_id: auth.app_id,
                 api_key_id: auth.api_key_id,
                 is_valid: true,
-            });
+            };
+            request.extensions_mut().insert(context.clone());
+            Some(context)
         }
         Err(BridgeError::UnauthorizedError(_)) if is_verify_path => {
-            request.extensions_mut().insert(AppAuth {
+            let context = AppAuth {
                 app_id: Uuid::nil(),
                 api_key_id: Uuid::nil(),
                 is_valid: false,
-            });
+            };
+            request.extensions_mut().insert(context.clone());
+            Some(context)
         }
         Err(e) => return Err(e),
-    }
+    };
 
-    Ok(next.run(request).await)
+    let mut response = next.run(request).await;
+    if let Some(context) = auth_ctx {
+        response.extensions_mut().insert(context);
+    }
+    Ok(response)
 }
 
 #[cfg(test)]

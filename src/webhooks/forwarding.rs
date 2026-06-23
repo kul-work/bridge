@@ -5,7 +5,7 @@ use crate::ports::{
 use crate::webhooks::processor::CanonicalWebhookPayload;
 use std::time::Duration;
 use uuid::Uuid;
-use crate::utils::redact_with_prefix;
+use crate::utils::diagnostic_hash;
 use reqwest::Client;
 use tracing::{debug, error, info, warn};
 use hmac::{Hmac, Mac};
@@ -67,9 +67,21 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
 
     if delivery.forward_attempts > 0 {
         info!(
-            "Retrying webhook delivery {} (attempt {} of 3)",
-            webhook_delivery_id,
-            delivery.forward_attempts + 1,
+            app_id = %app_id,
+            webhook_delivery_id = %webhook_delivery_id,
+            provider = %payload.provider,
+            event_type = %payload.event_type,
+            attempt = delivery.forward_attempts + 1,
+            "Retrying webhook delivery"
+        );
+    } else {
+        info!(
+            app_id = %app_id,
+            webhook_delivery_id = %webhook_delivery_id,
+            provider = %payload.provider,
+            event_type = %payload.event_type,
+            attempt = 1,
+            "Forwarding webhook delivery first attempt"
         );
     }
 
@@ -105,13 +117,14 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
 
             if is_success {
                 info!(
-                    "Successfully forwarded webhook {} to app {} (event={}, provider_event_id={}, external_user_id={}, status: {})",
-                    webhook_delivery_id,
-                    app_id,
-                    payload.event_type,
-                    payload.provider_event_id,
-                    payload.external_user_id.as_deref().unwrap_or("missing"),
-                    status
+                    app_id = %app_id,
+                    webhook_delivery_id = %webhook_delivery_id,
+                    provider = %payload.provider,
+                    event_type = %payload.event_type,
+                    provider_event_id = %payload.provider_event_id,
+                    external_user_id = payload.external_user_id.as_deref(),
+                    status,
+                    "Successfully forwarded webhook to app"
                 );
                 repo.update_webhook_delivery_attempt(
                     webhook_delivery_id,
@@ -121,24 +134,44 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
                 )
                 .await?;
             } else {
-                let response_body = resp
+                let _response_body = resp
                     .text()
                     .await
                     .unwrap_or_else(|e| format!("(failed to read response body: {})", e));
-                let error_msg = format_http_failure(status, &response_body);
-                warn!(
-                    "Failed to forward webhook {} to app {}: HTTP {}",
-                    webhook_delivery_id,
-                    app_id,
-                    status
-                );
+                let error_msg = format_http_failure(status);
+                let next_attempts = delivery.forward_attempts + 1;
+
+                if next_attempts >= 3 {
+                    error!(
+                        app_id = %app_id,
+                        webhook_delivery_id = %webhook_delivery_id,
+                        provider = %payload.provider,
+                        event_type = %payload.event_type,
+                        provider_event_id = %payload.provider_event_id,
+                        attempts = next_attempts,
+                        error_msg = %error_msg,
+                        status,
+                        "Webhook delivery permanently failed and marked dead_lettered"
+                    );
+                } else {
+                    warn!(
+                        app_id = %app_id,
+                        webhook_delivery_id = %webhook_delivery_id,
+                        provider = %payload.provider,
+                        event_type = %payload.event_type,
+                        provider_event_id = %payload.provider_event_id,
+                        attempt = next_attempts,
+                        status,
+                        "Failed to forward webhook to app"
+                    );
+                }
                 debug!(
                     webhook_delivery_id = %webhook_delivery_id,
                     app_id = %app_id,
                     callback_url = %app.webhook_callback_url,
                     http_status = status,
                     outbound_payload = %diagnostic_payload_json,
-                    response_body = %response_body,
+                    response_body = "[omitted]",
                     "Webhook forwarding diagnostics"
                 );
                 repo.update_webhook_delivery_attempt(
@@ -152,12 +185,31 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
         }
         Err(e) => {
             let error_msg = format!("Request error: {}", e);
-            error!(
-                "Failed to forward webhook {} to app {}: {}",
-                webhook_delivery_id,
-                app_id,
-                error_msg
-            );
+            let next_attempts = delivery.forward_attempts + 1;
+
+            if next_attempts >= 3 {
+                error!(
+                    app_id = %app_id,
+                    webhook_delivery_id = %webhook_delivery_id,
+                    provider = %payload.provider,
+                    event_type = %payload.event_type,
+                    provider_event_id = %payload.provider_event_id,
+                    attempts = next_attempts,
+                    error_msg = %error_msg,
+                    "Webhook delivery permanently failed and marked dead_lettered"
+                );
+            } else {
+                warn!(
+                    app_id = %app_id,
+                    webhook_delivery_id = %webhook_delivery_id,
+                    provider = %payload.provider,
+                    event_type = %payload.event_type,
+                    provider_event_id = %payload.provider_event_id,
+                    attempt = next_attempts,
+                    error = %error_msg,
+                    "Failed to forward webhook to app due to request error"
+                );
+            }
             debug!(
                 webhook_delivery_id = %webhook_delivery_id,
                 app_id = %app_id,
@@ -186,16 +238,12 @@ fn serialize_diagnostic_payload(payload: &CanonicalWebhookPayload) -> Result<Str
 
 fn scrub_payload_for_diagnostics(payload: &CanonicalWebhookPayload) -> CanonicalWebhookPayload {
     let mut scrubbed = payload.clone();
-    scrubbed.purchase_token = scrubbed.purchase_token.map(|token| redact_with_prefix(&token));
+    scrubbed.purchase_token = scrubbed.purchase_token.map(|token| diagnostic_hash(&token));
     scrubbed
 }
 
-fn format_http_failure(status: i32, response_body: &str) -> String {
-    if response_body.trim().is_empty() {
-        format!("HTTP {} with empty response body", status)
-    } else {
-        format!("HTTP {} response body: {}", status, response_body)
-    }
+fn format_http_failure(status: i32) -> String {
+    format!("HTTP error status {}", status)
 }
 
 /// Create a webhook delivery and forward it in one step.
@@ -271,10 +319,10 @@ fn create_signature(payload: &str, secret: &str) -> Result<String, BridgeError> 
     // Signature format: HMAC-SHA256(secret, raw JSON payload)
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
         .map_err(|_| BridgeError::WebhookError("Invalid webhook secret".to_string()))?;
-    
+
     mac.update(payload.as_bytes());
     let result = mac.finalize();
-    
+
     Ok(format!("sha256={}", hex::encode(result.into_bytes())))
 }
 
@@ -288,7 +336,7 @@ mod tests {
             r#"{"event_id":"test"}"#,
             "secret"
         ).unwrap();
-        
+
         assert!(result.starts_with("sha256="));
     }
 
@@ -296,7 +344,7 @@ mod tests {
     fn test_signature_deterministic() {
         let sig1 = create_signature(r#"{"event_id":"test"}"#, "secret").unwrap();
         let sig2 = create_signature(r#"{"event_id":"test"}"#, "secret").unwrap();
-        
+
         assert_eq!(sig1, sig2);
     }
 

@@ -211,6 +211,13 @@ impl IntoResponse for BridgeError {
             message,
         };
 
-        (status, Json(error_response)).into_response()
+        let mut res = (status, Json(error_response)).into_response();
+        if let Ok(value) = axum::http::HeaderValue::from_str(error_code) {
+            res.headers_mut().insert(
+                axum::http::HeaderName::from_static("x-error-code"),
+                value,
+            );
+        }
+        res
     }
 }

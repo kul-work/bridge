@@ -1,4 +1,4 @@
-use crate::utils::redact_with_prefix;
+use crate::utils::diagnostic_hash;
 use std::time::Duration;
 use crate::db::Database;
 use crate::ports::{
@@ -13,17 +13,17 @@ pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
     tokio::spawn(async move {
         // Ticks every 5 minutes
         let mut interval = tokio::time::interval(Duration::from_secs(300));
-        info!("Webhook retry worker started");
+        info!(job = "webhook_retry", status = "started", "Webhook retry worker started");
 
         loop {
             interval.tick().await;
 
             if let Err(e) = retry_webhooks(database.as_ref()).await {
-                error!("Webhook retry worker failed: {}", e);
+                error!(job = "webhook_retry", error = %e, "Webhook retry worker tick failed");
             }
 
             if let Err(e) = retry_google_play_subscription_acknowledgements(database.as_ref()).await {
-                error!("Google Play acknowledgement retry failed: {}", e);
+                error!(job = "webhook_retry", error = %e, "Google Play acknowledgement retry tick failed");
             }
         }
     });
@@ -33,13 +33,13 @@ pub fn spawn_reconciliation_worker(database: Arc<Database>) {
     tokio::spawn(async move {
         // Ticks every 24 hours (86400 seconds)
         let mut interval = tokio::time::interval(Duration::from_secs(86400));
-        info!("Subscription reconciliation worker started");
+        info!(job = "reconciliation", status = "started", "Subscription reconciliation worker started");
 
         loop {
             interval.tick().await;
 
             if let Err(e) = reconcile_subscriptions(&database).await {
-                error!("Subscription reconciliation worker failed: {}", e);
+                error!(job = "reconciliation", error = %e, "Subscription reconciliation worker tick failed");
             }
         }
     });
@@ -60,9 +60,9 @@ pub async fn retry_webhooks(
             Ok(deliveries) => deliveries,
             Err(e) => {
                 error!(
-                    "Failed to load pending webhook deliveries for app {}: {}",
-                    app_id,
-                    e
+                    app_id = %app_id,
+                    error = %e,
+                    "Failed to load pending webhook deliveries"
                 );
                 continue;
             }
@@ -95,7 +95,12 @@ pub async fn retry_webhooks(
                     .await?;
                 }
                 Err(e) => {
-                    error!("Failed to rebuild canonical webhook payload for delivery {}: {}", delivery.id, e);
+                    error!(
+                        app_id = %app_id,
+                        webhook_delivery_id = %delivery.id,
+                        error = %e,
+                        "Failed to rebuild canonical webhook payload for delivery"
+                    );
                 }
             }
         }
@@ -132,11 +137,11 @@ pub async fn retry_google_play_subscription_acknowledgements(
             .await
             {
                 warn!(
-                    "Retrying Google Play subscription acknowledgement failed for app {} subscription {} token {}: {}",
-                    app_id,
-                    candidate.subscription_id,
-                    redact_with_prefix(&candidate.purchase_token),
-                    err
+                    app_id = %app_id,
+                    subscription_id = %candidate.subscription_id,
+                    purchase_token = %diagnostic_hash(&candidate.purchase_token),
+                    error = %err,
+                    "Retrying Google Play subscription acknowledgement failed"
                 );
                 continue;
             }
@@ -155,18 +160,23 @@ pub async fn retry_google_play_subscription_acknowledgements(
 }
 
 pub async fn reconcile_subscriptions(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
-    info!("Starting subscription reconciliation job");
+    info!(job = "reconciliation", status = "start", "Starting subscription reconciliation job");
     
     let apps_result = SchedulerRepository::list_enabled_app_ids(database.as_ref()).await?;
 
     for app_id in apps_result {
         if let Err(e) = reconcile_app_subscriptions(database.as_ref(), app_id).await {
-            error!("Reconciliation failed for app {}: {}", app_id, e);
+            error!(
+                job = "reconciliation",
+                app_id = %app_id,
+                error = %e,
+                "Reconciliation failed for app"
+            );
             // Continue with next app, don't fail entire job
         }
     }
 
-    info!("Subscription reconciliation job completed");
+    info!(job = "reconciliation", status = "completed", "Subscription reconciliation job completed");
     Ok(())
 }
 
@@ -181,9 +191,12 @@ async fn reconcile_app_subscriptions(
             Ok(config) => config,
             Err(e) => {
                 warn!(
-                    "Skipping reconciliation for subscription {} because provider config is missing: {}",
-                    sub.subscription_id,
-                    e
+                    job = "reconciliation",
+                    app_id = %app_id,
+                    subscription_id = %sub.subscription_id,
+                    provider = %sub.provider,
+                    error = %e,
+                    "Skipping reconciliation because provider config is missing"
                 );
                 continue;
             }
@@ -203,8 +216,13 @@ async fn reconcile_app_subscriptions(
 
                 if current_db_status != provider_status {
                     info!(
-                        "Subscription {} status drift detected: db={}, provider={}. Triggering corrective callback.",
-                        sub.subscription_id, current_db_status, provider_status
+                        job = "reconciliation",
+                        app_id = %app_id,
+                        subscription_id = %sub.subscription_id,
+                        provider = %sub.provider,
+                        db_status = %current_db_status,
+                        provider_status = %provider_status,
+                        "Subscription status drift detected, triggering corrective callback"
                     );
 
                     let event_time_ms = chrono::Utc::now().timestamp_millis();
@@ -220,18 +238,24 @@ async fn reconcile_app_subscriptions(
 
                     if !updated {
                         info!(
-                            "Skipped stale reconciliation update for subscription {} (provider={})",
-                            sub.subscription_id,
-                            sub.provider,
+                            job = "reconciliation",
+                            app_id = %app_id,
+                            subscription_id = %sub.subscription_id,
+                            provider = %sub.provider,
+                            "Skipped stale reconciliation update for subscription"
                         );
                         continue;
                     }
 
-                    let alert = format!(
-                        "Admin alert: reconciliation drift app_id={} sub={} provider={} db_status={} provider_status={}",
-                        app_id, sub.subscription_id, sub.provider, current_db_status, provider_status
+                    error!(
+                        job = "reconciliation",
+                        app_id = %app_id,
+                        subscription_id = %sub.subscription_id,
+                        provider = %sub.provider,
+                        db_status = %current_db_status,
+                        provider_status = %provider_status,
+                        "Reconciliation drift detected, admin alert triggered"
                     );
-                    error!("{}", alert);
 
                     if let Err(e) = send_reconciliation_admin_alert_email(
                         repo,
@@ -244,9 +268,11 @@ async fn reconcile_app_subscriptions(
                     .await
                     {
                         warn!(
-                            "Failed to send reconciliation admin alert for subscription {}: {}",
-                            sub.subscription_id,
-                            e
+                            job = "reconciliation",
+                            app_id = %app_id,
+                            subscription_id = %sub.subscription_id,
+                            error = %e,
+                            "Failed to send reconciliation admin alert"
                         );
                     }
 
@@ -269,14 +295,24 @@ async fn reconcile_app_subscriptions(
                     )
                     .await
                     {
-                        error!("Failed to forward reconciliation callback for {}: {}", sub.subscription_id, e);
+                        error!(
+                            job = "reconciliation",
+                            app_id = %app_id,
+                            subscription_id = %sub.subscription_id,
+                            error = %e,
+                            "Failed to forward reconciliation callback"
+                        );
                     }
                 }
             }
             Err(e) => {
                 error!(
-                    "Failed to fetch status for subscription {} from {}: {}",
-                    sub.subscription_id, sub.provider, e
+                    job = "reconciliation",
+                    app_id = %app_id,
+                    subscription_id = %sub.subscription_id,
+                    provider = %sub.provider,
+                    error = %e,
+                    "Failed to fetch status for subscription from provider"
                 );
             }
         }
@@ -299,8 +335,10 @@ async fn send_reconciliation_admin_alert_email(
         Ok(value) if !value.trim().is_empty() => value,
         _ => {
             warn!(
-                "Skipping reconciliation admin email for subscription {}: ADMIN_ALERT_EMAIL not configured",
-                subscription_id
+                job = "reconciliation",
+                app_id = %app_id,
+                subscription_id = %subscription_id,
+                "Skipping reconciliation admin email: ADMIN_ALERT_EMAIL not configured"
             );
             return Ok(());
         }
@@ -338,9 +376,10 @@ async fn send_reconciliation_admin_alert_email(
         )))?;
 
     info!(
-        "Reconciliation admin email sent for app_id={} subscription_id={}",
-        app_id,
-        subscription_id
+        job = "reconciliation",
+        app_id = %app_id,
+        subscription_id = %subscription_id,
+        "Reconciliation admin email sent successfully"
     );
 
     Ok(())
@@ -349,13 +388,13 @@ async fn send_reconciliation_admin_alert_email(
 pub fn spawn_price_step_up_expiry_worker(database: Arc<Database>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
-        info!("Price step-up expiry worker started");
+        info!(job = "price_step_up", status = "started", "Price step-up expiry worker started");
 
         loop {
             interval.tick().await;
 
             if let Err(e) = process_price_step_up_expiry(&database).await {
-                error!("Price step-up expiry worker failed: {}", e);
+                error!(job = "price_step_up", error = %e, "Price step-up expiry worker tick failed");
             }
         }
     });
@@ -374,7 +413,13 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
         let google_price_step_up_consent_deadline = sub
             .google_price_step_up_consent_deadline
             .map(|date| date.timestamp_millis());
-        info!("Price step-up expired for subscription {}, auto-cancelling", subscription_id);
+        info!(
+            job = "price_step_up",
+            app_id = %app_id,
+            subscription_id = %subscription_id,
+            provider = %provider,
+            "Price step-up expired for subscription, auto-cancelling"
+        );
 
         if let Ok(config) = database.as_ref().get_provider_config(app_id, &provider).await {
             if let Err(e) = crate::services::provider_api::cancel_subscription(
@@ -387,15 +432,24 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
             )
             .await
             {
-                error!("Failed to cancel price step-up expired sub {}: {}", subscription_id, e);
+                error!(
+                    job = "price_step_up",
+                    app_id = %app_id,
+                    subscription_id = %subscription_id,
+                    provider = %provider,
+                    error = %e,
+                    "Failed to cancel price step-up expired subscription"
+                );
             }
         }
 
         let now_ms = chrono::Utc::now().timestamp_millis();
         if !SchedulerRepository::mark_subscription_price_step_up_expired(database.as_ref(), id, now_ms).await? {
             info!(
-                "Skipped price step-up expiry transition for subscription {} because it was already updated",
-                subscription_id
+                job = "price_step_up",
+                app_id = %app_id,
+                subscription_id = %subscription_id,
+                "Skipped price step-up expiry transition because state was already updated"
             );
             continue;
         }
@@ -419,7 +473,13 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
         )
         .await
         {
-            error!("Failed to forward price step-up expiry callback for {}: {}", subscription_id, e);
+            error!(
+                job = "price_step_up",
+                app_id = %app_id,
+                subscription_id = %subscription_id,
+                error = %e,
+                "Failed to forward price step-up expiry callback"
+            );
         }
     }
 
@@ -429,13 +489,13 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
 pub fn spawn_pause_scheduler_worker(database: Arc<Database>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1500)); // 25 minutes
-        info!("Pause scheduler worker started");
+        info!(job = "pause_scheduler", status = "started", "Pause scheduler worker started");
 
         loop {
             interval.tick().await;
 
             if let Err(e) = process_pause_transitions(&database).await {
-                error!("Pause scheduler worker failed: {}", e);
+                error!(job = "pause_scheduler", error = %e, "Pause scheduler worker failed");
             }
         }
     });
@@ -454,13 +514,21 @@ pub async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), c
         let google_pause_scheduled_at = sub
             .google_pause_scheduled_at
             .map(|date| date.timestamp_millis());
-        info!("Transitioning subscription {} to paused (scheduled pause)", subscription_id);
+        info!(
+            job = "pause_scheduler",
+            app_id = %app_id,
+            subscription_id = %subscription_id,
+            provider = %provider,
+            "Transitioning subscription to paused (scheduled pause)"
+        );
 
         let now_ms = chrono::Utc::now().timestamp_millis();
         if !SchedulerRepository::mark_subscription_paused(database.as_ref(), id, now_ms).await? {
             info!(
-                "Skipped pause transition callback for subscription {} because state was already updated",
-                subscription_id
+                job = "pause_scheduler",
+                app_id = %app_id,
+                subscription_id = %subscription_id,
+                "Skipped pause transition because state was already updated"
             );
             continue;
         }
@@ -484,13 +552,23 @@ pub async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), c
         )
         .await
         {
-            error!("Failed to forward pause transition callback for {}: {}", subscription_id, e);
+            error!(
+                job = "pause_scheduler",
+                app_id = %app_id,
+                subscription_id = %subscription_id,
+                error = %e,
+                "Failed to forward pause transition callback"
+            );
         }
     }
 
     let deleted = SchedulerRepository::delete_orphaned_pending_subscriptions(database.as_ref()).await?;
     if deleted > 0 {
-        info!("Cleaned up {} orphaned pending subscriptions", deleted);
+        info!(
+            job = "pause_scheduler",
+            count = deleted,
+            "Cleaned up orphaned pending subscriptions"
+        );
     }
 
     Ok(())
@@ -587,24 +665,24 @@ async fn emit_scheduler_callback(
 pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(86400)); // daily
-        info!("Webhook log cleanup worker started");
+        info!(job = "cleanup", status = "started", "Webhook log cleanup worker started");
 
         loop {
             interval.tick().await;
 
             if let Err(e) = cleanup_old_data(&database).await {
-                error!("Webhook log cleanup worker failed: {}", e);
+                error!(job = "cleanup", error = %e, "Webhook log cleanup worker failed");
             }
         }
     });
 }
 
 pub async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
-    info!("Starting data retention cleanup");
+    info!(job = "cleanup", status = "start", "Starting data retention cleanup");
 
     SchedulerRepository::cleanup_old_webhook_provider(database.as_ref()).await?;
     SchedulerRepository::cleanup_purged_fraud_prevention(database.as_ref()).await?;
 
-    info!("Data retention cleanup completed");
+    info!(job = "cleanup", status = "completed", "Data retention cleanup completed");
     Ok(())
 }

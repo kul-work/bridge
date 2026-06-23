@@ -513,9 +513,11 @@ pub async fn admin_auth_middleware(
         }
     };
 
-    request.extensions_mut().insert(admin);
+    request.extensions_mut().insert(admin.clone());
 
-    Ok(next.run(request).await)
+    let mut response = next.run(request).await;
+    response.extensions_mut().insert(admin);
+    Ok(response)
 }
 
 #[cfg(test)]

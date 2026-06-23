@@ -64,9 +64,10 @@ impl CreemClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            let scrubbed_body = scrub_creem_error_body(&body);
             return Err(BridgeError::ProviderError(format!(
                 "Creem checkout failed for product_id '{}': {} - {}",
-                product_id, status, body
+                product_id, status, scrubbed_body
             )));
         }
 
@@ -117,7 +118,8 @@ impl CreemClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            error!("Creem cancel failed: {} - {}", status, body);
+            let scrubbed_body = scrub_creem_error_body(&body);
+            error!("Creem cancel failed: {} - {}", status, scrubbed_body);
             return Err(BridgeError::ProviderError(format!(
                 "Creem cancel failed: {}",
                 status
@@ -146,7 +148,8 @@ impl CreemClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            error!("Creem resume failed: {} - {}", status, body);
+            let scrubbed_body = scrub_creem_error_body(&body);
+            error!("Creem resume failed: {} - {}", status, scrubbed_body);
             return Err(BridgeError::ProviderError(format!(
                 "Creem resume failed: {}",
                 status
@@ -177,7 +180,8 @@ impl CreemClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            error!("Creem billing portal failed: {} - {}", status, body);
+            let scrubbed_body = scrub_creem_error_body(&body);
+            error!("Creem billing portal failed: {} - {}", status, scrubbed_body);
             return Err(BridgeError::ProviderError(format!(
                 "Creem billing portal failed: {}",
                 status
@@ -214,7 +218,8 @@ impl CreemClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            error!("Creem get subscription failed: {} - {}", status, body);
+            let scrubbed_body = scrub_creem_error_body(&body);
+            error!("Creem get subscription failed: {} - {}", status, scrubbed_body);
             return Err(BridgeError::ProviderError(format!(
                 "Creem get subscription failed: {}",
                 status
@@ -247,4 +252,19 @@ fn normalize_creem_status(raw: &str) -> String {
         "paused" => "paused".to_string(),
         other => other.to_string(),
     }
+}
+
+fn scrub_creem_error_body(body: &str) -> String {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(msg) = val.get("message").and_then(|m| m.as_str()) {
+            return crate::utils::scrub_email(msg);
+        }
+        if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+            return crate::utils::scrub_email(err);
+        }
+        if let Some(err) = val.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+            return crate::utils::scrub_email(err);
+        }
+    }
+    crate::utils::scrub_email(body)
 }

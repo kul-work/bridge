@@ -21,12 +21,10 @@ use std::sync::Arc;
 use tracing::info;
 
 use tracing_subscriber::fmt::time::OffsetTime;
-use tower::ServiceBuilder;
-use tower_http::trace::TraceLayer;
 
 use config::Config;
 use db::Database;
-use handlers::health_check;
+use handlers::{health_check, readiness_check};
 use state::AppState;
 
 /// Initialize Google Play service account credentials from environment variables.
@@ -59,13 +57,13 @@ async fn main() -> anyhow::Result<()> {
     // Initialize tracing
     let environment = std::env::var("ENVIRONMENT")
         .unwrap_or_else(|_| "development".to_string());
-    
+
     let default_filter = match environment.as_str() {
         //"production" | "prod" => "bridge=info,axum=info",
         "production" | "prod" => "bridge=info,axum=info,BPT-TRACE=info,BPT-RAW=info",
         _ => "bridge=debug,axum=debug,BPT-TRACE=debug,BPT-RAW=debug",
     };
-    
+
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| {
             default_filter.parse().expect("Valid filter string")
@@ -154,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/users/:external_user_id/subscription-status", axum::routing::get(handlers::subscriptions::get_subscription_status_snapshot))
         .route("/users/:external_user_id/anonymize", axum::routing::post(handlers::users::anonymize))
         .route("/users/:external_user_id/data-export", axum::routing::get(handlers::users::data_export))
-        
+
         .layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
             middleware::rate_limit::api_rate_limit_middleware,
@@ -195,6 +193,7 @@ async fn main() -> anyhow::Result<()> {
     // Build app
     let health_routes = Router::new()
         .route("/health", get(health_check))
+        .route("/ready", get(readiness_check))
         .layer(axum::middleware::from_fn(
             middleware::rate_limit::health_ip_rate_limit_middleware,
         ));
@@ -206,9 +205,12 @@ async fn main() -> anyhow::Result<()> {
         .merge(admin_routes)
         .nest("/api/v1", protected_routes)
         .nest("/webhooks", webhooks::webhook_routes())
-        .layer(ServiceBuilder::new()
-            .layer(TraceLayer::new_for_http())
-        );
+        .route_layer(axum::middleware::from_fn(
+            middleware::observability::capture_matched_path,
+        ))
+        .layer(axum::middleware::from_fn(
+            middleware::observability::request_observability,
+        ));
 
     if config.mock_external_apis {
         app = app.nest("/internal/test", handlers::test_log::routes());

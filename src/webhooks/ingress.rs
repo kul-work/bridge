@@ -13,7 +13,7 @@ use crate::{
     ports::{ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository, WebhookWriteRepository},
     ports::composites::WebhookIngressRepository,
     state::AppState,
-    utils::{diagnostic_hash, redact_with_prefix},
+    utils::diagnostic_hash,
 };
 
 const CREEM_SIGNATURE_HEADERS: [&str; 3] = ["creem-signature", "Webhook-Signature", "x-signature"];
@@ -44,7 +44,7 @@ fn spawn_process_and_forward_webhook(
                 .await
                 {
                     error!("Failed to forward webhook for {}: {}", event_id, e);
-                }                
+                }
             }
             Ok(None) => info!("{} webhook suppressed: {}", provider_name, event_id),
             Err(e) => error!("{} webhook processing failed {}: {}", provider_name, event_id, e),
@@ -121,15 +121,33 @@ async fn handle_duplicate_webhook(
 
     match duplicate_webhook_action(webhook.processed, webhook.suppressed, has_delivery) {
         DuplicateWebhookAction::ResumeProcessing => {
-            info!("Duplicate {} webhook retrying stored unprocessed event: {}", provider_name, event_id);
+            tracing::info!(
+                app_id = %app_id,
+                webhook_provider_id = %webhook_id,
+                provider = provider_name,
+                event_id = event_id,
+                "Duplicate webhook retrying stored unprocessed event"
+            );
             spawn_process_and_forward_webhook(database, app_id, webhook_id, provider_name, event_id.to_string());
         }
         DuplicateWebhookAction::ResumeForwarding => {
-            info!("Duplicate {} webhook retrying stored undelivered event: {}", provider_name, event_id);
+            tracing::info!(
+                app_id = %app_id,
+                webhook_provider_id = %webhook_id,
+                provider = provider_name,
+                event_id = event_id,
+                "Duplicate webhook retrying stored undelivered event"
+            );
             spawn_forward_existing_webhook(database, app_id, webhook_id, provider_name, event_id.to_string());
         }
         DuplicateWebhookAction::Ignore => {
-            info!("Duplicate {} webhook already recovered: {}", provider_name, event_id);
+            tracing::info!(
+                app_id = %app_id,
+                webhook_provider_id = %webhook_id,
+                provider = provider_name,
+                event_id = event_id,
+                "Duplicate webhook already recovered"
+            );
         }
     }
 
@@ -235,12 +253,21 @@ pub async fn handle_google_play(
             .map_err(|e| BridgeError::WebhookError(format!("Google signature verify failed: {}", e)))?;
 
         if !verified {
+            tracing::error!(
+                app_id = %app.id,
+                provider = "google_play",
+                "Google Play webhook signature verification failed"
+            );
             return Err(BridgeError::WebhookError(
                 "Invalid Google Play signature".to_string(),
             ));
         }
 
-        info!("Google Play webhook signature verified");
+        tracing::info!(
+            app_id = %app.id,
+            provider = "google_play",
+            "Google Play webhook signature verified"
+        );
     }
 
     let payload: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
@@ -428,11 +455,19 @@ pub async fn handle_creem(
             .ok_or_else(|| BridgeError::WebhookError("Missing Webhook-Signature header".to_string()))?;
 
         if !constant_time_compare(provided_sig.as_bytes(), computed_sig.as_bytes()) {
-            error!("Creem webhook signature verification failed");
+            tracing::error!(
+                app_id = %app.id,
+                provider = "creem",
+                "Creem webhook signature verification failed"
+            );
             return Err(BridgeError::WebhookError("Invalid signature".to_string()));
         }
 
-        info!("Creem webhook signature verified");
+        tracing::info!(
+            app_id = %app.id,
+            provider = "creem",
+            "Creem webhook signature verified"
+        );
     }
 
     let payload: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
@@ -572,7 +607,7 @@ fn sanitize_google_play_payload_for_log(payload: &serde_json::Value) -> String {
     ] {
         if let Some(value) = sanitized.pointer_mut(pointer) {
             if let Some(token) = value.as_str() {
-                *value = serde_json::Value::String(redact_with_prefix(token));
+                *value = serde_json::Value::String(diagnostic_hash(token));
             }
         }
     }

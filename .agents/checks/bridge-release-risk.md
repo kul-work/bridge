@@ -13,6 +13,7 @@ For the release diff, classify whether any change affects:
 - callback payload: event type or body fields
 - migration: schema or data migration
 - tenant/RLS behavior: app scoping or cross-app isolation
+- logging, error formatting, or PII compliance
 - logging-only
 - docs-only
 
@@ -65,6 +66,13 @@ Migration changed:
 - migration apply check
 - affected query compile/type check
 - deploy/rollback risk note if rollback is not supported
+
+Logging, error formatting, or PII compliance changed:
+
+- run `tests/pii-leak-regression-test.sh` to ensure no email addresses or raw purchase tokens appear in test logs.
+- verify that all logged purchase tokens use `diagnostic_hash` instead of raw values or `redact_with_prefix`.
+- verify that reqwest URLs containing tokens are redacted on error paths.
+- verify that raw response logs (BPT-RAW) are set to `debug` level only.
 
 ## Output
 

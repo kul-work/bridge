@@ -22,6 +22,17 @@ pub(crate) fn diagnostic_hash(value: &str) -> String {
         .collect()
 }
 
+pub(crate) fn scrub_email(input: &str) -> String {
+    use std::sync::OnceLock;
+    use regex::Regex;
+
+    static EMAIL_REGEX: OnceLock<Regex> = OnceLock::new();
+    let re = EMAIL_REGEX.get_or_init(|| {
+        Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap()
+    });
+    re.replace_all(input, "[redacted_email]").into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,5 +50,17 @@ mod tests {
 
         assert_eq!(hash.len(), 12);
         assert_eq!(hash, diagnostic_hash("purchase-token"));
+    }
+
+    #[test]
+    fn scrub_email_redacts_email_addresses() {
+        assert_eq!(
+            scrub_email("Failed with email user@domain.com or test.name+tag@sub.domain.co.uk"),
+            "Failed with email [redacted_email] or [redacted_email]"
+        );
+        assert_eq!(
+            scrub_email("No email here."),
+            "No email here."
+        );
     }
 }

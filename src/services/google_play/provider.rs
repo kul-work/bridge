@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 
 use crate::error::AppError;
-use crate::utils::redact_with_prefix;
+use crate::utils::diagnostic_hash;
 use crate::services::payment::{
     CheckoutSession, GooglePlayProviderData, PaymentProvider, ProviderData, PurchaseType,
     SubscriptionDetails, SubscriptionStatus, WebhookEvent,
@@ -219,7 +219,7 @@ impl GooglePlayProvider {
                     Self::load_fixture_from_path::<super::models::ProductPurchase>(path)
                 {
                     let mock_json = serde_json::to_string(&purchase).unwrap_or_default();
-                    tracing::info!(target: "BPT-RAW", "GooglePlay Raw Response - get_product: {}", mock_json);
+                    tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - get_product: {}", mock_json);
 
                     let status = match purchase.purchase_state {
                         0 => SubscriptionStatus::Active,
@@ -267,7 +267,7 @@ impl GooglePlayProvider {
                 Self::load_fixture_from_path::<super::models::SubscriptionPurchaseV2>(path)
             {
                 let mock_json = serde_json::to_string(&purchase).unwrap_or_default();
-                tracing::info!(target: "BPT-RAW", "GooglePlay Raw Response - get_subscription (v2): {}", mock_json);
+                tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - get_subscription (v2): {}", mock_json);
                 return self
                     .verify_subscription_from_purchase(
                         purchase,
@@ -472,9 +472,9 @@ impl GooglePlayProvider {
             tracing::info!(
                 "MOCK: Simulating acknowledge_subscription for subscription_id: {}, token: {}",
                 subscription_id,
-                redact_with_prefix(purchase_token)
+                diagnostic_hash(purchase_token)
             );
-            tracing::info!(target: "BPT_RAW", "GooglePlay Raw Response - acknowledge_subscription (mock): {{}}");
+            tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - acknowledge_subscription (mock): {{}}");
             return Ok(());
         }
 
@@ -502,9 +502,9 @@ impl GooglePlayProvider {
             tracing::info!(
                 "MOCK: Simulating acknowledge for product_id: {}, token: {}",
                 product_id,
-                redact_with_prefix(purchase_token)
+                diagnostic_hash(purchase_token)
             );
-            tracing::info!(target: "BPT_RAW", "GooglePlay Raw Response - acknowledge (mock): {{}}");
+            tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - acknowledge (mock): {{}}");
             return Ok(());
         }
 
@@ -685,7 +685,7 @@ impl GooglePlayProvider {
                 // Support test scenarios: tokens with "declined" or "fail" simulate payment decline
                 if token.contains("declined") || token.contains("fail") {
                     tracing::info!("MOCK_EXTERNAL_APIS: Simulating declined INAPP product");
-                    tracing::debug!("Token: {}", token);
+                    tracing::debug!("Token: {}", diagnostic_hash(token));
                     return Err(AppError::PaymentProviderError(
                         "Payment was declined by the payment method".to_string(),
                     ));
@@ -695,7 +695,7 @@ impl GooglePlayProvider {
                 if token.contains("slow") || token.contains("pending") {
                     tracing::info!(
                         "MOCK_EXTERNAL_APIS: Simulating PENDING INAPP product for token: {}",
-                        token
+                        diagnostic_hash(token)
                     );
                     return Ok(crate::services::payment::VerificationResult::Success(Box::new(
                         SubscriptionDetails {
@@ -716,10 +716,10 @@ impl GooglePlayProvider {
 
                 tracing::info!(
                     "MOCK_EXTERNAL_APIS: Returning stubbed INAPP product verification for token: {}",
-                    token
+                    diagnostic_hash(token)
                 );
                 tracing::info!("MOCK: Simulating INAPP product acknowledgement");
-                tracing::debug!("Token: {}", token);
+                tracing::debug!("Token: {}", diagnostic_hash(token));
                 return Ok(crate::services::payment::VerificationResult::Success(Box::new(
                     SubscriptionDetails {
                         subscription_id: subscription_id.to_string(),
@@ -834,7 +834,7 @@ impl GooglePlayProvider {
             TokenValidator::apply_validation(validation_mode, token, subscription_id, self.api_mock)?;
 
             tracing::info!("MOCK_EXTERNAL_APIS: Simulating subscription verification");
-            tracing::debug!("Token: {}", token);
+            tracing::debug!("Token: {}", diagnostic_hash(token));
 
             // **GOOGLE MOCK CALL**: Different user attempting to verify another user's purchase token.
             // - **Why needed**: Security test ensuring LinkingRequired prevents unauthorized access via hash mismatch.
@@ -883,7 +883,7 @@ impl GooglePlayProvider {
                 //   * Returns acknowledgement_state=PENDING to trigger ACK flow (ACK-01, ACK-02, ACK-03)
                 //   * Returns user's computed hash as obfuscated_account_id to match subscription ownership
                 // - **Default state**: ACTIVE with 30-day expiry, auto_renewing=true
-                
+
                 // Compute obfuscated_account_id: use user's hash if authenticated, otherwise token-based
                 let obfuscated_account_id = if let Some(current_user_id) = user_id {
                     // User is authenticated: return their hash to indicate they own the subscription
@@ -892,7 +892,7 @@ impl GooglePlayProvider {
                     // No authenticated user: use token-based hash for unauthenticated access
                     format!("mock-obfuscated-{}", token.replace("-", "_"))
                 };
-                
+
                 let mock_expiry = (Utc::now() + chrono::Duration::days(30)).to_rfc3339();
                 let mock_purchase = super::models::SubscriptionPurchaseV2 {
                     kind: Some("androidpublisher#subscriptionPurchaseV2".to_string()),
@@ -953,7 +953,7 @@ impl GooglePlayProvider {
             }
         } else {
             TokenValidator::apply_validation(validation_mode, token, subscription_id, self.api_mock)?;
-            
+
             self.client
                 .get_subscription(&self.package_name, subscription_id, token) // Updated client uses V2 internal URL but interface keeps sub_id
                 .await
@@ -1100,7 +1100,7 @@ impl GooglePlayProvider {
                 //   In production (else branch), the real Google API call is made to acknowledge the subscription.
                 // - **Key difference**: Mock = direct return of Utc::now() | Real = async call to Google API then return Utc::now()
                 tracing::info!("MOCK: Simulating subscription acknowledgement");
-                tracing::debug!("Token: {}", token);
+                tracing::debug!("Token: {}", diagnostic_hash(token));
                 Some(Utc::now())
             } else {
                 if let Err(e) = self
@@ -1478,7 +1478,7 @@ impl PaymentProvider for GooglePlayProvider {
             if let Some(token) = event.purchase_token.clone() {
                 tracing::debug!(
                     "Enriching Google Play renewal webhook with subscription data from API for token: {}",
-                    token
+                    diagnostic_hash(&token)
                 );
 
                 let enrich_result = if let Some(ref fixture) = mock_fixture_path {
@@ -1528,7 +1528,7 @@ impl PaymentProvider for GooglePlayProvider {
                     }
                     Ok(_) => {
                         tracing::warn!("Webhook enrichment returned non-Success result");
-                        tracing::debug!("Token: {}", token);
+                        tracing::debug!("Token: {}", diagnostic_hash(&token));
                     }
                     Err(e) => {
                         tracing::warn!(

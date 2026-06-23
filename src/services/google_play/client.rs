@@ -5,7 +5,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use crate::error::AppError;
-use crate::utils::redact_with_prefix;
+use crate::utils::{diagnostic_hash, scrub_email};
 use backoff::ExponentialBackoff;
 use backoff::future::retry;
 
@@ -157,7 +157,7 @@ impl GooglePlayClient {
         _subscription_id: &str, // Deprecated in V2 GET, but kept for interface consistency
         token: &str,
     ) -> Result<super::models::SubscriptionPurchaseV2> {
-        tracing::debug!("GooglePlayClient: get_subscription (v2) - package: {}, token: {}", package_name, redact_with_prefix(token));
+        tracing::debug!("GooglePlayClient: get_subscription (v2) - package: {}, token: {}", package_name, diagnostic_hash(token));
         
         let access_token = self.get_access_token().await?;
 
@@ -172,22 +172,31 @@ impl GooglePlayClient {
             .get(&url)
             .bearer_auth(access_token)
             .send()
-            .await?;
+            .await
+            .map_err(|e| scrub_reqwest_error(e, token))?;
 
         if !res.status().is_success() {
              let status = res.status();
              let text = res.text().await?;
+             let scrubbed = scrub_google_body(&text, token);
              tracing::error!("GooglePlayClient: API error - package: {}, status: {}", package_name, status);
-             tracing::debug!("Response: {}", text);
-             tracing::debug!(target: "BPT-RAW", "GooglePlay Error Response - get_subscription (v2): status={}, body={}", status, text);
-             return Err(anyhow::anyhow!("Failed to get subscription for package {}, token {}: {}", package_name, redact_with_prefix(token), text));
+             tracing::debug!("Response: {}", scrubbed);
+             tracing::debug!(target: "BPT-RAW", "GooglePlay Error Response - get_subscription (v2): status={}, body={}", status, scrubbed);
+             return Err(anyhow::anyhow!("Failed to get subscription for package {}, token {}: {}", package_name, diagnostic_hash(token), scrubbed));
         }
 
         let text = res.text().await?;
-        tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - get_subscription (v2): {}", text);
+        let scrubbed_raw = scrub_google_body(&text, token);
+        tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - get_subscription (v2): {}", scrubbed_raw);
 
         let purchase: super::models::SubscriptionPurchaseV2 = serde_json::from_str(&text).map_err(|e| {
-             anyhow::anyhow!("Failed to parse subscription response: {} | Raw body: {}", e, text)
+             let truncated: String = scrubbed_raw.chars().take(256).collect();
+             let display = if scrubbed_raw.chars().count() > 256 {
+                 format!("{}...", truncated)
+             } else {
+                 truncated
+             };
+             anyhow::anyhow!("Failed to parse subscription response: {} | Raw body: {}", e, display)
         })?;
         let effective_expiry = purchase
             .line_items
@@ -222,21 +231,31 @@ impl GooglePlayClient {
             .get(&url)
             .bearer_auth(access_token)
             .send()
-            .await?;
+            .await
+            .map_err(|e| scrub_reqwest_error(e, token))?;
 
         if !res.status().is_success() {
              let status = res.status();
              let text = res.text().await?;
-             tracing::error!("GooglePlayClient: API error - package: {}, product: {}, status: {}, response: {}", package_name, product_id, status, text);
-             tracing::debug!(target: "BPT-RAW", "GooglePlay Error Response - get_product: status={}, body={}", status, text);
-             return Err(anyhow::anyhow!("Failed to get product: {}, response: {}", url, text));
+             let scrubbed = scrub_google_body(&text, token);
+             tracing::error!("GooglePlayClient: API error - package: {}, product: {}, status: {}, response: {}", package_name, product_id, status, scrubbed);
+             tracing::debug!(target: "BPT-RAW", "GooglePlay Error Response - get_product: status={}, body={}", status, scrubbed);
+             let scrubbed_url = url.replace(token, &diagnostic_hash(token));
+             return Err(anyhow::anyhow!("Failed to get product: {}, response: {}", scrubbed_url, scrubbed));
         }
 
         let text = res.text().await?;
-        tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - get_product: {}", text);
+        let scrubbed_raw = scrub_google_body(&text, token);
+        tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - get_product: {}", scrubbed_raw);
 
         let purchase: super::models::ProductPurchase = serde_json::from_str(&text).map_err(|e| {
-             anyhow::anyhow!("Failed to parse product response: {} | Raw body: {}", e, text)
+             let truncated: String = scrubbed_raw.chars().take(256).collect();
+             let display = if scrubbed_raw.chars().count() > 256 {
+                 format!("{}...", truncated)
+             } else {
+                 truncated
+             };
+             anyhow::anyhow!("Failed to parse product response: {} | Raw body: {}", e, display)
         })?;
         tracing::info!("GooglePlay product retrieved: purchase_state: {}", purchase.purchase_state);
         Ok(purchase)
@@ -270,9 +289,9 @@ impl GooglePlayClient {
                 package_name,
                 order_id,
                 status,
-                text
+                scrub_email(&text)
             );
-            return Err(anyhow::anyhow!("Failed to get order: {}, response: {}", url, text));
+            return Err(anyhow::anyhow!("Failed to get order: {}, response: {}", url, scrub_email(&text)));
         }
 
         let order: serde_json::Value = res.json().await?;
@@ -285,7 +304,7 @@ impl GooglePlayClient {
         subscription_id: &str,
         token: &str,
     ) -> Result<()> {
-        tracing::info!("GooglePlayClient: cancel_subscription - package: {}, subscription_id: {}, token: {}", package_name, subscription_id, redact_with_prefix(token));
+        tracing::info!("GooglePlayClient: cancel_subscription - package: {}, subscription_id: {}, token: {}", package_name, subscription_id, diagnostic_hash(token));
         
         let access_token = self.get_access_token().await?;
 
@@ -305,17 +324,19 @@ impl GooglePlayClient {
             .bearer_auth(access_token)
             .json(&body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| scrub_reqwest_error(e, token))?;
 
         if !res.status().is_success() {
              let status = res.status();
              let text = res.text().await?;
-             tracing::error!("GooglePlayClient: Failed to cancel subscription - package: {}, subscription: {}, status: {}, response: {}", package_name, subscription_id, status, text);
-             return Err(anyhow::anyhow!("Failed to cancel subscription: status {}, response: {}", status, text));
+             let scrubbed = scrub_google_body(&text, token);
+             tracing::error!("GooglePlayClient: Failed to cancel subscription - package: {}, subscription: {}, status: {}, response: {}", package_name, subscription_id, status, scrubbed);
+             return Err(anyhow::anyhow!("Failed to cancel subscription: status {}, response: {}", status, scrubbed));
         }
 
         let text = res.text().await?;
-        tracing::info!(target: "BPT_RAW", "GooglePlay Raw Response - cancel_subscription: {}", text);
+        tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - cancel_subscription: {}", scrub_google_body(&text, token));
 
         tracing::info!("GooglePlay subscription cancelled successfully");
         Ok(())
@@ -327,7 +348,7 @@ impl GooglePlayClient {
         subscription_id: &str,
         token: &str,
     ) -> Result<()> {
-        tracing::info!("GooglePlayClient: acknowledge_subscription - package: {}, subscription_id: {}, token: {}", package_name, subscription_id, redact_with_prefix(token));
+        tracing::info!("GooglePlayClient: acknowledge_subscription - package: {}, subscription_id: {}, token: {}", package_name, subscription_id, diagnostic_hash(token));
 
         // Exponential backoff for transient errors
         let backoff = ExponentialBackoff {
@@ -356,7 +377,7 @@ impl GooglePlayClient {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| backoff::Error::transient(anyhow::anyhow!("HTTP error: {}", e)))?;
+                .map_err(|e| backoff::Error::transient(scrub_reqwest_error(e, token)))?;
 
             let status = res.status();
 
@@ -364,7 +385,7 @@ impl GooglePlayClient {
                 .unwrap_or_else(|_| "(failed to read response body)".to_string());
 
             if status.is_success() {
-                tracing::info!(target: "BPT_RAW", "GooglePlay Raw Response - acknowledge_subscription: {}", text);
+                tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - acknowledge_subscription: {}", scrub_google_body(&text, token));
                 return Ok(());
             }
 
@@ -375,12 +396,12 @@ impl GooglePlayClient {
 
             if status == reqwest::StatusCode::BAD_REQUEST {
                 if text.contains("already acknowledged") {
-                    tracing::info!(target: "BPT_RAW", "GooglePlay Raw Response - acknowledge_subscription (already acknowledged): {}", text);
+                    tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - acknowledge_subscription (already acknowledged): {}", scrub_google_body(&text, token));
                     tracing::info!("GooglePlayClient: Subscription already acknowledged (ignoring error)");
                     return Ok(());
                 }
                 // Other 400 errors are permanent failures
-                return Err(backoff::Error::permanent(anyhow::anyhow!("Failed to acknowledge subscription (400): {}", text)));
+                return Err(backoff::Error::permanent(anyhow::anyhow!("Failed to acknowledge subscription (400): {}", scrub_google_body(&text, token))));
                 }
 
                 if status == reqwest::StatusCode::NOT_FOUND {
@@ -395,8 +416,8 @@ impl GooglePlayClient {
             }
 
             // Unknown error - treat as permanent
-            tracing::error!("GooglePlayClient: Failed to acknowledge subscription - package: {}, subscription: {}, status: {}, response: {}", package_name, subscription_id, status, text);
-            Err(backoff::Error::permanent(anyhow::anyhow!("Failed to acknowledge subscription: status {}, response: {}", status, text)))
+            tracing::error!("GooglePlayClient: Failed to acknowledge subscription - package: {}, subscription: {}, status: {}, response: {}", package_name, subscription_id, status, scrub_google_body(&text, token));
+            Err(backoff::Error::permanent(anyhow::anyhow!("Failed to acknowledge subscription: status {}, response: {}", status, scrub_google_body(&text, token))))
         }).await;
 
         match result {
@@ -417,7 +438,7 @@ impl GooglePlayClient {
         product_id: &str,
         token: &str,
     ) -> Result<()> {
-        tracing::info!("GooglePlayClient: acknowledge - package: {}, product_id: {}, token: {}", package_name, product_id, redact_with_prefix(token));
+        tracing::info!("GooglePlayClient: acknowledge - package: {}, product_id: {}, token: {}", package_name, product_id, diagnostic_hash(token));
 
         // Exponential backoff for transient errors
         let backoff = ExponentialBackoff {
@@ -446,7 +467,7 @@ impl GooglePlayClient {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| backoff::Error::transient(anyhow::anyhow!("HTTP error: {}", e)))?;
+                .map_err(|e| backoff::Error::transient(scrub_reqwest_error(e, token)))?;
 
             let status = res.status();
 
@@ -454,17 +475,17 @@ impl GooglePlayClient {
                 .unwrap_or_else(|_| "(failed to read response body)".to_string());
 
             if status.is_success() {
-                tracing::info!(target: "BPT_RAW", "GooglePlay Raw Response - acknowledge: {}", text);
+                tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - acknowledge: {}", scrub_google_body(&text, token));
                 return Ok(());
             }
 
             if status == reqwest::StatusCode::BAD_REQUEST {
                 if text.contains("already acknowledged") {
-                    tracing::info!(target: "BPT_RAW", "GooglePlay Raw Response - acknowledge (already acknowledged): {}", text);
+                    tracing::debug!(target: "BPT-RAW", "GooglePlay Raw Response - acknowledge (already acknowledged): {}", scrub_google_body(&text, token));
                     tracing::info!("GooglePlayClient: Purchase already acknowledged (ignoring error)");
                     return Ok(());
                 }
-                return Err(backoff::Error::permanent(anyhow::anyhow!("Failed to acknowledge (400): {}", text)));
+                return Err(backoff::Error::permanent(anyhow::anyhow!("Failed to acknowledge (400): {}", scrub_google_body(&text, token))));
             }
 
             if status == reqwest::StatusCode::NOT_FOUND {
@@ -477,8 +498,8 @@ impl GooglePlayClient {
                 return Err(backoff::Error::transient(anyhow::anyhow!("Server error {}, will retry", status)));
             }
 
-            tracing::error!("GooglePlayClient: Failed to acknowledge - package: {}, product_id: {}, status: {}, response: {}", package_name, product_id, status, text);
-            Err(backoff::Error::permanent(anyhow::anyhow!("Failed to acknowledge: status {}, response: {}", status, text)))
+            tracing::error!("GooglePlayClient: Failed to acknowledge - package: {}, product_id: {}, status: {}, response: {}", package_name, product_id, status, scrub_google_body(&text, token));
+            Err(backoff::Error::permanent(anyhow::anyhow!("Failed to acknowledge: status {}, response: {}", status, scrub_google_body(&text, token))))
         }).await;
 
         match result {
@@ -827,4 +848,16 @@ mod tests {
         assert_eq!(details.amount_cents, Some(1500));
         assert_eq!(details.currency, None);
     }
+}
+
+fn scrub_reqwest_error(err: reqwest::Error, token: &str) -> anyhow::Error {
+    let err_str = err.to_string();
+    let hashed = crate::utils::diagnostic_hash(token);
+    let scrubbed = err_str.replace(token, &hashed);
+    let scrubbed = crate::utils::scrub_email(&scrubbed);
+    anyhow::anyhow!("{}", scrubbed)
+}
+
+fn scrub_google_body(text: &str, token: &str) -> String {
+    scrub_email(text).replace(token, &diagnostic_hash(token))
 }
