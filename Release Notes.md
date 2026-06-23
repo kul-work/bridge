@@ -1,5 +1,21 @@
 # Release Notes
 
+## [0.5.0] - 2026-06-23
+### Features
+- **Observability**: Add PII-safe request, provider, webhook, and background job diagnostics with structured correlation fields.
+- **App Verification**: Add protected app identity verification for API key slug checks and callback-secret HMAC proof validation.
+- **Admin Webhooks**: Add webhook pagination for the admin dashboard.
+
+### Fixes
+- **Readiness**: Make provider readiness checks RLS-safe through a security-definer bootstrap count.
+- **Admin Testing**: Require explicit local admin test env loading and keep production/staging from reading test env files.
+- **Observability**: Scrub PII from provider/email/log diagnostics and clarify hashed webhook receipt log fields.
+- **Google Pub/Sub**: Use provider DB audience configuration when the environment fallback is unset.
+
+### Improvements
+- **Testing**: Add ADMIN, CTI, GPBI, Creem, and dead-letter/admin retry coverage.
+- **Documentation**: Refresh observability, admin test env, and Bridge check guidance.
+
 ## [0.4.0] - 2026-06-22
 ### Features
 - **Admin Dashboard**: Add a minimal Clerk-protected admin interface with notes, webhook actions, and manual job triggers.
