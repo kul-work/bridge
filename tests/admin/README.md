@@ -27,10 +27,13 @@ tests/admin/
 ## Prerequisites
 
 1. **Bridge Server Running**:
-   To test authentication and token validation, start the Bridge server in mock mode configured to use the Mock Clerk server as the JWT issuer:
+   To test authentication and token validation, configure the admin Clerk test values in `tests/admin/.env`:
    ```bash
-   ADMIN_CLERK_FRONTEND_API=http://localhost:5577 ADMIN_CLERK_AUTHORIZED_PARTIES=https://admin.bridge.example.com ADMIN_CLERK_ORG_ID=org_test cargo run
+   ADMIN_CLERK_FRONTEND_API=http://localhost:5577
+   ADMIN_CLERK_AUTHORIZED_PARTIES=https://admin.bridge.example.com
+   ADMIN_CLERK_ORG_ID=org_test
    ```
+   Then start Bridge from the repository root with `cargo run`. In local/test environments, Bridge loads these admin Clerk test values from `tests/admin/.env` when they are not already set in the process environment.
 2. **Database Access**:
    Ensure `psql` is in your environment PATH and configured correctly in `tests/cti/.env` or via default settings (localhost:5432, user: bridge_admin).
 3. **App Registered**:

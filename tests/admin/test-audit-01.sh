@@ -30,7 +30,7 @@ echo ""
 ADMIN_JWT=${ADMIN_JWT:-}
 if [[ -z "$ADMIN_JWT" ]]; then
     if curl -s -f "$MOCK_CLERK_URL/token" >/dev/null; then
-        ADMIN_JWT=$(curl -s "$MOCK_CLERK_URL/token?org=org_test")
+        ADMIN_JWT=$(curl -s "$MOCK_CLERK_URL/token?org=$ADMIN_CLERK_ORG_ID")
     else
         echo -e "${RED}✗ Mock Clerk server not running and no ADMIN_JWT set.${NC}"
         exit 1
