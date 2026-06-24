@@ -31,12 +31,23 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
 
     // Don't retry if already forwarded or already dead-lettered.
     if delivery.forwarded || delivery.dead_lettered || delivery.forward_attempts >= 3 {
-        if delivery.dead_lettered {
-            info!(
-                "Skipping dead-lettered webhook delivery {}",
-                webhook_delivery_id
-            );
-        }
+        info!(
+            app_id = %app_id,
+            webhook_delivery_id = %webhook_delivery_id,
+            provider = %payload.provider,
+            event_type = %payload.event_type,
+            provider_event_id = %payload.provider_event_id,
+            external_user_id_hash = payload
+                .external_user_id
+                .as_deref()
+                .map(diagnostic_hash)
+                .as_deref(),
+            forwarded = delivery.forwarded,
+            dead_lettered = delivery.dead_lettered,
+            attempts = delivery.forward_attempts,
+            outcome = "terminal_skip",
+            "Skipping terminal webhook delivery"
+        );
         return Ok(());
     }
 
@@ -56,11 +67,22 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
                 )
                 .await?;
                 info!(
-                    "Suppressed stale webhook delivery {} for subscription {} (event ts={} < last_event_time={})",
-                    webhook_delivery_id,
-                    subscription_id,
-                    payload.timestamp_epoch_ms,
-                    subscription.last_event_time
+                    app_id = %app_id,
+                    webhook_delivery_id = %webhook_delivery_id,
+                    webhook_provider_id = %delivery.webhook_provider_id,
+                    provider = %payload.provider,
+                    event_type = %payload.event_type,
+                    provider_event_id = %payload.provider_event_id,
+                    external_user_id_hash = payload
+                        .external_user_id
+                        .as_deref()
+                        .map(diagnostic_hash)
+                        .as_deref(),
+                    subscription_id = %subscription_id,
+                    event_time_ms = payload.timestamp_epoch_ms,
+                    last_event_time = subscription.last_event_time,
+                    outcome = "suppressed_stale",
+                    "Suppressed stale webhook delivery before forward"
                 );
                 return Ok(());
             }
@@ -124,7 +146,11 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
                     provider = %payload.provider,
                     event_type = %payload.event_type,
                     provider_event_id = %payload.provider_event_id,
-                    external_user_id = payload.external_user_id.as_deref(),
+                    external_user_id_hash = payload
+                        .external_user_id
+                        .as_deref()
+                        .map(diagnostic_hash)
+                        .as_deref(),
                     status,
                     "Successfully forwarded webhook to app"
                 );
@@ -285,8 +311,19 @@ pub async fn queue_and_forward_webhook<
 
     if !delivery.created {
         info!(
-            "Webhook delivery already queued for provider webhook {} (delivery={}); treating duplicate as idempotent",
-            webhook_provider_id, delivery.id,
+            app_id = %app_id,
+            webhook_provider_id = %webhook_provider_id,
+            webhook_delivery_id = %delivery.id,
+            provider = %payload.provider,
+            event_type = %payload.event_type,
+            provider_event_id = %payload.provider_event_id,
+            external_user_id_hash = payload
+                .external_user_id
+                .as_deref()
+                .map(diagnostic_hash)
+                .as_deref(),
+            outcome = "duplicate_delivery_queued",
+            "Webhook delivery already queued; treating duplicate as idempotent"
         );
         return Ok(());
     }
@@ -325,8 +362,12 @@ pub async fn create_and_forward_webhook<
 
     if !is_new {
         info!(
-            "Skipping duplicate synthetic webhook delivery: app_id={}, provider={}, provider_event_id={}, event_type={}",
-            app_id, provider, provider_webhook_id, event_type
+            app_id = %app_id,
+            provider,
+            provider_event_id = provider_webhook_id,
+            event_type,
+            outcome = "duplicate_synthetic_webhook",
+            "Skipping duplicate synthetic webhook delivery"
         );
         return Ok(());
     }

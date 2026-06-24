@@ -54,7 +54,14 @@ fn spawn_process_and_forward_webhook(
                     error!(error = %e, "Failed to forward webhook");
                 }
             }
-            Ok(None) => info!("Webhook suppressed"),
+            Ok(None) => info!(
+                app_id = %app_id,
+                webhook_provider_id = %webhook_id,
+                provider = provider_name,
+                event_id = %event_id,
+                outcome = "suppressed",
+                "Webhook suppressed"
+            ),
             Err(e) => error!(error = %e, "Webhook processing failed"),
         }
         debug!("End processing webhook");
@@ -89,10 +96,24 @@ fn spawn_forward_existing_webhook(
                 {
                     error!(error = %e, "Failed to resume webhook forwarding");
                 } else {
-                    info!("Webhook forwarding resumed");
+                    info!(
+                        app_id = %app_id,
+                        webhook_provider_id = %webhook_id,
+                        provider = provider_name,
+                        event_id = %event_id,
+                        outcome = "forwarding_resumed",
+                        "Webhook forwarding resumed"
+                    );
                 }
             }
-            Ok(None) => info!("Webhook suppressed while resuming"),
+            Ok(None) => info!(
+                app_id = %app_id,
+                webhook_provider_id = %webhook_id,
+                provider = provider_name,
+                event_id = %event_id,
+                outcome = "suppressed_while_resuming",
+                "Webhook suppressed while resuming"
+            ),
             Err(e) => error!(error = %e, "Webhook payload rebuild failed"),
         }
     }.instrument(span));
