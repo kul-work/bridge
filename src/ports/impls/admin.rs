@@ -2,7 +2,11 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
-    db::{self, apps::AppSummary, webhooks::{WebhookDelivery, WebhookProvider}},
+    db::{
+        self,
+        apps::AppSummary,
+        webhooks::{WebhookDelivery, WebhookProvider},
+    },
     error::BridgeError,
     ports::traits::AdminRepository,
 };
@@ -15,6 +19,18 @@ impl AdminRepository for db::Database {
 
     async fn count_failed_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError> {
         db::webhooks::count_failed_webhooks(self.pool(), app_id).await
+    }
+
+    async fn count_dead_lettered_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError> {
+        db::webhooks::count_dead_lettered_webhooks(self.pool(), app_id).await
+    }
+
+    async fn count_retryable_failed_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError> {
+        db::webhooks::count_retryable_failed_webhooks(self.pool(), app_id).await
+    }
+
+    async fn count_reconciliation_drift_callbacks(&self, app_id: Uuid) -> Result<i64, BridgeError> {
+        db::webhooks::count_reconciliation_drift_callbacks(self.pool(), app_id).await
     }
 
     async fn count_app_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError> {

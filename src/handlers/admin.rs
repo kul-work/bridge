@@ -2,17 +2,17 @@ use axum::{
     extract::{Extension, Json, Path, Query, State},
     http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode},
     middleware::Next,
-    response::{Html, IntoResponse},
     response::Response,
+    response::{Html, IntoResponse},
 };
 use std::{collections::HashSet, sync::OnceLock};
 use tokio::sync::Mutex;
+use tracing::{error, info};
 use uuid::Uuid;
-use tracing::{info, error};
 
 use crate::{
     config::ADMIN_WEBHOOK_LIST_LIMIT,
-    db::{apps as app_queries, webhooks as webhook_queries},
+    db::apps as app_queries,
     error::BridgeError,
     middleware::admin_auth::AdminAuthContext,
     ports::{AdminRepository, WebhookForwardRepository},
@@ -22,10 +22,7 @@ use crate::{
 
 static ADMIN_OPERATION_LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-pub async fn admin_no_store_middleware(
-    request: Request<axum::body::Body>,
-    next: Next,
-) -> Response {
+pub async fn admin_no_store_middleware(request: Request<axum::body::Body>, next: Next) -> Response {
     let mut response = next.run(request).await;
     response.headers_mut().insert(
         HeaderName::from_static("cache-control"),
@@ -43,10 +40,9 @@ pub async fn admin_no_store_middleware(
 pub async fn admin_dashboard(
     State(_state): State<AppState>,
 ) -> Result<impl IntoResponse, BridgeError> {
-    let publishable_key = std::env::var("CLERK_PUBLISHABLE_KEY")
-        .map_err(|_| BridgeError::ConfigError(
-            "CLERK_PUBLISHABLE_KEY must be set for admin auth.".to_string()
-        ))?;
+    let publishable_key = std::env::var("CLERK_PUBLISHABLE_KEY").map_err(|_| {
+        BridgeError::ConfigError("CLERK_PUBLISHABLE_KEY must be set for admin auth.".to_string())
+    })?;
     let csp_nonce = Uuid::new_v4().simple().to_string();
 
     let html = include_str!("../../templates/admin.html");
@@ -147,9 +143,18 @@ pub async fn alert_dashboard(
     let mut reconciliation_drift = 0;
 
     for app in apps {
-        dead_lettered += webhook_queries::count_dead_lettered_webhooks(database.pool(), app.id).await?;
-        retryable_failed += webhook_queries::count_retryable_failed_webhooks(database.pool(), app.id).await?;
-        reconciliation_drift += webhook_queries::count_reconciliation_drift_callbacks(database.pool(), app.id).await?;
+        dead_lettered += database
+            .as_ref()
+            .count_dead_lettered_webhooks(app.id)
+            .await?;
+        retryable_failed += database
+            .as_ref()
+            .count_retryable_failed_webhooks(app.id)
+            .await?;
+        reconciliation_drift += database
+            .as_ref()
+            .count_reconciliation_drift_callbacks(app.id)
+            .await?;
     }
 
     Ok(Json(vec![
@@ -214,7 +219,8 @@ pub async fn update_app_notes(
     }
 
     let database = state.database();
-    let notes = match app_queries::update_app_notes(database.pool(), app_uuid, &payload.notes).await {
+    let notes = match app_queries::update_app_notes(database.pool(), app_uuid, &payload.notes).await
+    {
         Ok(notes) => notes,
         Err(e) => {
             error!(
@@ -294,7 +300,11 @@ pub async fn get_app_webhooks(
         })
         .collect();
 
-    let pages = if total_count == 0 { 1 } else { (total_count + limit - 1) / limit };
+    let pages = if total_count == 0 {
+        1
+    } else {
+        (total_count + limit - 1) / limit
+    };
 
     Ok(axum::Json(PaginatedWebhooks {
         webhooks: summaries,
@@ -303,7 +313,6 @@ pub async fn get_app_webhooks(
         pages,
     }))
 }
-
 
 pub async fn get_webhook_payload(
     State(state): State<AppState>,
@@ -473,7 +482,12 @@ pub async fn trigger_jobs(
                     error!("Manual webhook retry job failed: {}", e);
                     err = Some(e.to_string());
                 }
-                if let Err(e) = crate::webhooks::scheduler::retry_google_play_subscription_acknowledgements(db.as_ref()).await {
+                if let Err(e) =
+                    crate::webhooks::scheduler::retry_google_play_subscription_acknowledgements(
+                        db.as_ref(),
+                    )
+                    .await
+                {
                     error!("Manual Google Play acknowledgement retry failed: {}", e);
                     err = Some(e.to_string());
                 }
@@ -506,15 +520,13 @@ pub async fn trigger_jobs(
                     }
                 }
             }
-            "cleanup" => {
-                match crate::webhooks::scheduler::cleanup_old_data(&db).await {
-                    Ok(()) => None,
-                    Err(e) => {
-                        error!("Manual cleanup job failed: {}", e);
-                        Some(e.to_string())
-                    }
+            "cleanup" => match crate::webhooks::scheduler::cleanup_old_data(&db).await {
+                Ok(()) => None,
+                Err(e) => {
+                    error!("Manual cleanup job failed: {}", e);
+                    Some(e.to_string())
                 }
-            }
+            },
             _ => unreachable!("validated above"),
         };
 
@@ -543,7 +555,10 @@ pub async fn trigger_jobs(
         results.push(JobResult { job, error: result });
     }
 
-    info!("Admin trigger-jobs completed: {:?}", results.iter().map(|r| &r.job).collect::<Vec<_>>());
+    info!(
+        "Admin trigger-jobs completed: {:?}",
+        results.iter().map(|r| &r.job).collect::<Vec<_>>()
+    );
 
     Ok(Json(TriggerJobsResponse { results }))
 }

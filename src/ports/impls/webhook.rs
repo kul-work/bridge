@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
-    db::{self, webhooks::{WebhookDelivery, WebhookDeliveryEnqueue, WebhookRecord}},
+    db::{
+        self,
+        webhooks::{WebhookDelivery, WebhookDeliveryEnqueue, WebhookRecord},
+    },
     error::BridgeError,
     ports::traits::{
         WebhookForwardRepository, WebhookProviderLookupRepository, WebhookReadRepository,
@@ -77,7 +80,10 @@ impl WebhookForwardRepository for db::Database {
         db::webhooks::get_webhook_delivery(self.pool(), id).await
     }
 
-    async fn webhook_delivery_exists(&self, webhook_provider_id: Uuid) -> Result<bool, BridgeError> {
+    async fn webhook_delivery_exists(
+        &self,
+        webhook_provider_id: Uuid,
+    ) -> Result<bool, BridgeError> {
         db::webhooks::webhook_delivery_exists(self.pool(), webhook_provider_id).await
     }
 
@@ -87,7 +93,7 @@ impl WebhookForwardRepository for db::Database {
         http_status: Option<i32>,
         error: Option<String>,
         forwarded: bool,
-    ) -> Result<(), BridgeError> {
+    ) -> Result<WebhookDelivery, BridgeError> {
         db::webhooks::update_webhook_delivery_attempt(
             self.pool(),
             delivery_id,
@@ -105,7 +111,10 @@ impl WebhookForwardRepository for db::Database {
 
 #[async_trait]
 impl WebhookProviderLookupRepository for db::Database {
-    async fn get_webhook_provider(&self, id: Uuid) -> Result<crate::ports::types::WebhookProviderSnapshot, BridgeError> {
+    async fn get_webhook_provider(
+        &self,
+        id: Uuid,
+    ) -> Result<crate::ports::types::WebhookProviderSnapshot, BridgeError> {
         let webhook = db::webhooks::get_webhook_provider(self.pool(), id).await?;
         Ok(crate::ports::types::WebhookProviderSnapshot {
             provider: webhook.provider,

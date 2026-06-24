@@ -1,9 +1,9 @@
 use crate::db::database::set_local_app_id;
 use crate::error::BridgeError;
-use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, FromRow};
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::{FromRow, PgPool};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct WebhookProvider {
@@ -57,7 +57,10 @@ async fn begin_app_tx<'a>(
     pool: &'a PgPool,
     app_id: Uuid,
 ) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, BridgeError> {
-    let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
     set_local_app_id(&mut tx, app_id).await?;
     Ok(tx)
 }
@@ -71,7 +74,10 @@ async fn get_webhook_provider_app_id(pool: &PgPool, webhook_id: Uuid) -> Result<
         .ok_or_else(|| BridgeError::ValidationError("Webhook not found".to_string()))
 }
 
-async fn get_webhook_delivery_app_id(pool: &PgPool, delivery_id: Uuid) -> Result<Uuid, BridgeError> {
+async fn get_webhook_delivery_app_id(
+    pool: &PgPool,
+    delivery_id: Uuid,
+) -> Result<Uuid, BridgeError> {
     sqlx::query_scalar("SELECT pay.get_webhook_delivery_app_id_bootstrap($1)")
         .bind(delivery_id)
         .fetch_optional(pool)
@@ -82,14 +88,12 @@ async fn get_webhook_delivery_app_id(pool: &PgPool, delivery_id: Uuid) -> Result
 
 /// Get webhook provider by ID
 pub async fn get_webhook_provider(pool: &PgPool, id: Uuid) -> Result<WebhookProvider, BridgeError> {
-    sqlx::query_as::<_, WebhookProvider>(
-        "SELECT * FROM pay.get_webhook_provider_bootstrap($1)"
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?
-    .ok_or_else(|| BridgeError::ValidationError("Webhook not found".to_string()))
+    sqlx::query_as::<_, WebhookProvider>("SELECT * FROM pay.get_webhook_provider_bootstrap($1)")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?
+        .ok_or_else(|| BridgeError::ValidationError("Webhook not found".to_string()))
 }
 
 /// Mark webhook as suppressed (stale event)
@@ -104,7 +108,7 @@ pub async fn suppress_webhook(
     let mut tx = begin_app_tx(pool, app_id).await?;
 
     sqlx::query(
-        "UPDATE pay.webhook_provider SET suppressed = true, suppressed_reason = $1 WHERE id = $2"
+        "UPDATE pay.webhook_provider SET suppressed = true, suppressed_reason = $1 WHERE id = $2",
     )
     .bind(reason)
     .bind(webhook_id)
@@ -112,15 +116,14 @@ pub async fn suppress_webhook(
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to suppress webhook: {}", e)))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(())
 }
 
-pub async fn mark_webhook_processed(
-    pool: &PgPool,
-    webhook_id: Uuid,
-) -> Result<(), BridgeError> {
+pub async fn mark_webhook_processed(pool: &PgPool, webhook_id: Uuid) -> Result<(), BridgeError> {
     let app_id = get_webhook_provider_app_id(pool, webhook_id).await?;
     let mut tx = begin_app_tx(pool, app_id).await?;
 
@@ -130,34 +133,32 @@ pub async fn mark_webhook_processed(
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(())
 }
 
 /// Get webhook delivery by ID
 pub async fn get_webhook_delivery(pool: &PgPool, id: Uuid) -> Result<WebhookDelivery, BridgeError> {
-    sqlx::query_as::<_, WebhookDelivery>(
-        "SELECT * FROM pay.get_webhook_delivery_bootstrap($1)"
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?
-    .ok_or_else(|| BridgeError::ValidationError("Webhook delivery not found".to_string()))
+    sqlx::query_as::<_, WebhookDelivery>("SELECT * FROM pay.get_webhook_delivery_bootstrap($1)")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?
+        .ok_or_else(|| BridgeError::ValidationError("Webhook delivery not found".to_string()))
 }
 
 pub async fn webhook_delivery_exists(
     pool: &PgPool,
     webhook_provider_id: Uuid,
 ) -> Result<bool, BridgeError> {
-    sqlx::query_scalar(
-        "SELECT pay.webhook_delivery_exists_bootstrap($1)"
-    )
-    .bind(webhook_provider_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    sqlx::query_scalar("SELECT pay.webhook_delivery_exists_bootstrap($1)")
+        .bind(webhook_provider_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
 pub async fn list_pending_webhook_deliveries(
@@ -171,7 +172,7 @@ pub async fn list_pending_webhook_deliveries(
         "SELECT * FROM pay.webhook_delivery
          WHERE app_id = $1 AND forwarded = false AND dead_lettered = false AND forward_attempts < 3
          ORDER BY created_at ASC
-         LIMIT $2"
+         LIMIT $2",
     )
     .bind(app_id)
     .bind(limit)
@@ -179,7 +180,9 @@ pub async fn list_pending_webhook_deliveries(
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(deliveries)
 }
@@ -201,7 +204,7 @@ pub async fn reset_webhook_delivery(pool: &PgPool, delivery_id: Uuid) -> Result<
          WHERE id = $1
            AND app_id = $2
            AND forwarded = false
-           AND dead_lettered = true"
+           AND dead_lettered = true",
     )
     .bind(delivery_id)
     .bind(app_id)
@@ -209,7 +212,9 @@ pub async fn reset_webhook_delivery(pool: &PgPool, delivery_id: Uuid) -> Result<
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to reset webhook delivery: {}", e)))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(result.rows_affected() == 1)
 }
@@ -221,11 +226,11 @@ pub async fn update_webhook_delivery_attempt(
     http_status: Option<i32>,
     error: Option<String>,
     forwarded: bool,
-) -> Result<(), BridgeError> {
+) -> Result<WebhookDelivery, BridgeError> {
     let app_id = get_webhook_delivery_app_id(pool, delivery_id).await?;
     let mut tx = begin_app_tx(pool, app_id).await?;
 
-    sqlx::query(
+    let delivery = sqlx::query_as::<_, WebhookDelivery>(
         "UPDATE pay.webhook_delivery 
          SET forward_attempts = forward_attempts + 1,
              last_http_status = $1,
@@ -248,19 +253,22 @@ pub async fn update_webhook_delivery_attempt(
                  ELSE dead_letter_reason
              END,
              updated_at = NOW()
-         WHERE id = $4"
+         WHERE id = $4
+         RETURNING *",
     )
     .bind(http_status)
     .bind(error)
     .bind(forwarded)
     .bind(delivery_id)
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to update webhook delivery: {}", e)))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    Ok(())
+    Ok(delivery)
 }
 
 /// List recent webhook deliveries for app (admin page)
@@ -277,7 +285,7 @@ pub async fn list_app_webhooks(
         "SELECT * FROM pay.webhook_delivery 
          WHERE app_id = $1
          ORDER BY created_at DESC
-         LIMIT $2 OFFSET $3"
+         LIMIT $2 OFFSET $3",
     )
     .bind(app_id)
     .bind(limit)
@@ -290,7 +298,7 @@ pub async fn list_app_webhooks(
     let mut results = Vec::new();
     for delivery in deliveries {
         let provider = sqlx::query_as::<_, WebhookProvider>(
-            "SELECT * FROM pay.webhook_provider WHERE id = $1"
+            "SELECT * FROM pay.webhook_provider WHERE id = $1",
         )
         .bind(delivery.webhook_provider_id)
         .fetch_optional(&mut *tx)
@@ -302,7 +310,9 @@ pub async fn list_app_webhooks(
         }
     }
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(results)
 }
@@ -318,7 +328,7 @@ pub async fn get_webhook_provider_for_delivery(
         "SELECT wp.*
          FROM pay.webhook_delivery wd
          JOIN pay.webhook_provider wp ON wp.id = wd.webhook_provider_id
-         WHERE wd.id = $1 AND wd.app_id = $2"
+         WHERE wd.id = $1 AND wd.app_id = $2",
     )
     .bind(delivery_id)
     .bind(app_id)
@@ -327,7 +337,9 @@ pub async fn get_webhook_provider_for_delivery(
     .map_err(|e| BridgeError::DbError(e.to_string()))?
     .ok_or_else(|| BridgeError::ValidationError("Webhook delivery not found".to_string()))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(provider)
 }
@@ -338,14 +350,16 @@ pub async fn count_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, B
 
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM pay.webhook_delivery 
-         WHERE app_id = $1 AND (forwarded = false OR last_http_status >= 400)"
+         WHERE app_id = $1 AND (forwarded = false OR last_http_status >= 400)",
     )
     .bind(app_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(count.0)
 }
@@ -355,19 +369,24 @@ pub async fn count_dead_lettered_webhooks(pool: &PgPool, app_id: Uuid) -> Result
 
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM pay.webhook_delivery
-         WHERE app_id = $1 AND dead_lettered = true"
+         WHERE app_id = $1 AND dead_lettered = true",
     )
     .bind(app_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(count.0)
 }
 
-pub async fn count_retryable_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, BridgeError> {
+pub async fn count_retryable_failed_webhooks(
+    pool: &PgPool,
+    app_id: Uuid,
+) -> Result<i64, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
 
     let count: (i64,) = sqlx::query_as(
@@ -375,32 +394,39 @@ pub async fn count_retryable_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Res
          WHERE app_id = $1
            AND forwarded = false
            AND dead_lettered = false
-           AND forward_attempts > 0"
+           AND forward_attempts > 0",
     )
     .bind(app_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(count.0)
 }
 
-pub async fn count_reconciliation_drift_callbacks(pool: &PgPool, app_id: Uuid) -> Result<i64, BridgeError> {
+pub async fn count_reconciliation_drift_callbacks(
+    pool: &PgPool,
+    app_id: Uuid,
+) -> Result<i64, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
 
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*)
          FROM pay.webhook_provider
-         WHERE app_id = $1 AND event_type = 'reconciliation.drift_detected'"
+         WHERE app_id = $1 AND event_type = 'reconciliation.drift_detected'",
     )
     .bind(app_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(count.0)
 }
@@ -411,18 +437,19 @@ pub async fn count_app_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, Brid
 
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM pay.webhook_delivery 
-         WHERE app_id = $1"
+         WHERE app_id = $1",
     )
     .bind(app_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(count.0)
 }
-
 
 pub async fn cleanup_old_webhook_provider(pool: &PgPool) -> Result<(), BridgeError> {
     sqlx::query("SELECT pay.cleanup_old_webhook_provider()")
@@ -446,7 +473,7 @@ pub async fn list_user_webhook_records(
          FROM pay.webhook_provider
          WHERE app_id = $1
            AND (subscription_id = ANY($2) OR purchase_token = ANY($3))
-         ORDER BY created_at DESC"
+         ORDER BY created_at DESC",
     )
     .bind(app_id)
     .bind(subscription_ids)
@@ -455,7 +482,9 @@ pub async fn list_user_webhook_records(
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(records)
 }
@@ -505,7 +534,7 @@ pub async fn create_webhook_provider(
             "SELECT id FROM pay.webhook_provider 
              WHERE app_id = $1 AND provider = $2 AND provider_webhook_id = $3
              ORDER BY created_at ASC
-             LIMIT 1"
+             LIMIT 1",
         )
         .bind(app_id)
         .bind(provider)
@@ -516,7 +545,9 @@ pub async fn create_webhook_provider(
         (existing.0, false)
     };
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok((webhook_id, is_new))
 }
@@ -542,7 +573,9 @@ pub async fn create_webhook_delivery(
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to create webhook delivery: {}", e)))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(delivery)
 }
@@ -552,12 +585,12 @@ mod tests {
     use std::{
         error::Error,
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         },
     };
 
-    use axum::{extract::State, http::StatusCode, routing::post, Router};
+    use axum::{Router, extract::State, http::StatusCode, routing::post};
     use sqlx::PgPool;
     use tokio::{net::TcpListener, task::JoinHandle};
 
@@ -565,18 +598,18 @@ mod tests {
     use crate::webhooks::processor::CanonicalWebhookPayload;
 
     #[tokio::test]
-    async fn manual_retry_reset_does_not_reopen_forwarded_deliveries() -> Result<(), Box<dyn Error>> {
+    async fn manual_retry_reset_does_not_reopen_forwarded_deliveries() -> Result<(), Box<dyn Error>>
+    {
         let Some(database) = test_database().await? else {
-            eprintln!(
-                "skipping DB-backed webhook retry regression; set BRIDGE_TEST_DATABASE_URL"
-            );
+            eprintln!("skipping DB-backed webhook retry regression; set BRIDGE_TEST_DATABASE_URL");
             return Ok(());
         };
 
         let pool = database.pool();
         let (callback_url, callback_count, server) = spawn_callback_server().await?;
         let app_id = insert_test_app(pool, &callback_url).await?;
-        let result = run_manual_retry_reset_regression(&database, pool, app_id, callback_count).await;
+        let result =
+            run_manual_retry_reset_regression(&database, pool, app_id, callback_count).await;
 
         delete_test_app(pool, app_id).await;
         server.abort();
@@ -597,13 +630,21 @@ mod tests {
 
         assert!(!reset_forwarded);
         assert!(forwarded_after.forwarded);
-        assert_eq!(forwarded_after.forward_attempts, forwarded_before.forward_attempts);
+        assert_eq!(
+            forwarded_after.forward_attempts,
+            forwarded_before.forward_attempts
+        );
         assert_eq!(forwarded_after.forwarded_at, forwarded_before.forwarded_at);
-        assert_eq!(forwarded_after.dead_lettered, forwarded_before.dead_lettered);
+        assert_eq!(
+            forwarded_after.dead_lettered,
+            forwarded_before.dead_lettered
+        );
 
         let dead_lettered_delivery_id = insert_test_delivery(pool, app_id, 3, false, true).await?;
-        let reset_dead_lettered = super::reset_webhook_delivery(pool, dead_lettered_delivery_id).await?;
-        let dead_lettered_after = super::get_webhook_delivery(pool, dead_lettered_delivery_id).await?;
+        let reset_dead_lettered =
+            super::reset_webhook_delivery(pool, dead_lettered_delivery_id).await?;
+        let dead_lettered_after =
+            super::get_webhook_delivery(pool, dead_lettered_delivery_id).await?;
 
         assert!(reset_dead_lettered);
         assert!(!dead_lettered_after.forwarded);
@@ -649,9 +690,9 @@ mod tests {
         let is_production = matches!(environment.as_str(), "production" | "prod");
         let database_url = match std::env::var("BRIDGE_TEST_DATABASE_URL") {
             Ok(url) => Some(url),
-            Err(_) if !is_production => {
-                admin_database_url.clone().or_else(|| std::env::var("DATABASE_URL").ok())
-            }
+            Err(_) if !is_production => admin_database_url
+                .clone()
+                .or_else(|| std::env::var("DATABASE_URL").ok()),
             Err(_) => None,
         };
         let Some(database_url) = database_url else {
@@ -706,7 +747,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO pay.webhook_provider
              (id, app_id, provider, provider_webhook_id, event_type, payload, processed)
-             VALUES ($1, $2, $3, $4, $5, $6, true)"
+             VALUES ($1, $2, $3, $4, $5, $6, true)",
         )
         .bind(provider_id)
         .bind(app_id)
@@ -721,7 +762,7 @@ mod tests {
             "INSERT INTO pay.webhook_delivery
              (id, app_id, webhook_provider_id, forward_attempts, forwarded, forwarded_at,
               dead_lettered, dead_lettered_at, dead_letter_reason, last_http_status, last_error)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(delivery_id)
         .bind(app_id)
@@ -752,7 +793,8 @@ mod tests {
         StatusCode::OK
     }
 
-    async fn spawn_callback_server() -> Result<(String, Arc<AtomicUsize>, JoinHandle<()>), Box<dyn Error>> {
+    async fn spawn_callback_server()
+    -> Result<(String, Arc<AtomicUsize>, JoinHandle<()>), Box<dyn Error>> {
         let count = Arc::new(AtomicUsize::new(0));
         let app = Router::new()
             .route("/callback", post(callback_handler))

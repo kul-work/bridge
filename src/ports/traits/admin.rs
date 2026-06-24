@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
-    db::{apps::AppSummary, webhooks::{WebhookDelivery, WebhookProvider}},
+    db::{
+        apps::AppSummary,
+        webhooks::{WebhookDelivery, WebhookProvider},
+    },
     error::BridgeError,
 };
 
@@ -11,6 +14,12 @@ pub trait AdminRepository: Send + Sync {
     async fn list_app_summaries(&self) -> Result<Vec<AppSummary>, BridgeError>;
 
     async fn count_failed_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError>;
+
+    async fn count_dead_lettered_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError>;
+
+    async fn count_retryable_failed_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError>;
+
+    async fn count_reconciliation_drift_callbacks(&self, app_id: Uuid) -> Result<i64, BridgeError>;
 
     async fn count_app_webhooks(&self, app_id: Uuid) -> Result<i64, BridgeError>;
 

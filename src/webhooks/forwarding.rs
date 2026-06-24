@@ -1,16 +1,15 @@
+use crate::db::webhooks::WebhookDelivery;
 use crate::error::BridgeError;
-use crate::ports::{
-    AppLookupRepository, WebhookForwardRepository, WebhookWriteRepository,
-};
-use crate::webhooks::processor::CanonicalWebhookPayload;
-use std::time::Duration;
-use uuid::Uuid;
+use crate::ports::{AppLookupRepository, WebhookForwardRepository, WebhookWriteRepository};
 use crate::utils::diagnostic_hash;
-use reqwest::Client;
-use tracing::{debug, error, info, warn};
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use crate::webhooks::processor::CanonicalWebhookPayload;
 use chrono::Utc;
+use hmac::{Hmac, Mac};
+use reqwest::Client;
+use sha2::Sha256;
+use std::time::Duration;
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -33,19 +32,22 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
     // Don't retry if already forwarded or already dead-lettered.
     if delivery.forwarded || delivery.dead_lettered || delivery.forward_attempts >= 3 {
         if delivery.dead_lettered {
-            info!("Skipping dead-lettered webhook delivery {}", webhook_delivery_id);
+            info!(
+                "Skipping dead-lettered webhook delivery {}",
+                webhook_delivery_id
+            );
         }
         return Ok(());
     }
 
     if let Some(ref subscription_id) = payload.subscription_id {
-        if let Some(subscription) = repo.get_subscription_by_sub_id(app_id, subscription_id).await? {
+        if let Some(subscription) = repo
+            .get_subscription_by_sub_id(app_id, subscription_id)
+            .await?
+        {
             if payload.timestamp_epoch_ms < subscription.last_event_time {
-                repo.suppress_webhook(
-                    delivery.webhook_provider_id,
-                    "superseded_before_forward",
-                )
-                .await?;
+                repo.suppress_webhook(delivery.webhook_provider_id, "superseded_before_forward")
+                    .await?;
                 repo.update_webhook_delivery_attempt(
                     webhook_delivery_id,
                     None,
@@ -126,58 +128,14 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
                     status,
                     "Successfully forwarded webhook to app"
                 );
-                repo.update_webhook_delivery_attempt(
-                    webhook_delivery_id,
-                    Some(status),
-                    None,
-                    true,
-                )
-                .await?;
+                repo.update_webhook_delivery_attempt(webhook_delivery_id, Some(status), None, true)
+                    .await?;
             } else {
                 let _response_body = resp
                     .text()
                     .await
                     .unwrap_or_else(|e| format!("(failed to read response body: {})", e));
                 let error_msg = format_http_failure(status);
-                let next_attempts = delivery.forward_attempts + 1;
-
-                if next_attempts >= 3 {
-                    error!(
-                        signal_class = "alert_signal",
-                        alert_key = "bridge.webhook.dead_lettered",
-                        alert_severity = "ticket",
-                        alert_subject = "Webhook delivery dead-lettered",
-                        app_id = %app_id,
-                        webhook_delivery_id = %webhook_delivery_id,
-                        provider = %payload.provider,
-                        event_type = %payload.event_type,
-                        provider_event_id = %payload.provider_event_id,
-                        attempts = next_attempts,
-                        last_http_status = status,
-                        error_kind = "app_non_success_status",
-                        error_msg = %error_msg,
-                        status,
-                        "Webhook delivery permanently failed and marked dead_lettered"
-                    );
-                } else {
-                    warn!(
-                        signal_class = "support_debug_signal",
-                        alert_key = "bridge.callback.delivery_failed",
-                        alert_severity = "audit",
-                        alert_subject = "Webhook delivery retryable failure",
-                        app_id = %app_id,
-                        webhook_delivery_id = %webhook_delivery_id,
-                        provider = %payload.provider,
-                        event_type = %payload.event_type,
-                        provider_event_id = %payload.provider_event_id,
-                        attempt = next_attempts,
-                        attempts = next_attempts,
-                        last_http_status = status,
-                        error_kind = "app_non_success_status",
-                        status,
-                        "Failed to forward webhook to app"
-                    );
-                }
                 debug!(
                     webhook_delivery_id = %webhook_delivery_id,
                     app_id = %app_id,
@@ -187,55 +145,30 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
                     response_body = "[omitted]",
                     "Webhook forwarding diagnostics"
                 );
-                repo.update_webhook_delivery_attempt(
+                let updated_delivery = repo
+                    .update_webhook_delivery_attempt(
+                        webhook_delivery_id,
+                        Some(status),
+                        Some(error_msg),
+                        false,
+                    )
+                    .await?;
+                log_persisted_delivery_failure(
+                    app_id,
                     webhook_delivery_id,
-                    Some(status),
-                    Some(error_msg),
-                    false,
-                )
-                .await?;
+                    &payload,
+                    &updated_delivery,
+                    DeliveryFailureLogContext {
+                        last_http_status: Some(status),
+                        error_kind: "app_non_success_status",
+                        retry_message: "Failed to forward webhook to app",
+                        dead_letter_message: "Webhook delivery permanently failed and marked dead_lettered",
+                    },
+                );
             }
         }
         Err(e) => {
             let error_msg = format!("Request error: {}", e);
-            let next_attempts = delivery.forward_attempts + 1;
-
-            if next_attempts >= 3 {
-                error!(
-                    signal_class = "alert_signal",
-                    alert_key = "bridge.webhook.dead_lettered",
-                    alert_severity = "ticket",
-                    alert_subject = "Webhook delivery dead-lettered",
-                    app_id = %app_id,
-                    webhook_delivery_id = %webhook_delivery_id,
-                    provider = %payload.provider,
-                    event_type = %payload.event_type,
-                    provider_event_id = %payload.provider_event_id,
-                    attempts = next_attempts,
-                    last_http_status = tracing::field::Empty,
-                    error_kind = "request_error",
-                    error_msg = %error_msg,
-                    "Webhook delivery permanently failed and marked dead_lettered"
-                );
-            } else {
-                warn!(
-                    signal_class = "support_debug_signal",
-                    alert_key = "bridge.callback.delivery_failed",
-                    alert_severity = "audit",
-                    alert_subject = "Webhook delivery retryable failure",
-                    app_id = %app_id,
-                    webhook_delivery_id = %webhook_delivery_id,
-                    provider = %payload.provider,
-                    event_type = %payload.event_type,
-                    provider_event_id = %payload.provider_event_id,
-                    attempt = next_attempts,
-                    attempts = next_attempts,
-                    last_http_status = tracing::field::Empty,
-                    error_kind = "request_error",
-                    error = %error_msg,
-                    "Failed to forward webhook to app due to request error"
-                );
-            }
             debug!(
                 webhook_delivery_id = %webhook_delivery_id,
                 app_id = %app_id,
@@ -244,22 +177,87 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
                 error = %error_msg,
                 "Webhook forwarding diagnostics"
             );
-            repo.update_webhook_delivery_attempt(
+            let updated_delivery = repo
+                .update_webhook_delivery_attempt(webhook_delivery_id, None, Some(error_msg), false)
+                .await?;
+            log_persisted_delivery_failure(
+                app_id,
                 webhook_delivery_id,
-                None,
-                Some(error_msg),
-                false,
-            )
-            .await?;
+                &payload,
+                &updated_delivery,
+                DeliveryFailureLogContext {
+                    last_http_status: None,
+                    error_kind: "request_error",
+                    retry_message: "Failed to forward webhook to app due to request error",
+                    dead_letter_message: "Webhook delivery permanently failed and marked dead_lettered",
+                },
+            );
         }
     }
 
     Ok(())
 }
 
+fn log_persisted_delivery_failure(
+    app_id: Uuid,
+    webhook_delivery_id: Uuid,
+    payload: &CanonicalWebhookPayload,
+    delivery: &WebhookDelivery,
+    context: DeliveryFailureLogContext,
+) {
+    if delivery.dead_lettered {
+        error!(
+            signal_class = "alert_signal",
+            alert_key = "bridge.webhook.dead_lettered",
+            alert_severity = "ticket",
+            alert_subject = "Webhook delivery dead-lettered",
+            app_id = %app_id,
+            webhook_delivery_id = %webhook_delivery_id,
+            provider = %payload.provider,
+            event_type = %payload.event_type,
+            provider_event_id = %payload.provider_event_id,
+            attempts = delivery.forward_attempts,
+            last_http_status = context.last_http_status,
+            error_kind = context.error_kind,
+            error_msg = ?delivery.last_error,
+            dead_letter_reason = ?delivery.dead_letter_reason,
+            dead_lettered_at = ?delivery.dead_lettered_at,
+            failure_message = context.dead_letter_message,
+            "Webhook delivery permanently failed and marked dead_lettered"
+        );
+    } else {
+        warn!(
+            signal_class = "support_debug_signal",
+            alert_key = "bridge.callback.delivery_failed",
+            alert_severity = "audit",
+            alert_subject = "Webhook delivery retryable failure",
+            app_id = %app_id,
+            webhook_delivery_id = %webhook_delivery_id,
+            provider = %payload.provider,
+            event_type = %payload.event_type,
+            provider_event_id = %payload.provider_event_id,
+            attempt = delivery.forward_attempts,
+            attempts = delivery.forward_attempts,
+            last_http_status = context.last_http_status,
+            error_kind = context.error_kind,
+            error_msg = ?delivery.last_error,
+            failure_message = context.retry_message,
+            "Webhook delivery retryable failure persisted"
+        );
+    }
+}
+
+struct DeliveryFailureLogContext {
+    last_http_status: Option<i32>,
+    error_kind: &'static str,
+    retry_message: &'static str,
+    dead_letter_message: &'static str,
+}
+
 fn serialize_diagnostic_payload(payload: &CanonicalWebhookPayload) -> Result<String, BridgeError> {
-    serde_json::to_string(&scrub_payload_for_diagnostics(payload))
-        .map_err(|e| BridgeError::WebhookError(format!("Failed to serialize diagnostic payload: {}", e)))
+    serde_json::to_string(&scrub_payload_for_diagnostics(payload)).map_err(|e| {
+        BridgeError::WebhookError(format!("Failed to serialize diagnostic payload: {}", e))
+    })
 }
 
 fn scrub_payload_for_diagnostics(payload: &CanonicalWebhookPayload) -> CanonicalWebhookPayload {
@@ -288,8 +286,7 @@ pub async fn queue_and_forward_webhook<
     if !delivery.created {
         info!(
             "Webhook delivery already queued for provider webhook {} (delivery={}); treating duplicate as idempotent",
-            webhook_provider_id,
-            delivery.id,
+            webhook_provider_id, delivery.id,
         );
         return Ok(());
     }
@@ -329,10 +326,7 @@ pub async fn create_and_forward_webhook<
     if !is_new {
         info!(
             "Skipping duplicate synthetic webhook delivery: app_id={}, provider={}, provider_event_id={}, event_type={}",
-            app_id,
-            provider,
-            provider_webhook_id,
-            event_type
+            app_id, provider, provider_webhook_id, event_type
         );
         return Ok(());
     }
@@ -358,10 +352,7 @@ mod tests {
 
     #[test]
     fn test_create_signature() {
-        let result = create_signature(
-            r#"{"event_id":"test"}"#,
-            "secret"
-        ).unwrap();
+        let result = create_signature(r#"{"event_id":"test"}"#, "secret").unwrap();
 
         assert!(result.starts_with("sha256="));
     }
@@ -373,5 +364,4 @@ mod tests {
 
         assert_eq!(sig1, sig2);
     }
-
-    }
+}

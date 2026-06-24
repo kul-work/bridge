@@ -40,14 +40,15 @@ pub trait WebhookWriteRepository: Send + Sync {
 
 #[async_trait]
 pub trait WebhookForwardRepository:
-    crate::ports::traits::subscription::SubscriptionLookupRepository 
-    + WebhookSuppressionRepository 
-    + Send 
+    crate::ports::traits::subscription::SubscriptionLookupRepository
+    + WebhookSuppressionRepository
+    + Send
     + Sync
 {
     async fn get_webhook_delivery(&self, id: Uuid) -> Result<WebhookDelivery, BridgeError>;
 
-    async fn webhook_delivery_exists(&self, webhook_provider_id: Uuid) -> Result<bool, BridgeError>;
+    async fn webhook_delivery_exists(&self, webhook_provider_id: Uuid)
+    -> Result<bool, BridgeError>;
 
     async fn update_webhook_delivery_attempt(
         &self,
@@ -55,7 +56,7 @@ pub trait WebhookForwardRepository:
         http_status: Option<i32>,
         error: Option<String>,
         forwarded: bool,
-    ) -> Result<(), BridgeError>;
+    ) -> Result<WebhookDelivery, BridgeError>;
 
     async fn reset_webhook_delivery(&self, delivery_id: Uuid) -> Result<bool, BridgeError>;
 }
@@ -67,7 +68,10 @@ pub trait WebhookSuppressionRepository: Send + Sync {
 
 #[async_trait]
 pub trait WebhookProviderLookupRepository: Send + Sync {
-    async fn get_webhook_provider(&self, id: Uuid) -> Result<crate::ports::types::WebhookProviderSnapshot, BridgeError>;
+    async fn get_webhook_provider(
+        &self,
+        id: Uuid,
+    ) -> Result<crate::ports::types::WebhookProviderSnapshot, BridgeError>;
 }
 
 #[async_trait]
