@@ -1,5 +1,18 @@
 # Release Notes
 
+## [0.5.1] - 2026-06-24
+### Features
+- **Admin Alerts**: Add an admin dashboard surface for alert monitoring.
+
+### Fixes
+- **Webhooks**: Persist delivery attempt updates before emitting retry/dead-letter alert signals so alert logs match stored delivery state.
+- **Webhooks**: Structure forwarding outcome logs for terminal skips, stale suppression, duplicate queues, and resumed forwarding while preserving PII-safe identifiers.
+
+### Improvements
+- **Observability**: Add structured request, provider, webhook, subscription action, admin job, email, and checkout diagnostics with hashed external user and recipient identifiers.
+- **Alerts**: Add alert signal logging and follow-up alert documentation cleanup.
+- **Documentation**: Reorganize and refresh documentation indexes.
+
 ## [0.5.0] - 2026-06-23
 ### Features
 - **Observability**: Add PII-safe request, provider, webhook, and background job diagnostics with structured correlation fields.
