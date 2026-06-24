@@ -3,7 +3,7 @@
 /// Google Play notification and email helpers
 use crate::application::checkout_helpers::format_cents_as_dollars;
 use crate::error::BridgeError;
-use crate::services::email::EmailService;
+use crate::services::email::{EmailContext, EmailService};
 use chrono::DateTime;
 use chrono::Utc;
 
@@ -27,11 +27,13 @@ pub async fn send_email_restarted(
     email: &str,
     subscription_id: &str,
     current_period_end: DateTime<Utc>,
+    context: EmailContext<'_>,
 ) -> Result<(), BridgeError> {
-    email_service.send_email(
+    email_service.send_email_with_context(
         email,
         "Subscription Restarted",
         &format!("Your subscription {} has been restarted. Current period ends: {}", subscription_id, current_period_end),
+        context,
     ).await
 }
 
@@ -69,11 +71,13 @@ pub async fn send_email_price_step_up(
     subscription_id: &str,
     new_price_cents: i32,
     deadline: DateTime<Utc>,
+    context: EmailContext<'_>,
 ) -> Result<(), BridgeError> {
-    email_service.send_email(
+    email_service.send_email_with_context(
         email,
         "Subscription Price Increase",
         &format!("Your subscription {} price is increasing to ${} effective {}.", subscription_id, format_cents_as_dollars(new_price_cents), deadline),
+        context,
     ).await
 }
 
@@ -96,11 +100,13 @@ pub async fn send_email_deferred(
     email: &str,
     subscription_id: &str,
     deferred_until: DateTime<Utc>,
+    context: EmailContext<'_>,
 ) -> Result<(), BridgeError> {
-    email_service.send_email(
+    email_service.send_email_with_context(
         email,
         "Subscription Renewal Deferred",
         &format!("Your subscription {} renewal is deferred until {}.", subscription_id, deferred_until),
+        context,
     ).await
 }
 
@@ -109,11 +115,13 @@ pub async fn send_email_paused(
     email_service: &dyn EmailService,
     email: &str,
     subscription_id: &str,
+    context: EmailContext<'_>,
 ) -> Result<(), BridgeError> {
-    email_service.send_email(
+    email_service.send_email_with_context(
         email,
         "Subscription Paused",
         &format!("Your subscription {} has been paused. You can resume it at any time from your account settings.", subscription_id),
+        context,
     ).await
 }
 
@@ -122,11 +130,13 @@ pub async fn send_email_refunded(
     email_service: &dyn EmailService,
     email: &str,
     subscription_id: &str,
+    context: EmailContext<'_>,
 ) -> Result<(), BridgeError> {
-    email_service.send_email(
+    email_service.send_email_with_context(
         email,
         "Refund Processed",
         &format!("A refund has been processed for your subscription {}. Your subscription has been revoked as a result.", subscription_id),
+        context,
     ).await
 }
 
@@ -137,6 +147,7 @@ pub async fn send_email_payment_failed(
     subscription_id: &str,
     provider_name: &str,
     app_url: &str,
+    context: EmailContext<'_>,
 ) -> Result<(), BridgeError> {
     
     let provider_display = match provider_name {
@@ -180,9 +191,10 @@ pub async fn send_email_payment_failed(
         "\nIf you don't update your payment method, your subscription may be cancelled."
     );
 
-    email_service.send_email(
+    email_service.send_email_with_context(
         email,
         "Payment Failed - Action Required",
         &body,
+        context,
     ).await
 }

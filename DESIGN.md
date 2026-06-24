@@ -191,6 +191,8 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - `CLERK_SECRET_KEY` — for ClerkEmailService
 - `RESEND_API_KEY` — for ResendEmailService
 - `APP_EMAIL_FROM` — from email address for Resend
+- `EMAIL_PROVIDER_DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS` — default Resend cooldown after 429
+- `EMAIL_PROVIDER_MAX_RATE_LIMIT_COOLDOWN_SECONDS` — maximum Resend cooldown after 429
 
 ---
 
@@ -359,6 +361,8 @@ Google Play (webhook)
 | `CLERK_SECRET_KEY` | Clerk API key for email service |
 | `RESEND_API_KEY` | Resend API key for email service |
 | `APP_EMAIL_FROM` | From email address for Resend |
+| `EMAIL_PROVIDER_DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS` | Default Resend cooldown after provider 429 |
+| `EMAIL_PROVIDER_MAX_RATE_LIMIT_COOLDOWN_SECONDS` | Maximum Resend cooldown after provider 429 |
 
 ### Per-App Configuration
 

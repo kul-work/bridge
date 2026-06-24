@@ -12,7 +12,9 @@ use crate::{
         WebhookProcessingRepository, WebhookProviderSnapshot,
         WebhookSubscriptionCommitRequest, WebhookSubscriptionSnapshot,
     },
+    services::email::EmailContext,
     services::google_play::subscription_lifecycle::GooglePlayLifecycleOutcome,
+    utils::diagnostic_hash,
 };
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -89,30 +91,76 @@ pub(super) fn activation_subscription_status(provider: &str, raw_status: Option<
     }
 }
 
-async fn lookup_lifecycle_email(ctx: &EventContext<'_>, event_type: &str) -> Option<String> {
-    let user_id = ctx.external_user_id.as_deref()?;
+fn lifecycle_email_context<'a>(
+    ctx: &'a EventContext<'a>,
+    event_type: &'a str,
+    subscription_id: Option<&'a str>,
+) -> EmailContext<'a> {
+    EmailContext {
+        email_type: Some("lifecycle"),
+        app_id: Some(ctx.app_id),
+        provider: Some(ctx.provider),
+        event_type: Some(event_type),
+        provider_webhook_id: Some(ctx.webhook.provider_webhook_id.as_str()),
+        external_user_id: ctx.external_user_id.as_deref(),
+        subscription_id,
+    }
+}
 
-    match lookup_lifecycle_email_once(ctx, user_id).await {
+fn log_lifecycle_email_failure(
+    ctx: &EventContext<'_>,
+    event_type: &str,
+    subscription_id: &str,
+    error: &BridgeError,
+) {
+    let external_user_id_hash = ctx.external_user_id.as_deref().map(diagnostic_hash);
+    warn!(
+        app_id = %ctx.app_id,
+        provider = ctx.provider,
+        event_type,
+        provider_webhook_id = %ctx.webhook.provider_webhook_id,
+        external_user_id_hash = external_user_id_hash.as_deref(),
+        subscription_id,
+        error = %error,
+        "Failed to send lifecycle email"
+    );
+}
+
+async fn lookup_lifecycle_email(
+    ctx: &EventContext<'_>,
+    event_type: &str,
+    subscription_id: Option<&str>,
+) -> Option<String> {
+    let user_id = ctx.external_user_id.as_deref()?;
+    let external_user_id_hash = diagnostic_hash(user_id);
+
+    match lookup_lifecycle_email_once(ctx, user_id, event_type, subscription_id).await {
         Ok(email) => email,
         Err(first_error) => {
             warn!(
-                "Lifecycle email lookup failed for event {}; retrying once: {}",
+                app_id = %ctx.app_id,
+                provider = ctx.provider,
                 event_type,
-                first_error
+                provider_webhook_id = %ctx.webhook.provider_webhook_id,
+                external_user_id_hash = %external_user_id_hash,
+                subscription_id,
+                error = %first_error,
+                "Lifecycle email lookup failed; retrying once"
             );
             tokio::time::sleep(LIFECYCLE_EMAIL_LOOKUP_RETRY_DELAY).await;
 
-            match lookup_lifecycle_email_once(ctx, user_id).await {
+            match lookup_lifecycle_email_once(ctx, user_id, event_type, subscription_id).await {
                 Ok(email) => email,
                 Err(second_error) => {
                     error!(
-                        "Skipping lifecycle email after lookup retry failed: app_id={}, provider={}, event_type={}, provider_webhook_id={}, external_user_id={}, error={}",
-                        ctx.app_id,
-                        ctx.provider,
+                        app_id = %ctx.app_id,
+                        provider = ctx.provider,
                         event_type,
-                        ctx.webhook.provider_webhook_id,
-                        user_id,
-                        second_error
+                        provider_webhook_id = %ctx.webhook.provider_webhook_id,
+                        external_user_id_hash = %external_user_id_hash,
+                        subscription_id,
+                        error = %second_error,
+                        "Skipping lifecycle email after lookup retry failed"
                     );
                     None
                 }
@@ -124,8 +172,20 @@ async fn lookup_lifecycle_email(ctx: &EventContext<'_>, event_type: &str) -> Opt
 async fn lookup_lifecycle_email_once(
     ctx: &EventContext<'_>,
     user_id: &str,
+    event_type: &str,
+    subscription_id: Option<&str>,
 ) -> Result<Option<String>, BridgeError> {
-    crate::services::email_lookup::lookup_user_email(ctx.app, user_id).await
+    crate::services::email_lookup::lookup_user_email_with_context(
+        ctx.app,
+        user_id,
+        crate::services::email_lookup::EmailLookupContext {
+            origin: "lifecycle_email",
+            event_type: Some(event_type),
+            provider: Some(ctx.provider),
+            provider_webhook_id: Some(ctx.webhook.provider_webhook_id.as_str()),
+            subscription_id,
+        },
+    ).await
 }
 
 async fn acknowledge_google_play_one_time_from_webhook<R: WebhookProcessingRepository + ?Sized>(
@@ -253,15 +313,33 @@ async fn acknowledge_google_play_subscription_from_webhook<R: WebhookProcessingR
 }
 
 async fn send_price_step_up_email(ctx: &EventContext<'_>, subscription_id: &str) {
-    let Some(email) = lookup_lifecycle_email(ctx, "subscription.price_step_up").await else {
+    let event_type = "subscription.price_step_up";
+    let Some(email) = lookup_lifecycle_email(ctx, event_type, Some(subscription_id)).await else {
         return;
     };
+    let external_user_id_hash = ctx.external_user_id.as_deref().map(diagnostic_hash);
     let Some(new_price_cents) = ctx.fields.google_new_price_cents else {
-        warn!("Skipping price step-up email: missing new price");
+        warn!(
+            app_id = %ctx.app_id,
+            provider = ctx.provider,
+            event_type,
+            provider_webhook_id = %ctx.webhook.provider_webhook_id,
+            external_user_id_hash = external_user_id_hash.as_deref(),
+            subscription_id,
+            "Skipping price step-up email: missing new price"
+        );
         return;
     };
     let Some(deadline) = ctx.fields.google_price_step_up_consent_deadline.as_deref().and_then(parse_rfc3339_utc) else {
-        warn!("Skipping price step-up email: missing consent deadline");
+        warn!(
+            app_id = %ctx.app_id,
+            provider = ctx.provider,
+            event_type,
+            provider_webhook_id = %ctx.webhook.provider_webhook_id,
+            external_user_id_hash = external_user_id_hash.as_deref(),
+            subscription_id,
+            "Skipping price step-up email: missing consent deadline"
+        );
         return;
     };
 
@@ -272,8 +350,9 @@ async fn send_price_step_up_email(ctx: &EventContext<'_>, subscription_id: &str)
         subscription_id,
         new_price_cents,
         deadline,
+        lifecycle_email_context(ctx, event_type, Some(subscription_id)),
     ).await {
-        warn!("Failed to send price step-up lifecycle email: {}", e);
+        log_lifecycle_email_failure(ctx, event_type, subscription_id, &e);
     }
 }
 
@@ -282,7 +361,8 @@ async fn send_deferred_email(
     subscription_id: &str,
     deferred_until: chrono::DateTime<chrono::Utc>,
 ) {
-    let Some(email) = lookup_lifecycle_email(ctx, "subscription.deferred").await else {
+    let event_type = "subscription.deferred";
+    let Some(email) = lookup_lifecycle_email(ctx, event_type, Some(subscription_id)).await else {
         return;
     };
 
@@ -292,13 +372,15 @@ async fn send_deferred_email(
         &email,
         subscription_id,
         deferred_until,
+        lifecycle_email_context(ctx, event_type, Some(subscription_id)),
     ).await {
-        warn!("Failed to send deferred lifecycle email: {}", e);
+        log_lifecycle_email_failure(ctx, event_type, subscription_id, &e);
     }
 }
 
 async fn send_paused_email(ctx: &EventContext<'_>, subscription_id: &str) {
-    let Some(email) = lookup_lifecycle_email(ctx, "subscription.paused").await else {
+    let event_type = "subscription.paused";
+    let Some(email) = lookup_lifecycle_email(ctx, event_type, Some(subscription_id)).await else {
         return;
     };
 
@@ -307,13 +389,15 @@ async fn send_paused_email(ctx: &EventContext<'_>, subscription_id: &str) {
         email_service.as_ref(),
         &email,
         subscription_id,
+        lifecycle_email_context(ctx, event_type, Some(subscription_id)),
     ).await {
-        warn!("Failed to send paused lifecycle email: {}", e);
+        log_lifecycle_email_failure(ctx, event_type, subscription_id, &e);
     }
 }
 
 async fn send_resumed_email(ctx: &EventContext<'_>, subscription_id: &str, current_period_end: chrono::DateTime<chrono::Utc>) {
-    let Some(email) = lookup_lifecycle_email(ctx, "subscription.resumed").await else {
+    let event_type = "subscription.resumed";
+    let Some(email) = lookup_lifecycle_email(ctx, event_type, Some(subscription_id)).await else {
         return;
     };
 
@@ -323,13 +407,15 @@ async fn send_resumed_email(ctx: &EventContext<'_>, subscription_id: &str, curre
         &email,
         subscription_id,
         current_period_end,
+        lifecycle_email_context(ctx, event_type, Some(subscription_id)),
     ).await {
-        warn!("Failed to send resumed lifecycle email: {}", e);
+        log_lifecycle_email_failure(ctx, event_type, subscription_id, &e);
     }
 }
 
 async fn send_refunded_email(ctx: &EventContext<'_>, subscription_id: &str) {
-    let Some(email) = lookup_lifecycle_email(ctx, "payment.refunded").await else {
+    let event_type = "payment.refunded";
+    let Some(email) = lookup_lifecycle_email(ctx, event_type, Some(subscription_id)).await else {
         return;
     };
 
@@ -338,17 +424,28 @@ async fn send_refunded_email(ctx: &EventContext<'_>, subscription_id: &str) {
         email_service.as_ref(),
         &email,
         subscription_id,
+        lifecycle_email_context(ctx, event_type, Some(subscription_id)),
     ).await {
-        warn!("Failed to send refunded lifecycle email: {}", e);
+        log_lifecycle_email_failure(ctx, event_type, subscription_id, &e);
     }
 }
 
 async fn send_payment_failed_email(ctx: &EventContext<'_>, subscription_id: &str) {
-    let Some(email) = lookup_lifecycle_email(ctx, "payment.failed").await else {
+    let event_type = "payment.failed";
+    let Some(email) = lookup_lifecycle_email(ctx, event_type, Some(subscription_id)).await else {
         return;
     };
+    let external_user_id_hash = ctx.external_user_id.as_deref().map(diagnostic_hash);
     let Some(app_url) = ctx.app.app_url.as_deref() else {
-        warn!("Skipping payment failed email: app_url is not configured");
+        warn!(
+            app_id = %ctx.app_id,
+            provider = ctx.provider,
+            event_type,
+            provider_webhook_id = %ctx.webhook.provider_webhook_id,
+            external_user_id_hash = external_user_id_hash.as_deref(),
+            subscription_id,
+            "Skipping payment failed email: app_url is not configured"
+        );
         return;
     };
 
@@ -359,8 +456,9 @@ async fn send_payment_failed_email(ctx: &EventContext<'_>, subscription_id: &str
         subscription_id,
         ctx.provider,
         app_url,
+        lifecycle_email_context(ctx, event_type, Some(subscription_id)),
     ).await {
-        warn!("Failed to send payment failed lifecycle email: {}", e);
+        log_lifecycle_email_failure(ctx, event_type, subscription_id, &e);
     }
 }
 

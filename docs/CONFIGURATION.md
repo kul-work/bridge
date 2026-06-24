@@ -61,6 +61,8 @@ The admin dashboard uses `CLERK_PUBLISHABLE_KEY` to initialize the Clerk JS SDK 
 - `CLERK_SECRET_KEY` - Required in production when `EMAIL_PROVIDER=clerk`.
 - `RESEND_API_KEY` - Required in production when `EMAIL_PROVIDER=resend`.
 - `APP_EMAIL_FROM` (default: `noreply@bridge.local`) - Resend sender address.
+- `EMAIL_PROVIDER_DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS` (default: `300`) - Resend cooldown after a `429` when `Retry-After` is missing or invalid.
+- `EMAIL_PROVIDER_MAX_RATE_LIMIT_COOLDOWN_SECONDS` (default: `900`) - Upper bound for Resend `Retry-After` cooldown.
 
 For non-production, missing provider credentials fall back to mock email. In production, missing required credentials fail startup.
 
