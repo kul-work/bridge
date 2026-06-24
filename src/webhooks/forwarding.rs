@@ -289,6 +289,7 @@ fn serialize_diagnostic_payload(payload: &CanonicalWebhookPayload) -> Result<Str
 fn scrub_payload_for_diagnostics(payload: &CanonicalWebhookPayload) -> CanonicalWebhookPayload {
     let mut scrubbed = payload.clone();
     scrubbed.purchase_token = scrubbed.purchase_token.map(|token| diagnostic_hash(&token));
+    scrubbed.external_user_id = scrubbed.external_user_id.map(|user_id| diagnostic_hash(&user_id));
     scrubbed
 }
 
@@ -404,5 +405,48 @@ mod tests {
         let sig2 = create_signature(r#"{"event_id":"test"}"#, "secret").unwrap();
 
         assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn diagnostic_payload_hashes_user_and_purchase_token() {
+        let payload = CanonicalWebhookPayload {
+            event_id: "evt_1".to_string(),
+            event_type: "subscription.activated".to_string(),
+            timestamp: "2026-06-24T00:00:00Z".to_string(),
+            timestamp_epoch_ms: 1782259200000,
+            app_slug: "household".to_string(),
+            product_id: Some("monthly".to_string()),
+            subscription_id: Some("sub_1".to_string()),
+            external_user_id: Some("user_raw".to_string()),
+            amount_cents: Some(499),
+            new_price_cents: None,
+            auto_renewing: Some(true),
+            purchase_token: Some("purchase_token_raw".to_string()),
+            current_period_end: None,
+            status: Some("active".to_string()),
+            provider: "google_play".to_string(),
+            provider_event_id: "provider_evt_1".to_string(),
+            previous_status: None,
+            corrected_status: None,
+            reconciliation_source: None,
+            revocation_reason: None,
+            cancellation_mode: None,
+            google_price_step_up_consent_deadline: None,
+            google_pause_scheduled_at: None,
+            google_deferred_until: None,
+            google_pending_price_change_new_price_cents: None,
+            google_pending_price_change_currency: None,
+            google_pending_price_change_mode: None,
+            google_pending_price_change_state: None,
+            google_pending_price_change_expected_at: None,
+        };
+
+        let scrubbed = scrub_payload_for_diagnostics(&payload);
+
+        let expected_user_hash = diagnostic_hash("user_raw");
+        let expected_token_hash = diagnostic_hash("purchase_token_raw");
+
+        assert_eq!(scrubbed.external_user_id.as_deref(), Some(expected_user_hash.as_str()));
+        assert_eq!(scrubbed.purchase_token.as_deref(), Some(expected_token_hash.as_str()));
     }
 }

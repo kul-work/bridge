@@ -10,6 +10,7 @@ use crate::application::checkout_types::{CheckoutRequest, CheckoutResponse};
 use crate::ports::CheckoutHandlerRepository;
 use crate::services::creem::config::CreemConfig;
 use crate::services::creem::client::CreemClient;
+use crate::utils::diagnostic_hash;
 
 pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
     repo: &R,
@@ -57,6 +58,17 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
 
             let cached_response: CheckoutResponse = serde_json::from_value(cached.response_payload)
                 .map_err(|e| BridgeError::InternalServerError(format!("Invalid cached checkout payload: {}", e)))?;
+            tracing::info!(
+                route = "/api/v1/payment/checkout",
+                operation = "create_checkout",
+                app_id = %app_id,
+                external_user_id_hash = %diagnostic_hash(&external_user_id),
+                provider = %provider,
+                product_id = %product_id,
+                product_type = product_type.as_deref(),
+                outcome = "idempotency_cache_hit",
+                "Checkout response returned from idempotency cache"
+            );
             return Ok(cached_response);
         }
     }
@@ -195,6 +207,19 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
         repo.cache_checkout_response(app_id, key.trim(), &request_fingerprint, &response_json)
         .await?;
     }
+
+    tracing::info!(
+        route = "/api/v1/payment/checkout",
+        operation = "create_checkout",
+        app_id = %app_id,
+        external_user_id_hash = %diagnostic_hash(&external_user_id),
+        provider = %provider,
+        product_id = %product_id,
+        product_type = product_type.as_deref(),
+        checkout_id = %response.checkout_id,
+        outcome = "created",
+        "Checkout response created"
+    );
 
     Ok(response)
 }

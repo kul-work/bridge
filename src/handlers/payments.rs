@@ -4,6 +4,7 @@ use crate::error::BridgeError;
 use crate::handlers::api_key::AppAuth;
 use crate::ports::{PaymentReadRepository, SubscriptionWriteRepository};
 use crate::state::AppState;
+use crate::utils::diagnostic_hash;
 use axum::{
     extract::{State, Extension, Query},
     http::StatusCode,
@@ -188,6 +189,16 @@ pub async fn register_purchase(
             &request.provider,
         )
         .await?;
+    tracing::info!(
+        route = "/api/v1/purchase/register",
+        operation = "register_purchase",
+        app_id = %auth.app_id,
+        external_user_id_hash = %diagnostic_hash(&request.external_user_id),
+        provider = %request.provider,
+        subscription_id = %request.subscription_id,
+        outcome = "registered",
+        "Purchase registration recorded"
+    );
 
     Ok((
         StatusCode::OK,
