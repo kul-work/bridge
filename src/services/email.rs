@@ -25,15 +25,36 @@ async fn send_via_provider(
         })?;
 
     if !response.status().is_success() {
+        let status = response.status();
         let error_text = response
             .text()
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            log_email_auth_or_permission_failure(api_label, Some(status.as_u16()), "provider_rejected");
+        }
         error!("{} API error: {}", api_label, scrub_email(&error_text));
         return Err(BridgeError::InternalServerError("Email send failed".into()));
     }
 
     Ok(())
+}
+
+fn log_email_auth_or_permission_failure(
+    provider: &str,
+    http_status: Option<u16>,
+    failure: &'static str,
+) {
+    error!(
+        signal_class = "alert_signal",
+        alert_key = "bridge.email.auth_or_permission_failed",
+        alert_severity = "ticket",
+        alert_subject = "Email provider auth or permission failure",
+        provider,
+        http_status,
+        failure,
+        "Email provider auth or permission failure"
+    );
 }
 
 #[async_trait]
@@ -129,6 +150,7 @@ fn build_email_service(config: &Config) -> Result<Arc<dyn EmailService>, BridgeE
             let api_key = std::env::var("CLERK_SECRET_KEY").unwrap_or_default();
             if api_key.is_empty() {
                 if is_production {
+                    log_email_auth_or_permission_failure("clerk", None, "missing_api_key");
                     return Err(BridgeError::ConfigError(
                         "EMAIL_PROVIDER=clerk requires CLERK_SECRET_KEY in production".to_string(),
                     ));
@@ -145,6 +167,7 @@ fn build_email_service(config: &Config) -> Result<Arc<dyn EmailService>, BridgeE
                 .unwrap_or_else(|_| "noreply@bridge.local".to_string());
             if api_key.is_empty() {
                 if is_production {
+                    log_email_auth_or_permission_failure("resend", None, "missing_api_key");
                     return Err(BridgeError::ConfigError(
                         "EMAIL_PROVIDER=resend requires RESEND_API_KEY in production".to_string(),
                     ));

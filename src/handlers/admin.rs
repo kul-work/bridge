@@ -189,6 +189,12 @@ pub async fn alert_dashboard(
             "Reconciliation job failed",
         ),
         AlertSignalSummary::log_routed(
+            "bridge.email.auth_or_permission_failed",
+            "alert_signal",
+            "ticket",
+            "Email provider auth or permission failure",
+        ),
+        AlertSignalSummary::log_routed(
             "bridge.db.readiness_failed",
             "alert_signal",
             "page",

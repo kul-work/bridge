@@ -25,6 +25,7 @@ alert_key="bridge.webhook.dead_lettered"
 alert_key="bridge.callback.delivery_failed"
 alert_key="bridge.reconciliation.drift_detected"
 alert_key="bridge.reconciliation.job_failed"
+alert_key="bridge.email.auth_or_permission_failed"
 alert_key="bridge.db.readiness_failed"
 alert_key="bridge.db.role_or_rls_failed"
 ```
@@ -36,6 +37,7 @@ Initial alert routing:
 | `bridge.webhook.dead_lettered` | Ticket | App callback delivery is stuck after all retries. |
 | `bridge.reconciliation.drift_detected` | Audit | Provider truth corrected Bridge state; review for recurring drift. |
 | `bridge.reconciliation.job_failed` | Ticket | Reconciliation self-healing did not run successfully. |
+| `bridge.email.auth_or_permission_failed` | Ticket | Admin/lifecycle email provider credentials or permissions need operator action. |
 | `bridge.db.readiness_failed` | Page | Bridge cannot prove database readiness or connect at startup. |
 | `bridge.db.role_or_rls_failed` | Page | Runtime DB role, migration, or app-context setup is broken. |
 | `bridge.callback.delivery_failed` | Dashboard only | Retryable callback failure before dead-lettering; useful for trend/debug, not paging. |
