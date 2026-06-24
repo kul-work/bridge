@@ -100,7 +100,11 @@ impl IntoResponse for BridgeError {
     fn into_response(self) -> Response {
         let (status, error_code, message) = match &self {
             BridgeError::DbError(msg) => {
-                error!("Database error: {}", msg);
+                error!(
+                    error_code = "database_error",
+                    error = %msg,
+                    "Bridge request failed"
+                );
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "database_error",
@@ -113,7 +117,11 @@ impl IntoResponse for BridgeError {
                 msg.clone(),
             ),
             BridgeError::UnauthorizedError(msg) => {
-                error!("Unauthorized: {}", msg);
+                error!(
+                    error_code = "unauthorized",
+                    error = %msg,
+                    "Bridge request failed"
+                );
                 (
                     StatusCode::UNAUTHORIZED,
                     "unauthorized",
@@ -121,7 +129,11 @@ impl IntoResponse for BridgeError {
                 )
             }
             BridgeError::ProviderError(msg) => {
-                error!("Provider error: {}", msg);
+                error!(
+                    error_code = "provider_error",
+                    error = %msg,
+                    "Bridge request failed"
+                );
                 (
                     StatusCode::BAD_GATEWAY,
                     "provider_error",
@@ -129,7 +141,11 @@ impl IntoResponse for BridgeError {
                 )
             }
             BridgeError::WebhookError(msg) => {
-                error!("Webhook error: {}", msg);
+                error!(
+                    error_code = "webhook_error",
+                    error = %msg,
+                    "Bridge request failed"
+                );
                 (
                     StatusCode::BAD_REQUEST,
                     "webhook_error",
@@ -137,7 +153,11 @@ impl IntoResponse for BridgeError {
                 )
             }
             BridgeError::InternalServerError(msg) => {
-                error!("Internal server error: {}", msg);
+                error!(
+                    error_code = "internal_server_error",
+                    error = %msg,
+                    "Bridge request failed"
+                );
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal_server_error",
@@ -160,7 +180,11 @@ impl IntoResponse for BridgeError {
                 msg.clone(),
             ),
             BridgeError::ConfigError(msg) => {
-                error!("Configuration error: {}", msg);
+                error!(
+                    error_code = "config_error",
+                    error = %msg,
+                    "Bridge request failed"
+                );
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "config_error",
@@ -168,7 +192,11 @@ impl IntoResponse for BridgeError {
                 )
             }
             BridgeError::ProviderNotConfigured(msg) => {
-                error!("Provider not configured: {}", msg);
+                error!(
+                    error_code = "provider_not_configured",
+                    error = %msg,
+                    "Bridge request failed"
+                );
                 (
                     StatusCode::BAD_REQUEST,
                     "provider_not_configured",
@@ -176,7 +204,11 @@ impl IntoResponse for BridgeError {
                 )
             }
             BridgeError::DatabaseError(e) => {
-                error!("Database error: {}", e);
+                error!(
+                    error_code = "database_error",
+                    error = %e,
+                    "Bridge request failed"
+                );
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "database_error",
@@ -184,7 +216,11 @@ impl IntoResponse for BridgeError {
                 )
             }
             BridgeError::FraudDetected(msg) => {
-                error!("Fraud detected: {}", msg);
+                error!(
+                    error_code = "fraud_detected",
+                    error = %msg,
+                    "Bridge request failed"
+                );
                 (
                     StatusCode::CONFLICT,
                     "fraud_detected",
@@ -192,7 +228,11 @@ impl IntoResponse for BridgeError {
                 )
             }
             BridgeError::AppDisabled(msg) => {
-                error!("App disabled: {}", msg);
+                error!(
+                    error_code = "app_disabled",
+                    error = %msg,
+                    "Bridge request failed"
+                );
                 (
                     StatusCode::FORBIDDEN,
                     "app_disabled",

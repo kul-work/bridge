@@ -8,6 +8,7 @@ use crate::application::subscription_actions_types::{
 use crate::error::BridgeError;
 use crate::ports::SubscriptionActionsHandlerRepository;
 use crate::services::provider_api;
+use crate::utils::diagnostic_hash;
 
 pub(crate) struct CancelSubscriptionInput {
     pub app_id: Uuid,
@@ -112,9 +113,15 @@ pub async fn cancel_subscription<R: SubscriptionActionsHandlerRepository + ?Size
     .await
     {
         tracing::warn!(
-            "Failed to forward cancel callback for {}: {}",
-            updated_sub.subscription_id,
-            e
+            operation = "cancel_subscription",
+            app_id = %app_id,
+            provider = %updated_sub.provider,
+            external_user_id_hash = %diagnostic_hash(&updated_sub.external_user_id),
+            subscription_id = %updated_sub.subscription_id,
+            event_type = "subscription.cancelled",
+            mode,
+            error = %e,
+            "Failed to forward subscription action callback"
         );
     }
 
@@ -186,9 +193,14 @@ pub async fn resume_subscription<R: SubscriptionActionsHandlerRepository + ?Size
     .await
     {
         tracing::warn!(
-            "Failed to forward resume callback for {}: {}",
-            updated_sub.subscription_id,
-            e
+            operation = "resume_subscription",
+            app_id = %app_id,
+            provider = %updated_sub.provider,
+            external_user_id_hash = %diagnostic_hash(&updated_sub.external_user_id),
+            subscription_id = %updated_sub.subscription_id,
+            event_type = "subscription.resumed",
+            error = %e,
+            "Failed to forward subscription action callback"
         );
     }
 
@@ -329,9 +341,15 @@ pub async fn accept_price_step_up<R: SubscriptionActionsHandlerRepository + ?Siz
     .await
     {
         tracing::warn!(
-            "Failed to forward price step-up accept callback for {}: {}",
-            updated_sub.subscription_id,
-            e
+            operation = "accept_price_step_up",
+            app_id = %app_id,
+            provider = %updated_sub.provider,
+            external_user_id_hash = %diagnostic_hash(&updated_sub.external_user_id),
+            subscription_id = %updated_sub.subscription_id,
+            event_type = "subscription.price_step_up",
+            new_price_cents,
+            error = %e,
+            "Failed to forward subscription action callback"
         );
     }
 
@@ -409,9 +427,15 @@ pub async fn decline_price_step_up<R: SubscriptionActionsHandlerRepository + ?Si
     .await
     {
         tracing::warn!(
-            "Failed to forward price step-up decline callback for {}: {}",
-            updated_sub.subscription_id,
-            e
+            operation = "decline_price_step_up",
+            app_id = %app_id,
+            provider = %updated_sub.provider,
+            external_user_id_hash = %diagnostic_hash(&updated_sub.external_user_id),
+            subscription_id = %updated_sub.subscription_id,
+            event_type = "subscription.cancelled",
+            mode = "scheduled",
+            error = %e,
+            "Failed to forward subscription action callback"
         );
     }
 

@@ -65,9 +65,17 @@ impl CreemClient {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             let scrubbed_body = scrub_creem_error_body(&body);
+            error!(
+                provider = "creem",
+                operation = "create_checkout",
+                product_id,
+                status = status.as_u16(),
+                error_body = %scrubbed_body,
+                "Creem checkout failed"
+            );
             return Err(BridgeError::ProviderError(format!(
-                "Creem checkout failed for product_id '{}': {} - {}",
-                product_id, status, scrubbed_body
+                "Creem checkout failed for product_id '{}': {}",
+                product_id, status
             )));
         }
 
@@ -119,14 +127,26 @@ impl CreemClient {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             let scrubbed_body = scrub_creem_error_body(&body);
-            error!("Creem cancel failed: {} - {}", status, scrubbed_body);
+            error!(
+                provider = "creem",
+                operation = "cancel_subscription",
+                subscription_id,
+                status = status.as_u16(),
+                error_body = %scrubbed_body,
+                "Creem cancel failed"
+            );
             return Err(BridgeError::ProviderError(format!(
                 "Creem cancel failed: {}",
                 status
             )));
         }
 
-        info!("Creem subscription {} cancelled via API", subscription_id);
+        info!(
+            provider = "creem",
+            operation = "cancel_subscription",
+            subscription_id,
+            "Creem subscription cancelled via API"
+        );
         Ok(())
     }
 
@@ -149,14 +169,26 @@ impl CreemClient {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             let scrubbed_body = scrub_creem_error_body(&body);
-            error!("Creem resume failed: {} - {}", status, scrubbed_body);
+            error!(
+                provider = "creem",
+                operation = "resume_subscription",
+                subscription_id,
+                status = status.as_u16(),
+                error_body = %scrubbed_body,
+                "Creem resume failed"
+            );
             return Err(BridgeError::ProviderError(format!(
                 "Creem resume failed: {}",
                 status
             )));
         }
 
-        info!("Creem subscription {} resumed via API", subscription_id);
+        info!(
+            provider = "creem",
+            operation = "resume_subscription",
+            subscription_id,
+            "Creem subscription resumed via API"
+        );
         Ok(())
     }
 
@@ -181,7 +213,13 @@ impl CreemClient {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             let scrubbed_body = scrub_creem_error_body(&body);
-            error!("Creem billing portal failed: {} - {}", status, scrubbed_body);
+            error!(
+                provider = "creem",
+                operation = "create_billing_portal",
+                status = status.as_u16(),
+                error_body = %scrubbed_body,
+                "Creem billing portal failed"
+            );
             return Err(BridgeError::ProviderError(format!(
                 "Creem billing portal failed: {}",
                 status
@@ -219,7 +257,14 @@ impl CreemClient {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             let scrubbed_body = scrub_creem_error_body(&body);
-            error!("Creem get subscription failed: {} - {}", status, scrubbed_body);
+            error!(
+                provider = "creem",
+                operation = "fetch_subscription_status",
+                subscription_id,
+                status = status.as_u16(),
+                error_body = %scrubbed_body,
+                "Creem get subscription failed"
+            );
             return Err(BridgeError::ProviderError(format!(
                 "Creem get subscription failed: {}",
                 status

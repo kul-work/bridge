@@ -485,7 +485,14 @@ pub async fn trigger_jobs(
             "webhook_retry" => {
                 let mut err = None;
                 if let Err(e) = crate::webhooks::scheduler::retry_webhooks(db.as_ref()).await {
-                    error!("Manual webhook retry job failed: {}", e);
+                    error!(
+                        admin_subject = %admin.subject,
+                        admin_org = ?admin.org_id,
+                        action = "run_background_job",
+                        job = "webhook_retry",
+                        error = %e,
+                        "Manual background job failed"
+                    );
                     err = Some(e.to_string());
                 }
                 if let Err(e) =
@@ -494,7 +501,15 @@ pub async fn trigger_jobs(
                     )
                     .await
                 {
-                    error!("Manual Google Play acknowledgement retry failed: {}", e);
+                    error!(
+                        admin_subject = %admin.subject,
+                        admin_org = ?admin.org_id,
+                        action = "run_background_job",
+                        job = "google_play_acknowledgement_retry",
+                        provider = "google_play",
+                        error = %e,
+                        "Manual background job failed"
+                    );
                     err = Some(e.to_string());
                 }
                 err
@@ -503,7 +518,14 @@ pub async fn trigger_jobs(
                 match crate::webhooks::scheduler::reconcile_subscriptions(&db).await {
                     Ok(()) => None,
                     Err(e) => {
-                        error!("Manual reconciliation job failed: {}", e);
+                        error!(
+                            admin_subject = %admin.subject,
+                            admin_org = ?admin.org_id,
+                            action = "run_background_job",
+                            job = "reconciliation",
+                            error = %e,
+                            "Manual background job failed"
+                        );
                         Some(e.to_string())
                     }
                 }
@@ -512,7 +534,14 @@ pub async fn trigger_jobs(
                 match crate::webhooks::scheduler::process_price_step_up_expiry(&db).await {
                     Ok(()) => None,
                     Err(e) => {
-                        error!("Manual price step-up expiry job failed: {}", e);
+                        error!(
+                            admin_subject = %admin.subject,
+                            admin_org = ?admin.org_id,
+                            action = "run_background_job",
+                            job = "price_step_up",
+                            error = %e,
+                            "Manual background job failed"
+                        );
                         Some(e.to_string())
                     }
                 }
@@ -521,7 +550,14 @@ pub async fn trigger_jobs(
                 match crate::webhooks::scheduler::process_pause_transitions(&db).await {
                     Ok(()) => None,
                     Err(e) => {
-                        error!("Manual pause scheduler job failed: {}", e);
+                        error!(
+                            admin_subject = %admin.subject,
+                            admin_org = ?admin.org_id,
+                            action = "run_background_job",
+                            job = "pause_scheduler",
+                            error = %e,
+                            "Manual background job failed"
+                        );
                         Some(e.to_string())
                     }
                 }
@@ -529,7 +565,14 @@ pub async fn trigger_jobs(
             "cleanup" => match crate::webhooks::scheduler::cleanup_old_data(&db).await {
                 Ok(()) => None,
                 Err(e) => {
-                    error!("Manual cleanup job failed: {}", e);
+                    error!(
+                        admin_subject = %admin.subject,
+                        admin_org = ?admin.org_id,
+                        action = "run_background_job",
+                        job = "cleanup",
+                        error = %e,
+                        "Manual background job failed"
+                    );
                     Some(e.to_string())
                 }
             },

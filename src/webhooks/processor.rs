@@ -89,11 +89,13 @@ async fn suppress_unresolved_webhook<R: WebhookProcessingRepository>(
     failure_summary: Option<&str>,
 ) -> Result<(), BridgeError> {
     warn!(
-        "Webhook {} discarded: unable to resolve external_user_id (provider={}, event={}, reason={})",
-        webhook.provider_webhook_id,
-        webhook.provider,
-        webhook.event_type,
-        failure_summary.unwrap_or("unknown")
+        webhook_provider_id = %webhook_provider_id,
+        provider_webhook_id = %webhook.provider_webhook_id,
+        provider = %webhook.provider,
+        event_type = %webhook.event_type,
+        failure_summary = failure_summary.unwrap_or("unknown"),
+        outcome = "suppressed",
+        "Webhook discarded: unable to resolve external_user_id"
     );
     repo.suppress_webhook(webhook_provider_id, "unresolved_external_user_id").await
 }
@@ -637,8 +639,12 @@ async fn resolve_user<R: WebhookProcessingRepository>(
     // 5. Creem orphan guard
     if webhook.provider == "creem" {
         error!(
-            "Creem orphan guard: discarding webhook {} (event={})",
-            webhook.provider_webhook_id, webhook.event_type
+            provider = "creem",
+            provider_webhook_id = %webhook.provider_webhook_id,
+            event_type = %webhook.event_type,
+            outcome = "discarded",
+            failure_summary = %failure_parts.join(", "),
+            "Creem orphan guard discarding webhook"
         );
         return UserResolution {
             external_user_id: None,
@@ -662,8 +668,13 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
 
     if webhook.suppressed {
         info!(
-            "Webhook {} already suppressed: {}",
-            webhook_provider_id, webhook.suppressed_reason.as_deref().unwrap_or("unknown")
+            webhook_provider_id = %webhook_provider_id,
+            provider = %webhook.provider,
+            provider_webhook_id = %webhook.provider_webhook_id,
+            event_type = %webhook.event_type,
+            suppressed_reason = webhook.suppressed_reason.as_deref().unwrap_or("unknown"),
+            outcome = "suppressed",
+            "Webhook already suppressed"
         );
         return Ok(None);
     }
@@ -1033,8 +1044,13 @@ pub async fn process_webhook(
 
     if webhook.suppressed {
         info!(
-            "Webhook {} already suppressed: {}",
-            webhook_provider_id, webhook.suppressed_reason.as_deref().unwrap_or("unknown")
+            webhook_provider_id = %webhook_provider_id,
+            provider = %webhook.provider,
+            provider_webhook_id = %webhook.provider_webhook_id,
+            event_type = %webhook.event_type,
+            suppressed_reason = webhook.suppressed_reason.as_deref().unwrap_or("unknown"),
+            outcome = "suppressed",
+            "Webhook already suppressed"
         );
         return Ok(None);
     }
@@ -1112,7 +1128,15 @@ pub async fn process_webhook(
         ),
         EventHandling::ReturnNone => return Ok(None),
         EventHandling::NotHandled => {
-            info!("Unhandled webhook event type: {} (provider: {})", canonical_event, webhook.provider);
+            info!(
+                app_id = %app_id,
+                provider = %webhook.provider,
+                provider_webhook_id = %webhook.provider_webhook_id,
+                event_type = %webhook.event_type,
+                canonical_event = %canonical_event,
+                outcome = "unhandled",
+                "Unhandled webhook event type"
+            );
         }
     }
 
