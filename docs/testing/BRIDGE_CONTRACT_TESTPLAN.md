@@ -2,7 +2,7 @@
 
 This document covers Bridge contract acceptance — the end-to-end path between Bridge and downstream apps (HouseHold, HiHa, future apps), with a focus on **cross-app tenant isolation**. Bridge is shared infrastructure; a regression in RLS or app-scoping would let one app's payment/webhook data leak to another app.
 
-**Related**: [WEBHOOK_ARCHITECTURE.md](./WEBHOOK_ARCHITECTURE.md), [API_CONTRACT.md](./API_CONTRACT.md), [GOOGLE_PLAY_BILLING_TESTPLAN.md](./google/GOOGLE_PLAY_BILLING_TESTPLAN.md), [CREEM_BILLING_TESTPLAN.md](./creem/CREEM_BILLING_TESTPLAN.md).
+**Related**: [WEBHOOK_ARCHITECTURE.md](../WEBHOOK_ARCHITECTURE.md), [API_CONTRACT.md](../API_CONTRACT.md), [GOOGLE_PLAY_BILLING_TESTPLAN.md](../google/GOOGLE_PLAY_BILLING_TESTPLAN.md), [CREEM_BILLING_TESTPLAN.md](../creem/CREEM_BILLING_TESTPLAN.md).
 
 ---
 

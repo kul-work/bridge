@@ -458,6 +458,6 @@ Track:
 
 ## 12. Related Documents
 
-- **[BEHAVIORAL_SPEC.md](docs.notes/BEHAVIORAL_SPEC.md)** — Step-by-step implementation flows
-- **[DECISIONS.md](DECISIONS.md)** — Why architectural choices exist
+- **[BEHAVIORAL_SPEC.md](docs/BEHAVIORAL_SPEC.md)** — Step-by-step implementation flows
+- **[INVARIANTS.md](INVARIANTS.md)** — Behavioral guarantees and constraints
 - **[AGENTS.md](AGENTS.md)** — Code organization + style guidelines

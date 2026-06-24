@@ -2,7 +2,7 @@
 
 Automated test suite for the Bridge admin interface (manual webhook retry, scheduler triggers, admin authentication, CSP, and mutation audit logging).
 
-These scenarios correspond to the test specifications in [BRIDGE_ADMIN_TESTPLAN.md](../../docs/BRIDGE_ADMIN_TESTPLAN.md).
+These scenarios correspond to the test specifications in [BRIDGE_ADMIN_TESTPLAN.md](../../docs/testing/BRIDGE_ADMIN_TESTPLAN.md).
 
 ## Directory Structure
 

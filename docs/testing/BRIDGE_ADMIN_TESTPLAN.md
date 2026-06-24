@@ -2,7 +2,7 @@
 
 This document covers the Bridge admin interface — manual webhook retry, scheduler triggers, admin authentication, and CSP enforcement. These scenarios are **not** provider-specific; they apply regardless of whether the source webhook came from Google Play or Creem.
 
-**Related**: [GOOGLE_PLAY_BILLING_TESTPLAN.md](./google/GOOGLE_PLAY_BILLING_TESTPLAN.md), [CREEM_BILLING_TESTPLAN.md](./creem/CREEM_BILLING_TESTPLAN.md), [WEBHOOK_ARCHITECTURE.md](./WEBHOOK_ARCHITECTURE.md).
+**Related**: [GOOGLE_PLAY_BILLING_TESTPLAN.md](../google/GOOGLE_PLAY_BILLING_TESTPLAN.md), [CREEM_BILLING_TESTPLAN.md](../creem/CREEM_BILLING_TESTPLAN.md), [WEBHOOK_ARCHITECTURE.md](../WEBHOOK_ARCHITECTURE.md).
 
 ---
 

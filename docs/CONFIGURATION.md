@@ -98,7 +98,7 @@ These appear in older docs or `.env.sample`, but active runtime paths do not cur
 
 ## Database Configuration
 
-Bridge onboarding is DB-driven. See [`DB-ONBOARDING.md`](./DB-ONBOARDING.md) for full SQL examples.
+Bridge onboarding is DB-driven. See [`DB_ONBOARDING.md`](./DB_ONBOARDING.md) for full SQL examples.
 
 ### `pay.apps`
 

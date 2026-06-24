@@ -204,12 +204,12 @@ The following tests are **deferred** for Phase 2. See [GOOGLE_PLAY_BILLING_DEFER
 
 ### H.2 Dead-Letter and Admin Retry (Cross-Provider)
 
-These scenarios are shared with the [Creem testplan](../creem/CREEM_BILLING_TESTPLAN.md) and the [Bridge Admin testplan](../BRIDGE_ADMIN_TESTPLAN.md). They are listed here for completeness so the Google Play acceptance can verify the full lifecycle including operator intervention.
+These scenarios are shared with the [Creem testplan](../creem/CREEM_BILLING_TESTPLAN.md) and the [Bridge Admin testplan](../testing/BRIDGE_ADMIN_TESTPLAN.md). They are listed here for completeness so the Google Play acceptance can verify the full lifecycle including operator intervention.
 
 | ID | Scenario | Steps | Expected Result | Backend Validation | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **DLQ-01** | **Webhook Forwarding Exhausts Retries → Dead-Lettered** | 1. Configure app with a `webhook_callback_url` that returns HTTP 500 for all requests.<br>2. Trigger a legitimate Google Play webhook (e.g., `subscription.paid`).<br>3. Wait for all retry attempts to exhaust (3 attempts per `WEBHOOK_ARCHITECTURE.md`).<br>4. Query `webhook_delivery` table. | - `webhook_delivery` row has `dead_lettered=true`, `dead_lettered_at` NOT NULL, `dead_letter_reason` set.<br>- `forward_attempts=3`, `forwarded=false`.<br>- `last_http_status=500`, `last_error` contains response detail. | - `pay.webhook_delivery` row transitions through retry cycle: `forward_attempts` 0→1→2→3, then `dead_lettered=true`.<br>- `webhook_provider` row remains `processed=true` (ingestion succeeded, forwarding failed).<br>- No `payments`/`subscriptions` duplication from retry attempts. | **DB-side dead-letter assertion**. Complements NET-03 (which covers the *timeout* case). This covers the *exhaustion* case where the app is consistently unreachable. See migration `04_create_webhooks.sql` columns `dead_lettered`, `dead_lettered_at`, `dead_letter_reason`. |
-| **DLQ-02** | **Dead-Lettered Webhook Recovered via Admin Retry** | 1. Complete DLQ-01 (dead-lettered delivery exists).<br>2. Fix the app callback URL (make it return 200).<br>3. Call `POST /admin/webhooks/:webhook_id/retry` with valid admin JWT (see [Bridge Admin testplan](../BRIDGE_ADMIN_TESTPLAN.md) ADMIN-WHK-01).<br>4. Verify delivery succeeds. | - HTTP 200 from admin endpoint.<br>- App receives signed callback.<br>- `webhook_delivery.forwarded=true`, `dead_lettered=false`. | - Retry clears `dead_lettered` and resets forwarding state.<br>- Idempotency maintained: no duplicate `payments`/`subscriptions` rows.<br>- Audit log records admin actor. | Tests operator recovery path. Full scenario details in [BRIDGE_ADMIN_TESTPLAN.md](../BRIDGE_ADMIN_TESTPLAN.md). |
+| **DLQ-02** | **Dead-Lettered Webhook Recovered via Admin Retry** | 1. Complete DLQ-01 (dead-lettered delivery exists).<br>2. Fix the app callback URL (make it return 200).<br>3. Call `POST /admin/webhooks/:webhook_id/retry` with valid admin JWT (see [Bridge Admin testplan](../testing/BRIDGE_ADMIN_TESTPLAN.md) ADMIN-WHK-01).<br>4. Verify delivery succeeds. | - HTTP 200 from admin endpoint.<br>- App receives signed callback.<br>- `webhook_delivery.forwarded=true`, `dead_lettered=false`. | - Retry clears `dead_lettered` and resets forwarding state.<br>- Idempotency maintained: no duplicate `payments`/`subscriptions` rows.<br>- Audit log records admin actor. | Tests operator recovery path. Full scenario details in [BRIDGE_ADMIN_TESTPLAN.md](../testing/BRIDGE_ADMIN_TESTPLAN.md). |
 | **NET-05** | **Bridge-to-App Delivery Verification** | 1. Trigger purchase event.<br>2. Wait for async webhook forwarding.<br>3. Verify `pay.webhook_delivery` record shows success. | - Webhook successfully forwarded to downstream app.<br>- Backend logs 2xx response from app. | - Background worker processes `webhook_queue`.<br>- Calls app callback URL with canonical payload.<br>- Updates `webhook_delivery` table with `forwarded=true`. | **End-to-End Integrity**: Ensures Bridge doesn't just ingest webhooks but successfully relays them to the final destination. |
 
 ---
@@ -333,8 +333,8 @@ All test scenarios must pass before production deployment:
 ### Dead-Letter and Admin Retry (Required)
 
 - ✅ Webhook forwarding exhausts retries and dead-letters correctly (DLQ-01): `webhook_delivery` row has `dead_lettered=true` with reason after 3 failed attempts
-- ✅ Dead-lettered webhook recovered via admin retry (DLQ-02): No duplicate DB entries; see [BRIDGE_ADMIN_TESTPLAN.md](../BRIDGE_ADMIN_TESTPLAN.md) ADMIN-WHK-01/ADMIN-WHK-02
-- ✅ Admin actions authenticated and audited: See [BRIDGE_ADMIN_TESTPLAN.md](../BRIDGE_ADMIN_TESTPLAN.md) acceptance criteria
+- ✅ Dead-lettered webhook recovered via admin retry (DLQ-02): No duplicate DB entries; see [BRIDGE_ADMIN_TESTPLAN.md](../testing/BRIDGE_ADMIN_TESTPLAN.md) ADMIN-WHK-01/ADMIN-WHK-02
+- ✅ Admin actions authenticated and audited: See [BRIDGE_ADMIN_TESTPLAN.md](../testing/BRIDGE_ADMIN_TESTPLAN.md) acceptance criteria
 
 ### Price Changes (Optional, if app targets Korea)
 
@@ -367,4 +367,3 @@ These may be added in future releases after evaluating market demand and product
 4. **One-time product pricing**: INAPP product pricing is not returned by API call; price must be fetched separately or stored in app config.
 
 5. **Pub/Sub audience validation**: Implemented in production. Set `GOOGLE_VERIFY_AUDIENCE=true` and `GOOGLE_PUB_SUB_AUDIENCE` to your webhook URL (e.g., `https://api.yourdomain.com/webhooks/google`). Mismatched audiences will be rejected with proper error logging.
-

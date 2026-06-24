@@ -75,5 +75,5 @@ The isolation tests verify Bridge's multi-tenant RLS enforcement at the database
 
 ## Testplan Reference
 
-- [BRIDGE_CONTRACT_TESTPLAN.md](../../docs/BRIDGE_CONTRACT_TESTPLAN.md)
-- [BRIDGE_ADMIN_TESTPLAN.md](../../docs/BRIDGE_ADMIN_TESTPLAN.md)
+- [BRIDGE_CONTRACT_TESTPLAN.md](../../docs/testing/BRIDGE_CONTRACT_TESTPLAN.md)
+- [BRIDGE_ADMIN_TESTPLAN.md](../../docs/testing/BRIDGE_ADMIN_TESTPLAN.md)
