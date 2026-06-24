@@ -143,24 +143,37 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
 
                 if next_attempts >= 3 {
                     error!(
+                        signal_class = "alert_signal",
+                        alert_key = "bridge.webhook.dead_lettered",
+                        alert_severity = "ticket",
+                        alert_subject = "Webhook delivery dead-lettered",
                         app_id = %app_id,
                         webhook_delivery_id = %webhook_delivery_id,
                         provider = %payload.provider,
                         event_type = %payload.event_type,
                         provider_event_id = %payload.provider_event_id,
                         attempts = next_attempts,
+                        last_http_status = status,
+                        error_kind = "app_non_success_status",
                         error_msg = %error_msg,
                         status,
                         "Webhook delivery permanently failed and marked dead_lettered"
                     );
                 } else {
                     warn!(
+                        signal_class = "support_debug_signal",
+                        alert_key = "bridge.callback.delivery_failed",
+                        alert_severity = "audit",
+                        alert_subject = "Webhook delivery retryable failure",
                         app_id = %app_id,
                         webhook_delivery_id = %webhook_delivery_id,
                         provider = %payload.provider,
                         event_type = %payload.event_type,
                         provider_event_id = %payload.provider_event_id,
                         attempt = next_attempts,
+                        attempts = next_attempts,
+                        last_http_status = status,
+                        error_kind = "app_non_success_status",
                         status,
                         "Failed to forward webhook to app"
                     );
@@ -189,23 +202,36 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
 
             if next_attempts >= 3 {
                 error!(
+                    signal_class = "alert_signal",
+                    alert_key = "bridge.webhook.dead_lettered",
+                    alert_severity = "ticket",
+                    alert_subject = "Webhook delivery dead-lettered",
                     app_id = %app_id,
                     webhook_delivery_id = %webhook_delivery_id,
                     provider = %payload.provider,
                     event_type = %payload.event_type,
                     provider_event_id = %payload.provider_event_id,
                     attempts = next_attempts,
+                    last_http_status = tracing::field::Empty,
+                    error_kind = "request_error",
                     error_msg = %error_msg,
                     "Webhook delivery permanently failed and marked dead_lettered"
                 );
             } else {
                 warn!(
+                    signal_class = "support_debug_signal",
+                    alert_key = "bridge.callback.delivery_failed",
+                    alert_severity = "audit",
+                    alert_subject = "Webhook delivery retryable failure",
                     app_id = %app_id,
                     webhook_delivery_id = %webhook_delivery_id,
                     provider = %payload.provider,
                     event_type = %payload.event_type,
                     provider_event_id = %payload.provider_event_id,
                     attempt = next_attempts,
+                    attempts = next_attempts,
+                    last_http_status = tracing::field::Empty,
+                    error_kind = "request_error",
                     error = %error_msg,
                     "Failed to forward webhook to app due to request error"
                 );

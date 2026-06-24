@@ -27,7 +27,14 @@ impl Database {
         admin_database_url: Option<&str>,
     ) -> Result<Self, BridgeError> {
         let mut opts = sqlx::postgres::PgConnectOptions::from_str(database_url).map_err(|e| {
-            error!(error = %e, "database URL parse failed");
+            error!(
+                signal_class = "alert_signal",
+                alert_key = "bridge.db.role_or_rls_failed",
+                alert_severity = "page",
+                alert_subject = "Bridge database configuration failed",
+                error = %e,
+                "database URL parse failed"
+            );
             BridgeError::ConfigError("Failed to parse database URL".to_string())
         })?;
 
@@ -45,7 +52,14 @@ impl Database {
         }
 
         let pool = PgPool::connect_with(opts).await.map_err(|e| {
-            error!(error = %e, "database pool connect failed");
+            error!(
+                signal_class = "alert_signal",
+                alert_key = "bridge.db.readiness_failed",
+                alert_severity = "page",
+                alert_subject = "Bridge database connection failed",
+                error = %e,
+                "database pool connect failed"
+            );
             BridgeError::DbError(format!("Failed to connect to database: {}", e))
         })?;
 
@@ -53,11 +67,25 @@ impl Database {
         // can stay least-privilege.
         if let Some(admin_url) = admin_database_url {
             let admin_opts = sqlx::postgres::PgConnectOptions::from_str(admin_url).map_err(|e| {
-                error!(error = %e, "admin database URL parse failed");
+                error!(
+                    signal_class = "alert_signal",
+                    alert_key = "bridge.db.role_or_rls_failed",
+                    alert_severity = "page",
+                    alert_subject = "Bridge admin database configuration failed",
+                    error = %e,
+                    "admin database URL parse failed"
+                );
                 BridgeError::ConfigError("Failed to parse ADMIN_DATABASE_URL".to_string())
             })?;
             let admin_pool = PgPool::connect_with(admin_opts).await.map_err(|e| {
-                error!(error = %e, "admin database pool connect failed");
+                error!(
+                    signal_class = "alert_signal",
+                    alert_key = "bridge.db.readiness_failed",
+                    alert_severity = "page",
+                    alert_subject = "Bridge admin database connection failed",
+                    error = %e,
+                    "admin database pool connect failed"
+                );
                 BridgeError::DbError(format!("Failed to connect to admin database: {}", e))
             })?;
 
@@ -65,7 +93,15 @@ impl Database {
                 .run(&admin_pool)
                 .await
                 .map_err(|e| {
-                    error!(error = %e, migration_pool = "admin", "database migration failed");
+                    error!(
+                        signal_class = "alert_signal",
+                        alert_key = "bridge.db.role_or_rls_failed",
+                        alert_severity = "page",
+                        alert_subject = "Bridge database migration failed",
+                        error = %e,
+                        migration_pool = "admin",
+                        "database migration failed"
+                    );
                     BridgeError::DbError(format!("Failed to run migrations: {}", e))
                 })?;
         } else {
@@ -73,7 +109,15 @@ impl Database {
                 .run(&pool)
                 .await
                 .map_err(|e| {
-                    error!(error = %e, migration_pool = "runtime", "database migration failed");
+                    error!(
+                        signal_class = "alert_signal",
+                        alert_key = "bridge.db.role_or_rls_failed",
+                        alert_severity = "page",
+                        alert_subject = "Bridge database migration failed",
+                        error = %e,
+                        migration_pool = "runtime",
+                        "database migration failed"
+                    );
                     BridgeError::DbError(format!("Failed to run migrations: {}", e))
                 })?;
         }
@@ -92,7 +136,18 @@ pub(crate) async fn set_local_app_id(
         .bind(app_id.to_string())
         .execute(&mut **tx)
         .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+        .map_err(|e| {
+            error!(
+                signal_class = "alert_signal",
+                alert_key = "bridge.db.role_or_rls_failed",
+                alert_severity = "page",
+                alert_subject = "Bridge database app context failed",
+                app_id = %app_id,
+                error = %e,
+                "database app context set failed"
+            );
+            BridgeError::DbError(e.to_string())
+        })?;
 
     Ok(())
 }

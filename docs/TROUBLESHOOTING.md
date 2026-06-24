@@ -14,6 +14,34 @@ Never paste or search for raw API keys, webhook secrets/signatures, purchase tok
 - `provider`: payment or email provider, such as `google_play`, `creem`, or `resend`.
 - `event_id`, `event_type`: webhook/callback event details.
 
+## Alert-key dashboards and routing
+
+Build Bridge dashboards from structured log fields, grouped by `alert_key`. Keep `signal_class` in every query so support/debug signals stay visible without paging.
+
+Dashboard queries:
+
+```text
+alert_key="bridge.webhook.dead_lettered"
+alert_key="bridge.callback.delivery_failed"
+alert_key="bridge.reconciliation.drift_detected"
+alert_key="bridge.reconciliation.job_failed"
+alert_key="bridge.db.readiness_failed"
+alert_key="bridge.db.role_or_rls_failed"
+```
+
+Initial alert routing:
+
+| `alert_key` | Route | Why |
+|---|---|---|
+| `bridge.webhook.dead_lettered` | Ticket | App callback delivery is stuck after all retries. |
+| `bridge.reconciliation.drift_detected` | Audit | Provider truth corrected Bridge state; review for recurring drift. |
+| `bridge.reconciliation.job_failed` | Ticket | Reconciliation self-healing did not run successfully. |
+| `bridge.db.readiness_failed` | Page | Bridge cannot prove database readiness or connect at startup. |
+| `bridge.db.role_or_rls_failed` | Page | Runtime DB role, migration, or app-context setup is broken. |
+| `bridge.callback.delivery_failed` | Dashboard only | Retryable callback failure before dead-lettering; useful for trend/debug, not paging. |
+
+Do not route duplicate delivery, malformed/manual traffic, isolated provider noise, or retryable callback failures to paging from these baseline queries. Add spike or prolonged-failure thresholds only after staging or launch-window log volume gives a normal baseline.
+
 ## Health, readiness, and startup failures
 
 Check:

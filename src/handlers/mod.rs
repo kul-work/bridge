@@ -24,7 +24,14 @@ pub async fn readiness_check(
     let db = state.database();
     let count = crate::db::readiness::count_enabled_provider_configs(db.pool()).await
         .map_err(|err| {
-            tracing::error!(error = %err, "Database readiness check failed");
+            tracing::error!(
+                signal_class = "alert_signal",
+                alert_key = "bridge.db.readiness_failed",
+                alert_severity = "page",
+                alert_subject = "Bridge database readiness failed",
+                error = %err,
+                "Database readiness check failed"
+            );
             crate::error::BridgeError::DbError("Database readiness check failed".to_string())
         })?;
 

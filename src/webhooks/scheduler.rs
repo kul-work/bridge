@@ -43,7 +43,15 @@ pub fn spawn_reconciliation_worker(database: Arc<Database>) {
             interval.tick().await;
 
             if let Err(e) = reconcile_subscriptions(&database).await {
-                error!(job = "reconciliation", error = %e, "Subscription reconciliation worker tick failed");
+                error!(
+                    signal_class = "alert_signal",
+                    alert_key = "bridge.reconciliation.job_failed",
+                    alert_severity = "ticket",
+                    alert_subject = "Reconciliation job failed",
+                    job = "reconciliation",
+                    error = %e,
+                    "Subscription reconciliation worker tick failed"
+                );
             }
         }
     }.instrument(span));
@@ -252,12 +260,17 @@ async fn reconcile_app_subscriptions(
                     }
 
                     error!(
+                        signal_class = "alert_signal",
+                        alert_key = "bridge.reconciliation.drift_detected",
+                        alert_severity = "audit",
+                        alert_subject = "Provider reconciliation drift detected",
                         job = "reconciliation",
                         app_id = %app_id,
                         subscription_id = %sub.subscription_id,
                         provider = %sub.provider,
-                        db_status = %current_db_status,
-                        provider_status = %provider_status,
+                        previous_status = %current_db_status,
+                        corrected_status = %provider_status,
+                        reconciliation_source = "provider_api",
                         "Reconciliation drift detected, admin alert triggered"
                     );
 
