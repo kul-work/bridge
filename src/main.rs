@@ -176,6 +176,7 @@ async fn main() -> anyhow::Result<()> {
 
     let admin_api = Router::new()
         .route("/admin/apps", axum::routing::get(handlers::admin::list_apps))
+        .route("/admin/alerts", axum::routing::get(handlers::admin::alert_dashboard))
         .route("/admin/apps/:app_id/notes", axum::routing::patch(handlers::admin::update_app_notes))
         .route("/admin/apps/:app_id/webhooks", axum::routing::get(handlers::admin::get_app_webhooks))
         .route("/admin/webhooks/:webhook_id/payload", axum::routing::get(handlers::admin::get_webhook_payload))

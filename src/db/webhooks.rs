@@ -350,6 +350,61 @@ pub async fn count_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, B
     Ok(count.0)
 }
 
+pub async fn count_dead_lettered_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM pay.webhook_delivery
+         WHERE app_id = $1 AND dead_lettered = true"
+    )
+    .bind(app_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(count.0)
+}
+
+pub async fn count_retryable_failed_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM pay.webhook_delivery
+         WHERE app_id = $1
+           AND forwarded = false
+           AND dead_lettered = false
+           AND forward_attempts > 0"
+    )
+    .bind(app_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(count.0)
+}
+
+pub async fn count_reconciliation_drift_callbacks(pool: &PgPool, app_id: Uuid) -> Result<i64, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*)
+         FROM pay.webhook_provider
+         WHERE app_id = $1 AND event_type = 'reconciliation.drift_detected'"
+    )
+    .bind(app_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(count.0)
+}
+
 /// Count all webhook deliveries for app
 pub async fn count_app_webhooks(pool: &PgPool, app_id: Uuid) -> Result<i64, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;

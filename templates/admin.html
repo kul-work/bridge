@@ -279,6 +279,29 @@
     </div>
 
     <div class="section">
+      <h2>Alert Signals</h2>
+      <div class="card">
+        <div id="alerts-loading" class="loading">Loading...</div>
+        <div id="alerts-error" class="error hidden"></div>
+        <div class="table-container">
+          <table id="alerts-table" class="hidden">
+            <thead>
+              <tr>
+                <th>Alert Key</th>
+                <th>Class</th>
+                <th>Route</th>
+                <th>Count</th>
+                <th>Source</th>
+                <th>Log Query</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
       <h2>Background Jobs</h2>
       <div class="card">
         <table>
@@ -434,6 +457,7 @@ async function showDashboard() {
   const name = Clerk.user?.firstName || Clerk.user?.username || Clerk.user?.id || "Admin";
   nameEl.textContent = name;
 
+  await loadAlerts();
   await loadApps();
 }
 
@@ -562,6 +586,56 @@ async function loadApps() {
     errEl.textContent = err.message;
     errEl.classList.remove("hidden");
   }
+}
+
+async function loadAlerts() {
+  try {
+    const res = await authedFetch("/admin/alerts");
+    if (!res.ok) throw new Error("Failed to load alert signals (" + res.status + ")");
+    const alerts = await res.json();
+
+    document.getElementById("alerts-loading").classList.add("hidden");
+    const tbody = document.querySelector("#alerts-table tbody");
+    tbody.innerHTML = "";
+
+    alerts.forEach(alert => {
+      const row = tbody.insertRow();
+
+      const keyCell = row.insertCell();
+      const key = document.createElement("code");
+      key.textContent = alert.alert_key;
+      keyCell.appendChild(key);
+
+      row.insertCell().textContent = alert.signal_class;
+
+      const routeCell = row.insertCell();
+      const badge = document.createElement("span");
+      badge.className = "badge " + alertRouteClass(alert.route);
+      badge.textContent = alert.route;
+      routeCell.appendChild(badge);
+
+      row.insertCell().textContent = alert.count === null ? "Log query" : String(alert.count);
+      row.insertCell().textContent = alert.source;
+
+      const queryCell = row.insertCell();
+      const query = document.createElement("code");
+      query.textContent = 'alert_key="' + alert.log_query + '"';
+      queryCell.appendChild(query);
+    });
+
+    document.getElementById("alerts-table").classList.remove("hidden");
+  } catch (err) {
+    document.getElementById("alerts-loading").classList.add("hidden");
+    const errEl = document.getElementById("alerts-error");
+    errEl.textContent = err.message;
+    errEl.classList.remove("hidden");
+  }
+}
+
+function alertRouteClass(route) {
+  if (route === "page" || route === "ticket") return "danger";
+  if (route === "audit") return "warning";
+  return "success";
 }
 
 function appendAppUrl(cell, appUrl) {

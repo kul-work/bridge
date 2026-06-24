@@ -12,7 +12,7 @@ use tracing::{info, error};
 
 use crate::{
     config::ADMIN_WEBHOOK_LIST_LIMIT,
-    db::apps as app_queries,
+    db::{apps as app_queries, webhooks as webhook_queries},
     error::BridgeError,
     middleware::admin_auth::AdminAuthContext,
     ports::{AdminRepository, WebhookForwardRepository},
@@ -135,6 +135,67 @@ pub async fn list_apps(
     }
 
     Ok(axum::Json(summaries))
+}
+
+pub async fn alert_dashboard(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<AlertSignalSummary>>, BridgeError> {
+    let database = state.database();
+    let apps = database.as_ref().list_app_summaries().await?;
+    let mut dead_lettered = 0;
+    let mut retryable_failed = 0;
+    let mut reconciliation_drift = 0;
+
+    for app in apps {
+        dead_lettered += webhook_queries::count_dead_lettered_webhooks(database.pool(), app.id).await?;
+        retryable_failed += webhook_queries::count_retryable_failed_webhooks(database.pool(), app.id).await?;
+        reconciliation_drift += webhook_queries::count_reconciliation_drift_callbacks(database.pool(), app.id).await?;
+    }
+
+    Ok(Json(vec![
+        AlertSignalSummary::counted(
+            "bridge.webhook.dead_lettered",
+            "alert_signal",
+            "ticket",
+            "Webhook delivery dead-lettered",
+            dead_lettered,
+            "DB current: dead-lettered webhook_delivery rows",
+        ),
+        AlertSignalSummary::counted(
+            "bridge.callback.delivery_failed",
+            "support_debug_signal",
+            "dashboard",
+            "Webhook delivery retryable failure",
+            retryable_failed,
+            "DB current: failed deliveries still eligible for retry",
+        ),
+        AlertSignalSummary::counted(
+            "bridge.reconciliation.drift_detected",
+            "alert_signal",
+            "audit",
+            "Provider reconciliation drift detected",
+            reconciliation_drift,
+            "DB total: reconciliation drift callback records",
+        ),
+        AlertSignalSummary::log_routed(
+            "bridge.reconciliation.job_failed",
+            "alert_signal",
+            "ticket",
+            "Reconciliation job failed",
+        ),
+        AlertSignalSummary::log_routed(
+            "bridge.db.readiness_failed",
+            "alert_signal",
+            "page",
+            "Bridge database readiness failed",
+        ),
+        AlertSignalSummary::log_routed(
+            "bridge.db.role_or_rls_failed",
+            "alert_signal",
+            "page",
+            "Bridge database role or RLS failed",
+        ),
+    ]))
 }
 
 pub async fn update_app_notes(
@@ -512,6 +573,55 @@ pub struct AppSummary {
     pub app_url: Option<String>,
     pub notes: Option<String>,
     pub failed_webhooks: i64,
+}
+
+#[derive(serde::Serialize)]
+pub struct AlertSignalSummary {
+    pub alert_key: &'static str,
+    pub signal_class: &'static str,
+    pub route: &'static str,
+    pub alert_subject: &'static str,
+    pub count: Option<i64>,
+    pub source: &'static str,
+    pub log_query: &'static str,
+}
+
+impl AlertSignalSummary {
+    fn counted(
+        alert_key: &'static str,
+        signal_class: &'static str,
+        route: &'static str,
+        alert_subject: &'static str,
+        count: i64,
+        source: &'static str,
+    ) -> Self {
+        Self {
+            alert_key,
+            signal_class,
+            route,
+            alert_subject,
+            count: Some(count),
+            source,
+            log_query: alert_key,
+        }
+    }
+
+    fn log_routed(
+        alert_key: &'static str,
+        signal_class: &'static str,
+        route: &'static str,
+        alert_subject: &'static str,
+    ) -> Self {
+        Self {
+            alert_key,
+            signal_class,
+            route,
+            alert_subject,
+            count: None,
+            source: "Logs: query by alert_key",
+            log_query: alert_key,
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]
