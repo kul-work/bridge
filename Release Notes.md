@@ -1,5 +1,12 @@
 # Release Notes
 
+## [0.5.2] - 2026-06-25
+### Fixes
+- **Webhook Tokens**: Add expiry handling for generated webhook tokens.
+
+### Improvements
+- **Documentation**: Add architectural review notes.
+
 ## [0.5.1] - 2026-06-24
 ### Features
 - **Admin Alerts**: Add an admin dashboard surface for alert monitoring.
