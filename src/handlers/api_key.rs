@@ -11,9 +11,11 @@ use axum::{
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
+const WEBHOOK_SECRET_PROOF_TTL_SECS: i64 = 5 * 60;
 
 #[derive(Clone)]
 pub struct AppAuth {
@@ -26,6 +28,7 @@ pub struct AppAuth {
 pub struct VerifyExpectedAppRequest {
     pub expected_slug: String,
     pub webhook_secret_nonce: String,
+    pub webhook_secret_issued_at: i64,
     pub webhook_secret_proof: String,
 }
 
@@ -41,6 +44,13 @@ pub async fn verify_expected_app(
     let webhook_secret_nonce = payload.webhook_secret_nonce.trim();
     if webhook_secret_nonce.is_empty() {
         return Err(BridgeError::BadRequest("webhook_secret_nonce is required".to_string()));
+    }
+    let now = unix_timestamp()?;
+    let proof_age_secs = now - payload.webhook_secret_issued_at;
+    if !(0..=WEBHOOK_SECRET_PROOF_TTL_SECS).contains(&proof_age_secs) {
+        return Err(BridgeError::Forbidden(
+            "WEBHOOK_CALLBACK_SECRET proof is expired or issued in the future".to_string(),
+        ));
     }
     let webhook_secret_proof = payload.webhook_secret_proof.trim();
     if webhook_secret_proof.is_empty() {
@@ -84,7 +94,7 @@ pub async fn verify_expected_app(
     if let Some(ref app) = expected_app {
         let mut mac = HmacSha256::new_from_slice(app.webhook_callback_secret.as_bytes())
             .map_err(|_| BridgeError::InternalServerError("HMAC init failed".to_string()))?;
-        let signed_message = format!("{}:{}", webhook_secret_nonce, expected_slug);
+        let signed_message = format!("{}:{}:{}", webhook_secret_nonce, expected_slug, payload.webhook_secret_issued_at);
         mac.update(signed_message.as_bytes());
         webhook_secret_matches_expected_app = mac.verify_slice(&provided_proof_bytes).is_ok();
     }
@@ -208,6 +218,13 @@ pub async fn api_key_auth(
     Ok(response)
 }
 
+fn unix_timestamp() -> Result<i64, BridgeError> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| BridgeError::InternalServerError("System clock is before Unix epoch".to_string()))?;
+    Ok(duration.as_secs() as i64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,7 +300,8 @@ mod tests {
         };
 
         let nonce = "testnonce123";
-        let signed_message = format!("{}:{}", nonce, slug);
+        let issued_at = unix_timestamp()?;
+        let signed_message = format!("{}:{}:{}", nonce, slug, issued_at);
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes())?;
         mac.update(signed_message.as_bytes());
         let proof_bytes = mac.finalize().into_bytes();
@@ -292,6 +310,7 @@ mod tests {
         let payload = VerifyExpectedAppRequest {
             expected_slug: slug.clone(),
             webhook_secret_nonce: nonce.to_string(),
+            webhook_secret_issued_at: issued_at,
             webhook_secret_proof: proof_hex,
         };
 
@@ -338,6 +357,7 @@ mod tests {
         let payload = VerifyExpectedAppRequest {
             expected_slug: slug.clone(),
             webhook_secret_nonce: nonce.to_string(),
+            webhook_secret_issued_at: unix_timestamp()?,
             webhook_secret_proof: incorrect_proof.to_string(),
         };
 
@@ -352,6 +372,54 @@ mod tests {
                 assert!(msg.contains("are not valid for expected Bridge app"));
             }
             other => panic!("expected Forbidden error, got {:?}", other),
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_verify_expected_app_rejects_expired_webhook_secret_proof() -> Result<(), Box<dyn Error>> {
+        let Some(database) = test_database().await? else {
+            eprintln!("skipping test; set BRIDGE_TEST_DATABASE_URL");
+            return Ok(());
+        };
+
+        let pool = database.pool().clone();
+        let app_id = Uuid::new_v4();
+        let slug = format!("verify-test-{}", app_id);
+        let secret = "my_super_secret_callback_key";
+        insert_test_app(&pool, app_id, &slug, secret).await?;
+
+        let state = AppState::new(Arc::new(database));
+        let auth = AppAuth {
+            app_id: Uuid::nil(),
+            api_key_id: Uuid::nil(),
+            is_valid: false,
+        };
+
+        let nonce = "testnonce123";
+        let issued_at = unix_timestamp()? - WEBHOOK_SECRET_PROOF_TTL_SECS - 1;
+        let signed_message = format!("{}:{}:{}", nonce, slug, issued_at);
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes())?;
+        mac.update(signed_message.as_bytes());
+        let proof_hex = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+
+        let payload = VerifyExpectedAppRequest {
+            expected_slug: slug.clone(),
+            webhook_secret_nonce: nonce.to_string(),
+            webhook_secret_issued_at: issued_at,
+            webhook_secret_proof: proof_hex,
+        };
+
+        let result = verify_expected_app(State(state.clone()), Extension(auth), Json(payload)).await;
+
+        delete_test_app(&pool, app_id).await;
+
+        match result {
+            Err(BridgeError::Forbidden(msg)) => {
+                assert!(msg.contains("expired or issued in the future"));
+            }
+            other => panic!("expected expired Forbidden error, got {:?}", other),
         }
 
         Ok(())
