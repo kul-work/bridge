@@ -16,6 +16,7 @@ The most important theme: Bridge currently looks like a payment event system, bu
 4. Centralize lifecycle state transitions behind typed statuses and a state machine.
 5. Move provider-specific semantics behind real provider adapters.
 6. Split raw webhook payload retention from dedupe/delivery retention.
+7. Centralize production startup validation for config, URLs, and database role separation.
 
 ---
 
@@ -214,6 +215,36 @@ Separate retention for:
 - Delivery/outbox records.
 
 Raw payload can expire; final delivery outcome and provider event identity should survive longer and should not cascade-delete unresolved work.
+
+---
+
+## 8. High â€” Production safety policy is split between docs, `main.rs`, and implicit environment discipline
+
+Bridge documents several production requirements, but the runtime enforces only part of them centrally. The current hard startup failure is mostly limited to `MOCK_EXTERNAL_APIS=true` in production. Other launch-critical assumptions still depend on deployment discipline or scattered service behavior.
+
+### Evidence
+
+- `main.rs` rejects `MOCK_EXTERNAL_APIS=true` in production, but there is no central `Config::validate_startup()` equivalent for the rest of the production contract.
+- `docs/CONFIGURATION.md` says `ADMIN_DATABASE_URL` is required in production, but `Config::from_env` still treats it as optional and database startup falls back to runtime credentials when it is absent.
+- Background workers default to enabled, but production does not fail fast if `ENABLE_BACKGROUND_JOBS=false`, even though retry, reconciliation, cleanup, price-step-up expiry, and pause scheduling are part of Bridge's durable payment operations.
+- Admin Clerk configuration is runtime-optional: `ADMIN_CLERK_FRONTEND_API`, `ADMIN_CLERK_ORG_ID`, and `ADMIN_CLERK_AUTHORIZED_PARTIES` are not validated as a production admin boundary at startup.
+- Production URL safety is not enforced centrally for database URLs, app callback URLs, email lookup URLs, provider API URLs, admin Clerk issuer, or other outbound/inbound trusted endpoints.
+- Production logging safety depends on default filters; startup does not reject explicit debug/raw trace filters such as `BPT-RAW=debug` in a production environment.
+
+### Why it matters
+
+Bridge is a payment system. A bad production environment should fail before serving traffic, not degrade into a subtly unsafe shape. Missing admin DB separation can run migrations with runtime credentials. Disabled workers can stop callback retry/reconciliation. Unsafe URLs can send API keys, callbacks, or provider traffic to the wrong endpoint. Debug/raw trace filters can expose sensitive operational data. These are not staging checklist problems only; they are code-level startup invariants.
+
+### Recommended architectural direction
+
+- Add a central `Config::validate_startup()` and call it before initializing providers, databases, workers, or routes.
+- In production, require `ADMIN_DATABASE_URL` and reject runtime migration fallback.
+- In production, require `ENABLE_BACKGROUND_JOBS=true` unless an explicit documented maintenance mode is introduced.
+- In production, reject `EMAIL_PROVIDER=mock` and require the configured provider credentials needed by the selected provider.
+- In production, require a deliberate admin auth boundary: at minimum a production Clerk issuer plus `ADMIN_CLERK_AUTHORIZED_PARTIES`, and preferably `ADMIN_CLERK_ORG_ID` or an explicit immutable admin allowlist.
+- In production, reject unsafe trusted URLs: localhost/private/test hosts where inappropriate, plain `http://` for public/provider-facing endpoints, and callback/email-lookup URLs that do not match the intended app boundary.
+- In production, reject debug/raw trace filters that can expose sensitive identifiers or provider payload context.
+- Treat production config validation as part of Bridge's architecture contract, not as deployment documentation.
 
 ---
 
