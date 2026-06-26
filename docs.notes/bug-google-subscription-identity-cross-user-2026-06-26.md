@@ -1,7 +1,7 @@
 # BUG — Google subscription identity can corrupt entitlement across users
 
 - **Severity:** Critical (money + entitlement, cross-user)
-- **Status:** Open
+- **Status:** Fixed (2026-06-26) — reconciliation now keyed by row id; forward stale-check and retry/resume rebuild are Google purchase-token keyed with no SKU fallback; DB regression test added (`src/db/subscriptions.rs::google_identity_regression_tests`).
 - **Discovered:** 2026-06-26, during architectural review (`docs.notes/architectural-review-2026-06-24.md`, section 1)
 - **Window:** Found **before** PROD/LIVE. No real customers affected yet. This ticket exists because this is the most critical bug found in the platform so far and must not get lost.
 - **Related review item:** "Critical — Google subscription identity is not safe enough"

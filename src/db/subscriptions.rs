@@ -1400,10 +1400,17 @@ pub async fn get_subscription_by_purchase_token_for_provider(
     .await
 }
 
-pub async fn update_subscription_status(
+/// Reconciliation write-back keyed on the concrete row id, not subscription_id.
+///
+/// Google Play subscription_id is a shared product SKU, so two users on the
+/// same product have rows that share (app_id, subscription_id). The reconciler
+/// already iterates a concrete DB row, so we mutate that exact row by
+/// (app_id, id) to avoid clobbering another user's same-SKU row. The
+/// high-water stale guard (last_event_time < event_time_ms) is preserved.
+pub async fn update_reconciled_subscription_status(
     pool: &PgPool,
     app_id: Uuid,
-    subscription_id: &str,
+    id: Uuid,
     new_status: &str,
     current_period_end: Option<DateTime<Utc>>,
     event_time_ms: i64,
@@ -1416,13 +1423,13 @@ pub async fn update_subscription_status(
              version = version + 1,
              last_event_time = $3,
              updated_at = NOW()
-         WHERE app_id = $4 AND subscription_id = $5 AND last_event_time < $3"
+         WHERE app_id = $4 AND id = $5 AND last_event_time < $3"
     )
     .bind(new_status)
     .bind(current_period_end)
     .bind(event_time_ms)
     .bind(app_id)
-    .bind(subscription_id)
+    .bind(id)
     .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
@@ -1483,4 +1490,195 @@ pub async fn link_replacement_subscriptions(
     tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(())
+}
+
+/// Test-only helper: insert a subscription row under the RLS app context.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_test_subscription(
+    pool: &PgPool,
+    app_id: Uuid,
+    external_user_id: &str,
+    subscription_id: &str,
+    provider: &str,
+    purchase_token: &str,
+    status: &str,
+    current_period_end: Option<DateTime<Utc>>,
+    last_event_time: i64,
+) -> Uuid {
+    let mut tx = begin_app_tx(pool, app_id).await.unwrap();
+    let row: (Uuid,) = sqlx::query_as(
+        "INSERT INTO pay.subscriptions
+           (app_id, external_user_id, subscription_id, provider, purchase_token, status, current_period_end, last_event_time)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id",
+    )
+    .bind(app_id)
+    .bind(external_user_id)
+    .bind(subscription_id)
+    .bind(provider)
+    .bind(purchase_token)
+    .bind(status)
+    .bind(current_period_end)
+    .bind(last_event_time)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    row.0
+}
+
+/// Test-only helper: delete a subscription row under the RLS app context.
+#[cfg(test)]
+pub(crate) async fn delete_test_subscription(pool: &PgPool, app_id: Uuid, id: Uuid) {
+    let mut tx = begin_app_tx(pool, app_id).await.unwrap();
+    sqlx::query("DELETE FROM pay.subscriptions WHERE app_id = $1 AND id = $2")
+        .bind(app_id)
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+}
+
+/// Regression coverage for the Google subscription identity cross-user bug.
+///
+/// Two Google Play rows can share `(app_id, provider, subscription_id)` because
+/// `subscription_id` is a shared product SKU. The per-user lifecycle identity is
+/// the purchase token. These tests prove the row-selection primitives the three
+/// fixed side paths rely on (reconciliation write-back, forward stale-check, and
+/// retry/resume canonical rebuild) isolate users sharing the same SKU.
+///
+/// DB-backed and self-cleaning. Skips when `DATABASE_URL` is not set so it is a
+/// no-op in environments without a database.
+#[cfg(test)]
+mod google_identity_regression_tests {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+
+    async fn insert_sub(
+        pool: &PgPool,
+        app_id: Uuid,
+        external_user_id: &str,
+        subscription_id: &str,
+        purchase_token: &str,
+        status: &str,
+        last_event_time: i64,
+    ) -> Uuid {
+        insert_test_subscription(
+            pool,
+            app_id,
+            external_user_id,
+            subscription_id,
+            "google_play",
+            purchase_token,
+            status,
+            None,
+            last_event_time,
+        )
+        .await
+    }
+
+    async fn status_of(pool: &PgPool, app_id: Uuid, id: Uuid) -> String {
+        let mut tx = begin_app_tx(pool, app_id).await.unwrap();
+        let row: (String,) = sqlx::query_as("SELECT status FROM pay.subscriptions WHERE app_id = $1 AND id = $2")
+            .bind(app_id)
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        row.0
+    }
+
+    async fn delete_sub(pool: &PgPool, app_id: Uuid, id: Uuid) {
+        let mut tx = begin_app_tx(pool, app_id).await.unwrap();
+        sqlx::query("DELETE FROM pay.subscriptions WHERE app_id = $1 AND id = $2")
+            .bind(app_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn google_same_sku_two_users_stay_isolated() {
+        let Ok(database_url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping google_same_sku_two_users_stay_isolated: DATABASE_URL not set");
+            return;
+        };
+
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&database_url)
+            .await
+            .expect("connect test pool");
+
+        // Discover a real app id past RLS via the bootstrap SECURITY DEFINER fn.
+        let app_ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM pay.list_enabled_app_ids_bootstrap()")
+            .fetch_all(&pool)
+            .await
+            .expect("list enabled app ids");
+        let Some(&app_id) = app_ids.first() else {
+            eprintln!("skipping google_same_sku_two_users_stay_isolated: no enabled apps");
+            return;
+        };
+
+        // Unique-but-shared SKU plus per-user unique identities for this run.
+        let run = Uuid::new_v4().simple().to_string();
+        let sku = format!("regtest_hiha_monthly_{run}");
+        let user_a = format!("regtest_user_a_{run}");
+        let user_b = format!("regtest_user_b_{run}");
+        let token_a = format!("regtest_token_a_{run}");
+        let token_b = format!("regtest_token_b_{run}");
+
+        // Row A is the older event; row B is newer. Same app/provider/SKU.
+        let id_a = insert_sub(&pool, app_id, &user_a, &sku, &token_a, "active", 1_000).await;
+        let id_b = insert_sub(&pool, app_id, &user_b, &sku, &token_b, "active", 5_000).await;
+
+        // --- Path 1: reconciliation write-back must touch only the target row ---
+        let updated = update_reconciled_subscription_status(&pool, app_id, id_a, "cancelled", None, 10_000)
+            .await
+            .unwrap();
+        assert!(updated, "reconciliation update should apply to row A");
+        assert_eq!(status_of(&pool, app_id, id_a).await, "cancelled", "row A updated");
+        assert_eq!(status_of(&pool, app_id, id_b).await, "active", "row B (other user) must be untouched");
+
+        // High-water stale guard preserved: an older event cannot overwrite.
+        let stale = update_reconciled_subscription_status(&pool, app_id, id_a, "active", None, 9_999)
+            .await
+            .unwrap();
+        assert!(!stale, "stale reconciliation update should be rejected");
+        assert_eq!(status_of(&pool, app_id, id_a).await, "cancelled", "row A unchanged by stale event");
+
+        // --- Paths 2 & 3: purchase-token lookup selects the correct same-SKU row ---
+        let by_token_b = get_subscription_by_purchase_token(&pool, app_id, &token_b)
+            .await
+            .unwrap()
+            .expect("row B by token");
+        assert_eq!(by_token_b.id, id_b);
+        assert_eq!(by_token_b.external_user_id, user_b);
+
+        let by_token_a = get_subscription_by_purchase_token_for_provider(&pool, app_id, "google_play", &token_a)
+            .await
+            .unwrap()
+            .expect("row A by token for provider");
+        assert_eq!(by_token_a.id, id_a);
+        assert_eq!(by_token_a.external_user_id, user_a);
+
+        // Token miss must NOT borrow a same-SKU row: returns None (fail-open).
+        let missing = get_subscription_by_purchase_token_for_provider(
+            &pool,
+            app_id,
+            "google_play",
+            &format!("regtest_token_missing_{run}"),
+        )
+        .await
+        .unwrap();
+        assert!(missing.is_none(), "unmatched token must not fall back to a same-SKU row");
+
+        delete_sub(&pool, app_id, id_a).await;
+        delete_sub(&pool, app_id, id_b).await;
+    }
 }
