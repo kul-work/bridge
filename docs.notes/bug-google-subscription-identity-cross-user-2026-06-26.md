@@ -53,8 +53,8 @@ This is not "the whole Google integration is wrong." It is "two call sites need 
 
 Do NOT re-key the whole Google integration — the live path is already correct. Only the two call sites that dropped the user dimension:
 
-1. **`update_subscription_status`** — add `external_user_id` (or `purchase_token`) to the WHERE clause, or replace its callers with a row-id / purchase-token-keyed mutation. Reconciliation must write to one row, not all rows sharing a `subscription_id`.
-2. **Forward stale-check in `forwarding.rs`** — look up the stored row by `purchase_token` (already available on the payload via `canonical_purchase_token`) instead of `get_subscription_by_sub_id`. Same pattern `resolve_user` already uses for Google.
+1. **`update_subscription_status` (reconciliation write-back)** — for `google_play`, key the write strictly on `purchase_token`, NOT `external_user_id`. These are not interchangeable: a user who cancels and resubscribes on the same SKU gets a **new** `purchase_token` but the **same** `(external_user_id, subscription_id)`, so an `external_user_id`-keyed UPDATE would still clobber that user's old row alongside the new one — a within-user version of the same bug. `purchase_token` is the only row-unique key. Scope is contained: `update_subscription_status` has exactly **one** caller (the reconciler at `scheduler.rs:241`), so add a `purchase_token`-keyed mutation and branch by provider in the reconciler. The reconciler row (`sub`) already carries `purchase_token`.
+2. **Forward stale-check in `forwarding.rs`** — make the stored-row lookup provider-aware, NOT a blanket swap. For `google_play`, look up by `purchase_token` (already on the payload via `canonical_purchase_token`); for other providers keep `get_subscription_by_sub_id`, because there `subscription_id` is already user-unique and `purchase_token` may be null — a global replacement would neuter stale-suppression for them. This mirrors exactly what `resolve_user` already does. The helper `get_subscription_by_purchase_token` already exists, so this is a one-line lookup swap, no new DB code.
 
 Consider a guardrail: ban generic lifecycle mutations keyed only by `subscription_id` for the `google_play` provider at the repo trait level, so this category cannot regress.
 
@@ -68,3 +68,56 @@ Consider a guardrail: ban generic lifecycle mutations keyed only by `subscriptio
 ## Bug autopsy (why it happened)
 
 The author understood Google's identity model and encoded it in `resolve_user` and the tracing. But that knowledge was not enforced as an invariant at the repository boundary. Two later call sites (`update_subscription_status`, the forward stale-check) reached for the convenient `subscription_id` key without the user dimension, and nothing stopped them. The practical guardrail is exactly that: lifecycle mutations for `google_play` must not accept a `subscription_id`-only key.
+
+-----
+
+## Fixing Strategy
+
+**Problem context:** Two Google Play `Subscription` rows can share the same
+`app_id/provider/subscription_id` but differ in `external_user_id`,
+`purchase_token`, or `last_event_time`. Any logic keyed on `subscription_id`
+alone risks updating or evaluating the wrong row.
+
+### Core changes
+
+1. **Reconciliation**
+   Update by row `id` from the reconciled `Subscription`, not by
+   `subscription_id`. The reconciler already iterates concrete DB rows, so the
+   row's own primary key is the safe identifier. Concretely: key
+   `update_subscription_status` (or a new variant) by `id` (row) and/or
+   `purchase_token` for Google, instead of `subscription_id` — eliminating the
+   multi-row ambiguity at the write path.
+
+2. **Forward stale check**
+   For `google_play`, compare staleness using `payload.purchase_token` (i.e.,
+   `canonical_purchase_token`) instead of `subscription_id`. If no token is
+   present, **fail open** (forward the event) rather than suppressing it based
+   on a shared SKU.
+
+3. **Retry/resume canonical payload rebuild**
+   For `google_play`, the lookup order is purchase-token first,
+   subscription-id only as fallback (never the reverse).
+
+4. **Guardrail**
+   Make any remaining `subscription_id`-only lookup/update path visibly unsafe
+   for Google, or remove it from generic lifecycle interfaces where feasible.
+
+   > **Open design question:** scope as minimal ("Google uses purchase-token
+   > keying," documented/asserted at the call sites that need it) vs. stronger
+   > (repo-trait level ban on `subscription_id`-only lifecycle mutations for
+   > `google_play`). Leaning toward minimal first; broader ban is a follow-up
+   > if minimal proves insufficient.
+
+5. **Regression test**
+   Two Google rows, same `app_id/provider/subscription_id`, different
+   `external_user_id`/`purchase_token`/`last_event_time`. Assert that
+   reconciliation, stale suppression, and retry payload rebuild all operate on
+   the intended row and leave the other row untouched.
+
+### Execution
+
+- **Priority order:**
+  1. Reconciliation fix
+  2. Forwarding stale-suppression fix
+  3. Two-user/same-SKU regression test covering both
+- **Validation:** Bridge Tier-2 checks + `cargo check` /
