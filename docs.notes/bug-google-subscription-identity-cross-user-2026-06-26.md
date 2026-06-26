@@ -73,6 +73,52 @@ The author understood Google's identity model and encoded it in `resolve_user` a
 
 ## Fixing Strategy
 
+### Goal
+
+Fix Google Play side paths that key subscription lifecycle work by shared SKU
+instead of row-unique purchase identity, so reconciliation, forwarding stale
+suppression, and retry/resume payload rebuilds cannot cross-contaminate users
+sharing the same subscription product.
+
+### Mechanism at a glance
+
+```diagram
+╭──────────────────────╮
+│ Google Play RTDN/SKU │
+│ subscription_id=SKU  │
+╰──────────┬───────────╯
+           │
+           ▼
+╭──────────────────────────────╮
+│ Resolve row by purchase_token │
+│ not SKU for google_play       │
+╰───────┬───────────┬──────────╯
+        │           │
+        ▼           ▼
+╭──────────────╮  ╭────────────────╮
+│ Reconciler   │  │ Forward stale   │
+│ update row id│  │ check same token│
+╰──────────────╯  ╰────────────────╯
+        │           │
+        ╰─────┬─────╯
+              ▼
+╭──────────────────────────────╮
+│ Callback/retry payload uses   │
+│ same subscription row/token   │
+╰──────────────────────────────╯
+```
+
+### Already-decided — not re-litigating
+
+- Do not re-key the whole Google integration; the live webhook mutation path
+  already resolves Google users by purchase token.
+- Do not replace all provider stale checks with purchase-token lookup; non-Google
+  providers can keep subscription-id keying where that id is user-unique.
+- Do not key Google reconciliation by `external_user_id + subscription_id`; the
+  same user can resubscribe to the same SKU with a new purchase token.
+- Minimal guardrail first; repo-trait-level bans can be follow-up unless review
+  finds the minimal guardrail insufficient.
+
 **Problem context:** Two Google Play `Subscription` rows can share the same
 `app_id/provider/subscription_id` but differ in `external_user_id`,
 `purchase_token`, or `last_event_time`. Any logic keyed on `subscription_id`
@@ -120,4 +166,4 @@ alone risks updating or evaluating the wrong row.
   1. Reconciliation fix
   2. Forwarding stale-suppression fix
   3. Two-user/same-SKU regression test covering both
-- **Validation:** Bridge Tier-2 checks + `cargo check` /
+- **Validation:** Bridge Tier-2 checks + `cargo check` + targeted regression tests.
