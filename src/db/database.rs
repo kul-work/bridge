@@ -105,6 +105,22 @@ impl Database {
                     BridgeError::DbError(format!("Failed to run migrations: {}", e))
                 })?;
         } else {
+            let environment = std::env::var("ENVIRONMENT")
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if matches!(environment.as_str(), "production" | "prod") {
+                error!(
+                    signal_class = "alert_signal",
+                    alert_key = "bridge.db.role_or_rls_failed",
+                    alert_severity = "page",
+                    alert_subject = "Bridge admin database configuration failed",
+                    "ADMIN_DATABASE_URL is required in production"
+                );
+                return Err(BridgeError::ConfigError(
+                    "ADMIN_DATABASE_URL is required in production".to_string(),
+                ));
+            }
+
             sqlx::migrate!("./migrations")
                 .run(&pool)
                 .await
