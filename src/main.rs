@@ -91,14 +91,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Load config
     let config = Config::from_env()?;
+    config.validate_startup()?;
     init_google_play_credentials(&config.environment)?;
-
-    let env_lower = config.environment.to_ascii_lowercase();
-    let is_production = env_lower == "production" || env_lower == "prod";
-
-    if is_production && config.mock_external_apis {
-        anyhow::bail!("MOCK_EXTERNAL_APIS=true is not allowed in production");
-    }
 
     info!("Starting Bridge v{}", env!("CARGO_PKG_VERSION"));
     info!("Environment: {}", config.environment);
