@@ -214,29 +214,6 @@ Separate retention for:
 
 Raw payload can expire; final delivery outcome and provider event identity should survive longer and should not cascade-delete unresolved work.
 
----
-
-## 8. High â€” Production safety policy is split between docs, `main.rs`, and implicit environment discipline
-
-Bridge documents several production requirements, but the runtime enforces only part of them centrally. The current hard startup failure is mostly limited to `MOCK_EXTERNAL_APIS=true` in production. Other launch-critical assumptions still depend on deployment discipline or scattered service behavior.
-
-### Evidence
-
-- `main.rs` rejects `MOCK_EXTERNAL_APIS=true` in production, but there is no central `Config::validate_startup()` equivalent for the rest of the production contract.
-- Background jobs are process-local scheduled jobs, so multi-instance deployments need a clear singleton/claiming strategy for cron-like work.
-- Admin Clerk configuration is runtime-optional: `ADMIN_CLERK_FRONTEND_API`, `ADMIN_CLERK_ORG_ID`, and `ADMIN_CLERK_AUTHORIZED_PARTIES` are not validated as a production admin boundary at startup.
-- Production URL safety is not enforced centrally for database URLs, app callback URLs, email lookup URLs, provider API URLs, admin Clerk issuer, or other outbound/inbound trusted endpoints.
-
-### Why it matters
-
-Bridge is a payment system. A bad production environment should fail before serving traffic, not degrade into a subtly unsafe shape. Unsafe URLs can send API keys, callbacks, or provider traffic to the wrong endpoint. These are not staging checklist problems only; they are code-level startup invariants.
-
-### Recommended architectural direction
-
-- Add a central `Config::validate_startup()` and call it before initializing providers, databases, workers, or routes.
-- In production, require a deliberate admin auth boundary: at minimum a production Clerk issuer plus `ADMIN_CLERK_AUTHORIZED_PARTIES`, and preferably `ADMIN_CLERK_ORG_ID` or an explicit immutable admin allowlist.
-- In production, reject unsafe trusted URLs: localhost/private/test hosts where inappropriate, plain `http://` for public/provider-facing endpoints, and callback/email-lookup URLs that do not match the intended app boundary.
-- Treat production config validation as part of Bridge's architecture contract, not as deployment documentation.
 
 ---
 
