@@ -16,7 +16,6 @@ The most important theme: Bridge currently looks like a payment event system, bu
 4. Centralize lifecycle state transitions behind typed statuses and a state machine.
 5. Move provider-specific semantics behind real provider adapters.
 6. Split raw webhook payload retention from dedupe/delivery retention.
-7. Centralize production startup validation for config and URLs.
 
 ---
 
