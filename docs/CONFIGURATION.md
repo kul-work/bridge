@@ -13,7 +13,7 @@ Bridge should not use app-specific provider env vars such as `CREEM_API_KEY` or 
 
 ### Core App
 
-- `DATABASE_URL` (default: `postgresql://localhost/bridge`) - Runtime PostgreSQL connection string. In production this should use the least-privilege `bridge_app` role.
+- `DATABASE_URL` (default: `postgresql://localhost/bridge`) - Runtime PostgreSQL connection string. In production this must be set explicitly, must parse as a PostgreSQL connection string, and should use the least-privilege `bridge_app` role.
 - `ADMIN_DATABASE_URL` (default: unset) - Elevated PostgreSQL connection string used only to run migrations at startup. Required in production and in any environment where the runtime role is hardened, because `bridge_app` must not own migration-table or schema-change privileges. When unset, migrations run with `DATABASE_URL`; keep that fallback for local development only.
 - `SERVER_ADDR` (default: `0.0.0.0`) - Bind address.
 - `PORT` (default: `3000`) - Bind port. Must parse as `u16`.
@@ -39,10 +39,10 @@ Logs are also written to daily files under `logs/server.YYYY-MM-DD.log`.
 Admin routes under `/admin` require a Clerk session JWT from the configured Clerk instance.
 
 - `ADMIN_CLERK_ORG_ID` (default: unset) - Optional. When set, the JWT's active organization must match this value (requires Clerk organizations/paid plan). When omitted, any valid JWT from the configured Clerk instance is accepted without org membership enforcement. Set this in production to restrict access to your internal Tyde org.
-- `ADMIN_CLERK_FRONTEND_API` (default: unset) - Preferred Clerk issuer for admin JWT validation.
-- `CLERK_FRONTEND_API` (default: unset) - Fallback Clerk issuer when `ADMIN_CLERK_FRONTEND_API` is unset.
-- `CLERK_PUBLISHABLE_KEY` - Used only to derive the Clerk issuer when both issuer URL vars are unset.
-- `ADMIN_CLERK_AUTHORIZED_PARTIES` (default: unset) - Optional comma-separated allowed browser origins, for example `http://localhost:3000,https://admin.tyde.app`. When set, admin JWTs must include an `azp` claim matching one of these origins; JWTs without `azp` are rejected.
+- `ADMIN_CLERK_FRONTEND_API` (default: unset) - Preferred Clerk issuer for admin JWT validation. In production, this URL must use public `https` when set.
+- `CLERK_FRONTEND_API` (default: unset) - Fallback Clerk issuer when `ADMIN_CLERK_FRONTEND_API` is unset. In production, this URL must use public `https` when set.
+- `CLERK_PUBLISHABLE_KEY` - Required in production for the admin dashboard. Also used to derive the Clerk issuer when both issuer URL vars are unset.
+- `ADMIN_CLERK_AUTHORIZED_PARTIES` (default: unset) - Comma-separated allowed browser origins, for example `https://admin.tyde.app`. Required in production; admin JWTs must include an `azp` claim matching one of these origins. Production origins must use public `https`.
 - `ADMIN_READ_RATE_LIMIT_PER_MINUTE` (default: `120`) - Per-admin-actor rate limit for admin `GET`/read requests.
 - `ADMIN_MUTATION_RATE_LIMIT_PER_MINUTE` (default: `10`) - Per-admin-actor rate limit for admin mutating requests such as `POST` and `PATCH`.
 - `ADMIN_AUTH_IP_LIMIT` (default: `10`) - Per-IP limit for failed or missing admin Clerk JWT attempts before JWT parsing. The rolling window is fixed at 60 seconds.
@@ -54,6 +54,8 @@ Issuer fallback order is:
 3. Derived from `CLERK_PUBLISHABLE_KEY`
 
 The admin dashboard uses `CLERK_PUBLISHABLE_KEY` to initialize the Clerk JS SDK for client-side sign-in.
+
+In production, startup validation rejects missing `CLERK_PUBLISHABLE_KEY`, missing `ADMIN_CLERK_AUTHORIZED_PARTIES`, non-HTTPS admin issuer/origin URLs, and localhost/private/test hosts for admin issuer/origin URLs.
 
 ### Email (`src/main.rs`, `src/services/email.rs`)
 
@@ -262,8 +264,7 @@ For admin UI locally, also configure Clerk admin auth:
 ADMIN_CLERK_ORG_ID=org_your_internal_tyde_org
 CLERK_FRONTEND_API=https://your-clerk-instance.clerk.accounts.dev
 CLERK_PUBLISHABLE_KEY=pk_test_xxx
-# Optional; only set when Clerk session JWTs include matching azp origins.
-# ADMIN_CLERK_AUTHORIZED_PARTIES=http://localhost:3000,https://admin.tyde.app
+ADMIN_CLERK_AUTHORIZED_PARTIES=https://admin.tyde.app
 ```
 
 For local provider simulation:
