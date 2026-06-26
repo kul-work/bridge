@@ -140,12 +140,11 @@ The docs say subscription status must be typed, unknown statuses explicit, and t
 - DB status is plain `TEXT`: `migrations/02_create_subscriptions.sql`.
 - Rust subscription model exposes raw `String`: `src/db/subscriptions.rs`.
 - Reconciliation accepts provider status as `String`: `src/webhooks/scheduler.rs`.
-- Unknown Google status defaults to `active` in reconciliation normalization: `src/services/provider_api.rs::normalize_google_status`.
 - Some transitions are in large SQL branches, while scheduler also directly mutates lifecycle state: `src/db/subscriptions.rs` and `src/webhooks/scheduler.rs`.
 
 ### Why it matters
 
-Unknown provider states can grant entitlement. Invalid states can enter the DB. Different writers can apply different lifecycle rules.
+Invalid states can enter the DB. Different writers can apply different lifecycle rules.
 
 ### Recommended architectural direction
 
@@ -153,7 +152,6 @@ Unknown provider states can grant entitlement. Invalid states can enter the DB. 
 - Use a `SubscriptionStatus` enum at the application boundary.
 - Persist canonical allowed states with a DB `CHECK` or enum.
 - Store raw provider state separately.
-- Unknown provider states should be explicit and non-entitling unless deliberately mapped.
 
 ---
 
@@ -226,24 +224,20 @@ Bridge documents several production requirements, but the runtime enforces only 
 
 - `main.rs` rejects `MOCK_EXTERNAL_APIS=true` in production, but there is no central `Config::validate_startup()` equivalent for the rest of the production contract.
 - `docs/CONFIGURATION.md` says `ADMIN_DATABASE_URL` is required in production, but `Config::from_env` still treats it as optional and database startup falls back to runtime credentials when it is absent.
-- Background workers default to enabled, but production does not fail fast if `ENABLE_BACKGROUND_JOBS=false`, even though retry, reconciliation, cleanup, price-step-up expiry, and pause scheduling are part of Bridge's durable payment operations.
+- Background jobs are process-local scheduled jobs, so multi-instance deployments need a clear singleton/claiming strategy for cron-like work.
 - Admin Clerk configuration is runtime-optional: `ADMIN_CLERK_FRONTEND_API`, `ADMIN_CLERK_ORG_ID`, and `ADMIN_CLERK_AUTHORIZED_PARTIES` are not validated as a production admin boundary at startup.
 - Production URL safety is not enforced centrally for database URLs, app callback URLs, email lookup URLs, provider API URLs, admin Clerk issuer, or other outbound/inbound trusted endpoints.
-- Production logging safety depends on default filters; startup does not reject explicit debug/raw trace filters such as `BPT-RAW=debug` in a production environment.
 
 ### Why it matters
 
-Bridge is a payment system. A bad production environment should fail before serving traffic, not degrade into a subtly unsafe shape. Missing admin DB separation can run migrations with runtime credentials. Disabled workers can stop callback retry/reconciliation. Unsafe URLs can send API keys, callbacks, or provider traffic to the wrong endpoint. Debug/raw trace filters can expose sensitive operational data. These are not staging checklist problems only; they are code-level startup invariants.
+Bridge is a payment system. A bad production environment should fail before serving traffic, not degrade into a subtly unsafe shape. Missing admin DB separation can run migrations with runtime credentials. Unsafe URLs can send API keys, callbacks, or provider traffic to the wrong endpoint. These are not staging checklist problems only; they are code-level startup invariants.
 
 ### Recommended architectural direction
 
 - Add a central `Config::validate_startup()` and call it before initializing providers, databases, workers, or routes.
 - In production, require `ADMIN_DATABASE_URL` and reject runtime migration fallback.
-- In production, require `ENABLE_BACKGROUND_JOBS=true` unless an explicit documented maintenance mode is introduced.
-- In production, reject `EMAIL_PROVIDER=mock` and require the configured provider credentials needed by the selected provider.
 - In production, require a deliberate admin auth boundary: at minimum a production Clerk issuer plus `ADMIN_CLERK_AUTHORIZED_PARTIES`, and preferably `ADMIN_CLERK_ORG_ID` or an explicit immutable admin allowlist.
 - In production, reject unsafe trusted URLs: localhost/private/test hosts where inappropriate, plain `http://` for public/provider-facing endpoints, and callback/email-lookup URLs that do not match the intended app boundary.
-- In production, reject debug/raw trace filters that can expose sensitive identifiers or provider payload context.
 - Treat production config validation as part of Bridge's architecture contract, not as deployment documentation.
 
 ---
