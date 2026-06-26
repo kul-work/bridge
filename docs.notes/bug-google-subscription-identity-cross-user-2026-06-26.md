@@ -116,6 +116,15 @@ sharing the same subscription product.
   providers can keep subscription-id keying where that id is user-unique.
 - Do not key Google reconciliation by `external_user_id + subscription_id`; the
   same user can resubscribe to the same SKU with a new purchase token.
+- For reconciliation, row `id` is the write key. Purchase token is the Google
+  identity concept, but the reconciler already has a concrete DB row, so row id
+  is the narrowest safe mutation target.
+- For Google stale checks and retry/rebuild, a missing or unmatched purchase
+  token must never fall back to SKU-only row lookup. Skip stale suppression and
+  forward; rebuild from webhook fields without borrowing another row's state.
+- Keep the existing purchase-token lookup helper. Do not add a provider-specific
+  token helper/refactor just for this fix; `purchase_token` is already unique in
+  `pay.subscriptions`.
 - Minimal guardrail first; repo-trait-level bans can be follow-up unless review
   finds the minimal guardrail insufficient.
 
@@ -124,46 +133,64 @@ sharing the same subscription product.
 `purchase_token`, or `last_event_time`. Any logic keyed on `subscription_id`
 alone risks updating or evaluating the wrong row.
 
+**Google docs basis:** `docs/google/GOOGLE_PLAY_BILLING_TESTPLAN.md` says
+purchase verification registers `(user_id, purchase_token, subscription_id)` and
+subsequent webhooks use `purchase_token` to look up the user. The same test plan
+and `docs/google/GOOGLE_PLAY_SUBSCRIPTION_LIFECYCLE-v1.1.md` also document that
+resubscribe flows issue a **new** purchase token on the same subscription SKU,
+and webhooks that arrive before purchase-token registration are safe to ignore
+or process without DB mutation until verification registers the token.
+
 ### Core changes
 
 1. **Reconciliation**
    Update by row `id` from the reconciled `Subscription`, not by
    `subscription_id`. The reconciler already iterates concrete DB rows, so the
-   row's own primary key is the safe identifier. Concretely: key
-   `update_subscription_status` (or a new variant) by `id` (row) and/or
-   `purchase_token` for Google, instead of `subscription_id` — eliminating the
-   multi-row ambiguity at the write path.
+   row's own primary key is the safe identifier. Replace the scheduler-facing
+   `update_subscription_status(app_id, subscription_id, ...)` path with an
+   id-keyed mutation such as `update_reconciled_subscription_status(app_id, id,
+   ...)`. Preserve the current app scope and high-water stale guard:
+   `WHERE app_id = ? AND id = ? AND last_event_time < event_time_ms`.
 
 2. **Forward stale check**
    For `google_play`, compare staleness using `payload.purchase_token` (i.e.,
-   `canonical_purchase_token`) instead of `subscription_id`. If no token is
-   present, **fail open** (forward the event) rather than suppressing it based
-   on a shared SKU.
+   `canonical_purchase_token`) instead of `subscription_id`. Use the existing
+   `get_subscription_by_purchase_token(app_id, token)` helper; no new provider
+   lookup is needed for this fix because `purchase_token` is unique. If no token
+   is present or the token lookup misses, skip stale suppression and forward the
+   event rather than suppressing it based on a shared SKU. This fail-open rule
+   applies only to token absence/miss; DB errors should still fail normally.
 
 3. **Retry/resume canonical payload rebuild**
-   For `google_play`, the lookup order is purchase-token first,
-   subscription-id only as fallback (never the reverse).
+   For `google_play`, rebuild from the subscription row found by purchase token.
+   If the token is missing or unmatched, do **not** fall back to
+   `subscription_id`-only lookup. Build from the webhook fields/resolved user and
+   avoid row-derived status/token/period fields rather than borrowing another
+   user's same-SKU row.
 
 4. **Guardrail**
-   Make any remaining `subscription_id`-only lookup/update path visibly unsafe
-   for Google, or remove it from generic lifecycle interfaces where feasible.
-
-   > **Open design question:** scope as minimal ("Google uses purchase-token
-   > keying," documented/asserted at the call sites that need it) vs. stronger
-   > (repo-trait level ban on `subscription_id`-only lifecycle mutations for
-   > `google_play`). Leaning toward minimal first; broader ban is a follow-up
-   > if minimal proves insufficient.
+   Keep the guardrail minimal in this fix: replace the scheduler's ambiguous
+   subscription-id update path with the id-keyed reconciler mutation, and make
+   the two Google read paths explicitly purchase-token keyed. Do not do a broad
+   repo-trait-level ban/refactor in this phase unless implementation proves the
+   surgical change cannot be made safely.
 
 5. **Regression test**
    Two Google rows, same `app_id/provider/subscription_id`, different
-   `external_user_id`/`purchase_token`/`last_event_time`. Assert that
-   reconciliation, stale suppression, and retry payload rebuild all operate on
-   the intended row and leave the other row untouched.
+   `external_user_id`/`purchase_token`/`last_event_time`. Cover all three paths:
+   reconciliation updates only the intended row; forwarding stale suppression
+   compares against the row with the same purchase token; retry/rebuild payloads
+   use the same-token row and never borrow state from a same-SKU row. Also cover
+   the best practical token-missing/miss case: Google should not suppress or
+   rebuild from a SKU-only wrong row when the purchase token is absent or not
+   found.
 
 ### Execution
 
 - **Priority order:**
   1. Reconciliation fix
   2. Forwarding stale-suppression fix
-  3. Two-user/same-SKU regression test covering both
-- **Validation:** Bridge Tier-2 checks + `cargo check` + targeted regression tests.
+  3. Retry/resume canonical payload rebuild fix
+  4. Two-user/same-SKU regression tests covering all three paths
+- **Validation:** Bridge Tier-2 checks + `cargo check` + `cargo clippy` + targeted
+  `cargo test` regression coverage for all three paths.
