@@ -47,6 +47,7 @@ This is not "the whole Google integration is wrong." It is "three side paths nee
 ### 3. Retry/resume payload rebuild (the hidden one)
 
 - Retry/resume can rebuild the canonical callback payload after the original webhook processing path.
+- The rebuild path is `src/webhooks/processor.rs:662` (`build_canonical_payload`), called from `src/webhooks/ingress.rs:87` and `src/webhooks/scheduler.rs:84`; its canonical lookup currently prefers `get_subscription_by_sub_id_for_provider(...)` before purchase-token lookup at `src/webhooks/processor.rs:710`.
 - For Google Play, that rebuild must use the subscription row matching the webhook purchase token.
 - If it falls back to `subscription_id`-only lookup, it can borrow status, token, or period fields from another user on the same SKU.
 
@@ -62,7 +63,7 @@ This is not "the whole Google integration is wrong." It is "three side paths nee
 
 Do NOT re-key the whole Google integration — the live path is already correct. Only the three side paths that dropped the user/purchase-token dimension:
 
-1. **`update_subscription_status` (reconciliation write-back)** — for `google_play`, key the write strictly on `purchase_token`, NOT `external_user_id`. These are not interchangeable: a user who cancels and resubscribes on the same SKU gets a **new** `purchase_token` but the **same** `(external_user_id, subscription_id)`, so an `external_user_id`-keyed UPDATE would still clobber that user's old row alongside the new one — a within-user version of the same bug. `purchase_token` is the only row-unique key. Scope is contained: `update_subscription_status` has exactly **one** caller (the reconciler at `scheduler.rs:241`), so add a `purchase_token`-keyed mutation and branch by provider in the reconciler. The reconciler row (`sub`) already carries `purchase_token`.
+1. **`update_subscription_status` (reconciliation write-back)** — replace the scheduler-facing `subscription_id` update with a concrete row-id keyed reconciliation mutation. The reconciler already iterates a specific DB row (`sub`), so update that row by `app_id + id` while preserving the stale-event guard. Do not key this by `external_user_id + subscription_id`; the same user can resubscribe to the same SKU with a new purchase token.
 2. **Forward stale-check in `forwarding.rs`** — make the stored-row lookup provider-aware, NOT a blanket swap. For `google_play`, look up by `purchase_token` (already on the payload via `canonical_purchase_token`); for other providers keep `get_subscription_by_sub_id`, because there `subscription_id` is already user-unique and `purchase_token` may be null — a global replacement would neuter stale-suppression for them. This mirrors exactly what `resolve_user` already does. The helper `get_subscription_by_purchase_token` already exists, so this is a one-line lookup swap, no new DB code.
 3. **Retry/resume canonical payload rebuild** — for `google_play`, rebuild row-derived callback fields from the row matching the purchase token. If the token is missing or unmatched, do not fall back to `subscription_id`-only lookup.
 
@@ -73,7 +74,7 @@ Consider a guardrail: ban generic lifecycle mutations keyed only by `subscriptio
 - `update_subscription_status` (or its replacement) cannot touch a row for a user other than the one the calling event is about.
 - Forward stale-suppression compares against the row matching the *same* purchase token as the incoming event.
 - Retry/resume canonical payload rebuild uses the row matching the *same* purchase token and never falls back to a same-SKU row when that token is missing or unmatched.
-- A regression test exists: two rows, same `subscription_id` (`hiha_monthly`), same `app_id`, same `provider`, different `external_user_id` + different `purchase_token`. Run reconciliation / a stale forward / retry-rebuild against one and assert the other row is untouched. No existing test in `tests/` covers this — that gap is why the bug shipped.
+- A regression test exists: two rows, same `subscription_id` (`hiha_monthly`), same `app_id`, same `provider`, different `external_user_id` + different `purchase_token`. Run reconciliation / a stale forward / retry-rebuild against one and assert the other row is untouched. No existing test in `tests/` covers this — that gap is why the bug survived testing.
 - Bridge checks (Tier 2 — lifecycle + identity) pass on the diff.
 
 ## Bug autopsy (why it happened)
