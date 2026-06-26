@@ -10,7 +10,7 @@ The most important theme: Bridge currently looks like a payment event system, bu
 
 ## Priority Order
 
-1. Correct lifecycle identity, especially Google `purchase_token` vs `subscription_id`.
+1. Correct lifecycle identity, especially Google `purchase_token` vs `subscription_id`. Expanded blocking bug: `docs.notes/bug-google-subscription-identity-cross-user-2026-06-26.md`.
 2. Introduce a durable inbox/outbox around webhook processing and callback delivery.
 3. Add worker claiming/leases before any callback or provider side effect.
 4. Centralize lifecycle state transitions behind typed statuses and a state machine.
@@ -23,11 +23,14 @@ The most important theme: Bridge currently looks like a payment event system, bu
 
 Bridge often treats `subscription_id` as if it identifies one subscription lifecycle. For Google Play, that value can represent the product/base subscription, not one user's purchase lifecycle.
 
+Expanded issue: `docs.notes/bug-google-subscription-identity-cross-user-2026-06-26.md`. That note narrows this to two unsafe side paths: reconciliation write-back and forward stale-suppression. The live Google webhook mutation path already resolves the user by purchase token.
+
 ### Evidence
 
 - Subscription uniqueness is `(app_id, external_user_id, subscription_id, provider)`, meaning many users can share the same `subscription_id`: `migrations/02_create_subscriptions.sql`.
 - Reconciliation updates by only `app_id + subscription_id`: `src/db/subscriptions.rs::update_subscription_status`.
 - Forwarding stale suppression looks up by `subscription_id` only before deciding whether to suppress a callback: `src/webhooks/forwarding.rs::forward_webhook`.
+- The expanded bug note classifies these as the current critical, pre-production entitlement-corruption bug and records the narrow fix scope.
 
 ### Why it matters
 
@@ -37,6 +40,7 @@ A reconciliation or stale-forward decision for one Google purchase can affect an
 
 - Model provider lifecycle identity explicitly.
 - For Google, lifecycle identity should be purchase-token or internal-row based, not product/subscription-id based.
+- First patch target: fix the two known unsafe side paths from the expanded bug note before broad provider/lifecycle redesign.
 - Ban generic lifecycle mutations keyed only by `subscription_id` unless the provider guarantees it is unique per customer lifecycle.
 - Make mutation APIs accept a `SubscriptionIdentity`/row id or `(app_id, provider, purchase_token)` where appropriate.
 - Keep `product_id` separate from lifecycle identity in both schema and application code.
