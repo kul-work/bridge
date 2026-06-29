@@ -21,11 +21,7 @@ const T_EVT: i64 = 1_500_000;
 
 #[tokio::test]
 async fn reconciliation_id_keyed_update_leaves_same_sku_other_row_untouched() -> Result<(), Box<dyn Error>> {
-    let Some(database) = test_database().await? else {
-        eprintln!("skipping DB-backed reconciliation regression; set BRIDGE_TEST_DATABASE_URL");
-        return Ok(());
-    };
-
+    let database = test_database().await?;
     let pool = database.pool();
     let app_id = insert_test_app(pool, "reconcile").await?;
     let result = run_reconciliation_regression(pool, app_id).await;
@@ -66,11 +62,7 @@ async fn run_reconciliation_regression(pool: &PgPool, app_id: Uuid) -> Result<()
 
 #[tokio::test]
 async fn forward_stale_check_compares_against_same_purchase_token_row() -> Result<(), Box<dyn Error>> {
-    let Some(database) = test_database().await? else {
-        eprintln!("skipping DB-backed forwarding regression; set BRIDGE_TEST_DATABASE_URL");
-        return Ok(());
-    };
-
+    let database = test_database().await?;
     let pool = database.pool();
     let (callback_url, callback_count, server) = spawn_callback_server().await?;
     let app_id = insert_test_app_with_url(pool, "forward-stale", &callback_url).await?;
@@ -116,11 +108,7 @@ async fn run_forward_stale_regression(
 
 #[tokio::test]
 async fn forward_stale_check_with_unmatched_token_does_not_suppress_against_same_sku_row() -> Result<(), Box<dyn Error>> {
-    let Some(database) = test_database().await? else {
-        eprintln!("skipping DB-backed forwarding regression; set BRIDGE_TEST_DATABASE_URL");
-        return Ok(());
-    };
-
+    let database = test_database().await?;
     let pool = database.pool();
     let (callback_url, callback_count, server) = spawn_callback_server().await?;
     let app_id = insert_test_app_with_url(pool, "forward-unmatched", &callback_url).await?;
@@ -154,11 +142,7 @@ async fn run_forward_unmatched_regression(
 
 #[tokio::test]
 async fn canonical_rebuild_uses_purchase_token_row_for_google_play() -> Result<(), Box<dyn Error>> {
-    let Some(database) = test_database().await? else {
-        eprintln!("skipping DB-backed canonical rebuild regression; set BRIDGE_TEST_DATABASE_URL");
-        return Ok(());
-    };
-
+    let database = test_database().await?;
     let pool = database.pool();
     let app_id = insert_test_app(pool, "canonical-rebuild").await?;
     let result = run_canonical_rebuild_regression(&database, pool, app_id).await;
@@ -402,14 +386,21 @@ fn google_canonical_payload(purchase_token: &str, timestamp_epoch_ms: i64, event
     }
 }
 
-async fn test_database() -> Result<Option<crate::db::Database>, Box<dyn Error>> {
+async fn test_database() -> Result<crate::db::Database, Box<dyn Error>> {
     dotenvy::dotenv().ok();
-    let Ok(database_url) = std::env::var("BRIDGE_TEST_DATABASE_URL") else {
-        return Ok(None);
-    };
     let admin_database_url = std::env::var("ADMIN_DATABASE_URL").ok();
+    let environment = std::env::var("ENVIRONMENT").unwrap_or_default().to_ascii_lowercase();
+    let is_production = matches!(environment.as_str(), "production" | "prod");
+    let database_url = match std::env::var("BRIDGE_TEST_DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) if !is_production => admin_database_url
+            .clone()
+            .or_else(|| std::env::var("DATABASE_URL").ok())
+            .ok_or("set BRIDGE_TEST_DATABASE_URL or a non-production DATABASE_URL for Google identity regression tests")?,
+        Err(_) => return Err("BRIDGE_TEST_DATABASE_URL must be set in production-like environments".into()),
+    };
 
-    Ok(Some(crate::db::Database::new(&database_url, admin_database_url.as_deref()).await?))
+    Ok(crate::db::Database::new(&database_url, admin_database_url.as_deref()).await?)
 }
 
 async fn insert_test_app(pool: &PgPool, label_suffix: &str) -> Result<Uuid, sqlx::Error> {
