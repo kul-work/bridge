@@ -238,10 +238,13 @@ async fn reconcile_app_subscriptions(
                     );
 
                     let event_time_ms = chrono::Utc::now().timestamp_millis();
-                    let updated = SchedulerRepository::update_subscription_status(
+                    // Key the write-back on the concrete row id, never on the
+                    // shared Google Play SKU subscription_id, so two users on
+                    // the same product can't clobber each other's entitlement.
+                    let updated = SchedulerRepository::update_reconciled_subscription_status(
                             repo,
                             app_id,
-                            &sub.subscription_id,
+                            sub.id,
                             &provider_status,
                             provider_period_end,
                             event_time_ms,

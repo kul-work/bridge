@@ -724,3 +724,103 @@ fn test_extract_metadata_user_id_supports_nested_paths() {
 
     assert_eq!(extract_metadata_user_id(&payload).as_deref(), Some("nested-user"));
 }
+
+/// Branch coverage for the Google identity cross-user fix in
+/// `build_canonical_payload`'s canonical-subscription lookup (Path 3).
+///
+/// DB-backed: seeds two same-SKU Google rows for different users and asserts the
+/// rebuilt payload borrows row-derived fields (status) from the row matching the
+/// webhook's purchase token, never another same-SKU user's row. Skips when
+/// `DATABASE_URL` is unset.
+#[cfg(test)]
+mod canonical_rebuild_identity_db_tests {
+    use crate::db::subscriptions::{delete_test_subscription, insert_test_subscription};
+    use crate::db::webhooks::create_webhook_provider;
+    use crate::db::Database;
+    use crate::webhooks::processor::build_canonical_payload;
+    use serde_json::json;
+    use sqlx::postgres::PgPoolOptions;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn google_canonical_rebuild_uses_same_purchase_token_row() {
+        let Ok(database_url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipping google_canonical_rebuild_uses_same_purchase_token_row: DATABASE_URL not set");
+            return;
+        };
+        // Avoid any real Google API call during field enrichment.
+        std::env::set_var("MOCK_EXTERNAL_APIS", "true");
+
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&database_url)
+            .await
+            .expect("connect test pool");
+
+        let app_ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM pay.list_enabled_app_ids_bootstrap()")
+            .fetch_all(&pool)
+            .await
+            .expect("list enabled app ids");
+        let Some(&app_id) = app_ids.first() else {
+            eprintln!("skipping: no enabled apps");
+            return;
+        };
+
+        let run = Uuid::new_v4().simple().to_string();
+        let sku = format!("regtest_hiha_monthly_{run}");
+        let user_a = format!("regtest_user_a_{run}");
+        let user_b = format!("regtest_user_b_{run}");
+        let token_a = format!("regtest_token_a_{run}");
+        let token_b = format!("regtest_token_b_{run}");
+
+        // Row A (the event's user) is active; row B (other same-SKU user) is expired.
+        let id_a = insert_test_subscription(&pool, app_id, &user_a, &sku, "google_play", &token_a, "active", None, 1_000).await;
+        let id_b = insert_test_subscription(&pool, app_id, &user_b, &sku, "google_play", &token_b, "expired", None, 5_000).await;
+
+        // A cancellation RTDN for user A (token_a) on the shared SKU.
+        let payload = json!({
+            "subscriptionNotification": {
+                "version": "1.0",
+                "notificationType": 3,
+                "purchaseToken": token_a,
+                "subscriptionId": sku,
+            }
+        });
+        let (webhook_id, _is_new) = create_webhook_provider(
+            &pool,
+            app_id,
+            "google_play",
+            &format!("regtest_rtdn_{run}"),
+            "SUBSCRIPTION_CANCELED",
+            Some(sku.clone()),
+            Some(token_a.clone()),
+            payload,
+            Some(chrono::Utc::now().timestamp_millis()),
+        )
+        .await
+        .expect("create webhook provider");
+
+        let db = Database::from_pool_for_test(pool.clone());
+        let canonical = build_canonical_payload(&db, webhook_id, app_id)
+            .await
+            .expect("build canonical")
+            .expect("canonical payload present");
+
+        // Row-derived status must come from row A (active), never row B (expired).
+        assert_eq!(
+            canonical.status.as_deref(),
+            Some("active"),
+            "canonical status must be borrowed from the same-purchase-token row, not another same-SKU user"
+        );
+        assert_ne!(canonical.status.as_deref(), Some("expired"), "must not borrow row B state");
+        assert_eq!(canonical.external_user_id.as_deref(), Some(user_a.as_str()));
+        assert_eq!(canonical.purchase_token.as_deref(), Some(token_a.as_str()));
+
+        // Note: the webhook_provider row is intentionally not deleted here —
+        // the runtime app role lacks DELETE on pay.webhook_provider (cleanup is
+        // worker-driven). Subscriptions are cleaned up below.
+        let _ = webhook_id;
+        delete_test_subscription(&pool, app_id, id_a).await;
+        delete_test_subscription(&pool, app_id, id_b).await;
+    }
+}

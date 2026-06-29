@@ -51,41 +51,56 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
         return Ok(());
     }
 
-    if let Some(ref subscription_id) = payload.subscription_id {
-        if let Some(subscription) = repo
-            .get_subscription_by_sub_id(app_id, subscription_id)
-            .await?
-        {
-            if payload.timestamp_epoch_ms < subscription.last_event_time {
-                repo.suppress_webhook(delivery.webhook_provider_id, "superseded_before_forward")
-                    .await?;
-                repo.update_webhook_delivery_attempt(
-                    webhook_delivery_id,
-                    None,
-                    Some("Suppressed stale event before forward".to_string()),
-                    true,
-                )
+    // Resolve the stored row to compare staleness against.
+    //
+    // Google Play subscription_id is a shared product SKU, so a sub_id lookup
+    // could measure user A's event against user B's newer row and silently
+    // drop it. For google_play, key the stale check on the purchase token,
+    // which uniquely identifies the user's subscription. If the token is
+    // absent or unmatched, fail open and forward rather than suppressing
+    // against a wrong same-SKU row. Other providers keep sub_id keying, where
+    // that id is already user-unique and purchase_token may be null.
+    let stale_check_subscription = if payload.provider == "google_play" {
+        match payload.purchase_token.as_deref() {
+            Some(token) => repo.get_subscription_by_purchase_token(app_id, token).await?,
+            None => None,
+        }
+    } else if let Some(ref subscription_id) = payload.subscription_id {
+        repo.get_subscription_by_sub_id(app_id, subscription_id).await?
+    } else {
+        None
+    };
+
+    if let Some(subscription) = stale_check_subscription {
+        if payload.timestamp_epoch_ms < subscription.last_event_time {
+            repo.suppress_webhook(delivery.webhook_provider_id, "superseded_before_forward")
                 .await?;
-                info!(
-                    app_id = %app_id,
-                    webhook_delivery_id = %webhook_delivery_id,
-                    webhook_provider_id = %delivery.webhook_provider_id,
-                    provider = %payload.provider,
-                    event_type = %payload.event_type,
-                    provider_event_id = %payload.provider_event_id,
-                    external_user_id_hash = payload
-                        .external_user_id
-                        .as_deref()
-                        .map(diagnostic_hash)
-                        .as_deref(),
-                    subscription_id = %subscription_id,
-                    event_time_ms = payload.timestamp_epoch_ms,
-                    last_event_time = subscription.last_event_time,
-                    outcome = "suppressed_stale",
-                    "Suppressed stale webhook delivery before forward"
-                );
-                return Ok(());
-            }
+            repo.update_webhook_delivery_attempt(
+                webhook_delivery_id,
+                None,
+                Some("Suppressed stale event before forward".to_string()),
+                true,
+            )
+            .await?;
+            info!(
+                app_id = %app_id,
+                webhook_delivery_id = %webhook_delivery_id,
+                webhook_provider_id = %delivery.webhook_provider_id,
+                provider = %payload.provider,
+                event_type = %payload.event_type,
+                provider_event_id = %payload.provider_event_id,
+                external_user_id_hash = payload
+                    .external_user_id
+                    .as_deref()
+                    .map(diagnostic_hash)
+                    .as_deref(),
+                subscription_id = payload.subscription_id.as_deref(),
+                event_time_ms = payload.timestamp_epoch_ms,
+                last_event_time = subscription.last_event_time,
+                outcome = "suppressed_stale",
+                "Suppressed stale webhook delivery before forward"
+            );
+            return Ok(());
         }
     }
 
@@ -448,5 +463,270 @@ mod tests {
 
         assert_eq!(scrubbed.external_user_id.as_deref(), Some(expected_user_hash.as_str()));
         assert_eq!(scrubbed.purchase_token.as_deref(), Some(expected_token_hash.as_str()));
+    }
+}
+
+/// Branch coverage for the Google identity cross-user fix in `forward_webhook`'s
+/// stale-suppression lookup (Path 2). Uses an in-memory mock repository so the
+/// provider-aware decision actually executes:
+/// - google_play compares staleness against the row matching the purchase token
+/// - a token miss fails open (forwards instead of suppressing)
+/// - other providers keep subscription_id keying
+///
+/// "Forward" cases reach an HTTP attempt to a closed local port (connection
+/// refused), which `forward_webhook` tolerates; we assert on whether the
+/// webhook was suppressed, which is the decision under test.
+#[cfg(test)]
+mod stale_suppression_branch_tests {
+    use super::*;
+    use crate::application::app_context::AppSnapshot;
+    use crate::db::webhooks::WebhookDelivery;
+    use crate::ports::types::SubscriptionLookupSnapshot;
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn snapshot(id: Uuid, user: &str, token: &str, last_event_time: i64) -> SubscriptionLookupSnapshot {
+        SubscriptionLookupSnapshot {
+            id,
+            external_user_id: user.to_string(),
+            provider: "google_play".to_string(),
+            subscription_id: "hiha_monthly".to_string(),
+            purchase_token: Some(token.to_string()),
+            status: "active".to_string(),
+            current_period_end: None,
+            auto_renewing: Some(true),
+            revocation_reason: None,
+            last_event_time,
+            google_price_step_up_consent_deadline: None,
+            google_pause_scheduled_at: None,
+            google_deferred_until: None,
+            google_pending_price_change_new_price_cents: None,
+            google_pending_price_change_currency: None,
+            google_pending_price_change_mode: None,
+            google_pending_price_change_state: None,
+            google_pending_price_change_expected_at: None,
+        }
+    }
+
+    fn payload(provider: &str, token: Option<&str>, timestamp_epoch_ms: i64) -> CanonicalWebhookPayload {
+        CanonicalWebhookPayload {
+            event_id: "evt".to_string(),
+            event_type: "subscription.cancelled".to_string(),
+            timestamp: "2026-06-26T00:00:00Z".to_string(),
+            timestamp_epoch_ms,
+            app_slug: "hiha".to_string(),
+            product_id: Some("hiha_monthly".to_string()),
+            subscription_id: Some("hiha_monthly".to_string()),
+            external_user_id: Some("user".to_string()),
+            amount_cents: None,
+            new_price_cents: None,
+            auto_renewing: Some(true),
+            purchase_token: token.map(str::to_string),
+            current_period_end: None,
+            status: Some("cancelled".to_string()),
+            provider: provider.to_string(),
+            provider_event_id: "prov_evt".to_string(),
+            previous_status: None,
+            corrected_status: None,
+            reconciliation_source: None,
+            revocation_reason: None,
+            cancellation_mode: None,
+            google_price_step_up_consent_deadline: None,
+            google_pause_scheduled_at: None,
+            google_deferred_until: None,
+            google_pending_price_change_new_price_cents: None,
+            google_pending_price_change_currency: None,
+            google_pending_price_change_mode: None,
+            google_pending_price_change_state: None,
+            google_pending_price_change_expected_at: None,
+        }
+    }
+
+    fn delivery(app_id: Uuid, id: Uuid) -> WebhookDelivery {
+        WebhookDelivery {
+            id,
+            app_id,
+            webhook_provider_id: Uuid::new_v4(),
+            forward_attempts: 0,
+            forwarded: false,
+            forwarded_at: None,
+            dead_lettered: false,
+            dead_lettered_at: None,
+            dead_letter_reason: None,
+            last_http_status: None,
+            last_error: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    struct MockRepo {
+        app_id: Uuid,
+        delivery_id: Uuid,
+        /// Row returned by purchase-token lookup (the correct, user-unique row).
+        by_token: HashMap<String, SubscriptionLookupSnapshot>,
+        /// Row returned by subscription_id lookup (for google_play this would be
+        /// the WRONG same-SKU row; the fix must not consult it).
+        by_sub_id: Option<SubscriptionLookupSnapshot>,
+        suppressed: AtomicBool,
+    }
+
+    #[async_trait]
+    impl crate::ports::traits::subscription::SubscriptionLookupRepository for MockRepo {
+        async fn get_subscription_by_sub_id(
+            &self,
+            _app_id: Uuid,
+            _subscription_id: &str,
+        ) -> Result<Option<SubscriptionLookupSnapshot>, BridgeError> {
+            Ok(self.by_sub_id.clone())
+        }
+
+        async fn get_subscription_by_sub_id_and_user(
+            &self,
+            _app_id: Uuid,
+            _subscription_id: &str,
+            _external_user_id: &str,
+        ) -> Result<Option<SubscriptionLookupSnapshot>, BridgeError> {
+            unreachable!("not used by forward_webhook")
+        }
+
+        async fn get_subscription_by_purchase_token(
+            &self,
+            _app_id: Uuid,
+            purchase_token: &str,
+        ) -> Result<Option<SubscriptionLookupSnapshot>, BridgeError> {
+            Ok(self.by_token.get(purchase_token).cloned())
+        }
+    }
+
+    #[async_trait]
+    impl crate::ports::traits::WebhookSuppressionRepository for MockRepo {
+        async fn suppress_webhook(&self, _webhook_id: Uuid, _reason: &str) -> Result<(), BridgeError> {
+            self.suppressed.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl crate::ports::traits::WebhookForwardRepository for MockRepo {
+        async fn get_webhook_delivery(&self, id: Uuid) -> Result<WebhookDelivery, BridgeError> {
+            Ok(delivery(self.app_id, id))
+        }
+
+        async fn webhook_delivery_exists(&self, _webhook_provider_id: Uuid) -> Result<bool, BridgeError> {
+            Ok(true)
+        }
+
+        async fn update_webhook_delivery_attempt(
+            &self,
+            delivery_id: Uuid,
+            _http_status: Option<i32>,
+            _error: Option<String>,
+            _forwarded: bool,
+        ) -> Result<WebhookDelivery, BridgeError> {
+            Ok(delivery(self.app_id, delivery_id))
+        }
+
+        async fn reset_webhook_delivery(&self, _delivery_id: Uuid) -> Result<bool, BridgeError> {
+            unreachable!("not used by forward_webhook")
+        }
+    }
+
+    #[async_trait]
+    impl crate::ports::traits::AppLookupRepository for MockRepo {
+        async fn get_app(&self, _app_id: Uuid) -> Result<AppSnapshot, BridgeError> {
+            Ok(AppSnapshot {
+                id: self.app_id,
+                slug: "hiha".to_string(),
+                display_name: "HiHa".to_string(),
+                // Closed local port: forward attempts fail fast (connection refused).
+                webhook_callback_url: "http://127.0.0.1:9/callback".to_string(),
+                webhook_callback_secret: "test_secret".to_string(),
+                api_rate_limit_per_minute: 60,
+                api_rate_limit_rules: None,
+                app_url: None,
+                google_package_name: None,
+                apple_bundle_id: None,
+            })
+        }
+    }
+
+    fn mock(by_token: Vec<SubscriptionLookupSnapshot>, by_sub_id: Option<SubscriptionLookupSnapshot>) -> MockRepo {
+        let mut map = HashMap::new();
+        for s in by_token {
+            map.insert(s.purchase_token.clone().unwrap(), s);
+        }
+        MockRepo {
+            app_id: Uuid::new_v4(),
+            delivery_id: Uuid::new_v4(),
+            by_token: map,
+            by_sub_id,
+            suppressed: AtomicBool::new(false),
+        }
+    }
+
+    #[tokio::test]
+    async fn google_event_not_suppressed_against_other_users_newer_same_sku_row() {
+        // The bug: user A's event measured against user B's newer same-SKU row.
+        let row_a = snapshot(Uuid::new_v4(), "user_a", "token_a", 1_000);
+        let row_b = snapshot(Uuid::new_v4(), "user_b", "token_b", 9_000);
+        // sub_id lookup would return the wrong (newer) row B; token lookup -> A.
+        let repo = mock(vec![row_a, row_b.clone()], Some(row_b));
+
+        // Event for user A (token_a), newer than A's own row but older than B's.
+        let p = payload("google_play", Some("token_a"), 5_000);
+        forward_webhook(&repo, repo.app_id, repo.delivery_id, p).await.unwrap();
+
+        assert!(
+            !repo.suppressed.load(Ordering::SeqCst),
+            "Google event must NOT be suppressed against another user's same-SKU row"
+        );
+    }
+
+    #[tokio::test]
+    async fn google_event_suppressed_against_same_users_own_newer_row() {
+        let row_a = snapshot(Uuid::new_v4(), "user_a", "token_a", 9_000);
+        let repo = mock(vec![row_a], None);
+
+        // Event for user A, older than A's own row -> genuinely stale.
+        let p = payload("google_play", Some("token_a"), 5_000);
+        forward_webhook(&repo, repo.app_id, repo.delivery_id, p).await.unwrap();
+
+        assert!(
+            repo.suppressed.load(Ordering::SeqCst),
+            "genuinely stale Google event must be suppressed via its own purchase-token row"
+        );
+    }
+
+    #[tokio::test]
+    async fn google_event_with_missing_token_fails_open() {
+        // No row matches the token -> must forward, never suppress on SKU.
+        let row_b = snapshot(Uuid::new_v4(), "user_b", "token_b", 9_000);
+        let repo = mock(vec![], Some(row_b));
+
+        let p = payload("google_play", Some("token_unmatched"), 1);
+        forward_webhook(&repo, repo.app_id, repo.delivery_id, p).await.unwrap();
+
+        assert!(
+            !repo.suppressed.load(Ordering::SeqCst),
+            "unmatched Google purchase token must fail open, not suppress on shared SKU"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_google_provider_still_uses_subscription_id_keying() {
+        // For non-google providers, subscription_id is user-unique: keep keying on it.
+        let mut stored = snapshot(Uuid::new_v4(), "user_c", "token_c", 9_000);
+        stored.provider = "creem".to_string();
+        let repo = mock(vec![], Some(stored));
+
+        let p = payload("creem", None, 5_000);
+        forward_webhook(&repo, repo.app_id, repo.delivery_id, p).await.unwrap();
+
+        assert!(
+            repo.suppressed.load(Ordering::SeqCst),
+            "stale non-google event must still be suppressed via subscription_id row"
+        );
     }
 }

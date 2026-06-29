@@ -30,18 +30,18 @@ impl SchedulerRepository for db::Database {
         db::subscriptions::list_reconciliation_subscriptions(self.pool(), app_id).await
     }
 
-    async fn update_subscription_status(
+    async fn update_reconciled_subscription_status(
         &self,
         app_id: Uuid,
-        subscription_id: &str,
+        id: Uuid,
         new_status: &str,
         current_period_end: Option<chrono::DateTime<chrono::Utc>>,
         event_time_ms: i64,
     ) -> Result<bool, BridgeError> {
-        db::subscriptions::update_subscription_status(
+        db::subscriptions::update_reconciled_subscription_status(
             self.pool(),
             app_id,
-            subscription_id,
+            id,
             new_status,
             current_period_end,
             event_time_ms,

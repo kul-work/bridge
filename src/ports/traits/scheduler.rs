@@ -21,10 +21,10 @@ pub trait SchedulerRepository: Send + Sync {
         app_id: Uuid,
     ) -> Result<Vec<Subscription>, BridgeError>;
 
-    async fn update_subscription_status(
+    async fn update_reconciled_subscription_status(
         &self,
         app_id: Uuid,
-        subscription_id: &str,
+        id: Uuid,
         new_status: &str,
         current_period_end: Option<chrono::DateTime<chrono::Utc>>,
         event_time_ms: i64,
