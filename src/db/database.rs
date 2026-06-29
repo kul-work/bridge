@@ -21,13 +21,6 @@ impl Database {
         &self.pool
     }
 
-    /// Test-only constructor that wraps an existing pool without running
-    /// migrations, so DB-backed tests can call repository trait methods.
-    #[cfg(test)]
-    pub(crate) fn from_pool_for_test(pool: PgPool) -> Self {
-        Database { pool }
-    }
-
     /// Create a new database connection pool and run migrations
     pub async fn new(
         database_url: &str,
