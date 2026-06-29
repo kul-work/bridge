@@ -17,9 +17,9 @@
 │  ├─ handle_google_play()      [Extract token, verify PubSub signature]       │
 │  ├─ handle_creem()             [Extract token, verify HMAC signature]        │
 │  │  └─ Toggleable via `verify_webhook_signature` per app                     │
-│  └─ Returns: 204 No Content (if successful ingestion)                        │
+│  └─ Returns: 204 after durable provider insert + delivery enqueue            │
 └─────────────────┬───────────────────────────────────────────────────────────┘
-                  │ (Async) tokio::spawn() 
+                  │ durable insert + delivery enqueue
                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                   DATABASE: WEBHOOK_PROVIDER TABLE                           │
@@ -198,7 +198,7 @@ Process Webhook (dedup + ordering + normalization)
     ↓
 Create webhook_delivery task
     ↓
-Return 204 No Content (immediately, for provider acknowledgement)
+Return 204 No Content after durable enqueue
 ```
 
 ### 2. FORWARDING (Bridge → App)

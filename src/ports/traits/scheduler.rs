@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
-    db::{subscriptions::Subscription, webhooks::WebhookDelivery},
+    db::{subscriptions::Subscription, webhooks::{WebhookDelivery, WebhookProvider}},
     error::BridgeError,
 };
 
@@ -15,6 +15,14 @@ pub trait SchedulerRepository: Send + Sync {
         app_id: Uuid,
         limit: i64,
     ) -> Result<Vec<WebhookDelivery>, BridgeError>;
+
+    async fn claim_unprocessed_webhook_providers(
+        &self,
+        app_id: Uuid,
+        created_before: chrono::DateTime<chrono::Utc>,
+        claim_expired_before: chrono::DateTime<chrono::Utc>,
+        limit: i64,
+    ) -> Result<Vec<WebhookProvider>, BridgeError>;
 
     async fn list_reconciliation_subscriptions(
         &self,

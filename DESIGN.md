@@ -19,7 +19,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - Email addresses are pass-through (never persisted in Bridge, but used for notifications)
 
 ### Idempotency First
-- Every webhook logged before state mutation (deduplication via `webhook_log`)
+- Every webhook provider event logged before state mutation (deduplication via `webhook_provider`)
 - Payments UPSERTed atomically to prevent duplicates
 - Subscriptions versioned for optimistic concurrency control
 - Stale event suppression via high-water mark (`last_event_time`)
@@ -85,23 +85,24 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 
 **Security**:
 1. Verify provider signature (provider-specific algorithm)
-2. Check webhook uniqueness via `webhook_log` deduplication
+2. Check webhook uniqueness via `webhook_provider` deduplication
 3. All processing is idempotent (UPSERT semantics)
 
 **Processing flow**:
 1. Validate signature
-2. Insert/check `webhook_log` (primary key: `provider_webhook_id`)
-3. Resolve `external_user_id` via lookup cascade
-4. Update subscription/payment state
-5. Queue callback delivery to app
-6. Return 204 to provider immediately
-7. (Async) Forward callback to app's `webhook_callback_url` with HMAC signature
+2. Insert/check `webhook_provider` (app-scoped uniqueness: `app_id`, `provider`, `provider_webhook_id`)
+3. Queue a durable `webhook_delivery` work item
+4. Return 204 to provider only after the event is durable
+5. (Async) Resolve `external_user_id` via lookup cascade
+6. (Async) Update subscription/payment state, or mark the event as suppressed/no-forward
+7. (Async) Forward queued callback to app's `webhook_callback_url` with HMAC signature
 
 **Callback forwarding**:
 - HMAC signature via `X-Pay-Signature` header using `apps.webhook_callback_secret`
 - 3-strike retry strategy (exponential backoff)
 - Dead letter queue: webhooks that exhaust retries are marked `dead_lettered`
-- Stale event suppression: compare `webhook_log.timestamp_epoch_ms` against `subscriptions.last_event_time`
+- Stale event suppression: compare `webhook_provider.timestamp_epoch_ms` against `subscriptions.last_event_time`
+- The webhook retry worker also recovers provider inbox rows that were stored before durable callback delivery existed, using a short DB lease to avoid concurrent recovery.
 
 ### 3.3 Provider Integration
 
@@ -133,7 +134,7 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 | `provider_configs` | Per-app provider credentials |
 | `subscriptions` | Subscription lifecycle source of truth |
 | `payments` | Immutable payment records |
-| `webhook_log` | Webhook audit + deduplication (ingress) |
+| `webhook_provider` | Webhook audit + deduplication (ingress) |
 | `webhook_delivery` | Callback forwarding state + dead letter queue |
 
 **Key design decisions**:
@@ -239,17 +240,19 @@ Google Play (webhook)
   |
   1. Verify Google's signature ✓
   |
-  2. Check webhook_log uniqueness ✓
+  2. Check webhook_provider uniqueness ✓
   |
-  3. Insert webhook_log (idempotent) ✓
+  3. Insert webhook_provider (idempotent) ✓
   |
-  4. Resolve external_user_id via lookup cascade ✓
+  4. Queue durable webhook_delivery ✓
   |
-  5. UPSERT subscription state ✓
+  5. Return 204 ✓
   |
-  6. Return 204 ✓
+  6. (Async) Resolve external_user_id via lookup cascade ✓
   |
-  7. (Async) Queue callback delivery
+  7. (Async) UPSERT subscription state or suppress/no-forward ✓
+  |
+  8. (Async) Forward queued callback delivery
      |
      v
      App webhook_callback_url

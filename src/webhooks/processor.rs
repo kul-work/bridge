@@ -3,6 +3,7 @@ use crate::{
     error::BridgeError,
     ports::{
         WebhookProcessingRepository, WebhookProviderSnapshot, WebhookSubscriptionSnapshot,
+        WebhookWriteRepository,
     },
     services::google_play::trace::{hash_token, BpTrace},
 };
@@ -23,6 +24,12 @@ use self::{
     },
 };
 pub(crate) use self::fields::WebhookFields;
+
+pub struct EnqueuedWebhook {
+    pub delivery_id: Uuid,
+    pub canonical: CanonicalWebhookPayload,
+    pub delivery_created: bool,
+}
 
 struct UserResolution {
     external_user_id: Option<String>,
@@ -1136,7 +1143,10 @@ pub async fn process_webhook(
             &mut canonical_subscription,
             &mut should_forward,
         ),
-        EventHandling::ReturnNone => return Ok(None),
+        EventHandling::ReturnNone => {
+            repo.mark_webhook_processed(webhook_provider_id).await?;
+            return Ok(None);
+        }
         EventHandling::NotHandled => {
             info!(
                 app_id = %app_id,
@@ -1243,14 +1253,34 @@ pub async fn process_webhook(
         google_pending_price_change_expected_at,
     };
 
-    // Step 6: Mark webhook as processed
-    repo.mark_webhook_processed(webhook_provider_id).await?;
-
     emit_webhook_trace(app_id, &canonical, &webhook.payload);
 
     Ok(Some(canonical))
 }
 
+pub async fn process_and_enqueue_webhook<R>(
+    repo: &R,
+    app_id: Uuid,
+    webhook_provider_id: Uuid,
+) -> Result<Option<EnqueuedWebhook>, BridgeError>
+where
+    R: WebhookProcessingRepository + WebhookWriteRepository,
+{
+    match process_webhook(repo, webhook_provider_id, app_id).await? {
+        Some(canonical) => {
+            let delivery = repo
+                .create_webhook_delivery(app_id, webhook_provider_id)
+                .await?;
+            repo.mark_webhook_processed(webhook_provider_id).await?;
+            Ok(Some(EnqueuedWebhook {
+                delivery_id: delivery.id,
+                canonical,
+                delivery_created: delivery.created,
+            }))
+        }
+        None => Ok(None),
+    }
+}
 
 #[cfg(test)]
 mod tests;

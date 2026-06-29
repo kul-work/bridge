@@ -524,7 +524,7 @@ POST /webhooks/:token/google_play
 POST /webhooks/:token/creem
 ```
 
-`:token` is the app's webhook ingress token. Bridge resolves the app from that token, stores/deduplicates the provider webhook, processes it asynchronously, and forwards a normalized callback to the app when possible.
+`:token` is the app's webhook ingress token. Bridge resolves the app from that token, stores/deduplicates the provider webhook, enqueues durable processing before provider ACK, and forwards a normalized callback to the app asynchronously/retryably when possible.
 
 Google Play ingress can verify Pub/Sub Authorization JWTs when provider config enables `verify_webhook_signature`. Creem ingress verifies HMAC signatures when provider config enables `verify_webhook_signature`; accepted signature header names are `Webhook-Signature`, `creem-signature`, and `x-signature`.
 

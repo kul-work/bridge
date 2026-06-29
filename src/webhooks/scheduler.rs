@@ -1,4 +1,5 @@
 use crate::utils::diagnostic_hash;
+use chrono::Utc;
 use std::time::Duration;
 use crate::db::Database;
 use crate::ports::{
@@ -8,6 +9,9 @@ use crate::ports::{
 use std::sync::Arc;
 use tracing::{info, error, warn, info_span, Instrument};
 use uuid::Uuid;
+
+const WEBHOOK_PROVIDER_RECOVERY_MIN_AGE_SECS: i64 = 300;
+const WEBHOOK_PROVIDER_RECOVERY_LEASE_SECS: i64 = 600;
 
 pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
     let span = info_span!("background_worker", job = "webhook_retry");
@@ -62,12 +66,15 @@ pub async fn retry_webhooks(
         impl SchedulerRepository
         + WebhookForwardRepository
         + WebhookProcessingRepository
+        + WebhookWriteRepository
     ),
 ) -> Result<(), crate::error::BridgeError> {
     let apps_result = SchedulerRepository::list_enabled_app_ids(repo).await?;
 
     // 2. Iterate apps and retry
     for app_id in apps_result {
+        recover_webhook_provider_inbox(repo, app_id).await;
+
         let deliveries = match SchedulerRepository::list_pending_webhook_deliveries(repo, app_id, 50).await {
             Ok(deliveries) => deliveries,
             Err(e) => {
@@ -81,6 +88,63 @@ pub async fn retry_webhooks(
         };
 
         for delivery in deliveries {
+            let provider = match repo.get_webhook_provider(delivery.webhook_provider_id).await {
+                Ok(provider) => provider,
+                Err(e) => {
+                    error!(
+                        app_id = %app_id,
+                        webhook_delivery_id = %delivery.id,
+                        webhook_provider_id = %delivery.webhook_provider_id,
+                        error = %e,
+                        "Failed to load provider webhook for pending delivery"
+                    );
+                    continue;
+                }
+            };
+
+            if !provider.processed {
+                match crate::webhooks::processor::process_webhook(
+                    repo,
+                    delivery.webhook_provider_id,
+                    app_id,
+                )
+                .await
+                {
+                    Ok(Some(canonical)) => {
+                        repo.mark_webhook_processed(delivery.webhook_provider_id).await?;
+
+                        let _ = crate::webhooks::forwarding::forward_webhook(
+                            repo,
+                            app_id,
+                            delivery.id,
+                            canonical,
+                        )
+                        .await;
+                    }
+                    Ok(None) => {
+                        WebhookForwardRepository::update_webhook_delivery_attempt(
+                            repo,
+                            delivery.id,
+                            None,
+                            Some("No app callback for provider webhook".to_string()),
+                            true,
+                        )
+                        .await?;
+                    }
+                    Err(e) => {
+                        error!(
+                            app_id = %app_id,
+                            webhook_delivery_id = %delivery.id,
+                            webhook_provider_id = %delivery.webhook_provider_id,
+                            error = %e,
+                            "Failed to process pending webhook delivery"
+                        );
+                    }
+                }
+
+                continue;
+            }
+
             match crate::webhooks::processor::build_canonical_payload(
                 repo,
                 delivery.webhook_provider_id,
@@ -119,6 +183,43 @@ pub async fn retry_webhooks(
     }
 
     Ok(())
+}
+
+async fn recover_webhook_provider_inbox(
+    repo: &(
+        impl SchedulerRepository
+        + WebhookForwardRepository
+        + WebhookProcessingRepository
+        + WebhookWriteRepository
+    ),
+    app_id: Uuid,
+) {
+    let now = Utc::now();
+    let created_before = now - chrono::Duration::seconds(WEBHOOK_PROVIDER_RECOVERY_MIN_AGE_SECS);
+    let claim_expired_before = now - chrono::Duration::seconds(WEBHOOK_PROVIDER_RECOVERY_LEASE_SECS);
+
+    match SchedulerRepository::claim_unprocessed_webhook_providers(repo, app_id, created_before, claim_expired_before, 50).await {
+        Ok(webhooks) => {
+            for webhook in webhooks {
+                match crate::webhooks::processor::process_and_enqueue_webhook(repo, app_id, webhook.id).await {
+                    Ok(Some(_enqueued)) => {}
+                    Ok(None) => {}
+                    Err(e) => error!(
+                        app_id = %app_id,
+                        webhook_provider_id = %webhook.id,
+                        error = %e,
+                        "Failed to recover unprocessed provider webhook"
+                    ),
+                }
+            }
+        }
+        Err(e) => error!(
+            app_id = %app_id,
+            error = %e,
+            "Failed to load unprocessed provider webhooks"
+        ),
+    }
+
 }
 
 pub async fn retry_google_play_subscription_acknowledgements(

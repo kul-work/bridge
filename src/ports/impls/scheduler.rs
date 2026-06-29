@@ -23,6 +23,22 @@ impl SchedulerRepository for db::Database {
         db::webhooks::list_pending_webhook_deliveries(self.pool(), app_id, limit).await
     }
 
+    async fn claim_unprocessed_webhook_providers(
+        &self,
+        app_id: Uuid,
+        created_before: chrono::DateTime<chrono::Utc>,
+        claim_expired_before: chrono::DateTime<chrono::Utc>,
+        limit: i64,
+    ) -> Result<Vec<db::webhooks::WebhookProvider>, BridgeError> {
+        db::webhooks::claim_unprocessed_webhook_providers(
+            self.pool(),
+            app_id,
+            created_before,
+            claim_expired_before,
+            limit,
+        ).await
+    }
+
     async fn list_reconciliation_subscriptions(
         &self,
         app_id: Uuid,

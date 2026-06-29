@@ -19,6 +19,7 @@ pub struct WebhookProvider {
     pub timestamp_epoch_ms: Option<i64>,
     pub suppressed: bool,
     pub suppressed_reason: Option<String>,
+    pub recovery_claimed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -185,6 +186,57 @@ pub async fn list_pending_webhook_deliveries(
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(deliveries)
+}
+
+pub async fn claim_unprocessed_webhook_providers(
+    pool: &PgPool,
+    app_id: Uuid,
+    created_before: DateTime<Utc>,
+    claim_expired_before: DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<WebhookProvider>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let providers = sqlx::query_as::<_, WebhookProvider>(
+        "WITH candidates AS (
+             SELECT id
+             FROM pay.webhook_provider
+             WHERE app_id = $1
+               AND processed = false
+               AND suppressed = false
+               AND created_at < $2
+               AND (
+                   recovery_claimed_at IS NULL
+                   OR recovery_claimed_at < $3
+               )
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM pay.webhook_delivery wd
+                   WHERE wd.webhook_provider_id = pay.webhook_provider.id
+               )
+             ORDER BY created_at ASC
+             LIMIT $4
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE pay.webhook_provider wp
+         SET recovery_claimed_at = NOW()
+         FROM candidates
+         WHERE wp.id = candidates.id
+         RETURNING wp.*",
+    )
+    .bind(app_id)
+    .bind(created_before)
+    .bind(claim_expired_before)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(providers)
 }
 
 /// Reset a dead-lettered webhook delivery for manual retry.
@@ -617,6 +669,23 @@ mod tests {
         result
     }
 
+    #[tokio::test]
+    async fn provider_inbox_recovery_selectors_find_only_old_unprocessed_rows()
+    -> Result<(), Box<dyn Error>> {
+        let Some(database) = test_database().await? else {
+            eprintln!("skipping DB-backed webhook inbox regression; set BRIDGE_TEST_DATABASE_URL");
+            return Ok(());
+        };
+
+        let pool = database.pool();
+        let app_id = insert_test_app(pool, "http://127.0.0.1:1/callback").await?;
+        let result = run_provider_inbox_selector_regression(pool, app_id).await;
+
+        delete_test_app(pool, app_id).await;
+
+        result
+    }
+
     async fn run_manual_retry_reset_regression(
         database: &crate::db::Database,
         pool: &PgPool,
@@ -677,6 +746,43 @@ mod tests {
         assert_eq!(pending_after.forward_attempts, 1);
         assert!(!pending_after.dead_lettered);
         assert_eq!(pending_after.last_http_status, Some(200));
+
+        Ok(())
+    }
+
+    async fn run_provider_inbox_selector_regression(
+        pool: &PgPool,
+        app_id: Uuid,
+    ) -> Result<(), Box<dyn Error>> {
+        let old_unprocessed_id = insert_test_provider(pool, app_id, false, false).await?;
+        make_provider_old(pool, old_unprocessed_id).await?;
+        let fresh_unprocessed_id = insert_test_provider(pool, app_id, false, false).await?;
+        let suppressed_id = insert_test_provider(pool, app_id, false, true).await?;
+        let processed_missing_delivery_id = insert_test_provider(pool, app_id, true, false).await?;
+        let processed_with_delivery_id = insert_test_delivery(pool, app_id, 0, false, false).await?;
+        let processed_with_delivery = super::get_webhook_delivery(pool, processed_with_delivery_id).await?;
+
+        let now = Utc::now();
+        let cutoff = now - chrono::Duration::seconds(300);
+        let claim_expired_before = now - chrono::Duration::seconds(600);
+        let unprocessed =
+            super::claim_unprocessed_webhook_providers(pool, app_id, cutoff, claim_expired_before, 50).await?;
+        let unprocessed_ids: Vec<Uuid> = unprocessed.iter().map(|webhook| webhook.id).collect();
+        assert!(unprocessed_ids.contains(&old_unprocessed_id));
+        assert!(!unprocessed_ids.contains(&fresh_unprocessed_id));
+        assert!(!unprocessed_ids.contains(&suppressed_id));
+        assert!(!unprocessed_ids.contains(&processed_missing_delivery_id));
+        assert!(!unprocessed_ids.contains(&processed_with_delivery.webhook_provider_id));
+
+        let second_claim =
+            super::claim_unprocessed_webhook_providers(pool, app_id, cutoff, claim_expired_before, 50).await?;
+        assert!(second_claim.is_empty());
+
+        make_provider_claim_old(pool, old_unprocessed_id).await?;
+        let reclaimed =
+            super::claim_unprocessed_webhook_providers(pool, app_id, cutoff, claim_expired_before, 50).await?;
+        let reclaimed_ids: Vec<Uuid> = reclaimed.iter().map(|webhook| webhook.id).collect();
+        assert!(reclaimed_ids.contains(&old_unprocessed_id));
 
         Ok(())
     }
@@ -779,6 +885,59 @@ mod tests {
         .await?;
 
         Ok(delivery_id)
+    }
+
+    async fn insert_test_provider(
+        pool: &PgPool,
+        app_id: Uuid,
+        processed: bool,
+        suppressed: bool,
+    ) -> Result<Uuid, sqlx::Error> {
+        let provider_id = Uuid::new_v4();
+
+        sqlx::query(
+            "INSERT INTO pay.webhook_provider
+             (id, app_id, provider, provider_webhook_id, event_type, payload, processed, suppressed)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(provider_id)
+        .bind(app_id)
+        .bind("test_provider")
+        .bind(format!("evt_{}", provider_id))
+        .bind("subscription.test")
+        .bind(serde_json::json!({ "test": true }))
+        .bind(processed)
+        .bind(suppressed)
+        .execute(pool)
+        .await?;
+
+        Ok(provider_id)
+    }
+
+    async fn make_provider_old(pool: &PgPool, provider_id: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE pay.webhook_provider
+             SET created_at = NOW() - INTERVAL '10 minutes'
+             WHERE id = $1",
+        )
+        .bind(provider_id)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn make_provider_claim_old(pool: &PgPool, provider_id: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE pay.webhook_provider
+             SET recovery_claimed_at = NOW() - INTERVAL '20 minutes'
+             WHERE id = $1",
+        )
+        .bind(provider_id)
+        .execute(pool)
+        .await?;
+
+        Ok(())
     }
 
     async fn delete_test_app(pool: &PgPool, app_id: Uuid) {

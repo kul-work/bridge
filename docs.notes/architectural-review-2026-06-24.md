@@ -10,34 +10,10 @@ The most important theme: Bridge currently looks like a payment event system, bu
 
 ## Priority Order
 
-2. Introduce a durable inbox/outbox around webhook processing and callback delivery.
 3. Add worker claiming/leases before any callback or provider side effect.
 4. Centralize lifecycle state transitions behind typed statuses and a state machine.
 5. Move provider-specific semantics behind real provider adapters.
 6. Split raw webhook payload retention from dedupe/delivery retention.
-
----
-
-## 2. Critical — Webhook ingress ACKs providers before durable processing is guaranteed
-
-Ingress inserts a `webhook_provider` row, spawns an in-memory task, then returns `204` to the provider.
-
-### Evidence
-
-- New webhook is inserted, then async processing is spawned, then `204` is returned: `src/webhooks/ingress.rs::handle_google_play` and `handle_creem`.
-- Spawned processing failure is only logged: `src/webhooks/ingress.rs::spawn_process_and_forward_webhook`.
-- Retry worker drains `webhook_delivery`, not unprocessed `webhook_provider` inbox rows: `src/webhooks/scheduler.rs::retry_webhooks`.
-
-### Why it matters
-
-If Bridge crashes after inserting `webhook_provider` but before processing/enqueueing delivery, the provider already received success and may never retry. The event can remain permanently unprocessed.
-
-### Recommended architectural direction
-
-- Treat `webhook_provider` as a durable inbox.
-- Add a worker that continuously claims unprocessed inbox rows using leases or `FOR UPDATE SKIP LOCKED`.
-- Or process state mutation and delivery enqueue synchronously before returning `204`.
-- Make `processed=false AND suppressed=false` an operational queue, not just an admin/debug state.
 
 ---
 

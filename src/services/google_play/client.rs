@@ -9,6 +9,8 @@ use crate::utils::{diagnostic_hash, scrub_email};
 use backoff::ExponentialBackoff;
 use backoff::future::retry;
 
+const GOOGLE_PLAY_HTTP_TIMEOUT_SECS: u64 = 10;
+
 #[derive(Debug, Deserialize)]
 struct ServiceAccount {
     client_email: String,
@@ -95,7 +97,9 @@ impl GooglePlayClient {
         let service_account: ServiceAccount = serde_json::from_str(&content)?;
 
         Ok(Self {
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(Duration::from_secs(GOOGLE_PLAY_HTTP_TIMEOUT_SECS))
+                .build()?,
             service_account: std::sync::Arc::new(service_account),
             cached_keys: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             verify_aud,

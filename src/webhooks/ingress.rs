@@ -4,19 +4,34 @@ use axum::{
 };
 use base64::Engine;
 use std::sync::Arc;
-use tracing::{debug, error, info, info_span, Instrument};
+use tracing::{error, info, info_span, Instrument};
 use uuid::Uuid;
 
 use crate::{
     db::Database,
     error::BridgeError,
-    ports::{ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository, WebhookWriteRepository},
-    ports::composites::WebhookIngressRepository,
+    ports::{
+        ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository,
+        WebhookWriteRepository,
+    },
+    ports::composites::{WebhookIngressRepository, WebhookProcessingMutationRepository},
     state::AppState,
     utils::diagnostic_hash,
 };
+use crate::db::webhooks::WebhookDeliveryEnqueue;
 
 const CREEM_SIGNATURE_HEADERS: [&str; 3] = ["creem-signature", "Webhook-Signature", "x-signature"];
+
+fn retryable_provider_ack_error(
+    provider: &str,
+    event_id: &str,
+    error: BridgeError,
+) -> BridgeError {
+    BridgeError::InternalServerError(format!(
+        "{} webhook {} processing failed after persistence: {}",
+        provider, event_id, error
+    ))
+}
 
 fn google_voided_purchase_product_type(payload: &serde_json::Value) -> Option<i64> {
     payload
@@ -24,97 +39,69 @@ fn google_voided_purchase_product_type(payload: &serde_json::Value) -> Option<i6
         .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
 }
 
-fn spawn_process_and_forward_webhook(
+fn spawn_process_and_forward_delivery(
     database: Arc<Database>,
     app_id: Uuid,
     webhook_id: Uuid,
     provider_name: &'static str,
     event_id: String,
+    delivery: WebhookDeliveryEnqueue,
 ) {
     let span = info_span!(
-        "webhook_process_and_forward",
+        "webhook_process_delivery",
         app_id = %app_id,
         provider = provider_name,
         webhook_provider_id = %webhook_id,
+        webhook_delivery_id = %delivery.id,
         event_id = %event_id,
     );
 
     tokio::spawn(async move {
-        debug!("Begin processing webhook");
+        if !delivery.created {
+            info!(
+                app_id = %app_id,
+                webhook_provider_id = %webhook_id,
+                webhook_delivery_id = %delivery.id,
+                provider = provider_name,
+                event_id = %event_id,
+                outcome = "duplicate_delivery_queued",
+                "Webhook delivery already queued; skipping duplicate immediate processing"
+            );
+            return;
+        }
+
         match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
             Ok(Some(canonical)) => {
-                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
+                if let Err(e) = database.as_ref().mark_webhook_processed(webhook_id).await {
+                    error!(error = %e, "Failed to mark processed webhook delivery complete");
+                    return;
+                }
+
+                if let Err(e) = crate::webhooks::forwarding::forward_webhook(
                     database.as_ref(),
                     app_id,
-                    webhook_id,
+                    delivery.id,
                     canonical,
                 )
                 .await
                 {
-                    error!(error = %e, "Failed to forward webhook");
+                    error!(error = %e, "Failed to forward processed webhook delivery");
                 }
             }
-            Ok(None) => info!(
-                app_id = %app_id,
-                webhook_provider_id = %webhook_id,
-                provider = provider_name,
-                event_id = %event_id,
-                outcome = "suppressed",
-                "Webhook suppressed"
-            ),
-            Err(e) => error!(error = %e, "Webhook processing failed"),
-        }
-        debug!("End processing webhook");
-    }.instrument(span));
-}
-
-fn spawn_forward_existing_webhook(
-    database: Arc<Database>,
-    app_id: Uuid,
-    webhook_id: Uuid,
-    provider_name: &'static str,
-    event_id: String,
-) {
-    let span = info_span!(
-        "webhook_resume_forwarding",
-        app_id = %app_id,
-        provider = provider_name,
-        webhook_provider_id = %webhook_id,
-        event_id = %event_id,
-    );
-
-    tokio::spawn(async move {
-        match crate::webhooks::processor::build_canonical_payload(database.as_ref(), webhook_id, app_id).await {
-            Ok(Some(canonical)) => {
-                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
-                    database.as_ref(),
-                    app_id,
-                    webhook_id,
-                    canonical,
-                )
-                .await
+            Ok(None) => {
+                if let Err(e) = database
+                    .update_webhook_delivery_attempt(
+                        delivery.id,
+                        None,
+                        Some("No app callback for provider webhook".to_string()),
+                        true,
+                    )
+                    .await
                 {
-                    error!(error = %e, "Failed to resume webhook forwarding");
-                } else {
-                    info!(
-                        app_id = %app_id,
-                        webhook_provider_id = %webhook_id,
-                        provider = provider_name,
-                        event_id = %event_id,
-                        outcome = "forwarding_resumed",
-                        "Webhook forwarding resumed"
-                    );
+                    error!(error = %e, "Failed to mark no-callback webhook delivery complete");
                 }
             }
-            Ok(None) => info!(
-                app_id = %app_id,
-                webhook_provider_id = %webhook_id,
-                provider = provider_name,
-                event_id = %event_id,
-                outcome = "suppressed_while_resuming",
-                "Webhook suppressed while resuming"
-            ),
-            Err(e) => error!(error = %e, "Webhook payload rebuild failed"),
+            Err(e) => error!(error = %e, "Failed to process webhook delivery"),
         }
     }.instrument(span));
 }
@@ -123,7 +110,6 @@ fn spawn_forward_existing_webhook(
 enum DuplicateWebhookAction {
     Ignore,
     ResumeProcessing,
-    ResumeForwarding,
 }
 
 fn duplicate_webhook_action(
@@ -136,11 +122,7 @@ fn duplicate_webhook_action(
     }
 
     if !processed {
-        return DuplicateWebhookAction::ResumeProcessing;
-    }
-
-    if !has_delivery {
-        return DuplicateWebhookAction::ResumeForwarding;
+        return if has_delivery { DuplicateWebhookAction::Ignore } else { DuplicateWebhookAction::ResumeProcessing };
     }
 
     DuplicateWebhookAction::Ignore
@@ -165,17 +147,11 @@ async fn handle_duplicate_webhook(
                 event_id = event_id,
                 "Duplicate webhook retrying stored unprocessed event"
             );
-            spawn_process_and_forward_webhook(database, app_id, webhook_id, provider_name, event_id.to_string());
-        }
-        DuplicateWebhookAction::ResumeForwarding => {
-            tracing::info!(
-                app_id = %app_id,
-                webhook_provider_id = %webhook_id,
-                provider = provider_name,
-                event_id = event_id,
-                "Duplicate webhook retrying stored undelivered event"
-            );
-            spawn_forward_existing_webhook(database, app_id, webhook_id, provider_name, event_id.to_string());
+            let delivery = database
+                .as_ref()
+                .create_webhook_delivery(app_id, webhook_id)
+                .await?;
+            spawn_process_and_forward_delivery(database, app_id, webhook_id, provider_name, event_id.to_string(), delivery);
         }
         DuplicateWebhookAction::Ignore => {
             tracing::info!(
@@ -417,11 +393,36 @@ pub async fn handle_google_play(
         .await?;
 
     if !is_new {
-        handle_duplicate_webhook(database, app.id, webhook_id, "Google Play", event_id).await?;
+        if let Err(e) = handle_duplicate_webhook(database, app.id, webhook_id, "Google Play", event_id).await {
+            error!(
+                app_id = %app.id,
+                webhook_provider_id = %webhook_id,
+                provider = "Google Play",
+                event_id = event_id,
+                error = %e,
+                "Duplicate webhook recovery failed before provider acknowledgement"
+            );
+            return Err(retryable_provider_ack_error("Google Play", event_id, e));
+        }
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    spawn_process_and_forward_webhook(database, app.id, webhook_id, "Google Play", event_id.to_string());
+    match database.as_ref().create_webhook_delivery(app.id, webhook_id).await {
+        Ok(delivery) => {
+            spawn_process_and_forward_delivery(database, app.id, webhook_id, "Google Play", event_id.to_string(), delivery);
+        }
+        Err(e) => {
+            error!(
+                app_id = %app.id,
+                webhook_provider_id = %webhook_id,
+                provider = "Google Play",
+                event_id = event_id,
+                error = %e,
+                "Webhook delivery enqueue failed before provider acknowledgement"
+            );
+            return Err(retryable_provider_ack_error("Google Play", event_id, e));
+        }
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -577,11 +578,36 @@ pub async fn handle_creem(
         .await?;
 
     if !is_new {
-        handle_duplicate_webhook(database, app.id, webhook_id, "Creem", event_id).await?;
+        if let Err(e) = handle_duplicate_webhook(database, app.id, webhook_id, "Creem", event_id).await {
+            error!(
+                app_id = %app.id,
+                webhook_provider_id = %webhook_id,
+                provider = "Creem",
+                event_id = event_id,
+                error = %e,
+                "Duplicate webhook recovery failed before provider acknowledgement"
+            );
+            return Err(retryable_provider_ack_error("Creem", event_id, e));
+        }
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    spawn_process_and_forward_webhook(database, app.id, webhook_id, "Creem", event_id.to_string());
+    match database.as_ref().create_webhook_delivery(app.id, webhook_id).await {
+        Ok(delivery) => {
+            spawn_process_and_forward_delivery(database, app.id, webhook_id, "Creem", event_id.to_string(), delivery);
+        }
+        Err(e) => {
+            error!(
+                app_id = %app.id,
+                webhook_provider_id = %webhook_id,
+                provider = "Creem",
+                event_id = event_id,
+                error = %e,
+                "Webhook delivery enqueue failed before provider acknowledgement"
+            );
+            return Err(retryable_provider_ack_error("Creem", event_id, e));
+        }
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -861,10 +887,18 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_processed_webhook_without_delivery_resumes_forwarding() {
+    fn duplicate_unprocessed_webhook_with_delivery_is_ignored() {
+        assert_eq!(
+            duplicate_webhook_action(false, false, true),
+            DuplicateWebhookAction::Ignore
+        );
+    }
+
+    #[test]
+    fn duplicate_processed_webhook_without_delivery_is_ignored() {
         assert_eq!(
             duplicate_webhook_action(true, false, false),
-            DuplicateWebhookAction::ResumeForwarding
+            DuplicateWebhookAction::Ignore
         );
     }
 
