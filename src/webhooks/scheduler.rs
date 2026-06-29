@@ -13,6 +13,20 @@ use uuid::Uuid;
 const WEBHOOK_PROVIDER_RECOVERY_MIN_AGE_SECS: i64 = 300;
 const WEBHOOK_PROVIDER_RECOVERY_LEASE_SECS: i64 = 600;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingDeliveryAction {
+    ProcessProviderFirst,
+    RebuildCanonicalPayload,
+}
+
+fn pending_delivery_action(provider_processed: bool) -> PendingDeliveryAction {
+    if provider_processed {
+        PendingDeliveryAction::RebuildCanonicalPayload
+    } else {
+        PendingDeliveryAction::ProcessProviderFirst
+    }
+}
+
 pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
     let span = info_span!("background_worker", job = "webhook_retry");
 
@@ -102,7 +116,7 @@ pub async fn retry_webhooks(
                 }
             };
 
-            if !provider.processed {
+            if pending_delivery_action(provider.processed) == PendingDeliveryAction::ProcessProviderFirst {
                 match crate::webhooks::processor::process_webhook(
                     repo,
                     delivery.webhook_provider_id,
@@ -812,4 +826,25 @@ pub async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::err
 
     info!(job = "cleanup", status = "completed", "Data retention cleanup completed");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pending_delivery_action, PendingDeliveryAction};
+
+    #[test]
+    fn pending_delivery_for_unprocessed_provider_processes_provider_first() {
+        assert_eq!(
+            pending_delivery_action(false),
+            PendingDeliveryAction::ProcessProviderFirst
+        );
+    }
+
+    #[test]
+    fn pending_delivery_for_processed_provider_rebuilds_canonical_payload() {
+        assert_eq!(
+            pending_delivery_action(true),
+            PendingDeliveryAction::RebuildCanonicalPayload
+        );
+    }
 }
