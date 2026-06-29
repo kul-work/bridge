@@ -19,6 +19,7 @@
 #   WHK-04:  Webhook Without Prior verify_payment Call
 #   WHK-05:  Refund Idempotency Verification
 #   WHK-06:  Token-based Webhook Deduplication
+#   WHK-07:  Same-SKU Cross-User Webhook Isolation
 #
 # Prerequisites:
 #   - Backend running with MOCK_EXTERNAL_APIS=true
@@ -136,6 +137,9 @@ run_test "WHK-05" "test-whk-05.sh" "Refund Idempotency Verification"
 
 # WHK-06: Token-based Webhook Deduplication
 run_test "WHK-06" "test-whk-06.sh" "Token-based Webhook Deduplication"
+
+# WHK-07: Same-SKU Cross-User Webhook Isolation
+run_test "WHK-07" "test-whk-07.sh" "Same-SKU Cross-User Webhook Isolation"
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))

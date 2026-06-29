@@ -706,7 +706,17 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
     let timestamp_iso = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
-    let canonical_subscription = if let Some(ref sub_id) = fields.subscription_id {
+    // For Google Play, subscription_id is a shared product SKU, so a sub_id
+    // lookup could borrow another same-SKU user's status/token/period fields.
+    // Resolve the canonical row strictly by purchase token; if the token is
+    // missing or unmatched, do NOT fall back to a sub_id-only lookup. The
+    // payload is then rebuilt from webhook fields without borrowing row state.
+    let canonical_subscription = if webhook.provider == "google_play" {
+        match fields.purchase_token.as_deref().or(webhook.purchase_token.as_deref()) {
+            Some(token) => repo.get_subscription_by_purchase_token_for_provider(app_id, &webhook.provider, token).await?,
+            None => None,
+        }
+    } else if let Some(ref sub_id) = fields.subscription_id {
         repo.get_subscription_by_sub_id_for_provider(app_id, &webhook.provider, sub_id).await?
     } else if let Some(ref token) = fields.purchase_token {
         repo.get_subscription_by_purchase_token_for_provider(app_id, &webhook.provider, token).await?

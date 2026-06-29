@@ -42,6 +42,7 @@ tests/gpbi/
 | **SUB-09** | Revocation (Refund) | Verifies status `revoked` and payment `refunded` on voided purchase webhook. |
 | **WHK-01** | Invalid Signature | Verifies rejection of webhooks with bad authorization headers. |
 | **WHK-02** | Duplicate Webhook | Verifies idempotent handling (returns success, but no duplicate record). |
+| **WHK-07** | Same-SKU Identity Isolation | Verifies a Google webhook for one purchase token is not suppressed by another user's newer same-SKU row. |
 | **DLQ-01** | Dead-Letter Exhaustion | Verifies `webhook_delivery` transitions to `dead_lettered=true` after 3 failed attempts. |
 | **DLQ-02** | Admin Retry Recovery | Verifies dead-lettered delivery is reset and already-forwarded delivery is NOT reopened. |
 | **NET-05** | Delivery Verification | Verifies Bridge → App callback forwarding success. |

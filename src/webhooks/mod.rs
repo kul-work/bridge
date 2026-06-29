@@ -3,6 +3,9 @@ pub mod processor;
 pub mod forwarding;
 pub mod scheduler;
 
+#[cfg(test)]
+mod identity_cross_user_tests;
+
 use axum::{
     routing::post,
     Router,

@@ -799,6 +799,18 @@ fn money_cents_from_value(value: &serde_json::Value) -> Option<i32> {
     i32::try_from(cents).ok()
 }
 
+fn scrub_reqwest_error(err: reqwest::Error, token: &str) -> anyhow::Error {
+    let err_str = err.to_string();
+    let hashed = crate::utils::diagnostic_hash(token);
+    let scrubbed = err_str.replace(token, &hashed);
+    let scrubbed = crate::utils::scrub_email(&scrubbed);
+    anyhow::anyhow!("{}", scrubbed)
+}
+
+fn scrub_google_body(text: &str, token: &str) -> String {
+    scrub_email(text).replace(token, &diagnostic_hash(token))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -848,16 +860,4 @@ mod tests {
         assert_eq!(details.amount_cents, Some(1500));
         assert_eq!(details.currency, None);
     }
-}
-
-fn scrub_reqwest_error(err: reqwest::Error, token: &str) -> anyhow::Error {
-    let err_str = err.to_string();
-    let hashed = crate::utils::diagnostic_hash(token);
-    let scrubbed = err_str.replace(token, &hashed);
-    let scrubbed = crate::utils::scrub_email(&scrubbed);
-    anyhow::anyhow!("{}", scrubbed)
-}
-
-fn scrub_google_body(text: &str, token: &str) -> String {
-    scrub_email(text).replace(token, &diagnostic_hash(token))
 }

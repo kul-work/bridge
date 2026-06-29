@@ -1400,10 +1400,17 @@ pub async fn get_subscription_by_purchase_token_for_provider(
     .await
 }
 
-pub async fn update_subscription_status(
+/// Reconciliation write-back keyed on the concrete row id, not subscription_id.
+///
+/// Google Play subscription_id is a shared product SKU, so two users on the
+/// same product have rows that share (app_id, subscription_id). The reconciler
+/// already iterates a concrete DB row, so we mutate that exact row by
+/// (app_id, id) to avoid clobbering another user's same-SKU row. The
+/// high-water stale guard (last_event_time < event_time_ms) is preserved.
+pub async fn update_reconciled_subscription_status(
     pool: &PgPool,
     app_id: Uuid,
-    subscription_id: &str,
+    id: Uuid,
     new_status: &str,
     current_period_end: Option<DateTime<Utc>>,
     event_time_ms: i64,
@@ -1416,13 +1423,13 @@ pub async fn update_subscription_status(
              version = version + 1,
              last_event_time = $3,
              updated_at = NOW()
-         WHERE app_id = $4 AND subscription_id = $5 AND last_event_time < $3"
+         WHERE app_id = $4 AND id = $5 AND last_event_time < $3"
     )
     .bind(new_status)
     .bind(current_period_end)
     .bind(event_time_ms)
     .bind(app_id)
-    .bind(subscription_id)
+    .bind(id)
     .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
