@@ -64,6 +64,7 @@ Once an event has an outbox row, delivery must send that stored event. It must n
 - Store the canonical callback payload on `pay.webhook_delivery` instead of creating a separate outbox table; this is the smallest schema change because the existing delivery row already owns retry/dead-letter state.
 - Keep HTTP forwarding outside the processing transaction; the atomic boundary is state mutation, outbox insertion, and processed/suppressed marking, not the external callback POST.
 - Keep `canonical_payload` nullable during migration only; new callback delivery rows must always store it before they become forwardable.
+- Use app-side stale callback suppression rather than Bridge-enforced per-subscription delivery ordering. Bridge must include monotonic event data in every canonical callback, and app callback handlers/specs must reject stale callbacks.
 
 ## Plan
 
@@ -88,6 +89,14 @@ If an existing non-null payload differs from the newly generated payload for the
 
 After legacy rows are migrated or handled, add a guard so new pending callback deliveries cannot be forwardable with `canonical_payload IS NULL`. This can be a DB constraint if the table shape makes it practical, or an explicit repository invariant checked by the insert/claim path. The end state is that NULL payloads are legacy-only, not a normal retry mode.
 
+Phase 1 must also add or map durable provider-inbox processing state for the outcome taxonomy below. Do not overload only `processed` and `suppressed` if they cannot represent the difference between terminal no-callback, poison, and retryable failure. The durable state needs at least:
+
+- processing outcome/status;
+- processing attempt count;
+- next retry time/backoff state;
+- last processing error or diagnostic code;
+- claim owner/claim expiry for processor workers.
+
 ### 2. Add an explicit atomic processing boundary
 
 Do not try to achieve this by only reordering current repo calls. Current helpers such as `mark_webhook_processed` and `create_webhook_delivery` open and commit their own transactions, so they cannot provide the required atomicity.
@@ -106,6 +115,8 @@ Add a new DB/application boundary for provider webhook processing, implemented w
 
 If provider enrichment requires network I/O, do it before the transaction and persist enough result data on the inbox row for deterministic processing, or leave the inbox row unprocessed with a retryable error state. The transaction itself should only validate and commit deterministic state.
 
+Inbox rows must be claimed before pre-transaction enrichment or deterministic snapshot preparation. The `FOR UPDATE` lock inside the processing transaction is still required, but it is not the first concurrency guard; a processor claim prevents multiple workers from doing the same enrichment/work for one inbox row.
+
 Processing outcomes must be explicit:
 
 - **processed with callback**: state changed and an outbox payload was inserted;
@@ -113,6 +124,23 @@ Processing outcomes must be explicit:
 - **suppressed terminally**: stale, duplicate-after-dedupe, or intentionally ignored event that should not retry;
 - **poison terminally**: invalid/unprocessable event that should not retry without operator intervention;
 - **retryable failure**: enrichment, transient DB, or dependency failure that should remain claimable by the processor worker.
+
+Retryable enrichment failures must persist attempts, next retry time, and last error so ACKed provider events do not hot-loop. After the retry budget or poison criteria is reached, the row should move to the poison terminal state for operator review instead of being silently marked processed.
+
+For stale suppression, define the lock target even when the subscription/payment row does not exist yet. Use one of these implementation mechanisms and document the chosen one in the phase diff:
+
+- an advisory lock keyed by `(app_id, provider, lifecycle identity)`;
+- a single conditional UPSERT keyed by the natural subscription/payment identity and event timestamp;
+- a serializable transaction with bounded retry.
+
+Do not rely on locking an existing subscription row alone, because first events for a new subscription may not have a row to lock.
+
+Non-callback side effects are out of the atomic callback transaction unless they get their own deterministic side-effect record. Provider acknowledgement to the webhook sender remains the HTTP ACK after durable inbox insert. Other side effects, such as Google Play purchase acknowledgement, lifecycle/admin emails, or future provider calls, must either:
+
+- be represented as separate idempotent outbox work with deterministic keys and claim-before-side-effect; or
+- run only after the atomic processing commit from a durable record that makes duplicate/lost side effects safe.
+
+Do not perform non-callback network side effects inside the processing transaction.
 
 This likely requires tx-scoped versions of the subscription/payment/webhook mutation methods currently used by `process_webhook`. The important point is the ownership boundary: the processing commit must be one transaction, not a sequence of independently committing repo calls.
 
@@ -128,6 +156,8 @@ New normal flow:
 4. A delivery worker forwards stored payloads after commit.
 
 Suppressed, stale, unhandled, or no-callback events should not leave pending empty delivery rows. If an audit row is needed for no-callback cases, it must be terminal and excluded from `list_pending_webhook_deliveries`.
+
+This ingress change belongs with the atomic processor rollout, not after it. Do not enable ACK-after-inbox-only behavior in production until the unprocessed-inbox recovery worker and claim path are deployed and verified.
 
 ### 4. Forward from the stored outbox payload only
 
@@ -151,7 +181,7 @@ stale/no-op event -> no callback outbox row
 
 This is what prevents accepted intermediate lifecycle callbacks from being flattened or skipped by newer DB state.
 
-Delivery ordering must be safe for apps. Either enforce per-subscription delivery ordering for lifecycle callbacks, or ensure every canonical payload carries enough monotonic data (`timestamp_epoch_ms`, subscription version/event id, and event type) for app backends to ignore stale callbacks delivered after newer ones. The plan must not rely on retry order matching lifecycle order.
+Delivery ordering is handled by app-side stale suppression, not Bridge-enforced per-subscription delivery ordering. Every canonical payload must carry enough monotonic data (`timestamp_epoch_ms`, subscription version/event id, and event type) for app backends to ignore stale callbacks delivered after newer ones. Bridge docs/specs for app callback consumers must be updated in the same implementation phase that enables stored-payload replay. The plan must not rely on retry order matching lifecycle order.
 
 ### 5. Change retry behavior to replay stored payloads
 
@@ -197,6 +227,8 @@ After the migration path has run, forwarding should reject or quarantine a forwa
 
 Retention does need to be checked as part of implementation: durable delivery/outbox rows and final delivery outcomes must not disappear just because raw provider payload retention cleanup removes old inbox payloads. If `webhook_delivery` continues to reference `webhook_provider`, cleanup must preserve unresolved/dead-lettered delivery evidence or split raw payload cleanup from inbox/delivery identity retention.
 
+Intermediate phases are not production-deployable until retention/FK behavior is safe for the new outbox durability contract, or until raw provider cleanup is disabled for affected rows. Stored payloads on `webhook_delivery` are only truly durable if cleanup cannot cascade-delete unresolved or final delivery evidence unexpectedly.
+
 ## What Must Change
 
 - Processing, outbox insertion, and `processed = true` must commit together.
@@ -208,6 +240,8 @@ Retention does need to be checked as part of implementation: durable delivery/ou
 - Processor and delivery workers must claim rows before state mutation or HTTP callback side effects.
 - Scheduler/synthetic callback paths must persist payloads before forwarding.
 - Scheduler/synthetic callback paths must use deterministic idempotency keys.
+- Non-callback side effects must be moved to deterministic side-effect records or otherwise made idempotent and recoverable outside the processing transaction.
+- App callback contracts must reject stale callbacks using monotonic payload data; Bridge will not guarantee per-subscription callback delivery order.
 
 ## Implementation Phases
 
@@ -216,11 +250,13 @@ Keep each implementation phase small enough to review independently. Do not mix 
 ### Phase 1 — Schema and repository primitives
 
 - Add `canonical_payload` and any claim/lease fields or indexes needed for inbox/outbox workers.
+- Add or map durable provider-inbox processing state for terminal no-callback, terminal poison, and retryable failure outcomes, including attempts, next retry, last error, and claim expiry.
 - Update `WebhookDelivery` mapping and add repository methods for write-once payload insert/update.
 - Add claim-before-work query primitives for provider inbox rows and delivery rows.
 - Add the legacy-null guard shape, while keeping migration compatibility for existing rows.
+- Add the retention/FK migration or cleanup guard needed so delivery/outbox rows are not cascade-deleted by raw provider payload cleanup.
 
-Verification focus: migration applies cleanly; repository tests cover write-once payload behavior, claim exclusivity, and NULL payload guards.
+Verification focus: migration applies cleanly; repository tests cover write-once payload behavior, claim exclusivity, processing outcome persistence, retry/backoff state, retention cleanup safety, and NULL payload guards.
 
 ### Phase 2 — Atomic provider processor boundary
 
@@ -228,6 +264,9 @@ Verification focus: migration applies cleanly; repository tests cover write-once
 - Move state mutation, outbox insertion, and processed/suppressed marking into one transaction.
 - Keep provider/network enrichment outside the transaction or persist retryable enrichment state before processing.
 - Record explicit terminal and retryable processing outcomes.
+- Claim inbox rows before enrichment/snapshot work, then re-lock the row inside the transaction before committing the processing decision.
+- Choose and implement the stale-suppression create-path guard: advisory lifecycle lock, conditional UPSERT, or serializable transaction with retry.
+- Stop ingress from pre-creating empty delivery rows as part of this rollout.
 
 Verification focus: crash-window tests before commit and after commit, stale suppression races, and idempotent reprocessing of already terminal rows.
 
@@ -236,9 +275,11 @@ Verification focus: crash-window tests before commit and after commit, stale sup
 - Change forwarding to claim delivery rows and send `canonical_payload` only.
 - Change retry logic to process unprocessed inbox rows or forward claimed stored outbox rows.
 - Remove normal-path rebuilds from current subscription state; allow rebuild only in the legacy path.
-- Ensure callback payloads carry enough monotonic data for app-side stale suppression if delivery order is not enforced.
+- Ensure callback payloads carry enough monotonic data for app-side stale suppression.
+- Update app-facing callback docs/specs to require stale callback rejection. Coordinate downstream app changes if existing handlers apply callbacks blindly.
+- Add deterministic side-effect records or equivalent idempotency/recovery for non-callback side effects that are currently coupled to webhook processing.
 
-Verification focus: multi-instance duplicate-send prevention, stored-payload replay after subscription changes, and out-of-order retry safety.
+Verification focus: multi-instance duplicate-send prevention, stored-payload replay after subscription changes, app-side stale contract coverage, non-callback side-effect idempotency, and out-of-order retry safety.
 
 ### Phase 4 — Scheduler/synthetic callback parity
 
@@ -251,7 +292,7 @@ Verification focus: scheduler crash/retry idempotency and no forwardable empty d
 ### Phase 5 — Legacy cleanup, retention, and release checks
 
 - Backfill or first-retry-persist legacy `canonical_payload IS NULL` rows, then reject/quarantine remaining forwardable NULL payload rows.
-- Adjust retention/FK cleanup so durable delivery outcomes and unresolved/dead-lettered work do not disappear with raw payload cleanup.
+- Confirm retention/FK cleanup preserves durable delivery outcomes and unresolved/dead-lettered work. This is a release gate even if the migration landed in Phase 1.
 - Run Bridge Tier 3 checks and update docs/specs that describe webhook delivery behavior.
 
 Verification focus: legacy rows rebuild at most once, retention cleanup preserves delivery evidence, and full Bridge payment/webhook checks pass.
