@@ -61,6 +61,9 @@ WHK_REPORTS=(
     "whk-02-report.json"
     "whk-03-report.json"
     "whk-04-report.json"
+    "whk-05-report.json"
+    "whk-06-report.json"
+    "whk-07-report.json"
     "whk-suite-summary.json"
 )
 
