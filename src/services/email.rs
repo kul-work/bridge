@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{is_production_environment, Config};
 use crate::error::BridgeError;
 use crate::utils::{diagnostic_hash, scrub_email};
 use async_trait::async_trait;
@@ -491,8 +491,12 @@ impl EmailService for ResendEmailService {
 }
 
 fn build_email_service(config: &Config) -> Result<Arc<dyn EmailService>, BridgeError> {
+    build_email_service_for_environment(&config.environment)
+}
+
+fn build_email_service_for_environment(environment: &str) -> Result<Arc<dyn EmailService>, BridgeError> {
     let provider = std::env::var("EMAIL_PROVIDER").unwrap_or_else(|_| "mock".to_string());
-    let environment = config.environment.to_ascii_lowercase();
+    let environment = environment.to_ascii_lowercase();
     let is_production = environment == "production" || environment == "prod";
     let (provider_default_rate_limit_cooldown_seconds, provider_max_rate_limit_cooldown_seconds) =
         email_provider_rate_limit_cooldown_config()?;
@@ -565,22 +569,34 @@ pub fn init_email_service(config: &Config) -> Result<Arc<dyn EmailService>, Brid
 pub fn get_email_service() -> Arc<dyn EmailService> {
     EMAIL_SERVICE
         .get_or_init(|| {
-            let fallback_config = Config {
-                database_url: String::new(),
-                admin_database_url: None,
-                server_addr: "0.0.0.0".to_string(),
-                server_port: 3000,
-                logging_level: "info".to_string(),
-                environment: std::env::var("ENVIRONMENT")
-                    .unwrap_or_else(|_| "development".to_string()),
-                mock_external_apis: false,
-                swagger_enabled: false,
-                enable_background_jobs: true,
-            };
+            let environment = std::env::var("ENVIRONMENT")
+                .unwrap_or_else(|_| "development".to_string());
 
-            build_email_service(&fallback_config).unwrap_or_else(|_| Arc::new(MockEmailService))
+            email_service_or_mock_for_environment(
+                &environment,
+                build_email_service_for_environment(&environment),
+            )
         })
         .clone()
+}
+
+fn email_service_or_mock_for_environment(
+    environment: &str,
+    service: Result<Arc<dyn EmailService>, BridgeError>,
+) -> Arc<dyn EmailService> {
+    match service {
+        Ok(service) => service,
+        Err(err) if is_production_environment(environment) => {
+            panic!("Email service initialization failed in production fallback: {}", err);
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                "Email service initialization failed, falling back to MockEmailService"
+            );
+            Arc::new(MockEmailService)
+        }
+    }
 }
 
 pub async fn send_email(to: &str, subject: &str, body: &str) -> Result<(), BridgeError> {
@@ -635,6 +651,18 @@ mod tests {
             email_provider_rate_limit_cooldown_seconds(Some("9999"), 300, 900),
             900
         );
+    }
+
+    #[test]
+    fn fallback_email_service_panics_on_production_config_error() {
+        let result = std::panic::catch_unwind(|| {
+            email_service_or_mock_for_environment(
+                "production",
+                Err(BridgeError::ConfigError("bad email config".to_string())),
+            );
+        });
+
+        assert!(result.is_err());
     }
 
     #[test]
