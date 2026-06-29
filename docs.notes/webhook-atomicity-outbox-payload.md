@@ -22,7 +22,9 @@ The durable inbox already exists: `pay.webhook_provider` stores the raw provider
 
 ## Goal
 
-Move webhook processing to this invariant:
+Make webhook processing crash-safe by committing subscription/payment mutation, callback outbox payload creation, and provider inbox processed/suppressed state as one durable decision.
+
+## Mechanism at a glance
 
 ```text
 Provider webhook
@@ -30,9 +32,15 @@ Provider webhook
       v
 pay.webhook_provider inbox row
       |
+      |  provider ACK only after the inbox row is durable;
+      |  unprocessed inbox rows are recoverable work
+      v
+processor/retry worker claims inbox row
+      |
       v
 single DB transaction
   - lock provider webhook row
+  - lock or conditionally update the subscription/payment identity
   - reject/suppress stale or invalid event before side effects
   - apply subscription/payment transition
   - if app callback is required, insert immutable outbox payload
@@ -42,10 +50,20 @@ single DB transaction
 commit
       |
       v
-delivery worker sends the stored outbox payload
+delivery worker claims outbox row
+      |
+      v
+send stored outbox payload
 ```
 
 Once an event has an outbox row, delivery must send that stored event. It must not rebuild the payload from current DB state or re-run lifecycle stale checks against newer subscription state.
+
+## Already-decided — not re-litigating
+
+- Keep `pay.webhook_provider` as the provider inbox and dedupe source; do not introduce a second provider-inbox table for this fix.
+- Store the canonical callback payload on `pay.webhook_delivery` instead of creating a separate outbox table; this is the smallest schema change because the existing delivery row already owns retry/dead-letter state.
+- Keep HTTP forwarding outside the processing transaction; the atomic boundary is state mutation, outbox insertion, and processed/suppressed marking, not the external callback POST.
+- Keep `canonical_payload` nullable during migration only; new callback delivery rows must always store it before they become forwardable.
 
 ## Plan
 
@@ -66,7 +84,9 @@ Update the Rust `WebhookDelivery` model and repository mapping so the payload ca
 canonical_payload = COALESCE(pay.webhook_delivery.canonical_payload, EXCLUDED.canonical_payload)
 ```
 
-If an existing non-null payload differs from the newly generated payload for the same provider event, treat that as a correctness error and log it loudly. The same provider event must not produce two different app callbacks.
+If an existing non-null payload differs from the newly generated payload for the same provider event, fail or quarantine that processing attempt and emit an operator-visible alert/metric. The same provider event must not produce two different app callbacks.
+
+After legacy rows are migrated or handled, add a guard so new pending callback deliveries cannot be forwardable with `canonical_payload IS NULL`. This can be a DB constraint if the table shape makes it practical, or an explicit repository invariant checked by the insert/claim path. The end state is that NULL payloads are legacy-only, not a normal retry mode.
 
 ### 2. Add an explicit atomic processing boundary
 
@@ -76,12 +96,23 @@ Add a new DB/application boundary for provider webhook processing, implemented w
 
 1. Lock the `webhook_provider` row with `FOR UPDATE`.
 2. Exit idempotently if the row is already `processed` or `suppressed`.
-3. Resolve/enrich the provider event.
-4. Apply lifecycle/payment mutation using tx-scoped repository operations.
-5. Decide whether an app callback should be emitted.
-6. If a callback should be emitted, insert `webhook_delivery` with `canonical_payload` in the same transaction.
-7. Mark `webhook_provider.processed = true` in the same transaction.
-8. Commit.
+3. Use only deterministic, already-available data inside the transaction. Do not hold the transaction open across provider API calls or other network I/O.
+4. Lock the affected subscription/payment identity, or apply the lifecycle mutation with a conditional timestamp/version update, so stale suppression and outbox insertion are one atomic decision for that identity.
+5. Apply lifecycle/payment mutation using tx-scoped repository operations.
+6. Decide whether an app callback should be emitted.
+7. If a callback should be emitted, insert `webhook_delivery` with `canonical_payload` in the same transaction.
+8. Mark `webhook_provider.processed = true`, or mark a terminal suppressed/no-callback state, in the same transaction.
+9. Commit.
+
+If provider enrichment requires network I/O, do it before the transaction and persist enough result data on the inbox row for deterministic processing, or leave the inbox row unprocessed with a retryable error state. The transaction itself should only validate and commit deterministic state.
+
+Processing outcomes must be explicit:
+
+- **processed with callback**: state changed and an outbox payload was inserted;
+- **processed without callback**: event was valid but did not require app delivery;
+- **suppressed terminally**: stale, duplicate-after-dedupe, or intentionally ignored event that should not retry;
+- **poison terminally**: invalid/unprocessable event that should not retry without operator intervention;
+- **retryable failure**: enrichment, transient DB, or dependency failure that should remain claimable by the processor worker.
 
 This likely requires tx-scoped versions of the subscription/payment/webhook mutation methods currently used by `process_webhook`. The important point is the ownership boundary: the processing commit must be one transaction, not a sequence of independently committing repo calls.
 
@@ -92,7 +123,7 @@ Ingress should only create or find the provider inbox row. It should not create 
 New normal flow:
 
 1. Insert or dedupe `webhook_provider`.
-2. Spawn/call the atomic processor for that provider row.
+2. Return the provider HTTP ACK only after the provider inbox row is durable. The atomic processor may run inline or asynchronously, but an unprocessed durable inbox row must be treated as recoverable work.
 3. The atomic processor creates a delivery row only if it has a canonical callback payload to send.
 4. A delivery worker forwards stored payloads after commit.
 
@@ -101,6 +132,8 @@ Suppressed, stale, unhandled, or no-callback events should not leave pending emp
 ### 4. Forward from the stored outbox payload only
 
 Change forwarding so it loads `canonical_payload` from `webhook_delivery` by delivery id and sends that payload.
+
+Forwarding workers must claim a delivery row before making the HTTP callback side effect. Use the existing project-preferred lease pattern or add `FOR UPDATE SKIP LOCKED`/lease columns so multiple Bridge instances cannot send the same stored payload concurrently or race attempt/dead-letter updates.
 
 For rows with non-null `canonical_payload`:
 
@@ -118,6 +151,8 @@ stale/no-op event -> no callback outbox row
 
 This is what prevents accepted intermediate lifecycle callbacks from being flattened or skipped by newer DB state.
 
+Delivery ordering must be safe for apps. Either enforce per-subscription delivery ordering for lifecycle callbacks, or ensure every canonical payload carries enough monotonic data (`timestamp_epoch_ms`, subscription version/event id, and event type) for app backends to ignore stale callbacks delivered after newer ones. The plan must not rely on retry order matching lifecycle order.
+
 ### 5. Change retry behavior to replay stored payloads
 
 `retry_webhooks` should process only two cases:
@@ -125,16 +160,17 @@ This is what prevents accepted intermediate lifecycle callbacks from being flatt
 1. **Unprocessed provider row with no committed outbox**: run the atomic processor. If it commits a callback outbox row, the worker can send it after commit.
 2. **Existing delivery row with stored payload**: forward the stored payload and update retry state.
 
+Both cases need row claiming/leases before side effects: processor workers claim inbox rows before mutation, and delivery workers claim outbox rows before HTTP forwarding.
+
 For processed rows, retry must not rebuild the canonical payload. Rebuilds are allowed only for legacy rows during a one-time migration path described below.
 
 ### 6. Cover scheduler and synthetic callbacks
 
 Scheduler-generated callbacks must use the same durable outbox semantics as provider webhooks.
 
-Either:
+Prefer routing scheduler callbacks through the same provider-row + delivery-row transaction, storing `canonical_payload` and marking the synthetic provider row processed. Synthetic provider rows must use deterministic identities derived from the scheduler action, app/subscription identity, and effective lifecycle timestamp or billing period. A retry of the same scheduled action must find the same synthetic inbox/outbox work item, not mint a new event.
 
-- route scheduler callbacks through the same provider-row + delivery-row transaction, storing `canonical_payload` and marking the synthetic provider row processed; or
-- create a separate synthetic outbox path with equivalent guarantees.
+Use a separate synthetic outbox path only if the provider-row model cannot represent the scheduler event without misleading provider audit data. If a separate path is used, it must still provide the same properties: deterministic idempotency key, claim-before-side-effect, stored canonical payload, terminal/retryable states, and no forwardable empty delivery row.
 
 Do not leave scheduler callbacks on the current create-and-forward path where a failed immediate forward can leave an unprocessed provider row without a stored callback payload.
 
@@ -149,6 +185,8 @@ For existing pending rows with `canonical_payload IS NULL`, choose one determini
 
 Do not rebuild legacy payloads on every retry. Once rebuilt, retries must use the stored payload.
 
+After the migration path has run, forwarding should reject or quarantine a forwardable row whose `canonical_payload` is still NULL instead of rebuilding from current subscription state.
+
 ## What Does Not Change
 
 - `pay.webhook_provider` remains the provider webhook inbox and dedupe source.
@@ -157,13 +195,19 @@ Do not rebuild legacy payloads on every retry. Once rebuilt, retries must use th
 - `build_canonical_payload` may remain as the producer for processing-time payloads and one-time legacy backfill.
 - HTTP forwarding remains outside the processing transaction.
 
+Retention does need to be checked as part of implementation: durable delivery/outbox rows and final delivery outcomes must not disappear just because raw provider payload retention cleanup removes old inbox payloads. If `webhook_delivery` continues to reference `webhook_provider`, cleanup must preserve unresolved/dead-lettered delivery evidence or split raw payload cleanup from inbox/delivery identity retention.
+
 ## What Must Change
 
 - Processing, outbox insertion, and `processed = true` must commit together.
 - New delivery rows must carry the canonical payload when they are created.
+- Provider ACK timing must be explicit: ACK after durable inbox insert is allowed only because the durable unprocessed inbox row is recoverable processor work.
+- Stale suppression must be atomic against the affected subscription/payment identity, not only against the provider webhook row.
 - Forwarding must send stored payloads, not caller-provided in-memory payloads.
 - Forwarding must not suppress an already accepted outbox event because newer subscription state exists.
+- Processor and delivery workers must claim rows before state mutation or HTTP callback side effects.
 - Scheduler/synthetic callback paths must persist payloads before forwarding.
+- Scheduler/synthetic callback paths must use deterministic idempotency keys.
 
 ## Verification
 
@@ -171,8 +215,12 @@ Do not rebuild legacy payloads on every retry. Once rebuilt, retries must use th
 - A crash injected before the atomic transaction commits leaves no partial state mutation, no processed mark, and no callback outbox row.
 - A crash after commit but before HTTP forward leaves `webhook_provider.processed = true`, a delivery row with `canonical_payload`, and `forwarded = false`.
 - Retrying a processed delivery sends exactly the stored `canonical_payload`, even if subscription state changed later.
-- An accepted older event followed by a newer event still sends both stored callbacks in delivery order or retry order; the older accepted outbox row is not suppressed at forward time.
+- Concurrent provider rows for the same subscription/payment identity cannot both pass stale suppression incorrectly; the older event either loses the conditional update/lock decision or is accepted before the newer event with a stored payload.
+- Delivery workers on multiple Bridge instances cannot send the same outbox row concurrently.
+- An accepted older event followed by a newer event still sends both stored callbacks, and app-visible payload ordering/version data prevents stale app-side state regression if retries deliver out of lifecycle order.
+- Synthetic scheduler callbacks retry to the same deterministic inbox/outbox identity instead of creating duplicate events.
 - Legacy `canonical_payload IS NULL` rows are rebuilt at most once and then replayed from storage.
+- New forwardable delivery rows with `canonical_payload IS NULL` are rejected by tests/invariants after the migration path.
 
 ## Recommended Checks Before Implementing
 
