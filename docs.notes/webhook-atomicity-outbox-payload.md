@@ -209,6 +209,53 @@ Retention does need to be checked as part of implementation: durable delivery/ou
 - Scheduler/synthetic callback paths must persist payloads before forwarding.
 - Scheduler/synthetic callback paths must use deterministic idempotency keys.
 
+## Implementation Phases
+
+Keep each implementation phase small enough to review independently. Do not mix behavior changes from later phases into earlier phases.
+
+### Phase 1 — Schema and repository primitives
+
+- Add `canonical_payload` and any claim/lease fields or indexes needed for inbox/outbox workers.
+- Update `WebhookDelivery` mapping and add repository methods for write-once payload insert/update.
+- Add claim-before-work query primitives for provider inbox rows and delivery rows.
+- Add the legacy-null guard shape, while keeping migration compatibility for existing rows.
+
+Verification focus: migration applies cleanly; repository tests cover write-once payload behavior, claim exclusivity, and NULL payload guards.
+
+### Phase 2 — Atomic provider processor boundary
+
+- Introduce the tx-scoped processing boundary that locks the provider row and affected subscription/payment identity.
+- Move state mutation, outbox insertion, and processed/suppressed marking into one transaction.
+- Keep provider/network enrichment outside the transaction or persist retryable enrichment state before processing.
+- Record explicit terminal and retryable processing outcomes.
+
+Verification focus: crash-window tests before commit and after commit, stale suppression races, and idempotent reprocessing of already terminal rows.
+
+### Phase 3 — Forwarding and retry from stored payloads
+
+- Change forwarding to claim delivery rows and send `canonical_payload` only.
+- Change retry logic to process unprocessed inbox rows or forward claimed stored outbox rows.
+- Remove normal-path rebuilds from current subscription state; allow rebuild only in the legacy path.
+- Ensure callback payloads carry enough monotonic data for app-side stale suppression if delivery order is not enforced.
+
+Verification focus: multi-instance duplicate-send prevention, stored-payload replay after subscription changes, and out-of-order retry safety.
+
+### Phase 4 — Scheduler/synthetic callback parity
+
+- Route scheduler callbacks through the same durable outbox semantics, preferably via deterministic synthetic provider rows.
+- Use deterministic synthetic event identity for scheduler action, app/subscription identity, and effective lifecycle timestamp or billing period.
+- Ensure scheduler retries find existing work instead of creating duplicate callbacks.
+
+Verification focus: scheduler crash/retry idempotency and no forwardable empty delivery rows.
+
+### Phase 5 — Legacy cleanup, retention, and release checks
+
+- Backfill or first-retry-persist legacy `canonical_payload IS NULL` rows, then reject/quarantine remaining forwardable NULL payload rows.
+- Adjust retention/FK cleanup so durable delivery outcomes and unresolved/dead-lettered work do not disappear with raw payload cleanup.
+- Run Bridge Tier 3 checks and update docs/specs that describe webhook delivery behavior.
+
+Verification focus: legacy rows rebuild at most once, retention cleanup preserves delivery evidence, and full Bridge payment/webhook checks pass.
+
 ## Verification
 
 - `cargo check` and `cargo clippy` pass.
