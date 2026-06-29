@@ -25,6 +25,7 @@ pub struct Config {
     pub logging_level: String,
     pub environment: String,
     pub mock_external_apis: bool,
+    pub swagger_enabled: bool,
     pub enable_background_jobs: bool,
 }
 
@@ -56,13 +57,13 @@ impl Config {
                 .unwrap_or_else(|_| "info".to_string()),
             environment,
             mock_external_apis: parse_bool_env("MOCK_EXTERNAL_APIS", false)?,
+            swagger_enabled: parse_bool_env("SWAGGER_ENABLED", false)?,
             enable_background_jobs: parse_bool_env("ENABLE_BACKGROUND_JOBS", true)?,
         })
     }
 
     pub fn validate_startup(&self) -> Result<()> {
-        let env_lower = self.environment.to_ascii_lowercase();
-        if !matches!(env_lower.as_str(), "production" | "prod") {
+        if !is_production_environment(&self.environment) {
             return Ok(());
         }
 
@@ -85,6 +86,10 @@ impl Config {
 
         if self.mock_external_apis {
             errors.push("MOCK_EXTERNAL_APIS=true is not allowed in production".to_string());
+        }
+
+        if self.swagger_enabled {
+            errors.push("SWAGGER_ENABLED=true is not allowed in production".to_string());
         }
 
         if env_var("DATABASE_URL").is_none() {
@@ -137,6 +142,10 @@ impl Config {
 
         errors
     }
+}
+
+pub fn is_production_environment(environment: &str) -> bool {
+    matches!(environment.trim().to_ascii_lowercase().as_str(), "production" | "prod")
 }
 
 fn trimmed_env<F>(env_var: &F, key: &str) -> Option<String>
@@ -281,6 +290,7 @@ mod tests {
             logging_level: "info".to_string(),
             environment: "production".to_string(),
             mock_external_apis: false,
+            swagger_enabled: false,
             enable_background_jobs: true,
         }
     }
@@ -372,5 +382,21 @@ mod tests {
         let errors = config.production_startup_errors(env);
 
         assert!(errors.iter().any(|error| error.contains("MOCK_EXTERNAL_APIS")));
+    }
+
+    #[test]
+    fn production_startup_rejects_swagger_enabled() {
+        let mut config = test_config();
+        config.swagger_enabled = true;
+        let env = env_getter(HashMap::from([
+            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+        ]));
+
+        let errors = config.production_startup_errors(env);
+
+        assert!(errors.iter().any(|error| error.contains("SWAGGER_ENABLED")));
     }
 }

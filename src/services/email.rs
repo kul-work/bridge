@@ -574,6 +574,7 @@ pub fn get_email_service() -> Arc<dyn EmailService> {
                 environment: std::env::var("ENVIRONMENT")
                     .unwrap_or_else(|_| "development".to_string()),
                 mock_external_apis: false,
+                swagger_enabled: false,
                 enable_background_jobs: true,
             };
 

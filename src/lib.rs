@@ -16,7 +16,7 @@ pub mod webhooks;
 use axum::{http::StatusCode, response::Redirect, routing::get, Router};
 
 use crate::{
-    config::Config,
+    config::{is_production_environment, Config},
     handlers::{
         health_check, list_routes, openapi_spec, readiness_check, RouteDescriptor,
     },
@@ -84,9 +84,8 @@ fn rd(method: &str, path: &str, group: &'static str, auth: &'static str) -> Rout
 /// can construct the app in-process without spawning a server. Bootstrap
 /// (tracing, config load, DB pool, background workers) stays in `main.rs`.
 ///
-/// `config` is read here only for the `mock_external_apis` flag that gates the
-/// `/internal/test` diagnostic mount. Later phases (Swagger route index) will
-/// also read `config.environment` for the production gate.
+/// `config` is read here for development-only mounts such as `/internal/test`
+/// and the opt-in Swagger route index.
 pub fn build_app(config: &Config, app_state: AppState) -> Router {
     // Build protected routes with API key middleware
     let protected_routes = Router::new()
@@ -246,8 +245,7 @@ pub fn build_app(config: &Config, app_state: AppState) -> Router {
     // Internal route index / OpenAPI spec — available only outside production so
     // security scanners (OWASP ZAP) and developers can discover routes in
     // dev/staging without exposing them publicly. Mirrors the household feature.
-    let is_production = config.environment.eq_ignore_ascii_case("production");
-    if !is_production {
+    if swagger_routes_enabled(config) {
         app = app
             .route("/routes", get(list_routes))
             .route("/routes/openapi", get(openapi_spec));
@@ -258,4 +256,51 @@ pub fn build_app(config: &Config, app_state: AppState) -> Router {
     }
 
     app.with_state(app_state)
+}
+
+fn swagger_routes_enabled(config: &Config) -> bool {
+    config.swagger_enabled && !is_production_environment(&config.environment)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::Config;
+
+    use super::swagger_routes_enabled;
+
+    fn test_config() -> Config {
+        Config {
+            database_url: "postgresql://localhost/bridge".to_string(),
+            admin_database_url: None,
+            server_addr: "0.0.0.0".to_string(),
+            server_port: 3000,
+            logging_level: "info".to_string(),
+            environment: "development".to_string(),
+            mock_external_apis: false,
+            swagger_enabled: false,
+            enable_background_jobs: true,
+        }
+    }
+
+    #[test]
+    fn swagger_routes_are_opt_in_outside_production() {
+        let mut config = test_config();
+
+        assert!(!swagger_routes_enabled(&config));
+
+        config.swagger_enabled = true;
+
+        assert!(swagger_routes_enabled(&config));
+    }
+
+    #[test]
+    fn swagger_routes_stay_disabled_for_production_aliases() {
+        for environment in ["production", "prod", " Production ", " PROD "] {
+            let mut config = test_config();
+            config.environment = environment.to_string();
+            config.swagger_enabled = true;
+
+            assert!(!swagger_routes_enabled(&config));
+        }
+    }
 }
