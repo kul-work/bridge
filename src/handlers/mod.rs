@@ -7,6 +7,9 @@ pub mod payments;
 pub mod admin;
 pub mod users;
 pub mod test_log;
+pub mod routes;
+
+pub use routes::{list_routes, openapi_spec, RouteDescriptor, RoutesIndexResponse};
 
 /// Health check handler
 pub async fn health_check() -> axum::Json<serde_json::Value> {
