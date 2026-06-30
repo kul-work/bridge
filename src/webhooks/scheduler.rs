@@ -511,6 +511,20 @@ async fn reconcile_app_subscriptions(
 
         match provider_result {
             Ok((provider_status, provider_period_end)) => {
+                // Skip the write-back when the provider returned a status we
+                // cannot map to the canonical set. Persisting a raw/unknown
+                // value would violate the subscriptions_status_check constraint.
+                let Some(provider_status) = provider_status else {
+                    warn!(
+                        job = "reconciliation",
+                        app_id = %app_id,
+                        subscription_id = %sub.subscription_id,
+                        provider = %sub.provider,
+                        "Skipping reconciliation because provider returned an unknown status"
+                    );
+                    continue;
+                };
+
                 let current_db_status = sub.status.clone();
 
                 if current_db_status != provider_status {

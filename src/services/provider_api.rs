@@ -154,7 +154,7 @@ pub async fn fetch_subscription_status(
     subscription_id: &str,
     _purchase_token: Option<&str>,
     config: &Value,
-) -> Result<(String, Option<chrono::DateTime<chrono::Utc>>), BridgeError> {
+) -> Result<(Option<String>, Option<chrono::DateTime<chrono::Utc>>), BridgeError> {
     match provider {
         "creem" => {
             let creem_client = CreemClient::from_json(config)?;
@@ -181,7 +181,7 @@ pub async fn fetch_subscription_status(
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                 .map(|dt| dt.with_timezone(&chrono::Utc));
 
-            Ok((status, period_end))
+            Ok((Some(status), period_end))
         }
 
         _ => Err(BridgeError::ValidationError(format!("Status fetch not supported for provider: {}", provider))),

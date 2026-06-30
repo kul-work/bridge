@@ -157,19 +157,24 @@ pub(super) fn normalize_event_type(provider: &str, event_type: &str) -> String {
 }
 
 /// Normalize raw provider status to canonical Bridge status
-pub(super) fn normalize_status(raw_status: Option<&str>) -> String {
-    let Some(s) = raw_status else { return "pending".to_string(); };
-    match s.trim().to_ascii_lowercase().as_str() {
-        "trialing" | "trial" => "trial".to_string(),
-        "active" | "paid" | "completed" | "success" => "active".to_string(),
-        "past_due" | "grace_period" => "past_due".to_string(),
-        "cancelled" | "canceled" => "cancelled".to_string(),
-        "expired" => "expired".to_string(),
-        "on_hold" | "on-hold" => "on_hold".to_string(),
-        "paused" => "paused".to_string(),
-        "revoked" => "revoked".to_string(),
-        "pending" => "pending".to_string(),
-        _ => s.to_string(),
+/// Keep this vocabulary in sync with subscriptions_status_check.
+pub(super) fn normalize_status(raw_status: Option<&str>) -> Option<String> {
+    let Some(s) = raw_status else { return Some("pending".to_string()); };
+    let cleaned = s.trim().to_ascii_lowercase();
+    match cleaned.as_str() {
+        "trialing" | "trial" => Some("trial".to_string()),
+        "active" | "paid" | "completed" | "success" => Some("active".to_string()),
+        "past_due" | "grace_period" => Some("past_due".to_string()),
+        "cancelled" | "canceled" => Some("cancelled".to_string()),
+        "expired" => Some("expired".to_string()),
+        "on_hold" | "on-hold" => Some("on_hold".to_string()),
+        "paused" => Some("paused".to_string()),
+        "revoked" => Some("revoked".to_string()),
+        "pending" => Some("pending".to_string()),
+        _ => {
+            tracing::warn!(raw_status = s, cleaned_status = %cleaned, "unknown subscription status ignored");
+            None
+        }
     }
 }
 

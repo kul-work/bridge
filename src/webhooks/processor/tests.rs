@@ -624,10 +624,11 @@ fn test_creem_metadata_user_id_from_checkout_path() {
 
 #[test]
 fn test_normalize_status() {
-    assert_eq!(normalize_status(Some("Trialing")), "trial");
-    assert_eq!(normalize_status(Some(" PAID ")), "active");
-    assert_eq!(normalize_status(Some("canceled")), "cancelled");
-    assert_eq!(normalize_status(None), "pending");
+    assert_eq!(normalize_status(Some("Trialing")), Some("trial".to_string()));
+    assert_eq!(normalize_status(Some(" PAID ")), Some("active".to_string()));
+    assert_eq!(normalize_status(Some("canceled")), Some("cancelled".to_string()));
+    assert_eq!(normalize_status(Some("unknown_status")), None);
+    assert_eq!(normalize_status(None), Some("pending".to_string()));
 }
 
 #[test]

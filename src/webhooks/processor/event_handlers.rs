@@ -127,7 +127,7 @@ fn effects_from_google_lifecycle_outcome(outcome: GooglePlayLifecycleOutcome) ->
 
 pub(super) fn activation_subscription_status(provider: &str, raw_status: Option<&str>) -> String {
     if provider == "creem" {
-        raw_status.map(|status| normalize_status(Some(status)))
+        raw_status.and_then(|status| normalize_status(Some(status)))
             .unwrap_or_else(|| "active".to_string())
     } else {
         "active".to_string()
@@ -876,7 +876,16 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
 
         "subscription.updated" => {
             if let Some(user_id) = ctx.external_user_id.as_deref() {
-                let status = normalize_status(ctx.fields.status.as_deref());
+                // An update event with no status field carries no lifecycle
+                // signal. Defaulting it to "pending" would clobber the existing
+                // row and expose it to delete_orphaned_pending_subscriptions, so
+                // skip a missing status the same way we skip an unknown one.
+                let Some(raw_status) = ctx.fields.status.as_deref() else {
+                    return Ok(EventHandling::ReturnNone);
+                };
+                let Some(status) = normalize_status(Some(raw_status)) else {
+                    return Ok(EventHandling::ReturnNone);
+                };
                 let sub_id = ctx.fields.subscription_id.clone()
                     .or(ctx.webhook.subscription_id.clone())
                     .unwrap_or_default();
