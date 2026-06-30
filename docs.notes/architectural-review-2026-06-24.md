@@ -10,39 +10,9 @@ The most important theme: Bridge currently looks like a payment event system, bu
 
 ## Priority Order
 
-4. Centralize lifecycle state transitions behind typed statuses and a state machine.
 5. Move provider-specific semantics behind real provider adapters.
 6. Split raw webhook payload retention from dedupe/delivery retention.
 
-
----
-
-## 4. Critical — Multi-instance deployment can duplicate callbacks and provider side effects
-
-Every server instance starts background workers if enabled, but workers do not claim rows before acting.
-
-### Evidence
-
-- All jobs start in each process when `ENABLE_BACKGROUND_JOBS=true`: `src/main.rs` background worker startup.
-- Pending deliveries are selected without claim/lease/in-progress state: `src/db/webhooks.rs::list_pending_webhook_deliveries`.
-- HTTP callback POST happens before the delivery attempt is persisted: `src/webhooks/forwarding.rs::forward_webhook`.
-- Price step-up worker calls provider cancel before marking the row expired: `src/webhooks/scheduler.rs::process_price_step_up_expiry`.
-
-### Why it matters
-
-With two Bridge instances, both can:
-
-- Send the same callback.
-- Increment attempts incorrectly.
-- Dead-letter prematurely.
-- Execute provider cancel/ack/reconcile side effects twice.
-
-### Recommended architectural direction
-
-- Introduce row leasing/claims for delivery and scheduler work.
-- Claim before external side effects.
-- Use `FOR UPDATE SKIP LOCKED`, `claimed_by`, `claimed_until`, or PostgreSQL advisory locks.
-- Make synthetic scheduler event IDs deterministic, not random UUIDs.
 
 ---
 
