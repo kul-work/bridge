@@ -698,9 +698,11 @@ If provider supports enrichment (Google Play):
 **Event type**: `dispute.created`
 
 1. Compose alert email with event details (event_id, amount, customer email).
-2. Send to Bridge admin email / Tyde support.
+2. Collect a post-commit admin alert effect for Bridge admin email / Tyde support.
 3. No subscription status change.
 4. **Forward callback to app**: a dispute notification so app can track it.
+
+Email/admin-alert side effects collected during webhook processing are scheduled only after Bridge commits webhook state and the stored canonical callback payload. They are best-effort unless a durable email outbox is added later.
 
 ---
 

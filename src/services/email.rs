@@ -23,6 +23,7 @@ pub struct EmailContext<'a> {
     pub provider_webhook_id: Option<&'a str>,
     pub external_user_id: Option<&'a str>,
     pub subscription_id: Option<&'a str>,
+    pub idempotency_key: Option<&'a str>,
 }
 
 fn email_provider_http_failure(status: u16) -> (&'static str, &'static str) {
@@ -185,6 +186,7 @@ async fn send_via_provider(
                     provider_webhook_id = context.provider_webhook_id,
                     external_user_id_hash = external_user_id_hash.as_deref(),
                     subscription_id = context.subscription_id,
+                    email_idempotency_key = context.idempotency_key,
                     recipient_hash,
                     error_kind = "request_failed",
                     error_msg = %scrub_emails_and_keys(&e.to_string()),
@@ -234,6 +236,7 @@ async fn send_via_provider(
             provider_webhook_id = context.provider_webhook_id,
             external_user_id_hash = external_user_id_hash.as_deref(),
             subscription_id = context.subscription_id,
+            email_idempotency_key = context.idempotency_key,
             recipient_hash,
             provider_status = status.as_u16(),
             error_kind,
@@ -254,6 +257,7 @@ async fn send_via_provider(
         provider_webhook_id = context.provider_webhook_id,
         external_user_id_hash = external_user_id_hash.as_deref(),
         subscription_id = context.subscription_id,
+        email_idempotency_key = context.idempotency_key,
         recipient_hash,
         "Email provider accepted message"
     );
@@ -281,6 +285,7 @@ fn log_email_auth_or_permission_failure(
         provider_webhook_id = context.provider_webhook_id,
         external_user_id_hash = external_user_id_hash.as_deref(),
         subscription_id = context.subscription_id,
+        email_idempotency_key = context.idempotency_key,
         http_status,
         failure,
         "Email provider auth or permission failure"
@@ -326,6 +331,7 @@ impl EmailService for MockEmailService {
             provider_webhook_id = context.provider_webhook_id,
             external_user_id_hash = external_user_id_hash.as_deref(),
             subscription_id = context.subscription_id,
+            email_idempotency_key = context.idempotency_key,
             email_subject = %scrub_emails_and_keys(subject),
             email_body = %scrub_emails_and_keys(body),
             "MOCK EMAIL SENT"
@@ -368,6 +374,7 @@ impl EmailService for ClerkEmailService {
             provider_webhook_id = context.provider_webhook_id,
             external_user_id_hash = external_user_id_hash.as_deref(),
             subscription_id = context.subscription_id,
+            email_idempotency_key = context.idempotency_key,
             recipient_hash = %recipient_hash,
             "Sending lifecycle email"
         );
@@ -443,6 +450,7 @@ impl EmailService for ResendEmailService {
                 provider_webhook_id = context.provider_webhook_id,
                 external_user_id_hash = external_user_id_hash.as_deref(),
                 subscription_id = context.subscription_id,
+                email_idempotency_key = context.idempotency_key,
                 recipient_hash = %recipient_hash,
                 error_kind = "provider_rate_limit_cooldown",
                 cooldown_remaining_seconds,
@@ -462,6 +470,7 @@ impl EmailService for ResendEmailService {
             provider_webhook_id = context.provider_webhook_id,
             external_user_id_hash = external_user_id_hash.as_deref(),
             subscription_id = context.subscription_id,
+            email_idempotency_key = context.idempotency_key,
             recipient_hash = %recipient_hash,
             "Sending lifecycle email"
         );
@@ -494,10 +503,16 @@ fn build_email_service(config: &Config) -> Result<Arc<dyn EmailService>, BridgeE
     build_email_service_for_environment(&config.environment)
 }
 
+pub fn configured_email_provider() -> String {
+    std::env::var("EMAIL_PROVIDER")
+        .unwrap_or_else(|_| "mock".to_string())
+        .trim()
+        .to_ascii_lowercase()
+}
+
 fn build_email_service_for_environment(environment: &str) -> Result<Arc<dyn EmailService>, BridgeError> {
-    let provider = std::env::var("EMAIL_PROVIDER").unwrap_or_else(|_| "mock".to_string());
-    let environment = environment.to_ascii_lowercase();
-    let is_production = environment == "production" || environment == "prod";
+    let provider = configured_email_provider();
+    let is_production = is_production_environment(environment);
     let (provider_default_rate_limit_cooldown_seconds, provider_max_rate_limit_cooldown_seconds) =
         email_provider_rate_limit_cooldown_config()?;
 
@@ -615,6 +630,44 @@ pub fn send_email_mock(_to: &str, subject: &str, body: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvRestore {
+        key: &'static str,
+        value: Option<String>,
+    }
+
+    impl EnvRestore {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self {
+                key,
+                value: previous,
+            }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self {
+                key,
+                value: previous,
+            }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            if let Some(value) = self.value.as_ref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
 
     #[test]
     fn scrub_emails_and_keys_redacts_email_and_provider_keys() {
@@ -663,6 +716,25 @@ mod tests {
         });
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn email_service_builder_treats_trimmed_production_as_production() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _provider = EnvRestore::set("EMAIL_PROVIDER", "resend");
+        let _api_key = EnvRestore::remove("RESEND_API_KEY");
+
+        let result = build_email_service_for_environment(" Production ");
+
+        assert!(matches!(result, Err(BridgeError::ConfigError(_))));
+    }
+
+    #[test]
+    fn configured_email_provider_trims_and_normalizes_case() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _provider = EnvRestore::set("EMAIL_PROVIDER", " Resend ");
+
+        assert_eq!(configured_email_provider(), "resend");
     }
 
     #[test]

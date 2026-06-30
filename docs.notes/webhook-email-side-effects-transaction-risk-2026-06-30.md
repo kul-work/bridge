@@ -4,7 +4,7 @@ Date: 2026-06-30
 
 ## Status
 
-Deferred follow-up. This is intentionally outside the webhook atomicity fix.
+Implemented with in-memory post-commit effects. Bridge still does not have a durable lifecycle email outbox.
 
 ## Problem
 
@@ -12,7 +12,7 @@ Deferred follow-up. This is intentionally outside the webhook atomicity fix.
 
 That fixes the outbox atomicity window, but it also means any external side effects performed inside webhook event handlers can happen before the database transaction commits.
 
-The current lifecycle email helpers in `src/webhooks/processor/event_handlers.rs` perform email lookup and email send during webhook processing:
+The lifecycle email helpers in `src/webhooks/processor/event_handlers.rs` used to perform email lookup and email send during webhook processing:
 
 - `send_price_step_up_email`
 - `send_deferred_email`
@@ -22,7 +22,7 @@ The current lifecycle email helpers in `src/webhooks/processor/event_handlers.rs
 - `send_payment_failed_email`
 - dispute admin alert send path
 
-Those paths can do external HTTP work while the webhook transaction is still open.
+Those paths are now collected as post-commit effects and executed only after webhook state, stored canonical payload, and `webhook_provider.processed = true` commit.
 
 ## Risks
 
@@ -34,6 +34,17 @@ Those paths can do external HTTP work while the webhook transaction is still ope
 ## Desired Direction
 
 Move lifecycle email side effects out of the webhook processing transaction.
+
+Implemented shape:
+
+1. Webhook handlers collect typed `PostCommitEffect` values in `EventEffects`.
+2. `process_webhook` returns the canonical payload together with post-commit effects.
+3. `process_webhook_atomically` commits the database transaction before scheduling effects.
+4. Lifecycle email lookup and provider email sends run in the post-commit effect executor task.
+5. Email idempotency is explicit in `EmailContext` as a stable key built from app/provider/provider webhook/email type/subscription identity.
+6. Email failures are logged and do not roll back payment/subscription/webhook state.
+
+Deliberate remaining tradeoff: because there is no durable email outbox, a process crash after DB commit but before effect execution can drop the lifecycle email or dispute admin alert.
 
 Recommended shape:
 

@@ -2,6 +2,7 @@ use crate::ports::WebhookProviderSnapshot;
 
 use super::normalize::normalize_event_type_with_payload;
 
+#[derive(Debug, Clone, Default)]
 pub(crate) struct WebhookFields {
     pub(crate) subscription_id: Option<String>,
     pub(crate) purchase_token: Option<String>,

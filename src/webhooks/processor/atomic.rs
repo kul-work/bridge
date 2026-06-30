@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-use super::{process_webhook, CanonicalWebhookPayload};
+use super::{process_webhook, spawn_post_commit_effects, CanonicalWebhookPayload};
 
 type ProcessingTx<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
 
@@ -51,8 +51,8 @@ pub async fn process_webhook_atomically(
 
     let result = process_webhook(&repo, webhook_provider_id, app_id).await?;
 
-    if let Some(canonical) = result.as_ref() {
-        let canonical_payload = serde_json::to_value(canonical)
+    if let Some(processed) = result.as_ref() {
+        let canonical_payload = serde_json::to_value(&processed.canonical)
             .map_err(|e| BridgeError::InternalServerError(e.to_string()))?;
         repo.store_webhook_delivery_canonical_payload_and_mark_processed(
             app_id,
@@ -73,7 +73,12 @@ pub async fn process_webhook_atomically(
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    Ok(result)
+    if let Some(processed) = result {
+        spawn_post_commit_effects(processed.post_commit);
+        return Ok(Some(processed.canonical));
+    }
+
+    Ok(None)
 }
 
 struct AtomicWebhookProcessingRepository<'a> {
