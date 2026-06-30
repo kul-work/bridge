@@ -220,7 +220,7 @@ async fn run_canonical_rebuild_regression(
     let token_a = format!("tok_a_{app_id}");
     let token_b = format!("tok_b_{app_id}");
     let row_a = insert_google_subscription(pool, app_id, "user_a", &token_a, "active", TA).await?;
-    let row_b = insert_google_subscription(pool, app_id, "user_b", &token_b, "grace_period", TB).await?;
+    let row_b = insert_google_subscription(pool, app_id, "user_b", &token_b, "past_due", TB).await?;
 
     let webhook_a = insert_webhook_provider(pool, app_id, &token_a, "evt_rebuild_a").await?;
     let webhook_b = insert_webhook_provider(pool, app_id, &token_b, "evt_rebuild_b").await?;

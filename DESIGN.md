@@ -118,6 +118,11 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 - Provider events mapped to canonical states: `active`, `trial`, `past_due`, `paused`, `cancelled`, `expired`, `revoked`
 - Provider events mapped to callback events: `subscription.activated`, `subscription.updated`, `subscription.expired`, etc.
 
+**Provider webhook adapter**:
+- Webhook decoding, event type mapping, and field extraction are decoupled from the shared processor.
+- Each provider implements a concrete adapter (`ProviderWebhookAdapter`) at the boundary.
+- **Identity ownership rule**: For Google Play, the purchase token uniquely identifies the subscription lifecycle. The product SKU (`subscription_id`) represents only the product definition, and must never be used as a lifecycle fallback during user/subscription resolution.
+
 **Google Play specifics**:
 - Purchase acknowledgment required within 3 days to prevent auto-refund.
 - Price step-up handling for Korea-specific consent.

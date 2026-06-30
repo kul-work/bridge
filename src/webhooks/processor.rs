@@ -20,10 +20,10 @@ use self::{
     event_handlers::{EventContext, EventEffects, EventHandling, PostCommitEffect},
     fields::{extract_metadata_user_id, extract_webhook_fields},
     normalize::{
-        callback_status_for_event, normalize_event_type_with_payload,
-        normalize_status, parse_rfc3339_utc, status_to_canonical_event,
+        callback_status_for_event, parse_rfc3339_utc, status_to_canonical_event,
     },
 };
+use super::provider_adapter::ProviderWebhookAdapter;
 pub(crate) use self::fields::WebhookFields;
 pub(crate) use self::atomic::process_webhook_atomically;
 
@@ -705,16 +705,13 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
     }
     let external_user_id = resolution.external_user_id;
 
-    let mut fields = extract_webhook_fields(&webhook);
+    let mut fields = extract_webhook_fields(&webhook)?;
     if webhook.provider == "google_play" {
         fields = enrich_google_play_fields(repo, app_id, &webhook, fields).await?;
     }
     fill_payment_product_id(repo, app_id, &webhook, &mut fields).await?;
-    let canonical_event = normalize_event_type_with_payload(
-        &webhook.provider,
-        &webhook.event_type,
-        Some(&webhook.payload),
-    );
+    let adapter = ProviderWebhookAdapter::from_provider(&webhook.provider)?;
+    let canonical_event = adapter.canonical_event_type(&webhook.event_type, &webhook.payload);
     let timestamp_epoch_ms = webhook
         .timestamp_epoch_ms
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
@@ -1099,16 +1096,14 @@ pub async fn process_webhook(
         return Ok(None);
     }
 
+
     let app = repo
         .get_app(app_id)
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    let canonical_event = normalize_event_type_with_payload(
-        &webhook.provider,
-        &webhook.event_type,
-        Some(&webhook.payload),
-    );
+    let adapter = ProviderWebhookAdapter::from_provider(&webhook.provider)?;
+    let canonical_event = adapter.canonical_event_type(&webhook.event_type, &webhook.payload);
 
     let resolution = resolve_user(repo, app_id, &webhook).await;
     if !ensure_resolved_user(repo, webhook_provider_id, &webhook, &resolution).await? {
@@ -1116,7 +1111,7 @@ pub async fn process_webhook(
     }
     let external_user_id = resolution.external_user_id;
 
-    let mut fields = extract_webhook_fields(&webhook);
+    let mut fields = extract_webhook_fields(&webhook)?;
     if webhook.provider == "google_play" {
         fields = enrich_google_play_fields(repo, app_id, &webhook, fields).await?;
     }

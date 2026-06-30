@@ -16,9 +16,10 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::{
-    normalize_status, parse_rfc3339_utc, send_dispute_admin_alert_email,
+    parse_rfc3339_utc, send_dispute_admin_alert_email,
     status_to_canonical_event, WebhookFields,
 };
+use crate::webhooks::provider_adapter::ProviderWebhookAdapter;
 
 const LIFECYCLE_EMAIL_LOOKUP_RETRY_DELAY: Duration = Duration::from_millis(500);
 
@@ -127,7 +128,7 @@ fn effects_from_google_lifecycle_outcome(outcome: GooglePlayLifecycleOutcome) ->
 
 pub(super) fn activation_subscription_status(provider: &str, raw_status: Option<&str>) -> String {
     if provider == "creem" {
-        raw_status.and_then(|status| normalize_status(Some(status)))
+        raw_status.and_then(|status| ProviderWebhookAdapter::Creem.normalize_status(Some(status)))
             .unwrap_or_else(|| "active".to_string())
     } else {
         "active".to_string()
@@ -883,7 +884,8 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 let Some(raw_status) = ctx.fields.status.as_deref() else {
                     return Ok(EventHandling::ReturnNone);
                 };
-                let Some(status) = normalize_status(Some(raw_status)) else {
+                let adapter = ProviderWebhookAdapter::from_provider(ctx.provider)?;
+                let Some(status) = adapter.normalize_status(Some(raw_status)) else {
                     return Ok(EventHandling::ReturnNone);
                 };
                 let sub_id = ctx.fields.subscription_id.clone()
