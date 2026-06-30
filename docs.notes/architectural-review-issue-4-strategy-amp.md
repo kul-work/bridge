@@ -283,8 +283,10 @@ This is a high-risk payment/provider change. Run at least:
 - payment side-effect checks
 - observability/PII checks if logging or diagnostic output changes
 
-## Main Risk That Remains
+## Caveat Remaining
 
-Row leases prevent concurrent duplicate side effects, but they do not guarantee exact-once provider behavior after a crash between provider success and DB completion.
+This remains an at-least-once worker model, not exactly-once.
 
-If Google cancel or acknowledgement calls are not idempotent, Bridge needs a provider-side-effect outbox with explicit idempotency semantics. If provider calls are idempotent, row leases plus fencing tokens are the smallest safe fix.
+Row leases and fencing tokens prevent concurrent workers, stale workers, and workers that lost their claim from running external side effects. They cannot prove that an external side effect succeeded if the process crashes after the callback/provider call succeeds but before Bridge records the DB completion.
+
+Mitigation: app callbacks and provider operations must remain idempotent by stable event or provider IDs. True exactly-once external side effects would require a provider/callback outbox with provider-supported idempotency semantics.

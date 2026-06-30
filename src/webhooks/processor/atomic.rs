@@ -471,9 +471,11 @@ impl<'a> WebhookWriteRepository for AtomicWebhookProcessingRepository<'a> {
         &self,
         app_id: Uuid,
         webhook_provider_id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
     ) -> Result<WebhookDeliveryEnqueue, BridgeError> {
         self.database
-            .create_webhook_delivery(app_id, webhook_provider_id)
+            .create_webhook_delivery(app_id, webhook_provider_id, worker_id, lease_secs)
             .await
     }
 
@@ -536,6 +538,8 @@ impl<'a> WebhookWriteRepository for AtomicWebhookProcessingRepository<'a> {
         provider_payload: serde_json::Value,
         timestamp_epoch_ms: Option<i64>,
         canonical_payload: serde_json::Value,
+        worker_id: &str,
+        lease_secs: i64,
     ) -> Result<WebhookDeliveryEnqueue, BridgeError> {
         self.database
             .create_synthetic_webhook_delivery(
@@ -548,6 +552,8 @@ impl<'a> WebhookWriteRepository for AtomicWebhookProcessingRepository<'a> {
                 provider_payload,
                 timestamp_epoch_ms,
                 canonical_payload,
+                worker_id,
+                lease_secs,
             )
             .await
     }
@@ -584,15 +590,40 @@ impl<'a> WebhookForwardRepository for AtomicWebhookProcessingRepository<'a> {
         self.database.webhook_delivery_exists(webhook_provider_id).await
     }
 
-    async fn update_webhook_delivery_attempt(
+    async fn complete_webhook_delivery_attempt(
         &self,
         delivery_id: Uuid,
+        claim_token: Uuid,
         http_status: Option<i32>,
         error: Option<String>,
         forwarded: bool,
     ) -> Result<WebhookDelivery, BridgeError> {
         self.database
-            .update_webhook_delivery_attempt(delivery_id, http_status, error, forwarded)
+            .complete_webhook_delivery_attempt(delivery_id, claim_token, http_status, error, forwarded)
+            .await
+    }
+
+    async fn refresh_webhook_delivery_claim(
+        &self,
+        app_id: Uuid,
+        delivery_id: Uuid,
+        claim_token: Uuid,
+        lease_secs: i64,
+    ) -> Result<bool, BridgeError> {
+        self.database
+            .refresh_webhook_delivery_claim(app_id, delivery_id, claim_token, lease_secs)
+            .await
+    }
+
+    async fn claim_webhook_delivery_by_id(
+        &self,
+        app_id: Uuid,
+        delivery_id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
+    ) -> Result<Option<WebhookDelivery>, BridgeError> {
+        self.database
+            .claim_webhook_delivery_by_id(app_id, delivery_id, worker_id, lease_secs)
             .await
     }
 

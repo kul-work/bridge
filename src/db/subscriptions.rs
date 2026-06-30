@@ -54,6 +54,14 @@ pub struct Subscription {
     pub google_pending_price_change_state: Option<String>,
     #[serde(default)]
     pub google_pending_price_change_expected_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub scheduled_job_claim_token: Option<Uuid>,
+    #[serde(default)]
+    pub scheduled_job_claimed_by: Option<String>,
+    #[serde(default)]
+    pub scheduled_job_claimed_until: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub scheduled_job_claim_kind: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -642,21 +650,52 @@ pub async fn list_reconciliation_subscriptions(
     .map_err(|e| BridgeError::DbError(e.to_string()))
 }
 
-pub async fn list_price_step_up_expired_subscriptions(
+pub async fn claim_price_step_up_expired_subscriptions(
     pool: &PgPool,
+    app_id: Uuid,
+    worker_id: &str,
+    lease_secs: i64,
     limit: i64,
 ) -> Result<Vec<Subscription>, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
-        "SELECT * FROM pay.subscriptions
-         WHERE google_requires_price_step_up_consent = true
-           AND google_price_step_up_consent_deadline IS NOT NULL
-           AND google_price_step_up_consent_deadline < NOW()
-         LIMIT $1"
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let subscriptions = sqlx::query_as::<_, Subscription>(
+        "WITH candidates AS (
+             SELECT id
+             FROM pay.subscriptions
+             WHERE app_id = $1
+               AND google_requires_price_step_up_consent = true
+               AND google_price_step_up_consent_deadline IS NOT NULL
+               AND google_price_step_up_consent_deadline < NOW()
+               AND (
+                   scheduled_job_claimed_until IS NULL
+                   OR scheduled_job_claimed_until < NOW()
+               )
+             ORDER BY google_price_step_up_consent_deadline ASC
+             LIMIT $4
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE pay.subscriptions s
+         SET scheduled_job_claim_token = gen_random_uuid(),
+             scheduled_job_claimed_by = $2,
+             scheduled_job_claimed_until = NOW() + ($3 * INTERVAL '1 second'),
+             scheduled_job_claim_kind = 'price_step_up_expiry',
+             updated_at = NOW()
+         FROM candidates
+         WHERE s.id = candidates.id AND s.app_id = $1
+         RETURNING s.*"
     )
+    .bind(app_id)
+    .bind(worker_id)
+    .bind(lease_secs)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscriptions)
 }
 
 pub async fn list_pending_pause_subscriptions(
@@ -678,9 +717,13 @@ pub async fn list_pending_pause_subscriptions(
 
 pub async fn mark_subscription_price_step_up_expired(
     pool: &PgPool,
+    app_id: Uuid,
     id: Uuid,
+    claim_token: Uuid,
     event_time_ms: i64,
 ) -> Result<bool, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
     let result = sqlx::query(
         "UPDATE pay.subscriptions
          SET google_requires_price_step_up_consent = false,
@@ -688,18 +731,68 @@ pub async fn mark_subscription_price_step_up_expired(
              status = 'cancelled',
              revocation_reason = 'price_step_up_expiry',
              auto_renewing = false,
+             scheduled_job_claim_token = NULL,
+             scheduled_job_claimed_by = NULL,
+             scheduled_job_claimed_until = NULL,
+             scheduled_job_claim_kind = NULL,
              version = version + 1,
              last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
              updated_at = NOW()
-         WHERE id = $2"
+         WHERE app_id = $2
+           AND id = $3
+           AND scheduled_job_claim_token = $4
+           AND scheduled_job_claim_kind = 'price_step_up_expiry'
+           AND google_requires_price_step_up_consent = true
+           AND google_price_step_up_consent_deadline IS NOT NULL
+           AND google_price_step_up_consent_deadline < NOW()"
     )
     .bind(event_time_ms)
+    .bind(app_id)
     .bind(id)
-    .execute(pool)
+    .bind(claim_token)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
     Ok(result.rows_affected() > 0)
+}
+
+pub async fn refresh_subscription_scheduler_claim(
+    pool: &PgPool,
+    app_id: Uuid,
+    id: Uuid,
+    claim_token: Uuid,
+    claim_kind: &str,
+    lease_secs: i64,
+) -> Result<bool, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let result = sqlx::query(
+        "UPDATE pay.subscriptions
+         SET scheduled_job_claimed_until = NOW() + ($5 * INTERVAL '1 second'),
+             updated_at = NOW()
+         WHERE app_id = $1
+           AND id = $2
+           AND scheduled_job_claim_token = $3
+           AND scheduled_job_claim_kind = $4
+           AND google_requires_price_step_up_consent = true
+           AND google_price_step_up_consent_deadline IS NOT NULL
+           AND google_price_step_up_consent_deadline < NOW()"
+    )
+    .bind(app_id)
+    .bind(id)
+    .bind(claim_token)
+    .bind(claim_kind)
+    .bind(lease_secs)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(result.rows_affected() == 1)
 }
 
 pub async fn mark_subscription_paused(
@@ -1429,7 +1522,8 @@ pub async fn get_subscription_by_purchase_token_for_provider(
 /// same product have rows that share (app_id, subscription_id). The reconciler
 /// already iterates a concrete DB row, so we mutate that exact row by
 /// (app_id, id) to avoid clobbering another user's same-SKU row. The
-/// high-water stale guard (last_event_time < event_time_ms) is preserved.
+/// high-water stale guard (last_event_time < event_time_ms) is preserved, and
+/// duplicate workers skip rows that another worker already corrected.
 pub async fn update_reconciled_subscription_status(
     pool: &PgPool,
     app_id: Uuid,
@@ -1446,7 +1540,10 @@ pub async fn update_reconciled_subscription_status(
              version = version + 1,
              last_event_time = $3,
              updated_at = NOW()
-         WHERE app_id = $4 AND id = $5 AND last_event_time < $3"
+         WHERE app_id = $4
+           AND id = $5
+           AND status IS DISTINCT FROM $1
+           AND last_event_time < $3"
     )
     .bind(new_status)
     .bind(current_period_end)

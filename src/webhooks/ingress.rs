@@ -19,6 +19,7 @@ use crate::{
     utils::diagnostic_hash,
 };
 use crate::db::webhooks::WebhookDeliveryEnqueue;
+use crate::webhooks::forwarding::{webhook_worker_id, WEBHOOK_DELIVERY_LEASE_SECS};
 
 const CREEM_SIGNATURE_HEADERS: [&str; 3] = ["creem-signature", "Webhook-Signature", "x-signature"];
 
@@ -79,10 +80,15 @@ fn spawn_process_and_forward_delivery(
         .await
         {
             Ok(Some(canonical)) => {
+                let Some(claim_token) = delivery.claim_token else {
+                    error!("New webhook delivery was not claimed before forwarding");
+                    return;
+                };
                 if let Err(e) = crate::webhooks::forwarding::forward_webhook(
                     database.as_ref(),
                     app_id,
                     delivery.id,
+                    claim_token,
                     canonical,
                 )
                 .await
@@ -91,9 +97,14 @@ fn spawn_process_and_forward_delivery(
                 }
             }
             Ok(None) => {
+                let Some(claim_token) = delivery.claim_token else {
+                    error!("New no-callback webhook delivery was not claimed before completion");
+                    return;
+                };
                 if let Err(e) = database
-                    .update_webhook_delivery_attempt(
+                    .complete_webhook_delivery_attempt(
                         delivery.id,
+                        claim_token,
                         None,
                         Some("No app callback for provider webhook".to_string()),
                         true,
@@ -151,7 +162,12 @@ async fn handle_duplicate_webhook(
             );
             let delivery = database
                 .as_ref()
-                .create_webhook_delivery(app_id, webhook_id)
+                .create_webhook_delivery(
+                    app_id,
+                    webhook_id,
+                    &webhook_worker_id("duplicate-ingress"),
+                    WEBHOOK_DELIVERY_LEASE_SECS,
+                )
                 .await?;
             spawn_process_and_forward_delivery(database, app_id, webhook_id, provider_name, event_id.to_string(), delivery);
         }
@@ -409,7 +425,12 @@ pub async fn handle_google_play(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    match database.as_ref().create_webhook_delivery(app.id, webhook_id).await {
+    match database.as_ref().create_webhook_delivery(
+        app.id,
+        webhook_id,
+        &webhook_worker_id("google-ingress"),
+        WEBHOOK_DELIVERY_LEASE_SECS,
+    ).await {
         Ok(delivery) => {
             spawn_process_and_forward_delivery(database, app.id, webhook_id, "Google Play", event_id.to_string(), delivery);
         }
@@ -594,7 +615,12 @@ pub async fn handle_creem(
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    match database.as_ref().create_webhook_delivery(app.id, webhook_id).await {
+    match database.as_ref().create_webhook_delivery(
+        app.id,
+        webhook_id,
+        &webhook_worker_id("creem-ingress"),
+        WEBHOOK_DELIVERY_LEASE_SECS,
+    ).await {
         Ok(delivery) => {
             spawn_process_and_forward_delivery(database, app.id, webhook_id, "Creem", event_id.to_string(), delivery);
         }

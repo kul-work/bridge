@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::db;
-use crate::webhooks::forwarding::forward_webhook;
+use crate::webhooks::forwarding::{forward_webhook, WEBHOOK_DELIVERY_LEASE_SECS};
 use crate::webhooks::processor::{build_canonical_payload, CanonicalWebhookPayload};
 
 const SUBSCRIPTION_ID: &str = "hiha_monthly";
@@ -53,6 +53,21 @@ async fn run_reconciliation_regression(pool: &PgPool, app_id: Uuid) -> Result<()
     assert_eq!(a_after.version, row_a.version + 1);
     assert_eq!(a_after.last_event_time, 3_000_000);
 
+    let duplicate = db::subscriptions::update_reconciled_subscription_status(
+        pool,
+        app_id,
+        row_a.id,
+        "expired",
+        None,
+        3_000_100,
+    )
+    .await?;
+    assert!(!duplicate, "same-status reconciliation must not move the row again");
+
+    let a_after_duplicate = load_subscription_state(pool, row_a.id).await?;
+    assert_eq!(a_after_duplicate.version, a_after.version);
+    assert_eq!(a_after_duplicate.last_event_time, a_after.last_event_time);
+
     assert_eq!(b_after.status, "cancelled");
     assert_eq!(b_after.version, row_b.version, "other same-SKU row version must not move");
     assert_eq!(b_after.last_event_time, TB, "other same-SKU row last_event_time must not move");
@@ -88,8 +103,11 @@ async fn run_forward_stale_regression(
     let provider_b = insert_webhook_provider(pool, app_id, &token_b, "evt_fwd_b").await?;
     let delivery_b = insert_webhook_delivery(pool, app_id, provider_b).await?;
 
-    forward_webhook(database, app_id, delivery_a, google_canonical_payload(&token_a, T_EVT, "subscription.cancelled")).await?;
-    forward_webhook(database, app_id, delivery_b, google_canonical_payload(&token_b, T_EVT, "subscription.cancelled")).await?;
+    let claim_a = claim_delivery(pool, app_id, delivery_a).await?;
+    let claim_b = claim_delivery(pool, app_id, delivery_b).await?;
+
+    forward_webhook(database, app_id, delivery_a, claim_a, google_canonical_payload(&token_a, T_EVT, "subscription.cancelled")).await?;
+    forward_webhook(database, app_id, delivery_b, claim_b, google_canonical_payload(&token_b, T_EVT, "subscription.cancelled")).await?;
 
     assert_eq!(callback_count.load(Ordering::SeqCst), 1, "only the same-token not-stale event must reach the app");
 
@@ -118,6 +136,18 @@ async fn forward_stale_check_with_unmatched_token_does_not_suppress_against_same
     result
 }
 
+#[tokio::test]
+async fn forward_with_lost_claim_does_not_post_callback() -> Result<(), Box<dyn Error>> {
+    let database = test_database().await?;
+    let pool = database.pool();
+    let (callback_url, callback_count, server) = spawn_callback_server().await?;
+    let app_id = insert_test_app_with_url(pool, "lost-claim", &callback_url).await?;
+    let result = run_forward_lost_claim_regression(&database, pool, app_id, callback_count).await;
+    cleanup_test_app(pool, app_id).await;
+    server.abort();
+    result
+}
+
 async fn run_forward_unmatched_regression(
     database: &crate::db::Database,
     pool: &PgPool,
@@ -131,11 +161,43 @@ async fn run_forward_unmatched_regression(
     let provider = insert_webhook_provider(pool, app_id, &unmatched_token, "evt_fwd_unmatched").await?;
     let delivery = insert_webhook_delivery(pool, app_id, provider).await?;
 
-    forward_webhook(database, app_id, delivery, google_canonical_payload(&unmatched_token, T_EVT, "subscription.cancelled")).await?;
+    let claim = claim_delivery(pool, app_id, delivery).await?;
+    forward_webhook(database, app_id, delivery, claim, google_canonical_payload(&unmatched_token, T_EVT, "subscription.cancelled")).await?;
 
     assert_eq!(callback_count.load(Ordering::SeqCst), 1, "unmatched-token Google event must forward");
     let provider_after = load_webhook_provider_suppression(pool, provider).await?;
     assert!(!provider_after.0, "unmatched Google token must not suppress against a same-SKU row");
+
+    Ok(())
+}
+
+async fn run_forward_lost_claim_regression(
+    database: &crate::db::Database,
+    pool: &PgPool,
+    app_id: Uuid,
+    callback_count: Arc<AtomicUsize>,
+) -> Result<(), Box<dyn Error>> {
+    let token = format!("tok_lost_claim_{app_id}");
+    let provider = insert_webhook_provider(pool, app_id, &token, "evt_lost_claim").await?;
+    let delivery = insert_webhook_delivery(pool, app_id, provider).await?;
+    let stale_claim = claim_delivery(pool, app_id, delivery).await?;
+
+    replace_delivery_claim(pool, delivery).await?;
+
+    forward_webhook(
+        database,
+        app_id,
+        delivery,
+        stale_claim,
+        google_canonical_payload(&token, T_EVT, "subscription.cancelled"),
+    )
+    .await?;
+
+    assert_eq!(callback_count.load(Ordering::SeqCst), 0, "lost claim must not emit callback POST");
+
+    let delivery_after = load_delivery(pool, delivery).await?;
+    assert!(!delivery_after.forwarded);
+    assert_eq!(delivery_after.forward_attempts, 0);
 
     Ok(())
 }
@@ -226,6 +288,41 @@ async fn load_delivery(pool: &PgPool, id: Uuid) -> Result<crate::db::webhooks::W
     Ok(row)
 }
 
+async fn claim_delivery(
+    pool: &PgPool,
+    app_id: Uuid,
+    delivery_id: Uuid,
+) -> Result<Uuid, Box<dyn Error>> {
+    let delivery = db::webhooks::claim_webhook_delivery_by_id(
+        pool,
+        app_id,
+        delivery_id,
+        "identity-cross-user-test",
+        WEBHOOK_DELIVERY_LEASE_SECS,
+    )
+    .await?
+    .ok_or("expected delivery to be claimable")?;
+
+    delivery
+        .claim_token
+        .ok_or_else(|| "expected claimed delivery to have a claim token".into())
+}
+
+async fn replace_delivery_claim(pool: &PgPool, delivery_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE pay.webhook_delivery
+         SET claim_token = gen_random_uuid(),
+             claimed_by = 'replacement-worker',
+             claimed_until = NOW() + INTERVAL '10 minutes'
+         WHERE id = $1",
+    )
+    .bind(delivery_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 async fn load_webhook_provider_suppression(pool: &PgPool, id: Uuid) -> Result<(bool, Option<String>), sqlx::Error> {
     let row: (bool, Option<String>) = sqlx::query_as(
         "SELECT suppressed, suppressed_reason FROM pay.webhook_provider WHERE id = $1",
@@ -306,8 +403,8 @@ async fn insert_webhook_delivery(pool: &PgPool, app_id: Uuid, webhook_provider_i
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO pay.webhook_delivery
-            (id, app_id, webhook_provider_id, forward_attempts, forwarded, dead_lettered)
-         VALUES ($1, $2, $3, 0, false, false)",
+            (id, app_id, webhook_provider_id, forward_attempts, forwarded, dead_lettered, next_attempt_at)
+         VALUES ($1, $2, $3, 0, false, false, NOW())",
     )
     .bind(id)
     .bind(app_id)

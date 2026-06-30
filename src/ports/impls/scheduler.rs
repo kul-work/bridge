@@ -15,12 +15,20 @@ impl SchedulerRepository for db::Database {
         db::apps::list_enabled_app_ids(self.pool()).await
     }
 
-    async fn list_pending_webhook_deliveries(
+    async fn claim_pending_webhook_deliveries(
         &self,
         app_id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
         limit: i64,
     ) -> Result<Vec<WebhookDelivery>, BridgeError> {
-        db::webhooks::list_pending_webhook_deliveries(self.pool(), app_id, limit).await
+        db::webhooks::claim_pending_webhook_deliveries(
+            self.pool(),
+            app_id,
+            worker_id,
+            lease_secs,
+            limit,
+        ).await
     }
 
     async fn claim_unprocessed_webhook_providers(
@@ -65,19 +73,36 @@ impl SchedulerRepository for db::Database {
         .await
     }
 
-    async fn list_price_step_up_expired_subscriptions(
+    async fn claim_price_step_up_expired_subscriptions(
         &self,
+        app_id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
         limit: i64,
     ) -> Result<Vec<Subscription>, BridgeError> {
-        db::subscriptions::list_price_step_up_expired_subscriptions(self.pool(), limit).await
+        db::subscriptions::claim_price_step_up_expired_subscriptions(
+            self.pool(),
+            app_id,
+            worker_id,
+            lease_secs,
+            limit,
+        ).await
     }
 
     async fn mark_subscription_price_step_up_expired(
         &self,
+        app_id: Uuid,
         id: Uuid,
+        claim_token: Uuid,
         event_time_ms: i64,
     ) -> Result<bool, BridgeError> {
-        db::subscriptions::mark_subscription_price_step_up_expired(self.pool(), id, event_time_ms).await
+        db::subscriptions::mark_subscription_price_step_up_expired(
+            self.pool(),
+            app_id,
+            id,
+            claim_token,
+            event_time_ms,
+        ).await
     }
 
     async fn list_pending_pause_subscriptions(

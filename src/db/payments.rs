@@ -35,14 +35,18 @@ pub struct PaymentHistoryEntry {
 
 #[derive(Debug, Clone, FromRow)]
 pub struct GooglePlaySubscriptionAckCandidate {
+    pub payment_id: Uuid,
     pub subscription_id: String,
     pub purchase_token: String,
+    pub claim_token: Uuid,
 }
 
 #[derive(Debug, Clone, FromRow)]
 pub struct GooglePlayProductAckCandidate {
+    pub payment_id: Uuid,
     pub product_id: String,
     pub purchase_token: String,
+    pub claim_token: Uuid,
 }
 
 async fn begin_app_tx<'a>(
@@ -365,30 +369,119 @@ pub async fn mark_payment_acknowledged(
     Ok(())
 }
 
-pub async fn list_google_play_subscription_ack_candidates(
+pub async fn mark_payment_acknowledged_with_claim(
     pool: &sqlx::PgPool,
     app_id: Uuid,
+    payment_id: Uuid,
+    claim_token: Uuid,
+) -> Result<bool, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let result = sqlx::query(
+        "UPDATE pay.payments
+         SET acknowledged_at = COALESCE(acknowledged_at, NOW()),
+             ack_claim_token = NULL,
+             ack_claimed_by = NULL,
+             ack_claimed_until = NULL
+         WHERE app_id = $1
+           AND id = $2
+           AND ack_claim_token = $3
+           AND acknowledged_at IS NULL",
+    )
+    .bind(app_id)
+    .bind(payment_id)
+    .bind(claim_token)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn refresh_payment_ack_claim(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    payment_id: Uuid,
+    claim_token: Uuid,
+    lease_secs: i64,
+) -> Result<bool, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let result = sqlx::query(
+        "UPDATE pay.payments
+         SET ack_claimed_until = NOW() + ($4 * INTERVAL '1 second')
+         WHERE app_id = $1
+           AND id = $2
+           AND ack_claim_token = $3
+           AND acknowledged_at IS NULL",
+    )
+    .bind(app_id)
+    .bind(payment_id)
+    .bind(claim_token)
+    .bind(lease_secs)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn claim_google_play_subscription_ack_candidates(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    worker_id: &str,
+    lease_secs: i64,
     limit: i64,
 ) -> Result<Vec<GooglePlaySubscriptionAckCandidate>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let rows = sqlx::query_as::<_, GooglePlaySubscriptionAckCandidate>(
-        "SELECT s.subscription_id, p.provider_purchase_token AS purchase_token
-         FROM pay.payments p
-         JOIN pay.subscriptions s
-           ON s.app_id = p.app_id
-          AND s.provider = p.provider
-          AND s.purchase_token = p.provider_purchase_token
-         WHERE p.app_id = $1
-           AND p.provider = 'google_play'
-           AND p.status = 'success'
-           AND p.ack_required = true
-           AND p.acknowledged_at IS NULL
-           AND p.provider_purchase_token IS NOT NULL
-           AND s.status IN ('active', 'past_due', 'cancelled', 'on_hold', 'paused')
-         ORDER BY p.created_at ASC
-         LIMIT $2",
+        "WITH candidates AS (
+             SELECT p.id
+             FROM pay.payments p
+             JOIN pay.subscriptions s
+               ON s.app_id = p.app_id
+              AND s.provider = p.provider
+              AND s.purchase_token = p.provider_purchase_token
+             WHERE p.app_id = $1
+               AND p.provider = 'google_play'
+               AND p.status = 'success'
+               AND p.ack_required = true
+               AND p.acknowledged_at IS NULL
+               AND p.provider_purchase_token IS NOT NULL
+               AND s.status IN ('active', 'past_due', 'cancelled', 'on_hold', 'paused')
+               AND (
+                   p.ack_claimed_until IS NULL
+                   OR p.ack_claimed_until < NOW()
+               )
+             ORDER BY p.created_at ASC
+             LIMIT $4
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE pay.payments p
+         SET ack_claim_token = gen_random_uuid(),
+             ack_claimed_by = $2,
+             ack_claimed_until = NOW() + ($3 * INTERVAL '1 second')
+         FROM candidates
+         WHERE p.id = candidates.id AND p.app_id = $1
+         RETURNING p.id AS payment_id,
+                   (SELECT s.subscription_id
+                    FROM pay.subscriptions s
+                    WHERE s.app_id = p.app_id
+                      AND s.provider = p.provider
+                      AND s.purchase_token = p.provider_purchase_token
+                    LIMIT 1) AS subscription_id,
+                   p.provider_purchase_token AS purchase_token,
+                   p.ack_claim_token AS claim_token",
     )
     .bind(app_id)
+    .bind(worker_id)
+    .bind(lease_secs)
     .bind(limit)
     .fetch_all(&mut *tx)
     .await
@@ -401,27 +494,48 @@ pub async fn list_google_play_subscription_ack_candidates(
     Ok(rows)
 }
 
-pub async fn list_google_play_product_ack_candidates(
+pub async fn claim_google_play_product_ack_candidates(
     pool: &sqlx::PgPool,
     app_id: Uuid,
+    worker_id: &str,
+    lease_secs: i64,
     limit: i64,
 ) -> Result<Vec<GooglePlayProductAckCandidate>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let rows = sqlx::query_as::<_, GooglePlayProductAckCandidate>(
-        "SELECT product_id, provider_purchase_token AS purchase_token
-         FROM pay.payments
-         WHERE app_id = $1
-           AND provider = 'google_play'
-           AND status = 'success'
-           AND ack_required = true
-           AND acknowledged_at IS NULL
-           AND provider_purchase_token IS NOT NULL
-           AND product_id IS NOT NULL
-           AND subscription_id IS NULL
-         ORDER BY created_at ASC
-         LIMIT $2",
+        "WITH candidates AS (
+             SELECT id
+             FROM pay.payments
+             WHERE app_id = $1
+               AND provider = 'google_play'
+               AND status = 'success'
+               AND ack_required = true
+               AND acknowledged_at IS NULL
+               AND provider_purchase_token IS NOT NULL
+               AND product_id IS NOT NULL
+               AND subscription_id IS NULL
+               AND (
+                   ack_claimed_until IS NULL
+                   OR ack_claimed_until < NOW()
+               )
+             ORDER BY created_at ASC
+             LIMIT $4
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE pay.payments p
+         SET ack_claim_token = gen_random_uuid(),
+             ack_claimed_by = $2,
+             ack_claimed_until = NOW() + ($3 * INTERVAL '1 second')
+         FROM candidates
+         WHERE p.id = candidates.id AND p.app_id = $1
+         RETURNING p.id AS payment_id,
+                   p.product_id,
+                   p.provider_purchase_token AS purchase_token,
+                   p.ack_claim_token AS claim_token",
     )
     .bind(app_id)
+    .bind(worker_id)
+    .bind(lease_secs)
     .bind(limit)
     .fetch_all(&mut *tx)
     .await

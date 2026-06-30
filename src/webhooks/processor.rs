@@ -29,6 +29,7 @@ pub(crate) use self::atomic::process_webhook_atomically;
 
 pub struct EnqueuedWebhook {
     pub delivery_id: Uuid,
+    pub claim_token: Option<Uuid>,
     pub canonical: CanonicalWebhookPayload,
     pub delivery_created: bool,
 }
@@ -1302,7 +1303,12 @@ where
     match process_webhook(repo, webhook_provider_id, app_id).await? {
         Some(processed) => {
             let delivery = repo
-                .create_webhook_delivery(app_id, webhook_provider_id)
+                .create_webhook_delivery(
+                    app_id,
+                    webhook_provider_id,
+                    &crate::webhooks::forwarding::webhook_worker_id("processor-enqueue"),
+                    crate::webhooks::forwarding::WEBHOOK_DELIVERY_LEASE_SECS,
+                )
                 .await?;
             let canonical_payload = serde_json::to_value(&processed.canonical)
                 .map_err(|e| BridgeError::InternalServerError(e.to_string()))?;
@@ -1316,6 +1322,7 @@ where
             spawn_post_commit_effects(processed.post_commit);
             Ok(Some(EnqueuedWebhook {
                 delivery_id: delivery.id,
+                claim_token: delivery.claim_token,
                 canonical: processed.canonical,
                 delivery_created: delivery.created,
             }))
