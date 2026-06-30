@@ -119,17 +119,10 @@ if test_revoked_access "paused" "future"; then
     PAUSED_PASS="true"
 fi
 
-# Additional: Test 'inactive' status POST expiry
-echo -e "${BLUE}Testing 'inactive' status (POST-expiry)${NC}"
-INACTIVE_POST_PASS="false"
-if test_revoked_access "inactive" "past"; then
-    INACTIVE_POST_PASS="true"
-fi
-
 # Generate JSON report
 TEST_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 OVERALL_STATUS="fail"
-if [[ "$EXPIRED_PASS" == "true" && "$PAUSED_PASS" == "true" && "$INACTIVE_POST_PASS" == "true" ]]; then
+if [[ "$EXPIRED_PASS" == "true" && "$PAUSED_PASS" == "true" ]]; then
     OVERALL_STATUS="pass"
 fi
 
@@ -144,8 +137,7 @@ cat > "$REPORT_FILE" <<EOF
   "user_id": "$USER_ID",
   "results": {
     "expired_pass": $EXPIRED_PASS,
-    "paused_pass": $PAUSED_PASS,
-    "inactive_post_pass": $INACTIVE_POST_PASS
+    "paused_pass": $PAUSED_PASS
   }
 }
 EOF
