@@ -303,7 +303,7 @@ Google Play (webhook)
 
 | Data | Retention | Rationale |
 |---|---|---|
-| Raw webhooks | 90 days | Debugging + reconciliation |
+| Webhook ingress + delivery state | 90 days | Operational debugging + reconciliation; `webhook_delivery` is removed with its source `webhook_provider` row |
 | Payments + subscriptions | 7 years / indefinite | Tax + audit compliance |
 | Purchase tokens | Indefinite | Fraud prevention + "restore purchases" |
 | Obfuscated IDs (deleted users) | 90 days post-deletion | Prevent re-enrollment fraud |
