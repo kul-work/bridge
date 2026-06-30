@@ -48,6 +48,37 @@ Recommended shape:
    - subscription/payment identity
 5. Keep lifecycle email failures from rolling back payment/subscription state.
 
+## Alternative Strategy Without a DB Outbox
+
+If Bridge intentionally avoids adding a database outbox table for lifecycle emails, use in-memory post-commit effects instead. This is not equivalent to a durable outbox, but it removes external I/O from the webhook transaction with the smallest schema-free change.
+
+Recommended shape:
+
+1. During webhook processing, collect typed post-commit effects instead of sending emails directly.
+2. Add those effects to `EventEffects`, for example as lifecycle email effects and dispute admin alert effects.
+3. Keep each effect as plain data: app/provider/webhook identity, external user id, subscription id, email type, and template-specific payload such as price step-up deadline, deferred-until timestamp, current period end, or app URL.
+4. Return the canonical webhook payload together with the collected post-commit effects from `process_webhook`.
+5. In `process_webhook_atomically`, commit the DB transaction first, then execute the collected effects.
+6. Move email lookup and provider email sends into the post-commit effect executor.
+7. Treat post-commit email failures as best-effort notification failures: log them with non-PII diagnostic context and never roll back payment/subscription/webhook state.
+
+Tradeoff:
+
+- This avoids email lookup and provider HTTP calls inside the DB transaction.
+- If the DB transaction rolls back, no post-commit effects run.
+- Reprocessing a normally processed webhook should not send another email because `webhook_provider.processed = true` prevents the handler path from running again.
+- A process crash after DB commit but before effect execution can drop the email because there is no durable intent. This must be documented as a deliberate best-effort lifecycle notification policy.
+
+Idempotency should still be best-effort and explicit. Build a stable email idempotency key from `app_id`, `provider`, `provider_webhook_id`, email type, and subscription/payment identity. Pass it through email context or provider-specific headers where supported. Without provider idempotency or durable storage, crash-after-send-before-log/mark cases cannot be made perfectly duplicate-proof.
+
+Suggested vertical slice:
+
+1. Convert one path, preferably `payment.failed`, from direct send to post-commit effect.
+2. Add a rollback/no-send test for that path.
+3. Add a send-after-commit test for that path.
+4. Convert the remaining lifecycle helpers after the pattern is proven.
+5. Handle dispute admin alerts separately because their recipient and payload semantics differ from user lifecycle notifications.
+
 ## Acceptance Criteria
 
 - Webhook DB transaction does not await email lookup or provider email sends.
