@@ -135,8 +135,12 @@ echo ""
 # Step 5: Verify status and settings in DB
 echo -e "${YELLOW}[3/5] Verifying status and settings after cancellation${NC}"
 export PGPASSWORD="postgres"
-RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, auto_renewing, (cancellation_initiated_at IS NOT NULL) as cancelled_at_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    RES_DATA \
+    "SELECT status, auto_renewing, (cancellation_initiated_at IS NOT NULL) as cancelled_at_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" \
+    "*cancelled*f*t*" \
+    10 \
+    1 || true
 
 # Expected: cancelled | f | t
 if [[ "$RES_DATA" == *"cancelled"*"f"*"t"* ]]; then

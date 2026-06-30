@@ -128,8 +128,12 @@ echo ""
 # Step 5: Verify status in DB
 echo -e "${YELLOW}[3/5] Verifying 'past_due' (grace period) state in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, (google_grace_period_start IS NOT NULL) as grace_start_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    RES_DATA \
+    "SELECT status, (google_grace_period_start IS NOT NULL) as grace_start_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" \
+    "*past_due*t*" \
+    10 \
+    1 || true
 
 # Expected: past_due | t
 if [[ "$RES_DATA" == *"past_due"*"t"* ]]; then
@@ -176,8 +180,12 @@ echo ""
 # Step 7: Final Validation
 echo -e "${YELLOW}[5/5] Verifying 'active' state after recovery in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, (google_grace_period_start IS NULL) as grace_start_cleared FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    RES_DATA \
+    "SELECT status, (google_grace_period_start IS NULL) as grace_start_cleared FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" \
+    "*active*t*" \
+    10 \
+    1 || true
 
 # Expected: active | t
 if [[ "$RES_DATA" == *"active"*"t"* ]]; then

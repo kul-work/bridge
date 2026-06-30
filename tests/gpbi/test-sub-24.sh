@@ -111,8 +111,15 @@ echo ""
 # Step 5: Verify subscription state in DB
 echo -e "${YELLOW}[3/5] Verifying subscription enrichment in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-SUB_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, auto_renewing, (current_period_end > NOW()) as in_future FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+SUB_DATA=""
+for attempt in $(seq 1 10); do
+    SUB_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+      -c "SELECT status, auto_renewing, (current_period_end > NOW()) as in_future FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+    if [[ "$SUB_DATA" == *"active"*"t"*"t"* ]]; then
+        break
+    fi
+    sleep 1
+done
 
 # Expected: active | t | t
 if [[ "$SUB_DATA" == *"active"*"t"*"t"* ]]; then

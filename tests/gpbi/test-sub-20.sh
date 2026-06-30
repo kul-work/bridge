@@ -58,7 +58,7 @@ echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: External User ID
-USER_ID="test_sub_user_01"
+USER_ID="test_sub_user_20_$TEST_RUN_ID"
 echo -e "${GREEN}PASS: Testing with User ID: $USER_ID${NC}"
 echo ""
 
@@ -96,6 +96,23 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"purchase_token\": \"$DUMMY_TOKEN\",
     \"product_type\": \"subscription\"
   }" )
+
+if [[ "$REGISTER_HTTP_CODE" != "200" || "$VERIFY_HTTP_CODE" != "200" ]]; then
+    echo -e "${RED}FAIL: Failed to establish active subscription (register=$REGISTER_HTTP_CODE, verify=$VERIFY_HTTP_CODE)${NC}"
+    exit 1
+fi
+
+bridge_wait_for_db_glob \
+    SETUP_STATE \
+    "SELECT external_user_id || '|' || status FROM pay.subscriptions WHERE app_id = '$BRIDGE_APP_ID' AND provider = '$PROVIDER' AND purchase_token = '$DUMMY_TOKEN';" \
+    "$USER_ID|active" \
+    10 \
+    1 || true
+
+if [[ "$SETUP_STATE" != "$USER_ID|active" ]]; then
+    echo -e "${RED}FAIL: Active subscription setup not visible in DB before webhook: $SETUP_STATE${NC}"
+    exit 1
+fi
 
 echo -e "${GREEN}PASS: Active subscription established${NC}"
 echo ""
@@ -173,8 +190,12 @@ echo ""
 # Step 6: Verify payment record with updated amount
 echo -e "${YELLOW}[4/5] Verifying payment record with updated amount in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-LATEST_PAYMENT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT amount_cents FROM pay.payments WHERE external_user_id = '$USER_ID' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    LATEST_PAYMENT \
+    "SELECT amount_cents FROM pay.payments WHERE external_user_id = '$USER_ID' ORDER BY created_at DESC LIMIT 1;" \
+    "$NEW_PRICE_CENTS" \
+    10 \
+    1 || true
 
 if [[ "$LATEST_PAYMENT" == "$NEW_PRICE_CENTS" ]]; then
     echo -e "${GREEN}PASS: Latest payment amount is $LATEST_PAYMENT cents${NC}"

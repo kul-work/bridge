@@ -110,8 +110,12 @@ echo ""
 # Step 5: Verify status changed to expired
 echo -e "${YELLOW}[3/5] Verifying status after expiration${NC}"
 export PGPASSWORD="postgres"
-STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    STATUS \
+    "SELECT status FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" \
+    "expired" \
+    10 \
+    1 || true
 
 if [[ "$STATUS" == "expired" ]]; then
     echo -e "${GREEN}✓ Success: Status is '$STATUS'${NC}"

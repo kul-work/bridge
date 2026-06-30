@@ -71,10 +71,20 @@ PAST_PAUSED_AT=$(date -u -d '1 day ago' '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date
 
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
   -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, provider, status, auto_renewing, purchase_token, google_paused_at) 
-      VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'paused', true, '$DUMMY_TOKEN', '$PAST_PAUSED_AT');" > /dev/null
+      VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID', '$PROVIDER', 'paused', true, '$DUMMY_TOKEN', '$PAST_PAUSED_AT')
+      ON CONFLICT (app_id, external_user_id, subscription_id, provider)
+      DO UPDATE SET status = 'paused', auto_renewing = true, purchase_token = EXCLUDED.purchase_token, google_paused_at = EXCLUDED.google_paused_at, updated_at = NOW();" > /dev/null
 
 echo -e "${GREEN}✓ Paused subscription seeded in DB (Paused at: $PAST_PAUSED_AT)${NC}"
 echo ""
+
+SEED_OWNER=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT external_user_id FROM pay.subscriptions WHERE app_id = '$BRIDGE_APP_ID' AND provider = '$PROVIDER' AND purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+
+if [[ "$SEED_OWNER" != "$USER_ID" ]]; then
+    echo -e "${RED}✗ Failure: Seeded subscription is not resolvable by purchase token (owner=$SEED_OWNER)${NC}"
+    exit 1
+fi
 
 # Step 4: Send Type 7 webhook (restarted - resume from pause)
 echo -e "${YELLOW}[2/5] Sending subscription.restarted webhook (notificationType 7)${NC}"
@@ -112,8 +122,15 @@ echo ""
 # Step 5: Verify status changed back to 'active' and google_paused_at is cleared
 echo -e "${YELLOW}[3/5] Verifying resumed state in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, (google_paused_at IS NULL) as is_paused_at_cleared FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+RES_DATA=""
+for attempt in $(seq 1 10); do
+    RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+      -c "SELECT status, (google_paused_at IS NULL) as is_paused_at_cleared FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+    if [[ "$RES_DATA" == *"active"*"t"* ]]; then
+        break
+    fi
+    sleep 1
+done
 
 # Expected: active | t
 if [[ "$RES_DATA" == *"active"*"t"* ]]; then
