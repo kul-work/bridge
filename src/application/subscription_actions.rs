@@ -10,6 +10,12 @@ use crate::ports::SubscriptionActionsHandlerRepository;
 use crate::services::provider_api;
 use crate::utils::diagnostic_hash;
 
+const PRICE_STEP_UP_DECLINE_CLAIM_LEASE_SECS: i64 = 600;
+
+fn subscription_action_worker_id(prefix: &str) -> String {
+    format!("{}-{}", prefix, Uuid::new_v4())
+}
+
 pub(crate) struct CancelSubscriptionInput {
     pub app_id: Uuid,
     pub subscription_id: String,
@@ -308,7 +314,12 @@ pub async fn accept_price_step_up<R: SubscriptionActionsHandlerRepository + ?Siz
         ));
     }
 
-    let updated_sub = repo.accept_price_step_up(app_id, sub.id).await?;
+    let updated_sub = repo
+        .accept_price_step_up(app_id, sub.id)
+        .await?
+        .ok_or_else(|| BridgeError::Conflict(
+            "Price step-up acceptance is already being processed or no longer requires consent".to_string(),
+        ))?;
 
     let new_price_cents = updated_sub.google_new_price_cents.ok_or_else(|| {
         BridgeError::ValidationError(
@@ -377,7 +388,7 @@ pub async fn decline_price_step_up<R: SubscriptionActionsHandlerRepository + ?Si
         ));
     }
 
-    let purchase_token = sub.purchase_token.as_deref().ok_or_else(|| {
+    sub.purchase_token.as_deref().ok_or_else(|| {
         BridgeError::SubscriptionNotFound(
             "Google Play purchase token not found for this subscription".to_string(),
         )
@@ -385,9 +396,44 @@ pub async fn decline_price_step_up<R: SubscriptionActionsHandlerRepository + ?Si
 
     let provider_config = repo.get_provider_config(app_id, &sub.provider).await?;
 
+    let claim_worker_id = subscription_action_worker_id("price-step-up-decline");
+    let claimed_sub = repo
+        .claim_price_step_up_decline(
+            app_id,
+            sub.id,
+            &claim_worker_id,
+            PRICE_STEP_UP_DECLINE_CLAIM_LEASE_SECS,
+        )
+        .await?
+        .ok_or_else(|| BridgeError::Conflict(
+            "Price step-up decline is already being processed or no longer requires consent".to_string(),
+        ))?;
+
+    let claim_token = claimed_sub.scheduled_job_claim_token.ok_or_else(|| {
+        BridgeError::InternalServerError("Price step-up decline claim token missing".to_string())
+    })?;
+
+    let purchase_token = claimed_sub.purchase_token.as_deref().ok_or_else(|| {
+        BridgeError::InternalServerError("Price step-up decline purchase token missing after claim".to_string())
+    })?;
+
+    if !repo
+        .refresh_price_step_up_decline_claim(
+            app_id,
+            claimed_sub.id,
+            claim_token,
+            PRICE_STEP_UP_DECLINE_CLAIM_LEASE_SECS,
+        )
+        .await?
+    {
+        return Err(BridgeError::Conflict(
+            "Price step-up decline claim was lost before provider cancellation".to_string(),
+        ));
+    }
+
     provider_api::cancel_subscription(
-        &sub.provider,
-        &sub.subscription_id,
+        &claimed_sub.provider,
+        &claimed_sub.subscription_id,
         Some(purchase_token),
         Some("scheduled"),
         None,
@@ -395,7 +441,12 @@ pub async fn decline_price_step_up<R: SubscriptionActionsHandlerRepository + ?Si
     )
     .await?;
 
-    let updated_sub = repo.decline_price_step_up(app_id, sub.id).await?;
+    let updated_sub = repo
+        .decline_price_step_up(app_id, claimed_sub.id, claim_token)
+        .await?
+        .ok_or_else(|| BridgeError::Conflict(
+            "Price step-up decline was already completed or the claim was lost".to_string(),
+        ))?;
 
     let cancellation_effective_at = updated_sub
         .current_period_end

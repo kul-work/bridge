@@ -299,12 +299,41 @@ impl<'a> SubscriptionWriteRepository for AtomicWebhookProcessingRepository<'a> {
             .await
     }
 
-    async fn accept_price_step_up(&self, app_id: Uuid, id: Uuid) -> Result<Subscription, BridgeError> {
+    async fn accept_price_step_up(&self, app_id: Uuid, id: Uuid) -> Result<Option<Subscription>, BridgeError> {
         self.database.accept_price_step_up(app_id, id).await
     }
 
-    async fn decline_price_step_up(&self, app_id: Uuid, id: Uuid) -> Result<Subscription, BridgeError> {
-        self.database.decline_price_step_up(app_id, id).await
+    async fn claim_price_step_up_decline(
+        &self,
+        app_id: Uuid,
+        id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
+    ) -> Result<Option<Subscription>, BridgeError> {
+        self.database
+            .claim_price_step_up_decline(app_id, id, worker_id, lease_secs)
+            .await
+    }
+
+    async fn refresh_price_step_up_decline_claim(
+        &self,
+        app_id: Uuid,
+        id: Uuid,
+        claim_token: Uuid,
+        lease_secs: i64,
+    ) -> Result<bool, BridgeError> {
+        self.database
+            .refresh_price_step_up_decline_claim(app_id, id, claim_token, lease_secs)
+            .await
+    }
+
+    async fn decline_price_step_up(
+        &self,
+        app_id: Uuid,
+        id: Uuid,
+        claim_token: Uuid,
+    ) -> Result<Option<Subscription>, BridgeError> {
+        self.database.decline_price_step_up(app_id, id, claim_token).await
     }
 
     async fn clear_payment_failure_notification(

@@ -75,13 +75,30 @@ pub trait SubscriptionWriteRepository: Send + Sync {
         &self,
         app_id: Uuid,
         id: Uuid,
-    ) -> Result<Subscription, BridgeError>;
+    ) -> Result<Option<Subscription>, BridgeError>;
+
+    async fn claim_price_step_up_decline(
+        &self,
+        app_id: Uuid,
+        id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
+    ) -> Result<Option<Subscription>, BridgeError>;
+
+    async fn refresh_price_step_up_decline_claim(
+        &self,
+        app_id: Uuid,
+        id: Uuid,
+        claim_token: Uuid,
+        lease_secs: i64,
+    ) -> Result<bool, BridgeError>;
 
     async fn decline_price_step_up(
         &self,
         app_id: Uuid,
         id: Uuid,
-    ) -> Result<Subscription, BridgeError>;
+        claim_token: Uuid,
+    ) -> Result<Option<Subscription>, BridgeError>;
 
     async fn clear_payment_failure_notification(
         &self,
