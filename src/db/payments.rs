@@ -39,6 +39,12 @@ pub struct GooglePlaySubscriptionAckCandidate {
     pub purchase_token: String,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct GooglePlayProductAckCandidate {
+    pub product_id: String,
+    pub purchase_token: String,
+}
+
 async fn begin_app_tx<'a>(
     pool: &'a sqlx::PgPool,
     app_id: Uuid,
@@ -248,9 +254,38 @@ pub async fn update_payment_status_for_provider(
     new_status: &str,
 ) -> Result<(), crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
+    update_payment_status_for_provider_tx(
+        &mut tx,
+        app_id,
+        provider,
+        provider_transaction_id,
+        new_status,
+    )
+    .await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
+pub async fn update_payment_status_for_provider_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+    provider: &str,
+    provider_transaction_id: &str,
+    new_status: &str,
+) -> Result<(), crate::error::BridgeError> {
     sqlx::query(
         "UPDATE pay.payments
-         SET status = $1, webhook_received_at = NOW()
+         SET status = $1,
+             ack_required = CASE
+                 WHEN provider = 'google_play' AND $1 = 'success' AND provider_purchase_token = $4
+                   THEN true
+                 ELSE ack_required
+             END,
+             webhook_received_at = NOW()
          WHERE app_id = $2
            AND provider = $3
            AND (provider_transaction_id = $4 OR provider_purchase_token = $4)"
@@ -259,13 +294,9 @@ pub async fn update_payment_status_for_provider(
     .bind(app_id)
     .bind(provider)
     .bind(provider_transaction_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
-
-    tx.commit()
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
     Ok(())
 }
@@ -355,6 +386,39 @@ pub async fn list_google_play_subscription_ack_candidates(
            AND p.provider_purchase_token IS NOT NULL
            AND s.status IN ('active', 'past_due', 'cancelled', 'on_hold', 'paused')
          ORDER BY p.created_at ASC
+         LIMIT $2",
+    )
+    .bind(app_id)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(rows)
+}
+
+pub async fn list_google_play_product_ack_candidates(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    limit: i64,
+) -> Result<Vec<GooglePlayProductAckCandidate>, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let rows = sqlx::query_as::<_, GooglePlayProductAckCandidate>(
+        "SELECT product_id, provider_purchase_token AS purchase_token
+         FROM pay.payments
+         WHERE app_id = $1
+           AND provider = 'google_play'
+           AND status = 'success'
+           AND ack_required = true
+           AND acknowledged_at IS NULL
+           AND provider_purchase_token IS NOT NULL
+           AND product_id IS NOT NULL
+           AND subscription_id IS NULL
+         ORDER BY created_at ASC
          LIMIT $2",
     )
     .bind(app_id)

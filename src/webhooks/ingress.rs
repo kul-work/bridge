@@ -14,7 +14,7 @@ use crate::{
         ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository,
         WebhookWriteRepository,
     },
-    ports::composites::{WebhookIngressRepository, WebhookProcessingMutationRepository},
+    ports::composites::WebhookIngressRepository,
     state::AppState,
     utils::diagnostic_hash,
 };
@@ -70,13 +70,15 @@ fn spawn_process_and_forward_delivery(
             return;
         }
 
-        match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
+        match crate::webhooks::processor::process_webhook_atomically(
+            database.as_ref(),
+            app_id,
+            webhook_id,
+            delivery.id,
+        )
+        .await
+        {
             Ok(Some(canonical)) => {
-                if let Err(e) = database.as_ref().mark_webhook_processed(webhook_id).await {
-                    error!(error = %e, "Failed to mark processed webhook delivery complete");
-                    return;
-                }
-
                 if let Err(e) = crate::webhooks::forwarding::forward_webhook(
                     database.as_ref(),
                     app_id,

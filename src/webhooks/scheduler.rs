@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::db::Database;
 use crate::ports::{
     AppLookupRepository, ProviderConfigLookupRepository, SchedulerRepository,
-    WebhookForwardRepository, WebhookProcessingRepository, WebhookWriteRepository,
+    WebhookForwardRepository, WebhookProviderLookupRepository, WebhookWriteRepository,
 };
 use std::sync::Arc;
 use tracing::{info, error, warn, info_span, Instrument};
@@ -16,15 +16,25 @@ const WEBHOOK_PROVIDER_RECOVERY_LEASE_SECS: i64 = 600;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingDeliveryAction {
     ProcessProviderFirst,
-    RebuildCanonicalPayload,
+    ForwardStoredPayload,
 }
 
 fn pending_delivery_action(provider_processed: bool) -> PendingDeliveryAction {
     if provider_processed {
-        PendingDeliveryAction::RebuildCanonicalPayload
+        PendingDeliveryAction::ForwardStoredPayload
     } else {
         PendingDeliveryAction::ProcessProviderFirst
     }
+}
+
+fn stored_canonical_payload(
+    delivery: &crate::db::webhooks::WebhookDelivery,
+) -> Result<Option<crate::webhooks::processor::CanonicalWebhookPayload>, serde_json::Error> {
+    delivery
+        .canonical_payload
+        .clone()
+        .map(serde_json::from_value)
+        .transpose()
 }
 
 pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
@@ -76,12 +86,7 @@ pub fn spawn_reconciliation_worker(database: Arc<Database>) {
 }
 
 pub async fn retry_webhooks(
-    repo: &(
-        impl SchedulerRepository
-        + WebhookForwardRepository
-        + WebhookProcessingRepository
-        + WebhookWriteRepository
-    ),
+    repo: &Database,
 ) -> Result<(), crate::error::BridgeError> {
     let apps_result = SchedulerRepository::list_enabled_app_ids(repo).await?;
 
@@ -117,16 +122,15 @@ pub async fn retry_webhooks(
             };
 
             if pending_delivery_action(provider.processed) == PendingDeliveryAction::ProcessProviderFirst {
-                match crate::webhooks::processor::process_webhook(
+                match crate::webhooks::processor::process_webhook_atomically(
                     repo,
-                    delivery.webhook_provider_id,
                     app_id,
+                    delivery.webhook_provider_id,
+                    delivery.id,
                 )
                 .await
                 {
                     Ok(Some(canonical)) => {
-                        repo.mark_webhook_processed(delivery.webhook_provider_id).await?;
-
                         let _ = crate::webhooks::forwarding::forward_webhook(
                             repo,
                             app_id,
@@ -159,13 +163,7 @@ pub async fn retry_webhooks(
                 continue;
             }
 
-            match crate::webhooks::processor::build_canonical_payload(
-                repo,
-                delivery.webhook_provider_id,
-                app_id,
-            )
-            .await
-            {
+            match stored_canonical_payload(&delivery) {
                 Ok(Some(canonical)) => {
                     let _ = crate::webhooks::forwarding::forward_webhook(
                         repo,
@@ -173,24 +171,26 @@ pub async fn retry_webhooks(
                         delivery.id,
                         canonical,
                     ).await;
+                    continue;
                 }
                 Ok(None) => {
-                    WebhookForwardRepository::update_webhook_delivery_attempt(
-                        repo,
-                        delivery.id,
-                        None,
-                        Some("Suppressed before retry".to_string()),
-                        true,
-                    )
-                    .await?;
+                    error!(
+                        app_id = %app_id,
+                        webhook_delivery_id = %delivery.id,
+                        webhook_provider_id = %delivery.webhook_provider_id,
+                        "Processed webhook delivery is missing stored canonical payload"
+                    );
+                    continue;
                 }
                 Err(e) => {
                     error!(
                         app_id = %app_id,
                         webhook_delivery_id = %delivery.id,
+                        webhook_provider_id = %delivery.webhook_provider_id,
                         error = %e,
-                        "Failed to rebuild canonical webhook payload for delivery"
+                        "Stored canonical webhook payload is invalid"
                     );
+                    continue;
                 }
             }
         }
@@ -200,12 +200,7 @@ pub async fn retry_webhooks(
 }
 
 async fn recover_webhook_provider_inbox(
-    repo: &(
-        impl SchedulerRepository
-        + WebhookForwardRepository
-        + WebhookProcessingRepository
-        + WebhookWriteRepository
-    ),
+    repo: &Database,
     app_id: Uuid,
 ) {
     let now = Utc::now();
@@ -215,8 +210,26 @@ async fn recover_webhook_provider_inbox(
     match SchedulerRepository::claim_unprocessed_webhook_providers(repo, app_id, created_before, claim_expired_before, 50).await {
         Ok(webhooks) => {
             for webhook in webhooks {
-                match crate::webhooks::processor::process_and_enqueue_webhook(repo, app_id, webhook.id).await {
-                    Ok(Some(_enqueued)) => {}
+                let delivery = match repo.create_webhook_delivery(app_id, webhook.id).await {
+                    Ok(delivery) => delivery,
+                    Err(e) => {
+                        error!(
+                            app_id = %app_id,
+                            webhook_provider_id = %webhook.id,
+                            error = %e,
+                            "Failed to create delivery for recovered provider webhook"
+                        );
+                        continue;
+                    }
+                };
+
+                match crate::webhooks::processor::process_webhook_atomically(
+                    repo,
+                    app_id,
+                    webhook.id,
+                    delivery.id,
+                ).await {
+                    Ok(Some(_canonical)) => {}
                     Ok(None) => {}
                     Err(e) => error!(
                         app_id = %app_id,
@@ -269,6 +282,41 @@ pub async fn retry_google_play_subscription_acknowledgements(
                     purchase_token_hash = %diagnostic_hash(&candidate.purchase_token),
                     error = %err,
                     "Retrying Google Play subscription acknowledgement failed"
+                );
+                continue;
+            }
+
+            crate::db::payments::mark_payment_acknowledged(
+                database.pool(),
+                app_id,
+                "google_play",
+                &candidate.purchase_token,
+            )
+            .await?;
+        }
+
+        let product_candidates = crate::db::payments::list_google_play_product_ack_candidates(
+            database.pool(),
+            app_id,
+            50,
+        )
+        .await?;
+
+        for candidate in product_candidates {
+            if let Err(err) = crate::services::provider_api::acknowledge_product(
+                "google_play",
+                &candidate.product_id,
+                &candidate.purchase_token,
+                &provider_config.config,
+            )
+            .await
+            {
+                warn!(
+                    app_id = %app_id,
+                    product_id = %candidate.product_id,
+                    purchase_token_hash = %diagnostic_hash(&candidate.purchase_token),
+                    error = %err,
+                    "Retrying Google Play product acknowledgement failed"
                 );
                 continue;
             }
@@ -841,10 +889,10 @@ mod tests {
     }
 
     #[test]
-    fn pending_delivery_for_processed_provider_rebuilds_canonical_payload() {
+    fn pending_delivery_for_processed_provider_forwards_stored_payload() {
         assert_eq!(
             pending_delivery_action(true),
-            PendingDeliveryAction::RebuildCanonicalPayload
+            PendingDeliveryAction::ForwardStoredPayload
         );
     }
 }

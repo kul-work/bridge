@@ -65,6 +65,50 @@ impl WebhookWriteRepository for db::Database {
     ) -> Result<WebhookDeliveryEnqueue, BridgeError> {
         db::webhooks::create_webhook_delivery(self.pool(), app_id, webhook_provider_id).await
     }
+
+    async fn store_webhook_delivery_canonical_payload_and_mark_processed(
+        &self,
+        app_id: Uuid,
+        delivery_id: Uuid,
+        webhook_provider_id: Uuid,
+        canonical_payload: serde_json::Value,
+    ) -> Result<(), BridgeError> {
+        db::webhooks::store_webhook_delivery_canonical_payload_and_mark_processed(
+            self.pool(),
+            app_id,
+            delivery_id,
+            webhook_provider_id,
+            canonical_payload,
+        )
+        .await
+    }
+
+    async fn create_synthetic_webhook_delivery(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        provider_webhook_id: &str,
+        event_type: &str,
+        subscription_id: Option<String>,
+        purchase_token: Option<String>,
+        provider_payload: serde_json::Value,
+        timestamp_epoch_ms: Option<i64>,
+        canonical_payload: serde_json::Value,
+    ) -> Result<WebhookDeliveryEnqueue, BridgeError> {
+        db::webhooks::create_synthetic_webhook_delivery(
+            self.pool(),
+            app_id,
+            provider,
+            provider_webhook_id,
+            event_type,
+            subscription_id,
+            purchase_token,
+            provider_payload,
+            timestamp_epoch_ms,
+            canonical_payload,
+        )
+        .await
+    }
 }
 
 #[async_trait]

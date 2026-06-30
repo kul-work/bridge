@@ -1,11 +1,7 @@
 use std::time::Duration;
 
 use crate::{
-    application::{
-        app_context::AppSnapshot,
-        verify_purchase_provider::acknowledge_google_play,
-        verify_purchase_types::ProductType,
-    },
+    application::app_context::AppSnapshot,
     error::BridgeError,
     ports::{
         SubscriptionWebhookTransition, WebhookPaymentRecordRequest,
@@ -186,130 +182,6 @@ async fn lookup_lifecycle_email_once(
             subscription_id,
         },
     ).await
-}
-
-async fn acknowledge_google_play_one_time_from_webhook<R: WebhookProcessingRepository + ?Sized>(
-    repo: &R,
-    ctx: &EventContext<'_>,
-) -> Result<(), BridgeError> {
-    if ctx.provider != "google_play" {
-        return Ok(());
-    }
-
-    let Some(purchase_token) = ctx.fields.purchase_token.as_deref()
-        .or(ctx.webhook.purchase_token.as_deref())
-    else {
-        warn!(
-            "Skipping Google Play OTP acknowledgement for webhook {}: missing purchase token",
-            ctx.webhook.provider_webhook_id
-        );
-        return Ok(());
-    };
-
-    let Some(product_id) = ctx.fields.product_id.as_deref()
-        .or(ctx.fields.subscription_id.as_deref())
-        .or(ctx.webhook.subscription_id.as_deref())
-    else {
-        warn!(
-            "Skipping Google Play OTP acknowledgement for webhook {}: missing product id",
-            ctx.webhook.provider_webhook_id
-        );
-        return Ok(());
-    };
-
-    if repo.payment_acknowledged_at(ctx.app_id, ctx.provider, purchase_token).await?.is_some() {
-        return Ok(());
-    }
-
-    let provider_config = match repo.get_provider_config(ctx.app_id, "google_play").await {
-        Ok(config) => config,
-        Err(err) => {
-            warn!(
-                "Skipping Google Play OTP acknowledgement for webhook {}: provider config unavailable: {}",
-                ctx.webhook.provider_webhook_id,
-                err
-            );
-            return Ok(());
-        }
-    };
-
-    if let Err(err) = acknowledge_google_play(
-        product_id,
-        purchase_token,
-        ProductType::OneTimeProduct,
-        &provider_config.config,
-    )
-    .await
-    {
-        warn!(
-            "Google Play OTP acknowledgement failed for webhook {} product {}: {}",
-            ctx.webhook.provider_webhook_id,
-            product_id,
-            err
-        );
-        return Ok(());
-    }
-
-    repo.mark_payment_acknowledged(ctx.app_id, ctx.provider, purchase_token).await
-}
-
-async fn acknowledge_google_play_subscription_from_webhook<R: WebhookProcessingRepository + ?Sized>(
-    repo: &R,
-    ctx: &EventContext<'_>,
-    subscription_id: &str,
-) -> Result<(), BridgeError> {
-    if ctx.provider != "google_play" || ctx.webhook.event_type != "SUBSCRIPTION_PURCHASED" {
-        return Ok(());
-    }
-
-    if ctx.fields.status.as_deref() == Some("pending") || ctx.fields.google_subscription_state == Some(5) {
-        return Ok(());
-    }
-
-    let Some(purchase_token) = ctx.fields.purchase_token.as_deref()
-        .or(ctx.webhook.purchase_token.as_deref())
-    else {
-        warn!(
-            "Skipping Google Play subscription acknowledgement for webhook {}: missing purchase token",
-            ctx.webhook.provider_webhook_id
-        );
-        return Ok(());
-    };
-
-    if repo.payment_acknowledged_at(ctx.app_id, ctx.provider, purchase_token).await?.is_some() {
-        return Ok(());
-    }
-
-    let provider_config = match repo.get_provider_config(ctx.app_id, "google_play").await {
-        Ok(config) => config,
-        Err(err) => {
-            warn!(
-                "Skipping Google Play subscription acknowledgement for webhook {}: provider config unavailable: {}",
-                ctx.webhook.provider_webhook_id,
-                err
-            );
-            return Ok(());
-        }
-    };
-
-    if let Err(err) = acknowledge_google_play(
-        subscription_id,
-        purchase_token,
-        ProductType::Subscription,
-        &provider_config.config,
-    )
-    .await
-    {
-        warn!(
-            "Google Play subscription acknowledgement failed for webhook {} subscription {}: {}",
-            ctx.webhook.provider_webhook_id,
-            subscription_id,
-            err
-        );
-        return Ok(());
-    }
-
-    repo.mark_payment_acknowledged(ctx.app_id, ctx.provider, purchase_token).await
 }
 
 async fn send_price_step_up_email(ctx: &EventContext<'_>, subscription_id: &str) {
@@ -503,6 +375,9 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     external_user_id: user_id,
                     provider: ctx.provider,
                     provider_transaction_id,
+                    provider_purchase_token: ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()),
+                    ack_required: ctx.provider == "google_play"
+                        && ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()).is_some(),
                     subscription_id: ctx.fields.subscription_id.as_deref(),
                     product_id: ctx.fields.product_id.as_deref(),
                     amount_cents: ctx.fields.amount_cents.unwrap_or(0),
@@ -539,8 +414,6 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 );
                 return Ok(EventHandling::ReturnNone);
             };
-
-            acknowledge_google_play_subscription_from_webhook(repo, ctx, sub_id_str).await?;
 
             if ctx.provider == "google_play" {
                 let _ = repo
@@ -1061,6 +934,8 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         external_user_id: user_id,
                         provider: ctx.provider,
                         provider_transaction_id: txn_id,
+                        provider_purchase_token: None,
+                        ack_required: false,
                         subscription_id: sub_id,
                         product_id: ctx.fields.product_id.as_deref(),
                         amount_cents: ctx.fields.amount_cents.unwrap_or(0),
@@ -1142,6 +1017,8 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     external_user_id: user_id,
                     provider: ctx.provider,
                     provider_transaction_id: txn_id,
+                    provider_purchase_token: ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()),
+                    ack_required: false,
                     subscription_id: ctx.fields.subscription_id.as_deref(),
                     product_id: ctx.fields.product_id.as_deref(),
                     amount_cents: ctx.fields.amount_cents.unwrap_or(0),
@@ -1172,6 +1049,8 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     external_user_id: user_id,
                     provider: ctx.provider,
                     provider_transaction_id: txn_id,
+                    provider_purchase_token: ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()),
+                    ack_required: false,
                     subscription_id: if sub_id.is_empty() { None } else { Some(sub_id) },
                     product_id: ctx.fields.product_id.as_deref(),
                     amount_cents: ctx.fields.amount_cents.unwrap_or(0),
@@ -1251,10 +1130,6 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                 ctx.external_user_id.as_deref(),
                 ctx.timestamp_epoch_ms,
             ).await?;
-
-            if outcome.is_some() {
-                acknowledge_google_play_one_time_from_webhook(repo, ctx).await?;
-            }
 
             Ok(EventHandling::handled(outcome.map(effects_from_google_lifecycle_outcome).unwrap_or_default()))
         }
@@ -1417,6 +1292,8 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     external_user_id: user_id,
                     provider: ctx.provider,
                     provider_transaction_id: txn_id,
+                    provider_purchase_token: None,
+                    ack_required: false,
                     subscription_id: ctx.fields.subscription_id.as_deref(),
                     product_id: ctx.fields.product_id.as_deref(),
                     amount_cents: ctx.fields.amount_cents.unwrap_or(0),

@@ -344,6 +344,16 @@ pub async fn queue_and_forward_webhook<
         return Ok(());
     }
 
+    let canonical_payload = serde_json::to_value(&payload)
+        .map_err(|e| BridgeError::InternalServerError(e.to_string()))?;
+    repo.store_webhook_delivery_canonical_payload_and_mark_processed(
+        app_id,
+        delivery.id,
+        webhook_provider_id,
+        canonical_payload,
+    )
+    .await?;
+
     forward_webhook(repo, app_id, delivery.id, payload).await
 }
 
@@ -363,8 +373,11 @@ pub async fn create_and_forward_webhook<
     timestamp_epoch_ms: Option<i64>,
     canonical_payload: crate::webhooks::processor::CanonicalWebhookPayload,
 ) -> Result<(), BridgeError> {
-    let (webhook_provider_id, is_new) = repo
-        .create_webhook_provider(
+    let canonical_payload_value = serde_json::to_value(&canonical_payload)
+        .map_err(|e| BridgeError::InternalServerError(e.to_string()))?;
+
+    let delivery = repo
+        .create_synthetic_webhook_delivery(
             app_id,
             provider,
             provider_webhook_id,
@@ -373,10 +386,11 @@ pub async fn create_and_forward_webhook<
             purchase_token,
             provider_payload,
             timestamp_epoch_ms,
+            canonical_payload_value,
         )
         .await?;
 
-    if !is_new {
+    if !delivery.created {
         info!(
             app_id = %app_id,
             provider,
@@ -388,7 +402,7 @@ pub async fn create_and_forward_webhook<
         return Ok(());
     }
 
-    queue_and_forward_webhook(repo, app_id, webhook_provider_id, canonical_payload).await
+    forward_webhook(repo, app_id, delivery.id, canonical_payload).await
 }
 
 /// Create HMAC-SHA256 signature for webhook
@@ -556,6 +570,7 @@ mod stale_suppression_branch_tests {
             dead_letter_reason: None,
             last_http_status: None,
             last_error: None,
+            canonical_payload: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

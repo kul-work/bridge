@@ -1,250 +1,174 @@
-# Webhook Atomicity - Codex Strategy
+# Webhook Atomicity - Codex Implementation Notes
 
-Status: proposal, not implemented.
+Status: implemented in current worktree, pending review.
 
-Context:
+Date: 2026-06-30
 
-- Source issue: `docs.notes/architectural-review-2026-06-24.md`, item `3. Critical - State mutation, processed marking, and callback enqueue are not atomic`.
-- Branch reviewed: `webhook-atomicity-outbox-payload`.
-- Decision: do not merge that branch. It is a broad webhook/payment/provider refactor, and current evidence includes OTP refund regressions where expected `refunded` remains `success`.
+## Summary
 
-## Goal
+This work closes architectural review item `3. Critical - State mutation, processed marking, and callback enqueue are not atomic`.
 
-Close the real crash window:
+For new webhook records, Bridge now commits the following as one durable decision before HTTP forwarding:
 
-1. Provider webhook is durable in `pay.webhook_provider`.
-2. Payment/subscription state mutation is applied.
-3. Canonical app callback payload is persisted.
-4. Provider webhook is marked processed or terminal.
+1. Provider webhook state/payment/subscription mutation.
+2. Canonical app callback payload storage.
+3. `webhook_provider.processed = true`.
 
-Those decisions must commit together when a callback is required. HTTP forwarding stays outside the transaction.
+HTTP forwarding remains outside the transaction.
 
-## Non-goals
+The old retry behavior that rebuilt processed callback payloads from current DB state has been removed. A processed delivery without stored `canonical_payload` is now an error, not a rebuild candidate.
 
-- Do not rewrite Google Play lifecycle modules as part of this fix.
-- Do not merge scheduler, reconciliation, ack-claim, DB status constraints, and docs rewrites into the same patch.
-- Do not make multi-instance worker safety the first patch. It is related, but it is a separate failure mode.
-- Do not change callback event semantics while adding durability.
+## Implemented Pieces
 
-## Current Dev Failure Windows
+### Schema
 
-Crush's plan usefully names the concrete `dev` windows. Keep these as the working diagnosis:
+Added migration:
 
-1. Retry rebuilds callbacks from current state by calling `build_canonical_payload`, so an older accepted event can be retried as a newer projection.
-2. Delivery retry workers list pending deliveries without a claim, so two background workers can send the same delivery.
-3. Webhook state mutation and `webhook_provider.processed = true` are split across transactions.
+- `migrations/96_webhook_delivery_canonical_payload.sql`
 
-Window 3 is the actual architectural issue #3. Window 1 is a symptom of the missing stored outbox payload. Window 2 is multi-instance hygiene and should be handled after the stored payload path is correct.
+It adds:
 
-## Rejected Shortcut
+- `pay.webhook_delivery.canonical_payload JSONB`
 
-Do not ship a patch that only stores `canonical_payload` after `process_webhook` returns and after `mark_webhook_processed` runs.
+This column stores the immutable app callback payload that retry must replay.
 
-That would improve retry replay for rows where the write succeeds, but it still leaves the scary crash windows:
+### Normal Provider Webhook Path
 
-- state changed, then crash before `processed=true`;
-- `processed=true`, then crash before `canonical_payload` is stored;
-- delivery row exists but has no committed event payload.
+Ingress now calls the atomic processor:
 
-The first durable-payload patch should therefore include the transaction boundary that commits mutation, payload insert, and processed/terminal state together.
+- `src/webhooks/ingress.rs`
+- `src/webhooks/processor/atomic.rs`
 
-## Why The Rejected Branch Broke OTP Refunds
+`process_webhook_atomically`:
 
-The branch did not only add an outbox primitive. It deleted the Google Play lifecycle modules and reimplemented OTP refund paths inside `event_handlers.rs`.
+1. Opens one app-scoped DB transaction.
+2. Runs existing webhook processing through a tx-backed repository adapter.
+3. Applies payment/subscription mutations through tx-scoped helpers.
+4. Serializes the produced canonical payload.
+5. Stores it on `webhook_delivery.canonical_payload`.
+6. Marks `webhook_provider.processed = true`.
+7. Commits.
 
-The risky shape was:
+Forwarding happens only after commit.
 
-- `purchase.one_time_refunded` called a new `commit_payment_with_outbox_effect` with a `WebHookPaymentStatusUpdateRequest` for `refunded`;
-- the helper treated an atomic `None` result as `should_forward=false` plus `terminal_recorded=true`;
-- the payment outbox commit built a `refunded` canonical payload from the request status, not from a verified persisted payment row;
-- the payment status update path did not prove that the target payment row was actually changed before committing the outbox decision.
+### Synthetic Callback Path
 
-That matches the observed failures where refund tests still saw `pay.payments.status = success`.
+Synthetic callbacks also use immutable outbox storage now.
 
-Do not copy that shape. The atomic commit helper must return enough information to prove the durable mutation happened, or must fail/quarantine instead of emitting or terminal-recording a refund decision.
+Covered callers:
 
-## Google Play Acknowledgement Prerequisite
+- verify purchase callbacks
+- subscription action callbacks
+- reconciliation/drift callbacks
 
-Crush is right that Phase 2 has a hard prerequisite: current event handling interleaves Google Play acknowledgement HTTP calls with DB mutation.
+Relevant implementation:
 
-Evidence on current `dev`:
+- `src/db/webhooks.rs::create_synthetic_webhook_delivery`
+- `src/webhooks/forwarding.rs::create_and_forward_webhook`
+- `src/webhooks/forwarding.rs::queue_and_forward_webhook`
 
-- `src/webhooks/processor/event_handlers.rs:236` and `:295` call `acknowledge_google_play(...)`, which is provider HTTP work.
-- `src/webhooks/processor/event_handlers.rs:543` calls subscription acknowledgement from the activation path after DB mutation.
-- `src/webhooks/processor/event_handlers.rs:1256` calls one-time acknowledgement after OTP purchase handling.
-- `src/webhooks/scheduler.rs:239-282` already has `retry_google_play_subscription_acknowledgements`, which retries acknowledgement from durable payment/subscription state and then marks `acknowledged_at`.
+The synthetic helper creates/fetches the synthetic provider row, creates/updates the delivery with `canonical_payload`, and marks the provider row processed in one DB transaction before forwarding.
 
-Before the atomic provider-processing transaction, split acknowledgement out of the DB mutation path:
+### Retry Behavior
 
-1. Existing webhook handlers should decide whether acknowledgement is needed, but not call Google inside the mutation transaction.
-2. The mutation transaction should persist the payment/subscription state and callback outbox.
-3. Google Play acknowledgement remains best-effort after commit, backed by the existing acknowledgement retry worker.
-4. Later, add row claiming for acknowledgement candidates as its own small patch.
+Retry now does this for processed deliveries:
 
-Do not hold a DB transaction open while calling Google Play.
+- if `canonical_payload` exists: deserialize and forward exactly that payload;
+- if `canonical_payload` is missing: log an error and skip;
+- it no longer calls `build_canonical_payload` for processed rows.
 
-## Household Callback Idempotency Evidence
+Unprocessed provider rows are still routed through `process_webhook_atomically`.
 
-Household is currently safer than an arbitrary consumer app, but Bridge should not rely on that globally.
+This makes the invariant explicit for new data:
 
-Evidence in `C:\share\tyde\household`:
+```text
+processed webhook delivery => canonical_payload must be present
+```
 
-- `migrations/08_create_webhook_callbacks_table.sql:7-10` creates `webhook_callbacks` with `event_id TEXT NOT NULL UNIQUE`.
-- `src/db.rs:225-248` inserts callback records with `ON CONFLICT (event_id) DO NOTHING` and records whether the insert happened.
-- `src/db.rs:252-255` applies premium updates only when the callback row was newly inserted.
-- `src/db.rs:435-535` premium updates use set-value updates with `COALESCE(last_bridge_event_ms, 0) < ...` stale guards.
+### Google Play Acknowledgement
 
-Implication: duplicate Bridge callback delivery is less dangerous for Household, but delivery claiming is still needed for Bridge correctness and for future apps that may not be equally defensive.
+Webhook event handlers no longer call Google Play acknowledgement HTTP inside the mutation path.
 
-## Recommended Phases
+Instead:
 
-### Phase 1 - Stored callback payload primitive
+- payment rows persist `provider_purchase_token` and `ack_required`;
+- the existing acknowledgement retry worker processes durable candidates;
+- one-time product acknowledgement candidates were added alongside subscription acknowledgement candidates.
 
-Add only the smallest schema/runtime primitive needed for durable callback replay:
+This avoids holding the webhook DB transaction open while calling Google Play.
 
-- migration: add nullable `pay.webhook_delivery.canonical_payload JSONB`;
-- update `WebhookDelivery` model mapping;
-- add a write-once delivery insert helper:
-  - inserts `webhook_delivery` with `canonical_payload`;
-  - on duplicate `webhook_provider_id`, accepts only the same payload or an existing NULL legacy row;
-  - rejects conflicting non-null payloads.
+## Test Updates
 
-Keep `canonical_payload` nullable only for legacy rows.
+`tests/gpbi/test-otp-rtdn-02.sh` now validates its OTP-01 prerequisite.
 
-Verification:
+Behavior:
 
-- repository test for write-once payload behavior;
-- duplicate insert with identical payload is idempotent;
-- duplicate insert with different payload fails visibly.
+- if `--token` is supplied, the explicit token is authoritative and OTP-01 is not rerun;
+- if no token is supplied, the script checks the OTP-01 report row;
+- if that row is missing or not `success`, it reruns OTP-01 before testing RTDN refund.
 
-### Phase 2 - Atomic provider processing commit
+This prevents stale `refunded` OTP-01 fixtures from making OTP-RTDN-02 only prove idempotency instead of a clean `success -> refunded` transition.
 
-Add one explicit transaction boundary for provider webhook processing. Do not try to compose existing helpers that each open their own transaction.
+## Verification Run
 
-Prerequisite: remove Google Play acknowledgement HTTP calls from the mutation path. Acknowledgement should run best-effort after the transaction commits, with the existing acknowledgement retry worker as the recovery source of truth.
+Observed passing checks during implementation:
 
-The new commit path should:
+- `cargo check`
+- `cargo test webhooks::processor`
+- `cargo test webhooks::forwarding`
+- `cargo test webhooks::scheduler::tests`
+- `bash ./tests/test-net-creem-callback-body.sh`
+- `bash ./tests/gpbi/test-otp-01.sh`
+- `bash ./tests/gpbi/test-otp-05.sh`
+- `bash ./tests/gpbi/test-otp-rtdn-02.sh`
+- `bash ./tests/gpbi/test-otp-rtdn-02.sh --token <fresh-token>`
+- `bash ./test-otp-02.sh` from `tests/creem`
+- `bash ./test-acc-03.sh` from `tests/creem`
+- `git diff --check`
 
-1. `BEGIN` with app RLS context.
-2. Lock `pay.webhook_provider` by id with `FOR UPDATE`.
-3. If already `processed` or `suppressed`, return idempotently.
-4. Apply the existing payment/subscription mutation using tx-scoped helpers.
-5. Build the canonical payload using the same semantics as today.
-6. Insert `webhook_delivery` with `canonical_payload` when a callback is required.
-7. Mark `webhook_provider.processed = true`.
-8. Commit.
+Manual DB spot check after a verify-purchase synthetic callback:
 
-For stale/no-forward events:
+```text
+webhook_provider.processed = true
+webhook_delivery.canonical_payload IS NOT NULL
+```
 
-- mark the provider row terminal/suppressed in the same transaction;
-- do not create a forwardable empty delivery row.
+## Reviewer Notes
 
-Important constraint:
+### No Legacy Rebuild Fallback
 
-- Do not hold this transaction across provider API calls, email sends, or app callback HTTP calls.
+Because Bridge is not live yet, there is no need to preserve processed rows from an older production schema.
 
-Verification:
+The processed-row fallback that rebuilt callback payloads from current DB state was removed. This is intentional. It keeps the invariant strict and makes missing payloads visible.
 
-- crash-before-commit leaves no partial state and no processed mark;
-- crash-after-commit leaves state changed, `processed=true`, `webhook_delivery.forwarded=false`, and a stored payload;
-- OTP refund regression proves payment status becomes `refunded` and callback body says `refunded`.
+### Diff Hygiene
 
-### Phase 3 - Forward from stored payload
+`src/db/payments.rs` and `src/db/subscriptions.rs` had line-ending churn during the work. They were normalized to LF and `git diff --check` was made clean.
 
-Change retry/forwarding for new rows:
+### Email Side Effects Are Deferred
 
-- load `webhook_delivery.canonical_payload`;
-- deserialize and send exactly that payload;
-- do not call `build_canonical_payload`;
-- do not re-run stale suppression at forward time for already accepted stored payloads.
+Lifecycle email lookup/sending can still happen inside webhook processing. With the new atomic transaction wrapper, that means email HTTP work can occur before DB commit and while DB locks are held.
 
-Legacy handling:
+That is not fixed in this patch. It is documented separately:
 
-- `canonical_payload IS NULL` rows are legacy-only;
-- either quarantine them or explicitly route unprocessed provider rows through the new processor;
-- do not silently rebuild processed legacy rows from current subscription state.
+- `docs.notes/webhook-email-side-effects-transaction-risk-2026-06-30.md`
 
-Verification:
+Recommended future direction: persist email intents or post-commit effects, then send emails after the webhook state transaction commits.
 
-- subscription changes after webhook processing do not alter the retried callback body;
-- failed callback retry sends the same payload bytes/fields.
+### Multi-Instance Delivery Claiming Is Still Separate
 
-### Phase 4 - Delivery claiming for multi-instance workers
+This patch fixes atomicity and immutable payload replay. It does not add multi-worker delivery claiming.
 
-Only after the durable payload path is correct, add row claiming for callback delivery:
+Future delivery-claim work should add a claim/lease mechanism on `webhook_delivery` so multiple workers cannot send the same pending delivery concurrently.
 
-- nullable `claim_owner`, `claim_expires_at` on `webhook_delivery`;
-- claim with `UPDATE ... FROM (SELECT ... FOR UPDATE SKIP LOCKED) ... RETURNING`;
-- forward only claimed rows.
+## Rejected Branch Context
 
-This is where multi-instance duplicate callback prevention belongs.
+The reviewed `webhook-atomicity-outbox-payload` branch was not merged because it bundled broad webhook/payment/provider rewrites and caused OTP refund regressions.
 
-Crush's Household finding is useful here: Household appears idempotent on callback `event_id`, so duplicate Bridge delivery is less dangerous for that app. Do not generalize that to future apps. Patch 4 is still needed for Bridge correctness and for any consumer that is not equally idempotent.
+This implementation intentionally kept the fix narrower:
 
-Verification:
-
-- two workers cannot claim the same delivery row;
-- expired claim can be reclaimed;
-- successful delivery marks forwarded once.
-
-### Phase 5 - Separate small mitigations
-
-Handle these independently, not inside the atomicity patch:
-
-- Google Play unknown subscription status rejection from `src/services/provider_api.rs`;
-- Google Play acknowledgement row claiming;
-- scheduler synthetic callback deterministic ids;
-- subscription status DB constraints.
-
-Each one should have its own diff and focused tests.
-
-## Verification Gate
-
-Before merging each implementation patch:
-
-- `cargo check 2>&1 && echo EXIT: %ERRORLEVEL%`;
-- focused Rust tests for the changed repository/processor path;
-- OTP refund regression: `./tests/gpbi` cases covering OTP refund must show DB status `refunded`;
-- Creem OTP refund regression must show `refunded`, not `success`;
-- `./tests/test-net-creem-callback-body.sh` must pass its one-time refund callback body case;
-- for delivery claiming, add a concurrent-claim test proving two workers cannot claim the same delivery row.
-
-## Railway Background Job Position
-
-Running only one active background-task node in Railway is a good operational guardrail for now, but it does not fix item 3.
-
-It helps with:
-
-- duplicate callback retry workers;
-- duplicate scheduler side effects;
-- duplicate provider acknowledgement retries.
-
-It does not help with:
-
-- process crash after state mutation but before callback enqueue;
-- process crash after callback enqueue but before processed mark;
-- retry rebuilding callbacks from current DB state.
-
-So the recommended production posture is:
-
-1. Short term: one background-worker node active.
-2. Code fix: atomic state + outbox + processed transaction.
-3. Later: row claiming so multiple background-worker nodes are safe.
-
-## Branch Salvage Decision
-
-From `webhook-atomicity-outbox-payload`, salvage only by manual hunk-level extraction:
-
-- keep: `src/services/provider_api.rs` unknown Google status rejection;
-- optional: `src/db/database.rs` comments about `sqlx::migrate!` embedding migrations;
-- optional: rewrite `docs.notes/webhook-atomicity-outbox-payload.md` as discarded/future reference.
-
-Do not salvage directly:
-
-- `src/webhooks/processor/event_handlers.rs` refactor;
-- `src/webhooks/processor.rs` prebuilt canonical payload changes;
-- `src/webhooks/forwarding.rs` stored payload forwarding changes;
-- large `src/db/webhooks.rs` outbox additions;
-- migrations `96` through `101` as-is;
-- deletion of Google Play lifecycle modules;
-- docs claiming stored-payload outbox is current production behavior.
+- keep existing event normalization/lifecycle semantics;
+- add a small durable payload primitive;
+- add an explicit tx-backed processing adapter;
+- move Google Play acknowledgement out of webhook handler HTTP calls;
+- make retry replay stored payload only.

@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 mod event_handlers;
 mod fields;
 mod normalize;
+mod atomic;
 
 use self::{
     event_handlers::{EventContext, EventEffects, EventHandling},
@@ -24,6 +25,7 @@ use self::{
     },
 };
 pub(crate) use self::fields::WebhookFields;
+pub(crate) use self::atomic::process_webhook_atomically;
 
 pub struct EnqueuedWebhook {
     pub delivery_id: Uuid,
@@ -52,7 +54,7 @@ pub enum WebhookEventType {
 
 /// Canonical webhook payload sent to apps
 /// Used for webhook forwarding to app callbacks.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CanonicalWebhookPayload {
     pub event_id: String,
     pub event_type: String,
@@ -1271,7 +1273,15 @@ where
             let delivery = repo
                 .create_webhook_delivery(app_id, webhook_provider_id)
                 .await?;
-            repo.mark_webhook_processed(webhook_provider_id).await?;
+            let canonical_payload = serde_json::to_value(&canonical)
+                .map_err(|e| BridgeError::InternalServerError(e.to_string()))?;
+            repo.store_webhook_delivery_canonical_payload_and_mark_processed(
+                app_id,
+                delivery.id,
+                webhook_provider_id,
+                canonical_payload,
+            )
+            .await?;
             Ok(Some(EnqueuedWebhook {
                 delivery_id: delivery.id,
                 canonical,

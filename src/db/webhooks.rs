@@ -36,6 +36,7 @@ pub struct WebhookDelivery {
     pub dead_letter_reason: Option<String>,
     pub last_http_status: Option<i32>,
     pub last_error: Option<String>,
+    pub canonical_payload: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -149,6 +150,55 @@ pub async fn get_webhook_delivery(pool: &PgPool, id: Uuid) -> Result<WebhookDeli
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?
         .ok_or_else(|| BridgeError::ValidationError("Webhook delivery not found".to_string()))
+}
+
+pub async fn store_webhook_delivery_canonical_payload_and_mark_processed(
+    pool: &PgPool,
+    app_id: Uuid,
+    delivery_id: Uuid,
+    webhook_provider_id: Uuid,
+    canonical_payload: serde_json::Value,
+) -> Result<(), BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let result = sqlx::query(
+        "UPDATE pay.webhook_delivery
+         SET canonical_payload = COALESCE(canonical_payload, $1),
+             updated_at = NOW()
+         WHERE id = $2
+           AND app_id = $3
+           AND webhook_provider_id = $4",
+    )
+    .bind(canonical_payload)
+    .bind(delivery_id)
+    .bind(app_id)
+    .bind(webhook_provider_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(format!("Failed to store webhook delivery payload: {}", e)))?;
+
+    if result.rows_affected() != 1 {
+        return Err(BridgeError::ValidationError(
+            "Webhook delivery not found for provider webhook".to_string(),
+        ));
+    }
+
+    sqlx::query(
+        "UPDATE pay.webhook_provider
+         SET processed = true
+         WHERE id = $1 AND app_id = $2",
+    )
+    .bind(webhook_provider_id)
+    .bind(app_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(format!("Failed to mark webhook processed: {}", e)))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
 }
 
 pub async fn webhook_delivery_exists(
@@ -602,6 +652,92 @@ pub async fn create_webhook_provider(
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok((webhook_id, is_new))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_synthetic_webhook_delivery(
+    pool: &PgPool,
+    app_id: Uuid,
+    provider: &str,
+    provider_webhook_id: &str,
+    event_type: &str,
+    subscription_id: Option<String>,
+    purchase_token: Option<String>,
+    provider_payload: serde_json::Value,
+    timestamp_epoch_ms: Option<i64>,
+    canonical_payload: serde_json::Value,
+) -> Result<WebhookDeliveryEnqueue, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let inserted = sqlx::query_as::<_, (Uuid,)>(
+        "INSERT INTO pay.webhook_provider
+         (app_id, provider, provider_webhook_id, event_type, subscription_id, purchase_token, payload, timestamp_epoch_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT DO NOTHING
+         RETURNING id",
+    )
+    .bind(app_id)
+    .bind(provider)
+    .bind(provider_webhook_id)
+    .bind(event_type)
+    .bind(subscription_id)
+    .bind(&purchase_token)
+    .bind(provider_payload)
+    .bind(timestamp_epoch_ms)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(format!("Failed to create synthetic webhook provider: {}", e)))?;
+
+    let webhook_provider_id = if let Some((id,)) = inserted {
+        id
+    } else {
+        let existing: (Uuid,) = sqlx::query_as(
+            "SELECT id FROM pay.webhook_provider
+             WHERE app_id = $1 AND provider = $2 AND provider_webhook_id = $3
+             ORDER BY created_at ASC
+             LIMIT 1",
+        )
+        .bind(app_id)
+        .bind(provider)
+        .bind(provider_webhook_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| BridgeError::DbError(format!("Failed to fetch existing synthetic webhook: {}", e)))?;
+        existing.0
+    };
+
+    let delivery: WebhookDeliveryEnqueue = sqlx::query_as(
+        "INSERT INTO pay.webhook_delivery
+         (app_id, webhook_provider_id, forward_attempts, forwarded, canonical_payload)
+         VALUES ($1, $2, 0, false, $3)
+         ON CONFLICT (webhook_provider_id) DO UPDATE
+         SET canonical_payload = COALESCE(pay.webhook_delivery.canonical_payload, EXCLUDED.canonical_payload),
+             updated_at = NOW()
+         RETURNING id, (xmax = 0) AS created",
+    )
+    .bind(app_id)
+    .bind(webhook_provider_id)
+    .bind(canonical_payload)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(format!("Failed to create synthetic webhook delivery: {}", e)))?;
+
+    sqlx::query(
+        "UPDATE pay.webhook_provider
+         SET processed = true
+         WHERE id = $1 AND app_id = $2",
+    )
+    .bind(webhook_provider_id)
+    .bind(app_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(format!("Failed to mark synthetic webhook processed: {}", e)))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(delivery)
 }
 
 /// Create webhook delivery record

@@ -174,18 +174,20 @@ impl WebhookProcessingTransactionRepository for db::Database {
 
         crate::ports::helpers::with_transaction_impl(pool, request.app_id, move |tx| {
             Box::pin(async move {
-                db::payments::record_payment_tx(
-                    tx,
-                    request.app_id,
-                    &request.external_user_id,
-                    &request.provider,
-                    &request.provider_transaction_id,
-                    request.subscription_id.as_deref(),
-                    request.product_id.as_deref(),
-                    request.amount_cents,
-                    request.currency.as_deref(),
-                    &request.status,
-                )
+                    db::payments::record_payment_with_purchase_token_tx(
+                        tx,
+                        request.app_id,
+                        &request.external_user_id,
+                        &request.provider,
+                        &request.provider_transaction_id,
+                        request.provider_purchase_token.as_deref(),
+                        request.ack_required,
+                        request.subscription_id.as_deref(),
+                        request.product_id.as_deref(),
+                        request.amount_cents,
+                        request.currency.as_deref(),
+                        &request.status,
+                    )
                 .await?;
 
                 Ok(TransactionOutcome::Commit(()))
@@ -245,8 +247,8 @@ impl WebhookProcessingTransactionRepository for db::Database {
                         &payment.external_user_id,
                         &payment.provider,
                         &payment.provider_transaction_id,
-                        purchase_token.as_deref(),
-                        false,
+                        payment.provider_purchase_token.as_deref().or(purchase_token.as_deref()),
+                        payment.ack_required,
                         payment.subscription_id.as_deref(),
                         payment.product_id.as_deref(),
                         payment.amount_cents,
