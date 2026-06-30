@@ -10,45 +10,10 @@ The most important theme: Bridge currently looks like a payment event system, bu
 
 ## Priority Order
 
-3. Add worker claiming/leases before any callback or provider side effect.
 4. Centralize lifecycle state transitions behind typed statuses and a state machine.
 5. Move provider-specific semantics behind real provider adapters.
 6. Split raw webhook payload retention from dedupe/delivery retention.
 
----
-
-## 3. Critical — State mutation, processed marking, and callback enqueue are not atomic
-
-Webhook processing mutates subscription/payment state, later marks the webhook processed, then separately enqueues and forwards callback delivery.
-
-### Evidence
-
-- `process_webhook` mutates state through event handlers, then later marks the webhook processed: `src/webhooks/processor.rs::process_webhook`.
-- Delivery enqueue happens after processing returns: `src/webhooks/ingress.rs::spawn_process_and_forward_webhook` and `src/webhooks/forwarding.rs::queue_and_forward_webhook`.
-- `webhook_delivery` stores retry state, not the immutable canonical payload: `migrations/04_create_webhooks.sql`.
-- Retries rebuild canonical payload from current DB state: `src/webhooks/scheduler.rs::retry_webhooks`.
-
-### Why it matters
-
-There are several bad crash windows:
-
-- State changed, but no callback was queued.
-- State changed, but `processed=false`, so a duplicate provider delivery can reprocess.
-- Retry sends a payload based on current state, not the event originally committed.
-
-This can lose callbacks, duplicate side effects, or skip intermediate lifecycle events.
-
-### Recommended architectural direction
-
-Use a real inbox/outbox transaction:
-
-1. Claim inbox event.
-2. Apply lifecycle/payment transition.
-3. Insert immutable outbox payload.
-4. Mark inbox processed.
-5. Let delivery workers send the stored outbox payload.
-
-Callbacks should be event records, not rebuilt projections.
 
 ---
 

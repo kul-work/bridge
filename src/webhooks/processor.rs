@@ -14,9 +14,10 @@ use tracing::{error, info, warn};
 mod event_handlers;
 mod fields;
 mod normalize;
+mod atomic;
 
 use self::{
-    event_handlers::{EventContext, EventEffects, EventHandling},
+    event_handlers::{EventContext, EventEffects, EventHandling, PostCommitEffect},
     fields::{extract_metadata_user_id, extract_webhook_fields},
     normalize::{
         callback_status_for_event, normalize_event_type_with_payload,
@@ -24,11 +25,17 @@ use self::{
     },
 };
 pub(crate) use self::fields::WebhookFields;
+pub(crate) use self::atomic::process_webhook_atomically;
 
 pub struct EnqueuedWebhook {
     pub delivery_id: Uuid,
     pub canonical: CanonicalWebhookPayload,
     pub delivery_created: bool,
+}
+
+pub struct ProcessedWebhook {
+    pub canonical: CanonicalWebhookPayload,
+    post_commit: Vec<PostCommitEffect>,
 }
 
 struct UserResolution {
@@ -52,7 +59,7 @@ pub enum WebhookEventType {
 
 /// Canonical webhook payload sent to apps
 /// Used for webhook forwarding to app callbacks.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CanonicalWebhookPayload {
     pub event_id: String,
     pub event_type: String,
@@ -872,24 +879,43 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
     }))
 }
 
-fn apply_event_effects(
-    effects: EventEffects,
-    callback_event_type: &mut String,
-    callback_status_override: &mut Option<String>,
-    callback_revocation_reason_override: &mut Option<String>,
-    callback_cancellation_mode_override: &mut Option<String>,
-    canonical_subscription: &mut Option<WebhookSubscriptionSnapshot>,
-    should_forward: &mut bool,
-) {
+struct EventEffectTargets<'a> {
+    callback_event_type: &'a mut String,
+    callback_status_override: &'a mut Option<String>,
+    callback_revocation_reason_override: &'a mut Option<String>,
+    callback_cancellation_mode_override: &'a mut Option<String>,
+    canonical_subscription: &'a mut Option<WebhookSubscriptionSnapshot>,
+    should_forward: &'a mut bool,
+    post_commit: &'a mut Vec<PostCommitEffect>,
+}
+
+fn apply_event_effects(effects: EventEffects, targets: EventEffectTargets<'_>) {
     if let Some(event_type) = effects.callback_event_type {
-        *callback_event_type = event_type;
+        *targets.callback_event_type = event_type;
     }
 
-    *callback_status_override = effects.callback_status_override;
-    *callback_revocation_reason_override = effects.callback_revocation_reason_override;
-    *callback_cancellation_mode_override = effects.callback_cancellation_mode_override;
-    *canonical_subscription = effects.canonical_subscription;
-    *should_forward = effects.should_forward;
+    *targets.callback_status_override = effects.callback_status_override;
+    *targets.callback_revocation_reason_override = effects.callback_revocation_reason_override;
+    *targets.callback_cancellation_mode_override = effects.callback_cancellation_mode_override;
+    *targets.canonical_subscription = effects.canonical_subscription;
+    *targets.should_forward = effects.should_forward;
+    targets.post_commit.extend(effects.post_commit);
+}
+
+async fn execute_post_commit_effects(effects: Vec<PostCommitEffect>) {
+    for effect in effects {
+        event_handlers::execute_post_commit_effect(effect).await;
+    }
+}
+
+fn spawn_post_commit_effects(effects: Vec<PostCommitEffect>) {
+    if effects.is_empty() {
+        return;
+    }
+
+    tokio::spawn(async move {
+        execute_post_commit_effects(effects).await;
+    });
 }
 
 fn google_play_notification_type(payload: &serde_json::Value) -> Option<i64> {
@@ -1055,7 +1081,7 @@ pub async fn process_webhook(
     repo: &impl WebhookProcessingRepository,
     webhook_provider_id: Uuid,
     app_id: Uuid,
-) -> Result<Option<CanonicalWebhookPayload>, BridgeError> {
+) -> Result<Option<ProcessedWebhook>, BridgeError> {
     // Step 1: Load webhook + app
     let webhook = repo.get_webhook_provider(webhook_provider_id).await?;
 
@@ -1113,6 +1139,7 @@ pub async fn process_webhook(
     let mut callback_cancellation_mode_override: Option<String> = None;
     let mut canonical_subscription: Option<WebhookSubscriptionSnapshot> = None;
     let mut should_forward = true;
+    let mut post_commit = Vec::new();
     let event_context = EventContext {
         app: &app,
         app_id,
@@ -1136,12 +1163,15 @@ pub async fn process_webhook(
     match handling {
         EventHandling::Handled(effects) => apply_event_effects(
             *effects,
-            &mut callback_event_type,
-            &mut callback_status_override,
-            &mut callback_revocation_reason_override,
-            &mut callback_cancellation_mode_override,
-            &mut canonical_subscription,
-            &mut should_forward,
+            EventEffectTargets {
+                callback_event_type: &mut callback_event_type,
+                callback_status_override: &mut callback_status_override,
+                callback_revocation_reason_override: &mut callback_revocation_reason_override,
+                callback_cancellation_mode_override: &mut callback_cancellation_mode_override,
+                canonical_subscription: &mut canonical_subscription,
+                should_forward: &mut should_forward,
+                post_commit: &mut post_commit,
+            },
         ),
         EventHandling::ReturnNone => {
             repo.mark_webhook_processed(webhook_provider_id).await?;
@@ -1255,7 +1285,10 @@ pub async fn process_webhook(
 
     emit_webhook_trace(app_id, &canonical, &webhook.payload);
 
-    Ok(Some(canonical))
+    Ok(Some(ProcessedWebhook {
+        canonical,
+        post_commit,
+    }))
 }
 
 pub async fn process_and_enqueue_webhook<R>(
@@ -1267,14 +1300,23 @@ where
     R: WebhookProcessingRepository + WebhookWriteRepository,
 {
     match process_webhook(repo, webhook_provider_id, app_id).await? {
-        Some(canonical) => {
+        Some(processed) => {
             let delivery = repo
                 .create_webhook_delivery(app_id, webhook_provider_id)
                 .await?;
-            repo.mark_webhook_processed(webhook_provider_id).await?;
+            let canonical_payload = serde_json::to_value(&processed.canonical)
+                .map_err(|e| BridgeError::InternalServerError(e.to_string()))?;
+            repo.store_webhook_delivery_canonical_payload_and_mark_processed(
+                app_id,
+                delivery.id,
+                webhook_provider_id,
+                canonical_payload,
+            )
+            .await?;
+            spawn_post_commit_effects(processed.post_commit);
             Ok(Some(EnqueuedWebhook {
                 delivery_id: delivery.id,
-                canonical,
+                canonical: processed.canonical,
                 delivery_created: delivery.created,
             }))
         }

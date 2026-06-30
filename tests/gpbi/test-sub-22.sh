@@ -164,8 +164,12 @@ echo ""
 # Step 6: Verify Linking in DB
 echo -e "${YELLOW}[4/5] Verifying resubscription linking in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT external_user_id, status FROM pay.subscriptions WHERE purchase_token = '$NEW_TOKEN';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    RES_DATA \
+    "SELECT external_user_id, status FROM pay.subscriptions WHERE purchase_token = '$NEW_TOKEN';" \
+    "*$USER_ID*active*" \
+    10 \
+    1 || true
 
 if [[ "$RES_DATA" == *"$USER_ID"*"active"* ]]; then
     echo -e "${GREEN}✓ Success: New token $NEW_TOKEN correctly linked to $USER_ID with status 'active'${NC}"

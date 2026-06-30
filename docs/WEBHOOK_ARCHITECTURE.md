@@ -54,7 +54,7 @@
 │     ├─ Stale Guard: Compare event.ts < subscription.last_event_time?         │
 │     │  └─ YES: suppress as "stale" → SKIP                                    │
 │     ├─ Normalization: Map provider raw status → Canonical types              │
-│     ├─ Trigger Lifecycle Emails (paused, resumed, refunded, etc.)           │
+│     ├─ Collect post-commit email effects (paused, resumed, refunded, etc.)  │
 │     └─ Create Canonical Payload (serializable for apps)                      │
 │        {                                                                     │
 │          event_id: "google_play-msg_123",                                    │
@@ -268,6 +268,8 @@ POST /admin/webhooks/:webhook_id/retry
 ## Summary
 
 **Webhook Pipeline**: Provider → Ingress → Processor → Delivery → Forwarder → App
+
+Lifecycle email and dispute admin alert side effects are collected as post-commit effects during processing. Bridge commits subscription/payment state, the stored canonical payload, and `webhook_provider.processed=true` before it schedules email lookup or provider email sends. Without a durable email outbox, those notifications are best-effort: a process crash after commit but before effect execution can drop the email, but email failures do not roll back payment or subscription state.
 
 **Deduplication**: Unique constraint on (app_id, provider, provider_webhook_id)
 

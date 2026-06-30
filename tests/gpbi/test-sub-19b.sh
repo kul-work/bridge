@@ -51,8 +51,8 @@ echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: External User IDs
-USER1_ID="test_sub_user_01"
-USER2_ID="test_sub_user_02"
+USER1_ID="test_sub_user_19b_owner_$TEST_RUN_ID"
+USER2_ID="test_sub_user_19b_competitor_$TEST_RUN_ID"
 echo -e "${GREEN}✓ Testing with User IDs: $USER1_ID (Owner), $USER2_ID (Competitor)${NC}"
 echo ""
 

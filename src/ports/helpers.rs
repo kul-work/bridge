@@ -16,6 +16,8 @@ impl<'a> From<WebhookPaymentRecordRequest<'a>> for OwnedWebhookPaymentRecord {
             external_user_id: request.external_user_id.to_string(),
             provider: request.provider.to_string(),
             provider_transaction_id: request.provider_transaction_id.to_string(),
+            provider_purchase_token: request.provider_purchase_token.map(str::to_string),
+            ack_required: request.ack_required,
             subscription_id: request.subscription_id.map(str::to_string),
             product_id: request.product_id.map(str::to_string),
             amount_cents: request.amount_cents,

@@ -51,8 +51,8 @@ echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
 # Step 1: External User IDs
-USER1_ID="test_sub_user_01"
-USER2_ID="test_sub_user_02"
+USER1_ID="test_sub_user_19_owner_$TEST_RUN_ID"
+USER2_ID="test_sub_user_19_secondary_$TEST_RUN_ID"
 echo -e "${GREEN}✓ Testing with User IDs: $USER1_ID (Owner), $USER2_ID (Secondary)${NC}"
 echo ""
 
@@ -91,6 +91,11 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"product_type\": \"subscription\"
   }" )
 
+if [[ "$REGISTER_HTTP_CODE" != "200" || "$VERIFY_HTTP_CODE" != "200" ]]; then
+    echo -e "${RED}Failed to establish User 1 subscription (register=$REGISTER_HTTP_CODE, verify=$VERIFY_HTTP_CODE)${NC}"
+    exit 1
+fi
+
 echo -e "${GREEN}✓ User 1 subscription established${NC}"
 echo ""
 
@@ -114,8 +119,12 @@ echo ""
 # Step 5: Verify DB state
 echo -e "${YELLOW}[3/5] Verifying DB state remains consistent${NC}"
 export PGPASSWORD="postgres"
-OWNER_IN_DB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT external_user_id FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    OWNER_IN_DB \
+    "SELECT external_user_id FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" \
+    "$USER1_ID" \
+    10 \
+    1 || true
 
 if [[ "$OWNER_IN_DB" == "$USER1_ID" ]]; then
     echo -e "${GREEN}✓ Success: User 1 remains the primary owner in Bridge DB${NC}"

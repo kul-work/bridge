@@ -128,8 +128,12 @@ echo ""
 # Step 5: Verify status in DB
 echo -e "${YELLOW}[3/5] Verifying 'on_hold' state in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, payment_failure_notification FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    RES_DATA \
+    "SELECT status, payment_failure_notification FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" \
+    "*on_hold*t*" \
+    10 \
+    1 || true
 
 # Expected: on_hold | t
 if [[ "$RES_DATA" == *"on_hold"*"t"* ]]; then

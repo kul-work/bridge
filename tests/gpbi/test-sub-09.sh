@@ -135,8 +135,15 @@ echo ""
 # Step 5: Verify status in DB
 echo -e "${YELLOW}[3/6] Verifying 'revoked' state in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, (revoked_at IS NOT NULL) as is_revoked_at_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+RES_DATA=""
+for attempt in $(seq 1 10); do
+    RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+      -c "SELECT status, (revoked_at IS NOT NULL) as is_revoked_at_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+    if [[ "$RES_DATA" == *"revoked"*"t"* ]]; then
+        break
+    fi
+    sleep 1
+done
 
 # Expected: revoked | t
 if [[ "$RES_DATA" == *"revoked"*"t"* ]]; then
@@ -175,8 +182,15 @@ echo ""
 
 # Step 7: Verify payment status updated to 'refunded'
 echo -e "${YELLOW}[5/6] Verifying payment status update to 'refunded'${NC}"
-PAY_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
+PAY_STATUS=""
+for attempt in $(seq 1 10); do
+    PAY_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+      -c "SELECT status FROM pay.payments WHERE external_user_id = '$USER_ID' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
+    if [[ "$PAY_STATUS" == "refunded" ]]; then
+        break
+    fi
+    sleep 1
+done
 
 if [[ "$PAY_STATUS" == "refunded" ]]; then
     echo -e "${GREEN}✓ Success: Payment correctly marked as 'refunded'${NC}"

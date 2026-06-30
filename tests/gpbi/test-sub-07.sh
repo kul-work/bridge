@@ -171,8 +171,15 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   }" > /dev/null
 
 # Verify date extended
-FINAL_PERIOD_END=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT current_period_end FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+FINAL_PERIOD_END=""
+for attempt in $(seq 1 10); do
+    FINAL_PERIOD_END=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+      -c "SELECT current_period_end FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+    if [[ -n "$FINAL_PERIOD_END" && "$FINAL_PERIOD_END" != "$OLD_PERIOD_END" ]]; then
+        break
+    fi
+    sleep 1
+done
 
 if [[ "$FINAL_PERIOD_END" == "$OLD_PERIOD_END" ]]; then
     echo -e "${RED}✗ Final check failed: Period was NOT extended after success${NC}"

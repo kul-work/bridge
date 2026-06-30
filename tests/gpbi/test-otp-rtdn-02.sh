@@ -76,6 +76,56 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+report_field() {
+    python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ''))" "$1" "$2" 2>/dev/null || echo ""
+}
+
+otp_01_report_status() {
+    local report_file="$1"
+    local report_user_id
+    local report_purchase_token
+
+    if [[ ! -f "$report_file" ]]; then
+        echo ""
+        return
+    fi
+
+    report_user_id=$(report_field "$report_file" "user_id")
+    report_purchase_token=$(report_field "$report_file" "purchase_token")
+    if [[ -z "$report_user_id" || -z "$report_purchase_token" ]]; then
+        echo ""
+        return
+    fi
+
+    psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+        -c "SELECT status FROM pay.payments WHERE external_user_id = '$report_user_id' AND product_id = '$PRODUCT_ID' AND provider_purchase_token = '$report_purchase_token' ORDER BY created_at DESC LIMIT 1;" \
+        -t 2>/dev/null | tr -d ' ' || echo ""
+}
+
+ensure_otp_01_prereq() {
+    local status
+
+    if [[ -n "$PURCHASE_TOKEN" ]]; then
+        return
+    fi
+
+    status=$(otp_01_report_status "$OTP_01_REPORT")
+
+    if [[ "$status" == "success" ]]; then
+        return
+    fi
+
+    if [[ -n "$status" ]]; then
+        echo -e "${YELLOW}OTP-01 prerequisite is '$status'; rerunning OTP-01 for a fresh success row${NC}"
+    else
+        echo -e "${YELLOW}OTP-01 prerequisite missing; running OTP-01 first${NC}"
+    fi
+
+    (cd "$SCRIPT_DIR" && bash ./test-otp-01.sh)
+    OTP_01_REPORT="$SCRIPT_DIR/otp-01-report.json"
+    PURCHASE_TOKEN=""
+}
+
 echo -e "${YELLOW}========================================${NC}"
 echo "OTP-RTDN-02: Webhook Refund Completed"
 echo -e "${YELLOW}========================================${NC}"
@@ -83,9 +133,11 @@ echo ""
 echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
+ensure_otp_01_prereq
+
 # Step 1: External User ID (read from OTP-01 report if available)
 if [[ -f "$OTP_01_REPORT" ]]; then
-    REPORT_USER_ID=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('user_id', ''))" "$OTP_01_REPORT" 2>/dev/null || echo "")
+    REPORT_USER_ID=$(report_field "$OTP_01_REPORT" "user_id")
     if [[ -n "$REPORT_USER_ID" ]]; then
         USER_ID="$REPORT_USER_ID"
     else
@@ -97,7 +149,7 @@ fi
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 
 if [[ -z "$PURCHASE_TOKEN" && -f "$OTP_01_REPORT" ]]; then
-    PURCHASE_TOKEN=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('purchase_token', ''))" "$OTP_01_REPORT" 2>/dev/null || echo "")
+    PURCHASE_TOKEN=$(report_field "$OTP_01_REPORT" "purchase_token")
 fi
 echo ""
 

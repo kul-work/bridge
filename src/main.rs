@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
     if config.mock_external_apis {
         tracing::info!("⚠️ MOCK_EXTERNAL_APIS is ENABLED - Verification checks disabled");
     }
-    let email_provider = std::env::var("EMAIL_PROVIDER").unwrap_or_else(|_| "mock".to_string());
+    let email_provider = services::email::configured_email_provider();
     if email_provider == "mock" {
         tracing::info!("⚠️ EMAIL_PROVIDER is 'mock' - Emails will not be sent");
     }
