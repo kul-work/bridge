@@ -18,6 +18,7 @@ use crate::services::google_play::{
 use crate::webhooks::processor::CanonicalWebhookPayload;
 
 const MOCK_SUBSCRIPTION_TOKEN_PREFIX: &str = "mock-google-play-subscription:";
+const MOCK_RESUBSCRIBE_LINKING_REQUIRED_TOKEN: &str = "resubscribe-linking-required";
 
 fn verify_purchase_event_id(
     provider: &str,
@@ -424,7 +425,7 @@ fn mock_verify_google_play(
             // Token designed to test linking_required: returns Verified so the first
             // user becomes the owner; a second user with the same token will hit
             // "token already bound to different user" → linking_required.
-            if purchase_token.starts_with("resubscribe-linking-required") {
+            if purchase_token.starts_with(MOCK_RESUBSCRIBE_LINKING_REQUIRED_TOKEN) {
                 let obfuscated_account_id = compute_obfuscated_id_hash(external_user_id);
                 return Ok(VerificationOutcome::Verified(VerifiedPurchase {
                     status: "active".to_string(),
@@ -568,6 +569,13 @@ fn reject_mock_google_subscription_token(
         ));
     }
 
+    if !is_supported_mock_subscription_token(token) {
+        return Err(BridgeError::ValidationError(
+            "Mock Google Play subscription tokens must use mock-google-play-subscription:{subscription_id}:{token}"
+                .to_string(),
+        ));
+    }
+
     if token.contains("invalid")
         || token.contains("not-a-valid")
         || (token.contains("abc") && token.contains("!@#$"))
@@ -605,6 +613,11 @@ fn reject_mock_google_subscription_token(
     }
 
     Ok(())
+}
+
+fn is_supported_mock_subscription_token(token: &str) -> bool {
+    mock_subscription_id_from_token(token).is_some()
+        || token.starts_with(MOCK_RESUBSCRIBE_LINKING_REQUIRED_TOKEN)
 }
 
 fn mock_subscription_id_from_token(token: &str) -> Option<&str> {
@@ -750,6 +763,8 @@ mod tests {
     #[test]
     fn mock_google_subscription_rejects_err_token_patterns() {
         let cases = [
+            "demo_token",
+            "demo_token\" AND \"1\"=\"1\" -- ",
             "invalid-token-xyz",
             "1234567890",
             "not-a-valid-purchase-token",
@@ -765,6 +780,20 @@ mod tests {
                 "expected token {token} to be rejected"
             );
         }
+    }
+
+    #[test]
+    fn mock_google_subscription_accepts_prefixed_dev_tokens() {
+        assert!(reject_mock_google_subscription_token(
+            "premium_monthly",
+            "mock-google-play-subscription:premium_monthly:pending-token-123"
+        )
+        .is_ok());
+        assert!(reject_mock_google_subscription_token(
+            "premium_monthly",
+            "resubscribe-linking-required"
+        )
+        .is_ok());
     }
 
     #[test]

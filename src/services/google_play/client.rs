@@ -166,9 +166,11 @@ impl GooglePlayClient {
         let access_token = self.get_access_token().await?;
 
         // V2 API: GET /androidpublisher/v3/applications/{packageName}/purchases/subscriptionsv2/tokens/{token}
+        let package_name_segment = encode_path_segment(package_name);
+        let token_segment = encode_path_segment(token);
         let url = format!(
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/subscriptionsv2/tokens/{}",
-            package_name, token
+            package_name_segment, token_segment
         );
         tracing::debug!("GooglePlayClient: calling API endpoint for subscription");
 
@@ -225,9 +227,12 @@ impl GooglePlayClient {
 
         let access_token = self.get_access_token().await?;
 
+        let package_name_segment = encode_path_segment(package_name);
+        let product_id_segment = encode_path_segment(product_id);
+        let token_segment = encode_path_segment(token);
         let url = format!(
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/products/{}/tokens/{}",
-            package_name, product_id, token
+            package_name_segment, product_id_segment, token_segment
         );
         tracing::debug!("GooglePlayClient: calling API endpoint for product");
 
@@ -274,9 +279,11 @@ impl GooglePlayClient {
 
         let access_token = self.get_access_token().await?;
 
+        let package_name_segment = encode_path_segment(package_name);
+        let order_id_segment = encode_path_segment(order_id);
         let url = format!(
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/orders/{}",
-            package_name, order_id
+            package_name_segment, order_id_segment
         );
 
         let res = self.client
@@ -815,10 +822,30 @@ fn scrub_google_body(text: &str, token: &str) -> String {
     scrub_email(text).replace(token, &diagnostic_hash(token))
 }
 
+fn encode_path_segment(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn encodes_google_api_path_segments() {
+        assert_eq!(encode_path_segment("com.example.app"), "com.example.app");
+        assert_eq!(encode_path_segment("premium/monthly token"), "premium%2Fmonthly%20token");
+        assert_eq!(encode_path_segment("token+with?query#frag"), "token%2Bwith%3Fquery%23frag");
+    }
 
     #[test]
     fn order_payment_details_include_amount_and_currency() {
