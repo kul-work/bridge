@@ -319,9 +319,12 @@ impl GooglePlayClient {
         
         let access_token = self.get_access_token().await?;
 
+        let package_name_segment = encode_path_segment(package_name);
+        let subscription_id_segment = encode_path_segment(subscription_id);
+        let token_segment = encode_path_segment(token);
         let url = format!(
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/subscriptionsv2/{}/tokens/{}:cancel",
-            package_name, subscription_id, token
+            package_name_segment, subscription_id_segment, token_segment
         );
 
         // Request body with cancellation type: user-initiated (stop renewal)
@@ -374,9 +377,12 @@ impl GooglePlayClient {
             let access_token = self.get_access_token().await
                 .map_err(|e| backoff::Error::transient(anyhow::anyhow!("Failed to get access token: {}", e)))?;
 
+            let package_name_segment = encode_path_segment(package_name);
+            let subscription_id_segment = encode_path_segment(subscription_id);
+            let token_segment = encode_path_segment(token);
             let url = format!(
                 "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/subscriptions/{}/tokens/{}:acknowledge",
-                package_name, subscription_id, token
+                package_name_segment, subscription_id_segment, token_segment
             );
 
             // Empty body for acknowledge
@@ -464,9 +470,12 @@ impl GooglePlayClient {
             let access_token = self.get_access_token().await
                 .map_err(|e| backoff::Error::transient(anyhow::anyhow!("Failed to get access token: {}", e)))?;
 
+            let package_name_segment = encode_path_segment(package_name);
+            let product_id_segment = encode_path_segment(product_id);
+            let token_segment = encode_path_segment(token);
             let url = format!(
                 "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/products/{}/tokens/{}:acknowledge",
-                package_name, product_id, token
+                package_name_segment, product_id_segment, token_segment
             );
 
             // Empty body for acknowledge
