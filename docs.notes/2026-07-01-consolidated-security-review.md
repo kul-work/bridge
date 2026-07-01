@@ -79,22 +79,6 @@ This is the highest-consensus finding across all reviewers.
 
 ---
 
-### B-4. Admin auth silently accepts any valid Clerk JWT when `ADMIN_CLERK_ORG_ID` is unset
-
-**Reviewers:** Amp, Crush (both flagged)
-
-**Risk:** If the Clerk instance includes non-admin users, any valid session from that instance can access all admin APIs — monitoring, webhook controls, app management.
-
-**Evidence:**
-- `src/middleware/admin_auth.rs:111-113` — missing `ADMIN_CLERK_ORG_ID` logs a warning and proceeds with no org enforcement.
-- `src/config.rs` — requires authorized parties but not org membership.
-
-**Required fix:**
-- In production (`ENVIRONMENT=production`), require `ADMIN_CLERK_ORG_ID` or a strict admin subject/email allowlist.
-- Treat absence as a startup failure, not an info/warn log.
-
----
-
 ### B-5. `BridgeError::DbError` leaks raw SQL errors to API clients
 
 **Reviewer:** Crush (unique finding)
