@@ -562,3 +562,278 @@ async fn spawn_callback_server() -> Result<(String, Arc<AtomicUsize>, JoinHandle
 
     Ok((format!("http://{}/callback", address), count, server))
 }
+
+#[tokio::test]
+async fn google_play_lifecycle_strictly_token_based_matching() -> Result<(), Box<dyn Error>> {
+    let database = test_database().await?;
+    let pool = database.pool();
+    let app_id = insert_test_app(pool, "token-only-gp").await?;
+
+    let token_matching = format!("token_matching_{app_id}");
+    let token_unmatched = format!("token_unmatched_{app_id}");
+
+    let sub = insert_google_subscription(pool, app_id, "user_matching", &token_matching, "active", TA).await?;
+
+    let payload = serde_json::json!({
+        "subscriptionNotification": {
+            "subscriptionId": SUBSCRIPTION_ID,
+            "purchaseToken": token_unmatched,
+            "notificationType": 13 // SUBSCRIPTION_EXPIRED
+        }
+    });
+
+    let webhook_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO pay.webhook_provider
+            (id, app_id, provider, provider_webhook_id, event_type, subscription_id, purchase_token, payload, processed, timestamp_epoch_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9)",
+    )
+    .bind(webhook_id)
+    .bind(app_id)
+    .bind(PROVIDER)
+    .bind("evt_unmatched_expired")
+    .bind("SUBSCRIPTION_EXPIRED")
+    .bind(SUBSCRIPTION_ID)
+    .bind(&token_unmatched)
+    .bind(payload)
+    .bind(T_EVT)
+    .execute(pool)
+    .await?;
+
+    let outcome = crate::webhooks::processor::process_webhook(&database, webhook_id, app_id).await?;
+    assert!(outcome.is_none(), "Unmatched token expired event should be skipped (no-op/ReturnNone)");
+
+    let sub_state = load_subscription_state(pool, sub.id).await?;
+    assert_eq!(sub_state.status, "active", "unmatched token event must not modify active subscription");
+    assert_eq!(sub_state.version, sub.version, "version must not change");
+
+    cleanup_test_app(pool, app_id).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn google_play_lifecycle_matching_token_updates_correct_row() -> Result<(), Box<dyn Error>> {
+    let database = test_database().await?;
+    let pool = database.pool();
+    let app_id = insert_test_app(pool, "matching-token-gp").await?;
+
+    let token_matching = format!("token_matching_{app_id}");
+    let sub = insert_google_subscription(pool, app_id, "user_matching", &token_matching, "active", TA).await?;
+
+    let payload = serde_json::json!({
+        "subscriptionNotification": {
+            "subscriptionId": SUBSCRIPTION_ID,
+            "purchaseToken": token_matching,
+            "notificationType": 13 // SUBSCRIPTION_EXPIRED
+        }
+    });
+
+    let webhook_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO pay.webhook_provider
+            (id, app_id, provider, provider_webhook_id, event_type, subscription_id, purchase_token, payload, processed, timestamp_epoch_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9)",
+    )
+    .bind(webhook_id)
+    .bind(app_id)
+    .bind(PROVIDER)
+    .bind("evt_matching_expired")
+    .bind("SUBSCRIPTION_EXPIRED")
+    .bind(SUBSCRIPTION_ID)
+    .bind(&token_matching)
+    .bind(payload)
+    .bind(T_EVT)
+    .execute(pool)
+    .await?;
+
+    let outcome = crate::webhooks::processor::process_webhook(&database, webhook_id, app_id).await?;
+    assert!(outcome.is_some(), "Matching token expired event should be processed successfully");
+
+    let sub_state = load_subscription_state(pool, sub.id).await?;
+    assert_eq!(sub_state.status, "expired", "matching token event must update the subscription status to expired");
+    assert_eq!(sub_state.version, sub.version + 1, "version must increment");
+
+    cleanup_test_app(pool, app_id).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn atomic_processor_rejects_mismatched_claim_token() -> Result<(), Box<dyn Error>> {
+    let database = test_database().await?;
+    let pool = database.pool();
+    let app_id = insert_test_app(pool, "claim-fence-gp").await?;
+
+    let token = format!("token_claim_fence_{app_id}");
+    let _sub = insert_google_subscription(pool, app_id, "user_fence", &token, "active", TA).await?;
+
+    let provider = insert_webhook_provider(pool, app_id, &token, "evt_claim_fence").await?;
+    let delivery = insert_webhook_delivery(pool, app_id, provider).await?;
+
+    // Claim the delivery to generate a valid claim token
+    let _claim_token = claim_delivery(pool, app_id, delivery).await?;
+
+    // Try to run process_webhook_atomically with a DIFFERENT claim token (e.g. Uuid::new_v4())
+    let wrong_token = Uuid::new_v4();
+    let result = crate::webhooks::processor::process_webhook_atomically(
+        &database,
+        app_id,
+        provider,
+        delivery,
+        wrong_token,
+    )
+    .await;
+
+    assert!(result.is_err(), "Expected process_webhook_atomically to fail with wrong claim token");
+    match result {
+        Err(crate::error::BridgeError::Conflict(msg)) => {
+            assert!(msg.contains("claim token mismatch") || msg.contains("lease expired"), "Unexpected conflict message: {}", msg);
+        }
+        other => panic!("Expected BridgeError::Conflict, got {:?}", other),
+    }
+
+    cleanup_test_app(pool, app_id).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn google_play_lifecycle_on_hold_and_paused_strictly_token_based_matching() -> Result<(), Box<dyn Error>> {
+    let database = test_database().await?;
+    let pool = database.pool();
+    let app_id = insert_test_app(pool, "token-only-pause-hold").await?;
+
+    let token_matching = format!("token_matching_ph_{app_id}");
+    let token_unmatched = format!("token_unmatched_ph_{app_id}");
+
+    // Insert active subscription
+    let sub = insert_google_subscription(pool, app_id, "user_matching", &token_matching, "active", TA).await?;
+
+    // 1. Test SUBSCRIPTION_ON_HOLD with unmatched token
+    let hold_payload = serde_json::json!({
+        "subscriptionNotification": {
+            "subscriptionId": SUBSCRIPTION_ID,
+            "purchaseToken": token_unmatched,
+            "notificationType": 5 // SUBSCRIPTION_ON_HOLD
+        }
+    });
+
+    let hold_webhook_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO pay.webhook_provider
+            (id, app_id, provider, provider_webhook_id, event_type, subscription_id, purchase_token, payload, processed, timestamp_epoch_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9)",
+    )
+    .bind(hold_webhook_id)
+    .bind(app_id)
+    .bind(PROVIDER)
+    .bind("evt_unmatched_hold")
+    .bind("SUBSCRIPTION_ON_HOLD")
+    .bind(SUBSCRIPTION_ID)
+    .bind(&token_unmatched)
+    .bind(hold_payload)
+    .bind(T_EVT)
+    .execute(pool)
+    .await?;
+
+    let hold_outcome = crate::webhooks::processor::process_webhook(&database, hold_webhook_id, app_id).await?;
+    assert!(hold_outcome.is_none(), "Unmatched token hold event should be skipped");
+
+    let sub_state = load_subscription_state(pool, sub.id).await?;
+    assert_eq!(sub_state.status, "active", "unmatched token hold event must not modify active subscription");
+
+    // 2. Test SUBSCRIPTION_PAUSED with unmatched token
+    let paused_payload = serde_json::json!({
+        "subscriptionNotification": {
+            "subscriptionId": SUBSCRIPTION_ID,
+            "purchaseToken": token_unmatched,
+            "notificationType": 12 // SUBSCRIPTION_PAUSED
+        }
+    });
+
+    let paused_webhook_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO pay.webhook_provider
+            (id, app_id, provider, provider_webhook_id, event_type, subscription_id, purchase_token, payload, processed, timestamp_epoch_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9)",
+    )
+    .bind(paused_webhook_id)
+    .bind(app_id)
+    .bind(PROVIDER)
+    .bind("evt_unmatched_paused")
+    .bind("SUBSCRIPTION_PAUSED")
+    .bind(SUBSCRIPTION_ID)
+    .bind(&token_unmatched)
+    .bind(paused_payload)
+    .bind(T_EVT)
+    .execute(pool)
+    .await?;
+
+    let paused_outcome = crate::webhooks::processor::process_webhook(&database, paused_webhook_id, app_id).await?;
+    assert!(paused_outcome.is_none(), "Unmatched token paused event should be skipped");
+
+    let sub_state = load_subscription_state(pool, sub.id).await?;
+    assert_eq!(sub_state.status, "active", "unmatched token paused event must not modify active subscription");
+
+    cleanup_test_app(pool, app_id).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn google_play_webhook_signature_verification_cannot_be_bypassed_outside_mock_mode() -> Result<(), Box<dyn Error>> {
+    let database = std::sync::Arc::new(test_database().await?);
+    let pool = database.pool();
+    
+    // Set up app and get token
+    let app_id = insert_test_app(pool, "sig-bypass-gp").await?;
+    let token_uuid: Uuid = sqlx::query_scalar("SELECT webhook_ingress_token FROM pay.apps WHERE id = $1")
+        .bind(app_id)
+        .fetch_one(pool)
+        .await?;
+
+    // Insert provider config with verify_webhook_signature = false
+    sqlx::query(
+        "INSERT INTO pay.provider_configs (app_id, provider, config, enabled)
+         VALUES ($1, 'google_play', '{\"verify_webhook_signature\": false}'::jsonb, true)"
+    )
+    .bind(app_id)
+    .execute(pool)
+    .await?;
+
+    // Create AppState
+    let state = crate::state::AppState::new(database.clone());
+
+    // Force non-mock environment variable for the duration of the check
+    let orig_mock = std::env::var("MOCK_EXTERNAL_APIS").ok();
+    std::env::set_var("MOCK_EXTERNAL_APIS", "false");
+
+    // Call handle_google_play with invalid signature / no headers
+    let result = crate::webhooks::ingress::handle_google_play(
+        axum::extract::State(state),
+        axum::extract::Path(token_uuid.to_string()),
+        axum::http::HeaderMap::new(),
+        "{}".to_string(),
+    )
+    .await;
+
+    // Restore original mock environment variable
+    if let Some(val) = orig_mock {
+        std::env::set_var("MOCK_EXTERNAL_APIS", val);
+    } else {
+        std::env::remove_var("MOCK_EXTERNAL_APIS");
+    }
+
+    // Verify it was rejected with WebhookError (meaning signature check was forced and failed early on missing headers)
+    assert!(result.is_err(), "Expected webhook to be rejected in non-mock mode");
+    match result {
+        Err(crate::error::BridgeError::WebhookError(msg)) => {
+            assert!(msg.contains("Missing Authorization header"), "Unexpected error: {}", msg);
+        }
+        other => panic!("Expected BridgeError::WebhookError, got {:?}", other),
+    }
+
+    // Clean up
+    let _ = sqlx::query("DELETE FROM pay.provider_configs WHERE app_id = $1").bind(app_id).execute(pool).await;
+    cleanup_test_app(pool, app_id).await;
+    
+    Ok(())
+}
+

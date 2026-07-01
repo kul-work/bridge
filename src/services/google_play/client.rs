@@ -35,7 +35,7 @@ struct TokenResponse {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GoogleOrderPaymentDetails {
-    pub amount_cents: Option<i32>,
+    pub amount_cents: Option<i64>,
     pub currency: Option<String>,
 }
 
@@ -780,8 +780,7 @@ fn order_payment_details_from_payload(order: &serde_json::Value) -> GoogleOrderP
     let total_cents = line_items
         .iter()
         .filter_map(|line_item| money_cents_from_value(&line_item["total"]))
-        .try_fold(0i64, |sum, amount| sum.checked_add(i64::from(amount)))
-        .and_then(|total| i32::try_from(total).ok());
+        .try_fold(0i64, |sum, amount| sum.checked_add(amount));
 
     let currency = consistent_line_item_currency(line_items);
 
@@ -808,7 +807,7 @@ fn consistent_line_item_currency(line_items: &[serde_json::Value]) -> Option<Str
     currency
 }
 
-fn money_cents_from_value(value: &serde_json::Value) -> Option<i32> {
+fn money_cents_from_value(value: &serde_json::Value) -> Option<i64> {
     let units = value["units"].as_str()?.parse::<i64>().ok()?;
     if units < 0 {
         return None;
@@ -816,7 +815,7 @@ fn money_cents_from_value(value: &serde_json::Value) -> Option<i32> {
 
     let nanos = i64::from(value["nanos"].as_i64().unwrap_or(0) as i32).clamp(0, 999_999_999);
     let cents = units.checked_mul(100)?.checked_add(nanos / 10_000_000)?;
-    i32::try_from(cents).ok()
+    Some(cents)
 }
 
 fn scrub_reqwest_error(err: reqwest::Error, token: &str) -> anyhow::Error {

@@ -109,19 +109,35 @@ impl SchedulerRepository for db::Database {
         &self,
         limit: i64,
     ) -> Result<Vec<Subscription>, BridgeError> {
-        db::subscriptions::list_pending_pause_subscriptions(self.pool(), limit).await
+        let app_ids = db::apps::list_enabled_app_ids(self.pool()).await?;
+        let mut all_subs = Vec::new();
+        for app_id in app_ids {
+            let mut subs = db::subscriptions::list_pending_pause_subscriptions(self.pool(), app_id, limit).await?;
+            all_subs.append(&mut subs);
+            if all_subs.len() as i64 >= limit {
+                all_subs.truncate(limit as usize);
+                break;
+            }
+        }
+        Ok(all_subs)
     }
 
     async fn mark_subscription_paused(
         &self,
+        app_id: Uuid,
         id: Uuid,
         event_time_ms: i64,
     ) -> Result<bool, BridgeError> {
-        db::subscriptions::mark_subscription_paused(self.pool(), id, event_time_ms).await
+        db::subscriptions::mark_subscription_paused(self.pool(), app_id, id, event_time_ms).await
     }
 
     async fn delete_orphaned_pending_subscriptions(&self) -> Result<u64, BridgeError> {
-        db::subscriptions::delete_orphaned_pending_subscriptions(self.pool()).await
+        let app_ids = db::apps::list_enabled_app_ids(self.pool()).await?;
+        let mut total_deleted = 0;
+        for app_id in app_ids {
+            total_deleted += db::subscriptions::delete_orphaned_pending_subscriptions(self.pool(), app_id).await?;
+        }
+        Ok(total_deleted)
     }
 
     async fn cleanup_old_webhook_provider(&self) -> Result<(), BridgeError> {

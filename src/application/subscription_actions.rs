@@ -62,6 +62,13 @@ pub async fn cancel_subscription<R: SubscriptionActionsHandlerRepository + ?Size
         )
         .await?;
 
+    if sub.status == "revoked" || sub.status == "expired" {
+        return Err(BridgeError::Conflict(format!(
+            "Cannot cancel a terminal subscription with status '{}'",
+            sub.status
+        )));
+    }
+
     let purchase_token = request
         .purchase_token
         .as_deref()
@@ -162,6 +169,13 @@ pub async fn resume_subscription<R: SubscriptionActionsHandlerRepository + ?Size
             &provider,
         )
         .await?;
+
+    if sub.status != "paused" && sub.status != "cancelled" {
+        return Err(BridgeError::Conflict(format!(
+            "Cannot resume a subscription with status '{}'",
+            sub.status
+        )));
+    }
 
     let provider_config = repo.get_provider_config(app_id, &sub.provider).await?;
 
@@ -516,7 +530,7 @@ async fn dispatch_subscription_callback<R: SubscriptionActionsHandlerRepository 
     sub: &SubscriptionCallbackData,
     event_type: &str,
     cancellation_mode: Option<&str>,
-    new_price_cents: Option<i32>,
+    new_price_cents: Option<i64>,
 ) -> Result<(), BridgeError>
 {
     let app = repo.get_app(app_id).await?;
@@ -549,7 +563,7 @@ async fn dispatch_subscription_callback<R: SubscriptionActionsHandlerRepository 
         subscription_id: Some(sub.subscription_id.clone()),
         external_user_id: Some(sub.external_user_id.clone()),
         amount_cents: None,
-        new_price_cents: new_price_cents.map(i64::from),
+        new_price_cents,
         auto_renewing: sub.auto_renewing,
         purchase_token: sub.purchase_token.clone(),
         current_period_end: sub.current_period_end.map(|d| d.to_rfc3339()),
@@ -584,4 +598,491 @@ async fn dispatch_subscription_callback<R: SubscriptionActionsHandlerRepository 
         canonical,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    use async_trait::async_trait;
+    use chrono::Utc;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::application::app_context::{AppSnapshot, ProviderConfigSnapshot};
+    use crate::db::subscriptions::Subscription;
+    use crate::db::webhooks::{WebhookDelivery, WebhookDeliveryEnqueue, WebhookRecord};
+    use crate::ports::traits::*;
+    use crate::ports::types::{SubscriptionLookupSnapshot, WebhookProviderSnapshot};
+
+    struct ResumeGuardRepo {
+        subscription: Subscription,
+        provider_config_calls: Arc<AtomicUsize>,
+        db_resume_calls: Arc<AtomicUsize>,
+    }
+
+    impl ResumeGuardRepo {
+        fn new(status: &str) -> Self {
+            let now = Utc::now();
+            Self {
+                subscription: Subscription {
+                    id: Uuid::new_v4(),
+                    app_id: Uuid::new_v4(),
+                    external_user_id: "user_123".to_string(),
+                    subscription_id: "sub_123".to_string(),
+                    provider: "google_play".to_string(),
+                    purchase_token: Some("token_123".to_string()),
+                    status: status.to_string(),
+                    current_period_end: None,
+                    auto_renewing: Some(true),
+                    payment_state: None,
+                    cancel_reason: None,
+                    provider_customer_id: None,
+                    cancellation_initiated_at: None,
+                    revocation_reason: None,
+                    revoked_at: None,
+                    payment_failure_notification: false,
+                    version: 1,
+                    last_event_time: 0,
+                    created_at: now,
+                    updated_at: now,
+                    google_requires_price_step_up_consent: None,
+                    google_price_step_up_consent_deadline: None,
+                    google_new_price_cents: None,
+                    google_pause_scheduled_at: None,
+                    google_paused_at: None,
+                    google_deferred_until: None,
+                    google_pending_price_change_new_price_cents: None,
+                    google_pending_price_change_currency: None,
+                    google_pending_price_change_mode: None,
+                    google_pending_price_change_state: None,
+                    google_pending_price_change_expected_at: None,
+                    scheduled_job_claim_token: None,
+                    scheduled_job_claimed_by: None,
+                    scheduled_job_claimed_until: None,
+                    scheduled_job_claim_kind: None,
+                },
+                provider_config_calls: Arc::new(AtomicUsize::new(0)),
+                db_resume_calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AppLookupRepository for ResumeGuardRepo {
+        async fn get_app(&self, app_id: Uuid) -> Result<AppSnapshot, BridgeError> {
+            Ok(AppSnapshot {
+                id: app_id,
+                slug: "test".to_string(),
+                display_name: "Test".to_string(),
+                webhook_callback_url: "http://127.0.0.1/callback".to_string(),
+                webhook_callback_secret: "secret".to_string(),
+                api_rate_limit_per_minute: 60,
+                api_rate_limit_rules: None,
+                app_url: None,
+                google_package_name: None,
+                apple_bundle_id: None,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ProviderConfigLookupRepository for ResumeGuardRepo {
+        async fn get_provider_config(
+            &self,
+            _app_id: Uuid,
+            _provider: &str,
+        ) -> Result<ProviderConfigSnapshot, BridgeError> {
+            self.provider_config_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ProviderConfigSnapshot { config: json!({}) })
+        }
+    }
+
+    impl AppConfigRepository for ResumeGuardRepo {}
+
+    #[async_trait]
+    impl SubscriptionReadRepository for ResumeGuardRepo {
+        async fn get_subscription(
+            &self,
+            _app_id: Uuid,
+            _external_user_id: &str,
+            _subscription_id: &str,
+            _provider: &str,
+        ) -> Result<Subscription, BridgeError> {
+            Ok(self.subscription.clone())
+        }
+
+        async fn get_user_subscriptions_keyset(
+            &self,
+            _app_id: Uuid,
+            _external_user_id: &str,
+            _limit: i64,
+            _cursor_created_at: Option<chrono::DateTime<Utc>>,
+            _cursor_id: Option<Uuid>,
+        ) -> Result<Vec<Subscription>, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn get_user_subscriptions(
+            &self,
+            _app_id: Uuid,
+            _external_user_id: &str,
+            _limit: i64,
+            _offset: i64,
+        ) -> Result<Vec<Subscription>, BridgeError> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl SubscriptionWriteRepository for ResumeGuardRepo {
+        async fn upsert_pending_subscription(
+            &self,
+            _app_id: Uuid,
+            _external_user_id: &str,
+            _subscription_id: &str,
+            _provider: &str,
+        ) -> Result<Subscription, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn cancel_subscription_scheduled(
+            &self,
+            _app_id: Uuid,
+            _id: Uuid,
+        ) -> Result<Subscription, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn cancel_subscription_immediate(
+            &self,
+            _app_id: Uuid,
+            _id: Uuid,
+        ) -> Result<Subscription, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn resume_subscription(
+            &self,
+            _app_id: Uuid,
+            _id: Uuid,
+        ) -> Result<Subscription, BridgeError> {
+            self.db_resume_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.subscription.clone())
+        }
+
+        async fn mark_payment_acknowledged_for_subscription(
+            &self,
+            _app_id: Uuid,
+            _external_user_id: &str,
+            _provider: &str,
+            _subscription_id: &str,
+            _purchase_token: Option<&str>,
+        ) -> Result<(), BridgeError> {
+            unimplemented!()
+        }
+
+        async fn accept_price_step_up(
+            &self,
+            _app_id: Uuid,
+            _id: Uuid,
+        ) -> Result<Option<Subscription>, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn claim_price_step_up_decline(
+            &self,
+            _app_id: Uuid,
+            _id: Uuid,
+            _worker_id: &str,
+            _lease_secs: i64,
+        ) -> Result<Option<Subscription>, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn refresh_price_step_up_decline_claim(
+            &self,
+            _app_id: Uuid,
+            _id: Uuid,
+            _claim_token: Uuid,
+            _lease_secs: i64,
+        ) -> Result<bool, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn decline_price_step_up(
+            &self,
+            _app_id: Uuid,
+            _id: Uuid,
+            _claim_token: Uuid,
+        ) -> Result<Option<Subscription>, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn clear_payment_failure_notification(
+            &self,
+            _app_id: Uuid,
+            _external_user_id: &str,
+            _provider: &str,
+            _subscription_id: &str,
+        ) -> Result<(), BridgeError> {
+            unimplemented!()
+        }
+
+        async fn delete_pending_subscription(
+            &self,
+            _app_id: Uuid,
+            _external_user_id: &str,
+            _subscription_id: &str,
+            _provider: &str,
+        ) -> Result<(), BridgeError> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl SubscriptionLookupRepository for ResumeGuardRepo {
+        async fn get_subscription_by_sub_id(
+            &self,
+            _app_id: Uuid,
+            _subscription_id: &str,
+        ) -> Result<Option<SubscriptionLookupSnapshot>, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn get_subscription_by_sub_id_and_user(
+            &self,
+            _app_id: Uuid,
+            _subscription_id: &str,
+            _external_user_id: &str,
+        ) -> Result<Option<SubscriptionLookupSnapshot>, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn get_subscription_by_purchase_token(
+            &self,
+            _app_id: Uuid,
+            _purchase_token: &str,
+        ) -> Result<Option<SubscriptionLookupSnapshot>, BridgeError> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl PurchaseOwnerLookupRepository for ResumeGuardRepo {
+        async fn lookup_user_by_subscription_id(
+            &self,
+            _app_id: Uuid,
+            _provider: &str,
+            _subscription_id: &str,
+        ) -> Result<Option<String>, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn lookup_user_by_purchase_token(
+            &self,
+            _app_id: Uuid,
+            _provider: &str,
+            _purchase_token: &str,
+        ) -> Result<Option<String>, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn lookup_user_by_purchase_token_payment(
+            &self,
+            _app_id: Uuid,
+            _provider: &str,
+            _purchase_token: &str,
+        ) -> Result<Option<String>, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn lookup_product_id_by_purchase_token_payment(
+            &self,
+            _app_id: Uuid,
+            _provider: &str,
+            _purchase_token: &str,
+        ) -> Result<Option<String>, BridgeError> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl GooglePlayAccountLookupRepository for ResumeGuardRepo {
+        async fn lookup_user_by_google_obfuscated_id(
+            &self,
+            _app_id: Uuid,
+            _obfuscated_id: &str,
+        ) -> Result<Option<String>, BridgeError> {
+            unimplemented!()
+        }
+    }
+
+    impl SubscriptionRepository for ResumeGuardRepo {}
+
+    #[async_trait]
+    impl WebhookReadRepository for ResumeGuardRepo {
+        async fn list_user_webhook_records(
+            &self,
+            _app_id: Uuid,
+            _subscription_ids: &[String],
+            _purchase_tokens: &[String],
+        ) -> Result<Vec<WebhookRecord>, BridgeError> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl WebhookWriteRepository for ResumeGuardRepo {
+        async fn create_webhook_provider(
+            &self,
+            _app_id: Uuid,
+            _provider: &str,
+            _provider_webhook_id: &str,
+            _event_type: &str,
+            _subscription_id: Option<String>,
+            _purchase_token: Option<String>,
+            _payload: serde_json::Value,
+            _timestamp_epoch_ms: Option<i64>,
+        ) -> Result<(Uuid, bool), BridgeError> {
+            unimplemented!()
+        }
+
+        async fn create_webhook_delivery(
+            &self,
+            _app_id: Uuid,
+            _webhook_provider_id: Uuid,
+            _worker_id: &str,
+            _lease_secs: i64,
+        ) -> Result<WebhookDeliveryEnqueue, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn store_webhook_delivery_canonical_payload_and_mark_processed(
+            &self,
+            _app_id: Uuid,
+            _delivery_id: Uuid,
+            _webhook_provider_id: Uuid,
+            _canonical_payload: serde_json::Value,
+        ) -> Result<(), BridgeError> {
+            unimplemented!()
+        }
+
+        async fn create_synthetic_webhook_delivery(
+            &self,
+            _app_id: Uuid,
+            _provider: &str,
+            _provider_webhook_id: &str,
+            _event_type: &str,
+            _subscription_id: Option<String>,
+            _purchase_token: Option<String>,
+            _provider_payload: serde_json::Value,
+            _timestamp_epoch_ms: Option<i64>,
+            _canonical_payload: serde_json::Value,
+            _worker_id: &str,
+            _lease_secs: i64,
+        ) -> Result<WebhookDeliveryEnqueue, BridgeError> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl WebhookForwardRepository for ResumeGuardRepo {
+        async fn get_webhook_delivery(&self, _id: Uuid) -> Result<WebhookDelivery, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn webhook_delivery_exists(
+            &self,
+            _webhook_provider_id: Uuid,
+        ) -> Result<bool, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn complete_webhook_delivery_attempt(
+            &self,
+            _delivery_id: Uuid,
+            _claim_token: Uuid,
+            _http_status: Option<i32>,
+            _error: Option<String>,
+            _forwarded: bool,
+        ) -> Result<WebhookDelivery, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn refresh_webhook_delivery_claim(
+            &self,
+            _app_id: Uuid,
+            _delivery_id: Uuid,
+            _claim_token: Uuid,
+            _lease_secs: i64,
+        ) -> Result<bool, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn claim_webhook_delivery_by_id(
+            &self,
+            _app_id: Uuid,
+            _delivery_id: Uuid,
+            _worker_id: &str,
+            _lease_secs: i64,
+        ) -> Result<Option<WebhookDelivery>, BridgeError> {
+            unimplemented!()
+        }
+
+        async fn reset_webhook_delivery(&self, _delivery_id: Uuid) -> Result<bool, BridgeError> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl WebhookSuppressionRepository for ResumeGuardRepo {
+        async fn suppress_webhook(&self, _webhook_id: Uuid, _reason: &str) -> Result<(), BridgeError> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl WebhookProviderLookupRepository for ResumeGuardRepo {
+        async fn get_webhook_provider(
+            &self,
+            _id: Uuid,
+        ) -> Result<WebhookProviderSnapshot, BridgeError> {
+            unimplemented!()
+        }
+    }
+
+    impl WebhookRepository for ResumeGuardRepo {}
+
+    #[tokio::test]
+    async fn resume_active_subscription_returns_conflict_before_provider_or_db_resume() {
+        let repo = ResumeGuardRepo::new("active");
+
+        let result = resume_subscription(
+            &repo,
+            repo.subscription.app_id,
+            &repo.subscription.subscription_id,
+            SubscriptionActionQuery {
+                external_user_id: repo.subscription.external_user_id.clone(),
+                provider: repo.subscription.provider.clone(),
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(BridgeError::Conflict(_))), "expected conflict, got {result:?}");
+        assert_eq!(
+            repo.provider_config_calls.load(Ordering::SeqCst),
+            0,
+            "invalid resume status must be rejected before loading provider config or calling provider"
+        );
+        assert_eq!(
+            repo.db_resume_calls.load(Ordering::SeqCst),
+            0,
+            "invalid resume status must not reach the DB resume mutation"
+        );
+    }
 }

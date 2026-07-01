@@ -59,8 +59,8 @@ pub async fn handle_otp_purchased<
             ack_required: webhook.provider == "google_play" && purchase_token.is_some(),
             subscription_id: None,
             product_id: fields.product_id.as_deref(),
-            amount_cents: fields.amount_cents.unwrap_or(0),
-            currency: fields.currency.as_deref(),
+            amount_cents: fields.amount_cents.unwrap_or(-1),
+            currency: fields.currency.as_deref().or(Some("UNKNOWN")),
             status: "success",
         })
         .await?;

@@ -15,7 +15,7 @@ pub struct Payment {
     pub provider_transaction_id: String,
     pub subscription_id: Option<String>,
     pub product_id: Option<String>,
-    pub amount_cents: i32,
+    pub amount_cents: i64,
     pub currency: String,
     pub status: String,
 }
@@ -27,7 +27,7 @@ pub struct PaymentHistoryEntry {
     pub subscription_id: Option<String>,
     pub provider: String,
     pub provider_transaction_id: String,
-    pub amount_cents: i32,
+    pub amount_cents: i64,
     pub currency: String,
     pub status: String,
     pub created_at: DateTime<Utc>,
@@ -70,7 +70,7 @@ pub async fn record_payment_tx(
     provider_transaction_id: &str,
     subscription_id: Option<&str>,
     product_id: Option<&str>,
-    amount_cents: i32,
+    amount_cents: i64,
     currency: Option<&str>,
     status: &str,
 ) -> Result<(), crate::error::BridgeError> {
@@ -102,13 +102,41 @@ pub async fn record_payment_with_purchase_token_tx(
     ack_required: bool,
     subscription_id: Option<&str>,
     product_id: Option<&str>,
-    amount_cents: i32,
+    amount_cents: i64,
     currency: Option<&str>,
     status: &str,
 ) -> Result<(), crate::error::BridgeError> {
+    let currency = currency.map(str::trim).filter(|value| {
+        !value.is_empty() && !value.eq_ignore_ascii_case("N/A") && !value.eq_ignore_ascii_case("UNKNOWN")
+    });
+
+    if currency.is_none() && !ack_required {
+        tracing::info!(
+            app_id = %app_id,
+            provider,
+            status,
+            provider_transaction_id,
+            "Skipping payment record without explicit currency"
+        );
+        return Ok(());
+    };
+
+    let amount_cents = (amount_cents >= 0).then_some(amount_cents);
+
+    if amount_cents.is_none() && !ack_required {
+        tracing::info!(
+            app_id = %app_id,
+            provider,
+            status,
+            provider_transaction_id,
+            "Skipping payment record without explicit amount"
+        );
+        return Ok(());
+    }
+
     let result = sqlx::query(
         "INSERT INTO pay.payments (app_id, external_user_id, provider, provider_transaction_id, provider_purchase_token, ack_required, subscription_id, product_id, amount_cents, currency, status, webhook_received_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE(NULLIF($10, ''), 'N/A'), $11, NOW())
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
          ON CONFLICT (app_id, provider, provider_transaction_id)
          DO UPDATE SET
            status = CASE
@@ -124,8 +152,8 @@ pub async fn record_payment_with_purchase_token_tx(
            ack_required = payments.ack_required OR EXCLUDED.ack_required,
            subscription_id = COALESCE(EXCLUDED.subscription_id, payments.subscription_id),
            product_id = COALESCE(EXCLUDED.product_id, payments.product_id),
-           amount_cents = CASE WHEN EXCLUDED.amount_cents > 0 THEN EXCLUDED.amount_cents ELSE payments.amount_cents END,
-           currency = COALESCE(NULLIF($10, ''), payments.currency),
+           amount_cents = COALESCE(EXCLUDED.amount_cents, payments.amount_cents),
+           currency = COALESCE(EXCLUDED.currency, payments.currency),
            webhook_received_at = NOW()
          WHERE payments.external_user_id = EXCLUDED.external_user_id"
     )
@@ -232,6 +260,7 @@ pub async fn get_payment_currency_for_subscription(
            AND external_user_id = $3
            AND subscription_id = $4
            AND currency != 'N/A'
+           AND currency != 'UNKNOWN'
          ORDER BY created_at DESC
          LIMIT 1"
     )

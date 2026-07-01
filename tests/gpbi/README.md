@@ -36,6 +36,7 @@ tests/gpbi/
 | :--- | :--- | :--- |
 | **SUB-01** | Initial Purchase | Verifies `/api/v1/verify-purchase` and record creation. |
 | **OTP-01** | One-Time Purchase | Verifies purchase verification, payment record creation, and provider acknowledgment. |
+| **OTP-06** | Missing Price ACK Row | Verifies Google OTP purchases without explicit price/currency still create the ACK identity row in `pay.payments`. |
 | **SUB-02** | Renewal | Verifies extension of `current_period_end` on renewal webhook. |
 | **SUB-03** | Cancellation | Verifies status transition to `cancelled` on cancellation webhook. |
 | **SUB-05** | Expiration | Verifies status transition to `expired` on expiration webhook. |

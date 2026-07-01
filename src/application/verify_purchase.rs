@@ -341,7 +341,7 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
                 .and_then(|subscription| subscription.provider_customer_id.as_deref()),
             google_obfuscated_account_id: verified.obfuscated_account_id.as_deref(),
             google_linked_purchase_token: verified.linked_purchase_token.as_deref(),
-            amount_cents: verified.amount_cents.unwrap_or(0),
+            amount_cents: verified.amount_cents.unwrap_or(-1),
             currency: commit_currency,
             event_time_ms: Utc::now().timestamp_millis(),
             is_subscription: product_type.is_subscription(),
@@ -468,7 +468,7 @@ pub async fn verify_purchase<R: VerifyPurchaseHandlerRepository + ?Sized>(
         .add_metadata("provider", json!(payload.provider.as_str()))
         .add_metadata("current_period_end", json!(response.current_period_end.as_deref()))
         .add_metadata("auto_renewing", json!(response.auto_renewing))
-        .add_metadata("amount_cents", json!(verified.amount_cents.unwrap_or(0)))
+        .add_metadata("amount_cents", json!(verified.amount_cents))
         .add_metadata("payment_status", json!(payment_status.as_str()))
         .emit();
 

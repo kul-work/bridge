@@ -98,7 +98,7 @@ pub async fn get_payments(
             subscription_id: row.subscription_id.clone(),
             provider: row.provider.clone(),
             provider_transaction_id: row.provider_transaction_id.clone(),
-            amount_cents: row.amount_cents as i64,
+            amount_cents: row.amount_cents,
             currency: row.currency.clone(),
             status: row.status.clone(),
             created_at: row.created_at.to_rfc3339(),

@@ -21,7 +21,7 @@ pub struct VerifyPurchaseResponse {
     pub subscription_id: String,
     pub current_period_end: Option<String>,
     pub auto_renewing: Option<bool>,
-    pub amount_cents: Option<i32>,
+    pub amount_cents: Option<i64>,
     pub is_new: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -84,7 +84,7 @@ pub(crate) struct VerifiedPurchase {
     pub(crate) provider_transaction_id: Option<String>,
     pub(crate) current_period_end: Option<DateTime<Utc>>,
     pub(crate) auto_renewing: Option<bool>,
-    pub(crate) amount_cents: Option<i32>,
+    pub(crate) amount_cents: Option<i64>,
     pub(crate) currency: Option<String>,
     pub(crate) payment_state: Option<i32>,
     pub(crate) acknowledgement: PaymentAcknowledgement,
@@ -105,7 +105,7 @@ pub(crate) struct VerifyPurchaseCallback<'a> {
     pub(crate) status: &'a str,
     pub(crate) current_period_end: Option<&'a str>,
     pub(crate) auto_renewing: Option<bool>,
-    pub(crate) amount_cents: Option<i32>,
+    pub(crate) amount_cents: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,7 +131,7 @@ pub(crate) struct VerifyPurchaseCommitRequest<'a> {
     pub provider_customer_id: Option<&'a str>,
     pub google_obfuscated_account_id: Option<&'a str>,
     pub google_linked_purchase_token: Option<&'a str>,
-    pub amount_cents: i32,
+    pub amount_cents: i64,
     pub currency: Option<&'a str>,
     pub event_time_ms: i64,
     pub is_subscription: bool,

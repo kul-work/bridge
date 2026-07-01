@@ -441,8 +441,14 @@ Per-app provider config in `provider_configs`:
 ### Scaling
 
 - **Stateless API**: Autoscaling via load balancer (no session state)
-- **Database**: Single PostgreSQL instance (can scale with read replicas for webhooks)
 - **Background jobs**: Can run on separate instance or same instance with feature flag
+
+### Database Roles & Row-Level Security
+
+Bridge database schema enforces strict tenant isolation using Row-Level Security (RLS) on all transaction tables.
+
+- **`bridge_app`**: The application connection role. RLS is enabled and forced for this role. It is scoped to specific apps using the `pay.current_app_id()` local session parameter configured at transaction start.
+- **`bridge_admin`**: The administration connection role used by the Admin Dashboard and admin endpoints. Since RLS is enabled and forced (`FORCE ROW LEVEL SECURITY`) on all transaction tables, and no specific isolation policies are defined for `bridge_admin`, the database cluster MUST configure `bridge_admin` with `BYPASSRLS` permissions (or run as a superuser). Without `BYPASSRLS`, the admin dashboard and its endpoints will fail to retrieve any data due to RLS filtration.
 
 ### Health Checks
 - `GET /health` — no auth, returns `{ "status": "healthy", "version": "..." }`

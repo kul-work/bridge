@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ##############################################################################
-# Run All OTP Tests (OTP-01 to OTP-05, RTDN-01 to 04)
+# Run All OTP Tests (OTP-01 to OTP-06, RTDN-01 to 04)
 # 
 # Executes complete OTP test suite with proper setup and cleanup.
 #
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo -e "${BLUE}================================================${NC}"
-echo -e "${BLUE}OTP Test Suite Runner (OTP-01 to 05, RTDN-01 to 04)${NC}"
+echo -e "${BLUE}OTP Test Suite Runner (OTP-01 to 06, RTDN-01 to 04)${NC}"
 echo -e "${BLUE}================================================${NC}"
 echo ""
 echo "Configuration:"
@@ -163,7 +163,7 @@ run_otp04_with_polling() {
 }
 
 # Check if scripts are executable
-for script in test-otp-{01..05}.sh test-otp-rtdn-{01..04}.sh; do
+for script in test-otp-{01..05}.sh test-otp-06-missing-price-ack-row.sh test-otp-rtdn-{01..04}.sh; do
     if [[ ! -f "$script" ]]; then
         echo -e "${RED}Error: $script not found${NC}"
         exit 1
@@ -203,6 +203,9 @@ run_test "test-otp-01.sh" "OTP-01: Successful Purchase"
 
 # OTP-05: Refund After Purchase
 run_test "test-otp-05.sh" "OTP-05: Refund After Purchase"
+
+# OTP-06: Missing Price ACK Row
+run_test "test-otp-06-missing-price-ack-row.sh" "OTP-06: Missing Price ACK Row"
 
 echo ""
 
@@ -252,7 +255,7 @@ JSON_RESULTS+="]"
 # Generate summary report
 cat > otp-suite-summary.json <<EOF
 {
-  "test_suite": "OTP-01 to OTP-05 + RTDN-01 to 04",
+  "test_suite": "OTP-01 to OTP-06 + RTDN-01 to 04",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "total_tests": $TESTS_RUN,
   "passed": $PASSED,

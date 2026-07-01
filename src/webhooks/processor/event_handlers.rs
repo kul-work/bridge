@@ -90,7 +90,7 @@ pub(super) struct LifecycleEmailEffect {
 #[derive(Debug, Clone)]
 pub(super) enum LifecycleEmailKind {
     PriceStepUp {
-        new_price_cents: i32,
+        new_price_cents: i64,
         deadline: chrono::DateTime<chrono::Utc>,
     },
     Deferred {
@@ -466,8 +466,8 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         && ctx.fields.purchase_token.as_deref().or(ctx.webhook.purchase_token.as_deref()).is_some(),
                     subscription_id: ctx.fields.subscription_id.as_deref(),
                     product_id: ctx.fields.product_id.as_deref(),
-                    amount_cents: ctx.fields.amount_cents.unwrap_or(0),
-                    currency: ctx.fields.currency.as_deref(),
+                    amount_cents: ctx.fields.amount_cents.unwrap_or(-1),
+                    currency: ctx.fields.currency.as_deref().or(Some("UNKNOWN")),
                     status: "success",
                 }
             });
@@ -485,7 +485,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     payment_state: None,
                     provider_customer_id: ctx.fields.provider_customer_id.as_deref(),
                     event_time_ms: ctx.timestamp_epoch_ms,
-                    recurring_amount_cents: ctx.fields.amount_cents.map(i64::from),
+                    recurring_amount_cents: ctx.fields.amount_cents,
                     payment,
                     adopt_stale_payment,
                     stale_payment_window_secs,
@@ -564,7 +564,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     payment_state: None,
                     provider_customer_id: ctx.fields.provider_customer_id.as_deref(),
                     event_time_ms: ctx.timestamp_epoch_ms,
-                    recurring_amount_cents: ctx.fields.amount_cents.map(i64::from),
+                    recurring_amount_cents: ctx.fields.amount_cents,
                     payment: None,
                     adopt_stale_payment: false,
                     stale_payment_window_secs: 86400,
@@ -639,29 +639,44 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
 
         "subscription.on_hold" => {
             if let Some(user_id) = ctx.external_user_id.as_deref() {
-                let sub_id = ctx.fields.subscription_id.as_deref()
-                    .or(ctx.webhook.subscription_id.as_deref())
-                    .unwrap_or("");
-                let updated = repo.apply_subscription_transition(
-                    ctx.app_id,
-                    user_id,
-                    ctx.provider,
-                    sub_id,
-                    ctx.timestamp_epoch_ms,
-                    SubscriptionWebhookTransition::OnHold,
-                ).await?;
+                if ctx.provider == "google_play" {
+                    let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_on_hold(
+                        repo,
+                        ctx.app_id,
+                        user_id,
+                        ctx.webhook,
+                        ctx.fields,
+                        ctx.timestamp_epoch_ms,
+                    ).await? else {
+                        return Ok(EventHandling::ReturnNone);
+                    };
 
-                if let Some(sub) = updated {
-                    return Ok(EventHandling::handled(EventEffects {
-                        callback_event_type: Some("subscription.on_hold".to_string()),
-                        callback_status_override: Some("on_hold".to_string()),
-                        canonical_subscription: Some(sub.into()),
-                        ..Default::default()
-                    }));
+                    return Ok(EventHandling::handled(effects_from_google_lifecycle_outcome(outcome)));
+                } else {
+                    let sub_id = ctx.fields.subscription_id.as_deref()
+                        .or(ctx.webhook.subscription_id.as_deref())
+                        .unwrap_or("");
+                    let updated = repo.apply_subscription_transition(
+                        ctx.app_id,
+                        user_id,
+                        ctx.provider,
+                        sub_id,
+                        ctx.timestamp_epoch_ms,
+                        SubscriptionWebhookTransition::OnHold,
+                    ).await?;
+
+                    if let Some(sub) = updated {
+                        return Ok(EventHandling::handled(EventEffects {
+                            callback_event_type: Some("subscription.on_hold".to_string()),
+                            callback_status_override: Some("on_hold".to_string()),
+                            canonical_subscription: Some(sub.into()),
+                            ..Default::default()
+                        }));
+                    }
+
+                    info!("Skipped stale on_hold event for subscription {}", sub_id);
+                    return Ok(EventHandling::ReturnNone);
                 }
-
-                info!("Skipped stale on_hold event for subscription {}", sub_id);
-                return Ok(EventHandling::ReturnNone);
             }
 
             Ok(EventHandling::handled(EventEffects::default()))
@@ -669,40 +684,62 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
 
         "subscription.paused" => {
             if let Some(user_id) = ctx.external_user_id.as_deref() {
-                let sub_id = ctx.fields.subscription_id.clone().unwrap_or_default();
-                if let Ok(Some(sub)) = repo.get_subscription_by_sub_id_and_user_for_provider(ctx.app_id, ctx.provider, &sub_id, user_id).await {
-                    if sub.status == "active" || sub.status == "trial" {
-                        let updated = repo.apply_subscription_transition(
-                            ctx.app_id,
-                            user_id,
-                            ctx.provider,
-                            &sub_id,
-                            ctx.timestamp_epoch_ms,
-                            SubscriptionWebhookTransition::Paused,
-                        ).await?;
+                if ctx.provider == "google_play" {
+                    let Some(outcome) = crate::services::google_play::subscription_lifecycle::handle_subscription_paused(
+                        repo,
+                        ctx.app_id,
+                        user_id,
+                        ctx.webhook,
+                        ctx.fields,
+                        ctx.timestamp_epoch_ms,
+                    ).await? else {
+                        return Ok(EventHandling::ReturnNone);
+                    };
 
-                        if let Some(updated_sub) = updated {
-                            let post_commit = lifecycle_email_effect(ctx, &sub_id, LifecycleEmailKind::Paused)
-                                .into_iter()
-                                .collect();
-                            return Ok(EventHandling::handled(EventEffects {
-                                callback_event_type: Some("subscription.paused".to_string()),
-                                callback_status_override: Some("paused".to_string()),
-                                canonical_subscription: Some(updated_sub.into()),
-                                post_commit,
-                                ..Default::default()
-                            }));
+                    let sub_id = ctx.fields.subscription_id.as_deref()
+                        .or(ctx.webhook.subscription_id.as_deref())
+                        .unwrap_or("");
+                    let mut effects = effects_from_google_lifecycle_outcome(outcome);
+                    effects.post_commit = lifecycle_email_effect(ctx, sub_id, LifecycleEmailKind::Paused)
+                        .into_iter()
+                        .collect();
+                    return Ok(EventHandling::handled(effects));
+                } else {
+                    let sub_id = ctx.fields.subscription_id.clone().unwrap_or_default();
+                    if let Ok(Some(sub)) = repo.get_subscription_by_sub_id_and_user_for_provider(ctx.app_id, ctx.provider, &sub_id, user_id).await {
+                        if sub.status == "active" || sub.status == "trial" {
+                            let updated = repo.apply_subscription_transition(
+                                ctx.app_id,
+                                user_id,
+                                ctx.provider,
+                                &sub_id,
+                                ctx.timestamp_epoch_ms,
+                                SubscriptionWebhookTransition::Paused,
+                            ).await?;
+
+                            if let Some(updated_sub) = updated {
+                                let post_commit = lifecycle_email_effect(ctx, &sub_id, LifecycleEmailKind::Paused)
+                                    .into_iter()
+                                    .collect();
+                                return Ok(EventHandling::handled(EventEffects {
+                                    callback_event_type: Some("subscription.paused".to_string()),
+                                    callback_status_override: Some("paused".to_string()),
+                                    canonical_subscription: Some(updated_sub.into()),
+                                    post_commit,
+                                    ..Default::default()
+                                }));
+                            }
+
+                            info!("Skipped stale paused event for subscription {}", sub_id);
+                            return Ok(EventHandling::ReturnNone);
                         }
 
-                        info!("Skipped stale paused event for subscription {}", sub_id);
-                        return Ok(EventHandling::ReturnNone);
+                        info!(
+                            "Ignoring pause event for subscription {} in status '{}' (not active/trial)",
+                            sub_id,
+                            sub.status
+                        );
                     }
-
-                    info!(
-                        "Ignoring pause event for subscription {} in status '{}' (not active/trial)",
-                        sub_id,
-                        sub.status
-                    );
                 }
             }
 
@@ -769,7 +806,35 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
 
         "subscription.expired" => {
             if let Some(user_id) = ctx.external_user_id.as_deref() {
-                if let Some(purchase_token) = ctx.fields.purchase_token.as_deref() {
+                if ctx.provider == "google_play" {
+                    if let Some(purchase_token) = ctx.fields.purchase_token.as_deref() {
+                        if let Some(sub) = repo.get_subscription_by_purchase_token_for_provider(ctx.app_id, ctx.provider, purchase_token).await? {
+                            let updated = repo.apply_subscription_transition(
+                                ctx.app_id,
+                                user_id,
+                                ctx.provider,
+                                &sub.subscription_id,
+                                ctx.timestamp_epoch_ms,
+                                SubscriptionWebhookTransition::Expired,
+                            ).await?;
+
+                            if let Some(updated_sub) = updated {
+                                return Ok(EventHandling::handled(EventEffects {
+                                    callback_event_type: Some("subscription.expired".to_string()),
+                                    callback_status_override: Some("expired".to_string()),
+                                    canonical_subscription: Some(updated_sub.into()),
+                                    ..Default::default()
+                                }));
+                            }
+                        } else {
+                            info!("Google Play expired event skipped: purchase_token not found in database");
+                            return Ok(EventHandling::ReturnNone);
+                        }
+                    } else {
+                        info!("Google Play expired event skipped: missing purchase_token");
+                        return Ok(EventHandling::ReturnNone);
+                    }
+                } else if let Some(purchase_token) = ctx.fields.purchase_token.as_deref() {
                     if let Some(sub) = repo.get_subscription_by_purchase_token_for_provider(ctx.app_id, ctx.provider, purchase_token).await? {
                         let updated = repo.apply_subscription_transition(
                             ctx.app_id,
@@ -905,7 +970,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         payment_state: None,
                         provider_customer_id: ctx.fields.provider_customer_id.as_deref(),
                         event_time_ms: ctx.timestamp_epoch_ms,
-                        recurring_amount_cents: ctx.fields.amount_cents.map(i64::from),
+                        recurring_amount_cents: ctx.fields.amount_cents,
                         payment: None,
                         adopt_stale_payment: false,
                         stale_payment_window_secs: 86400,
@@ -1067,8 +1132,8 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                         ack_required: false,
                         subscription_id: sub_id,
                         product_id: ctx.fields.product_id.as_deref(),
-                        amount_cents: ctx.fields.amount_cents.unwrap_or(0),
-                        currency,
+                        amount_cents: ctx.fields.amount_cents.unwrap_or(-1),
+                        currency: currency.or(Some("UNKNOWN")),
                         status: "price_changed",
                     })
                     .await;
@@ -1150,8 +1215,8 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     ack_required: false,
                     subscription_id: ctx.fields.subscription_id.as_deref(),
                     product_id: ctx.fields.product_id.as_deref(),
-                    amount_cents: ctx.fields.amount_cents.unwrap_or(0),
-                    currency: ctx.fields.currency.as_deref(),
+                    amount_cents: ctx.fields.amount_cents.unwrap_or(-1),
+                    currency: ctx.fields.currency.as_deref().or(Some("UNKNOWN")),
                     status: "pending",
                 })
                 .await?;
@@ -1182,8 +1247,8 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     ack_required: false,
                     subscription_id: if sub_id.is_empty() { None } else { Some(sub_id) },
                     product_id: ctx.fields.product_id.as_deref(),
-                    amount_cents: ctx.fields.amount_cents.unwrap_or(0),
-                    currency: ctx.fields.currency.as_deref(),
+                    amount_cents: ctx.fields.amount_cents.unwrap_or(-1),
+                    currency: ctx.fields.currency.as_deref().or(Some("UNKNOWN")),
                     status: "failed",
                 })
                 .await?;
@@ -1354,33 +1419,35 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     }
                 }
 
-                let subscription_ids = [
-                    matched_payment_subscription_id.as_deref(),
-                    ctx.fields.subscription_id.as_deref(),
-                    ctx.webhook.subscription_id.as_deref(),
-                ];
-                for sub_id in subscription_ids.into_iter().flatten() {
-                    let updated = repo.apply_subscription_transition(
-                        ctx.app_id,
-                        _user_id,
-                        ctx.provider,
-                        sub_id,
-                        ctx.timestamp_epoch_ms,
-                        SubscriptionWebhookTransition::Revoked {
-                            revocation_reason: Some("REFUND".to_string()),
-                        },
-                    ).await?;
-                    if let Some(_updated_sub) = updated {
-                        let post_commit = lifecycle_email_effect(ctx, sub_id, LifecycleEmailKind::Refunded)
-                            .into_iter()
-                            .collect();
-                        return Ok(EventHandling::handled(EventEffects {
-                            callback_event_type: Some("payment.refunded".to_string()),
-                            callback_status_override: Some("refunded".to_string()),
-                            canonical_subscription: Some(_updated_sub.into()),
-                            post_commit,
-                            ..Default::default()
-                        }));
+                if ctx.provider != "google_play" {
+                    let subscription_ids = [
+                        matched_payment_subscription_id.as_deref(),
+                        ctx.fields.subscription_id.as_deref(),
+                        ctx.webhook.subscription_id.as_deref(),
+                    ];
+                    for sub_id in subscription_ids.into_iter().flatten() {
+                        let updated = repo.apply_subscription_transition(
+                            ctx.app_id,
+                            _user_id,
+                            ctx.provider,
+                            sub_id,
+                            ctx.timestamp_epoch_ms,
+                            SubscriptionWebhookTransition::Revoked {
+                                revocation_reason: Some("REFUND".to_string()),
+                            },
+                        ).await?;
+                        if let Some(_updated_sub) = updated {
+                            let post_commit = lifecycle_email_effect(ctx, sub_id, LifecycleEmailKind::Refunded)
+                                .into_iter()
+                                .collect();
+                            return Ok(EventHandling::handled(EventEffects {
+                                callback_event_type: Some("payment.refunded".to_string()),
+                                callback_status_override: Some("refunded".to_string()),
+                                canonical_subscription: Some(_updated_sub.into()),
+                                post_commit,
+                                ..Default::default()
+                            }));
+                        }
                     }
                 }
             }
@@ -1430,8 +1497,8 @@ pub(super) async fn handle_payment_event<R: WebhookProcessingRepository + ?Sized
                     ack_required: false,
                     subscription_id: ctx.fields.subscription_id.as_deref(),
                     product_id: ctx.fields.product_id.as_deref(),
-                    amount_cents: ctx.fields.amount_cents.unwrap_or(0),
-                    currency: ctx.fields.currency.as_deref(),
+                    amount_cents: ctx.fields.amount_cents.unwrap_or(-1),
+                    currency: ctx.fields.currency.as_deref().or(Some("UNKNOWN")),
                     status: "dispute_created",
                 })
                 .await?;

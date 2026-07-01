@@ -36,6 +36,7 @@ pub async fn process_webhook_atomically(
     app_id: Uuid,
     webhook_provider_id: Uuid,
     delivery_id: Uuid,
+    claim_token: Uuid,
 ) -> Result<Option<CanonicalWebhookPayload>, BridgeError> {
     let mut tx = database
         .pool()
@@ -44,9 +45,30 @@ pub async fn process_webhook_atomically(
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
     set_local_app_id(&mut tx, app_id).await?;
 
+    // Lock the webhook delivery row and validate the active lease claim
+    let claim_row = sqlx::query(
+        "SELECT id FROM pay.webhook_delivery
+         WHERE id = $1
+           AND claim_token = $2
+           AND forwarded = false
+           AND dead_lettered = false
+           AND claimed_until > clock_timestamp()
+         FOR UPDATE"
+    )
+    .bind(delivery_id)
+    .bind(claim_token)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    if claim_row.is_none() {
+        return Err(BridgeError::Conflict("webhook delivery claim token mismatch, already forwarded/dead-lettered, or lease expired".to_string()));
+    }
+
     let repo = AtomicWebhookProcessingRepository {
         database,
         tx: Arc::new(Mutex::new(Some(tx))),
+        claim_token,
     };
 
     let result = process_webhook(&repo, webhook_provider_id, app_id).await?;
@@ -61,6 +83,34 @@ pub async fn process_webhook_atomically(
             canonical_payload,
         )
         .await?;
+    }
+
+    // Verify that we still hold an active delivery claim before committing.
+    {
+        let mut guard = repo.tx.lock().await;
+        let tx = guard
+            .as_mut()
+            .ok_or_else(|| BridgeError::InternalServerError("webhook transaction closed".to_string()))?;
+        let still_claimed = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1
+                FROM pay.webhook_delivery
+                WHERE id = $1
+                  AND claim_token = $2
+                  AND forwarded = false
+                  AND dead_lettered = false
+                  AND claimed_until > clock_timestamp()
+            )"
+        )
+        .bind(delivery_id)
+        .bind(claim_token)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+        if !still_claimed {
+            return Err(BridgeError::Conflict("webhook delivery claim token mismatch or lease expired".to_string()));
+        }
     }
 
     let tx = repo
@@ -84,6 +134,7 @@ pub async fn process_webhook_atomically(
 struct AtomicWebhookProcessingRepository<'a> {
     database: &'a Database,
     tx: Arc<Mutex<Option<ProcessingTx<'a>>>>,
+    claim_token: Uuid,
 }
 
 impl<'a> AtomicWebhookProcessingRepository<'a> {
@@ -526,19 +577,21 @@ impl<'a> WebhookWriteRepository for AtomicWebhookProcessingRepository<'a> {
                  updated_at = NOW()
              WHERE id = $2
                AND app_id = $3
-               AND webhook_provider_id = $4",
+               AND webhook_provider_id = $4
+               AND claim_token = $5",
         )
         .bind(canonical_payload)
         .bind(delivery_id)
         .bind(app_id)
         .bind(webhook_provider_id)
+        .bind(self.claim_token)
         .execute(&mut **tx)
         .await
         .map_err(|e| BridgeError::DbError(format!("Failed to store webhook delivery payload: {}", e)))?;
 
         if result.rows_affected() != 1 {
-            return Err(BridgeError::ValidationError(
-                "Webhook delivery not found for provider webhook".to_string(),
+            return Err(BridgeError::Conflict(
+                "Webhook delivery claim token mismatch or lease expired".to_string(),
             ));
         }
 

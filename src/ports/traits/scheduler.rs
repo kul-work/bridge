@@ -63,6 +63,7 @@ pub trait SchedulerRepository: Send + Sync {
 
     async fn mark_subscription_paused(
         &self,
+        app_id: Uuid,
         id: Uuid,
         event_time_ms: i64,
     ) -> Result<bool, BridgeError>;

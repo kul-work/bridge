@@ -71,19 +71,21 @@ fn spawn_process_and_forward_delivery(
             return;
         }
 
+        let Some(claim_token) = delivery.claim_token else {
+            error!("New webhook delivery was not claimed before immediate processing");
+            return;
+        };
+
         match crate::webhooks::processor::process_webhook_atomically(
             database.as_ref(),
             app_id,
             webhook_id,
             delivery.id,
+            claim_token,
         )
         .await
         {
             Ok(Some(canonical)) => {
-                let Some(claim_token) = delivery.claim_token else {
-                    error!("New webhook delivery was not claimed before forwarding");
-                    return;
-                };
                 if let Err(e) = crate::webhooks::forwarding::forward_webhook(
                     database.as_ref(),
                     app_id,
@@ -97,10 +99,6 @@ fn spawn_process_and_forward_delivery(
                 }
             }
             Ok(None) => {
-                let Some(claim_token) = delivery.claim_token else {
-                    error!("New no-callback webhook delivery was not claimed before completion");
-                    return;
-                };
                 if let Err(e) = database
                     .complete_webhook_delivery_attempt(
                         delivery.id,
@@ -209,15 +207,13 @@ pub async fn handle_google_play(
         .get_provider_config(app.id, "google_play")
         .await?;
 
-    let verify_signature = provider_config
-        .config
-        .get("verify_webhook_signature")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-
-    // Only allow header override in test/mock mode (MOCK_EXTERNAL_APIS=true)
     let verify_signature = if crate::config::mock_external_apis_enabled() {
-        // Priority 1: Request header override (X-Webhook-Verification-Mode: strict/off) - test mode only
+        let db_verify = provider_config
+            .config
+            .get("verify_webhook_signature")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
         headers
             .get("X-Webhook-Verification-Mode")
             .and_then(|h| h.to_str().ok())
@@ -225,13 +221,24 @@ pub async fn handle_google_play(
             .map(|mode| match mode.as_str() {
                 "strict" => true,
                 "off" => false,
-                _ => verify_signature,
+                _ => db_verify,
             })
-            // Priority 2: DB config value
-            .unwrap_or(verify_signature)
+            .unwrap_or(db_verify)
     } else {
-        // Production: always use DB config, ignore headers
-        verify_signature
+        let db_verify = provider_config
+            .config
+            .get("verify_webhook_signature")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        if !db_verify {
+            tracing::warn!(
+                app_id = %app.id,
+                provider = "google_play",
+                "DB config attempted to disable webhook signature verification in non-mock mode; ignoring and forcing verification"
+            );
+        }
+        true
     };
 
     if verify_signature {
@@ -439,15 +446,13 @@ pub async fn handle_creem(
         .get_provider_config(app.id, "creem")
         .await?;
 
-    let verify_signature = provider_config
-        .config
-        .get("verify_webhook_signature")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-
-    // Only allow header override in test/mock mode (MOCK_EXTERNAL_APIS=true)
     let verify_signature = if crate::config::mock_external_apis_enabled() {
-        // Priority 1: Request header override (X-Webhook-Verification-Mode: strict/off) - test mode only
+        let db_verify = provider_config
+            .config
+            .get("verify_webhook_signature")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
         headers
             .get("X-Webhook-Verification-Mode")
             .and_then(|h| h.to_str().ok())
@@ -455,13 +460,24 @@ pub async fn handle_creem(
             .map(|mode| match mode.as_str() {
                 "strict" => true,
                 "off" => false,
-                _ => verify_signature,
+                _ => db_verify,
             })
-            // Priority 2: DB config value
-            .unwrap_or(verify_signature)
+            .unwrap_or(db_verify)
     } else {
-        // Production: always use DB config, ignore headers
-        verify_signature
+        let db_verify = provider_config
+            .config
+            .get("verify_webhook_signature")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        if !db_verify {
+            tracing::warn!(
+                app_id = %app.id,
+                provider = "creem",
+                "DB config attempted to disable webhook signature verification in non-mock mode; ignoring and forcing verification"
+            );
+        }
+        true
     };
 
     use hmac::{Hmac, Mac};

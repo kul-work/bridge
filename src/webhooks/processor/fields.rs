@@ -6,7 +6,7 @@ use crate::webhooks::provider_adapter::ProviderWebhookAdapter;
 pub(crate) struct WebhookFields {
     pub(crate) subscription_id: Option<String>,
     pub(crate) purchase_token: Option<String>,
-    pub(crate) amount_cents: Option<i32>,
+    pub(crate) amount_cents: Option<i64>,
     pub(crate) auto_renewing: Option<bool>,
     pub(crate) current_period_end: Option<String>,
     pub(crate) provider_transaction_id: Option<String>,
@@ -18,7 +18,7 @@ pub(crate) struct WebhookFields {
     pub(crate) google_subscription_state: Option<i32>,
     pub(crate) google_cancellation_context: Option<String>,
     pub(crate) google_cancellation_feedback: Option<String>,
-    pub(crate) google_new_price_cents: Option<i32>,
+    pub(crate) google_new_price_cents: Option<i64>,
     pub(crate) google_price_step_up_consent_deadline: Option<String>,
     pub(crate) google_pending_price_change_new_price_cents: Option<i64>,
     pub(crate) google_pending_price_change_currency: Option<String>,

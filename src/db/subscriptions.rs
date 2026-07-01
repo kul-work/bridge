@@ -37,7 +37,7 @@ pub struct Subscription {
     #[serde(default)]
     pub google_price_step_up_consent_deadline: Option<DateTime<Utc>>,
     #[serde(default)]
-    pub google_new_price_cents: Option<i32>,
+    pub google_new_price_cents: Option<i64>,
     #[serde(default)]
     pub google_pause_scheduled_at: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -361,9 +361,9 @@ pub async fn apply_webhook_transition_tx(
                 "UPDATE pay.subscriptions
                  SET payment_failure_notification = true,
                      version = version + 1,
-                     last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
+                     last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND external_user_id = $3 AND provider = $4 AND subscription_id = $5
+                 WHERE app_id = $2 AND external_user_id = $3 AND provider = $4 AND subscription_id = $5 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
@@ -381,7 +381,7 @@ pub async fn apply_webhook_transition_tx(
                  SET status = 'cancelled',
                      auto_renewing = false,
                      cancellation_initiated_at = COALESCE(cancellation_initiated_at, NOW()),
-                     revocation_reason = 'pending_purchase_canceled',
+                     revocation_reason = 'pending_purchase_cancelled',
                      google_subscription_state = 1,
                      google_pending_price_change_new_price_cents = NULL,
                      google_pending_price_change_currency = NULL,
@@ -640,14 +640,18 @@ pub async fn list_reconciliation_subscriptions(
     pool: &PgPool,
     app_id: Uuid,
 ) -> Result<Vec<Subscription>, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subs = sqlx::query_as::<_, Subscription>(
         "SELECT * FROM pay.subscriptions
          WHERE app_id = $1 AND status IN ('active', 'trial', 'past_due')"
     )
     .bind(app_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    Ok(subs)
 }
 
 pub async fn claim_price_step_up_expired_subscriptions(
@@ -700,19 +704,26 @@ pub async fn claim_price_step_up_expired_subscriptions(
 
 pub async fn list_pending_pause_subscriptions(
     pool: &PgPool,
+    app_id: Uuid,
     limit: i64,
 ) -> Result<Vec<Subscription>, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subs = sqlx::query_as::<_, Subscription>(
         "SELECT * FROM pay.subscriptions
-         WHERE google_pause_scheduled_at IS NOT NULL
+         WHERE app_id = $1
+           AND google_pause_scheduled_at IS NOT NULL
            AND google_pause_scheduled_at <= NOW()
            AND status != 'paused'
-         LIMIT $1"
+         LIMIT $2"
     )
+    .bind(app_id)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    Ok(subs)
 }
 
 pub async fn mark_subscription_price_step_up_expired(
@@ -876,9 +887,11 @@ pub async fn refresh_price_step_up_decline_claim(
 
 pub async fn mark_subscription_paused(
     pool: &PgPool,
+    app_id: Uuid,
     id: Uuid,
     event_time_ms: i64,
 ) -> Result<bool, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let result = sqlx::query(
         "UPDATE pay.subscriptions
          SET status = 'paused',
@@ -887,28 +900,37 @@ pub async fn mark_subscription_paused(
              version = version + 1,
              last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
              updated_at = NOW()
-         WHERE id = $2 AND status != 'paused'"
+         WHERE app_id = $2 AND id = $3 AND status != 'paused'"
     )
     .bind(event_time_ms)
+    .bind(app_id)
     .bind(id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn delete_orphaned_pending_subscriptions(pool: &PgPool) -> Result<u64, BridgeError> {
+pub async fn delete_orphaned_pending_subscriptions(
+    pool: &PgPool,
+    app_id: Uuid,
+) -> Result<u64, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let result = sqlx::query(
         "DELETE FROM pay.subscriptions
-         WHERE status = 'pending'
+         WHERE app_id = $1
+           AND status = 'pending'
            AND purchase_token IS NULL
            AND created_at < NOW() - INTERVAL '30 minutes'"
     )
-    .execute(pool)
+    .bind(app_id)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
     Ok(result.rows_affected())
 }
 
@@ -942,8 +964,8 @@ pub async fn upsert_subscription_tx(
 
         if let Some(existing_sub) = existing {
             // Update existing subscription found by purchase_token
-            // Only apply if the new event is newer or equal (stale event suppression)
-            if existing_sub.last_event_time <= event_time_ms {
+            // Only apply if the new event is newer (stale event suppression)
+            if existing_sub.last_event_time < event_time_ms {
                 let updated = sqlx::query_as::<_, Subscription>(
                     "UPDATE pay.subscriptions
                      SET status = $1, current_period_end = COALESCE($2, current_period_end),
@@ -1069,7 +1091,7 @@ pub async fn upsert_pending_subscription(
          ON CONFLICT (app_id, external_user_id, subscription_id, provider)
          DO UPDATE SET
            updated_at = NOW()
-         WHERE subscriptions.last_event_time <= EXCLUDED.last_event_time
+         WHERE subscriptions.last_event_time < EXCLUDED.last_event_time
          RETURNING *"
     )
     .bind(app_id)
@@ -1168,7 +1190,7 @@ pub async fn cancel_subscription_immediate(
              revocation_reason = 'immediate_cancel',
              revoked_at = NOW(),
              updated_at = NOW()
-         WHERE app_id = $1 AND id = $2
+         WHERE app_id = $1 AND id = $2 AND status NOT IN ('revoked', 'expired')
          RETURNING *",
     )
     .bind(app_id)
@@ -1191,7 +1213,7 @@ pub async fn resume_subscription(
     let subscription = sqlx::query_as::<_, Subscription>(
         "UPDATE pay.subscriptions
          SET status = 'active', auto_renewing = true, cancellation_initiated_at = NULL, updated_at = NOW()
-         WHERE app_id = $1 AND id = $2
+         WHERE app_id = $1 AND id = $2 AND status IN ('paused', 'cancelled')
          RETURNING *",
     )
     .bind(app_id)

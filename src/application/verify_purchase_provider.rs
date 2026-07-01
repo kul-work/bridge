@@ -238,7 +238,7 @@ async fn build_google_play_client(config: &serde_json::Value) -> Result<GooglePl
 
 
 
-fn google_money_to_cents(money: &Money) -> Option<i32> {
+fn google_money_to_cents(money: &Money) -> Option<i64> {
     let units = money.units.as_deref()?.parse::<i64>().ok()?;
     if units < 0 {
         return None;
@@ -246,7 +246,7 @@ fn google_money_to_cents(money: &Money) -> Option<i32> {
 
     let nanos = i64::from(money.nanos.unwrap_or(0)).clamp(0, 999_999_999);
     let total_cents = units.checked_mul(100)?.checked_add(nanos / 10_000_000)?;
-    i32::try_from(total_cents).ok()
+    Some(total_cents)
 }
 
 fn map_google_subscription_verification(
@@ -346,7 +346,7 @@ fn map_google_subscription_verification(
     }))
 }
 
-fn google_subscription_current_amount_cents(purchase: &SubscriptionPurchaseV2) -> Option<i32> {
+fn google_subscription_current_amount_cents(purchase: &SubscriptionPurchaseV2) -> Option<i64> {
     let line_item = purchase.line_items.first()?;
 
     if line_item
@@ -367,7 +367,7 @@ fn google_subscription_current_amount_cents(purchase: &SubscriptionPurchaseV2) -
 
 fn map_google_product_verification(
     purchase: ProductPurchase,
-    amount_cents: Option<i32>,
+    amount_cents: Option<i64>,
 ) -> VerifiedPurchase {
     let status = match purchase.purchase_state {
         0 => "active",

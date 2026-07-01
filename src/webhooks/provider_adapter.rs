@@ -397,7 +397,7 @@ impl ProviderWebhookAdapter {
                     .or_else(|| p.pointer("/voidedPurchaseNotification/purchaseToken")
                         .and_then(|v| v.as_str()).map(|s| s.to_string())),
                 amount_cents: p.pointer("/oneTimeProductNotification/priceMicros")
-                    .and_then(|v| v.as_i64()).map(|m| (m / 10_000) as i32),
+                    .and_then(|v| v.as_i64()).map(|m| m / 10_000),
                 auto_renewing: p.pointer("/subscriptionNotification/autoRenewing")
                     .and_then(|v| v.as_bool()),
                 current_period_end: p.pointer("/subscriptionNotification/expiryTimeMillis")
@@ -423,7 +423,7 @@ impl ProviderWebhookAdapter {
                 google_cancellation_context: None,
                 google_cancellation_feedback: None,
                 google_new_price_cents: p.pointer("/subscriptionNotification/priceStepUpConsentDetails/priceMicros")
-                    .and_then(|v| v.as_i64()).map(|m| (m / 10_000) as i32),
+                    .and_then(|v| v.as_i64()).map(|m| m / 10_000),
                 google_price_step_up_consent_deadline: p.pointer("/subscriptionNotification/priceStepUpConsentDetails/consentDeadlineTimeMillis")
                     .and_then(|v| v.as_i64())
                     .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
@@ -519,8 +519,7 @@ impl ProviderWebhookAdapter {
                     .or_else(|| obj.get("product")
                         .and_then(|v| v.get("price"))
                         .and_then(|v| v.as_i64()))
-                    .or_else(|| obj.get("amount").and_then(|v| v.as_i64()))
-                    .map(|a| a as i32);
+                    .or_else(|| obj.get("amount").and_then(|v| v.as_i64()));
                 let currency = obj.get("product")
                     .and_then(|v| v.get("currency"))
                     .and_then(|v| v.as_str())

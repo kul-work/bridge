@@ -145,6 +145,7 @@ pub async fn retry_webhooks(
                     app_id,
                     delivery.webhook_provider_id,
                     delivery.id,
+                    claim_token,
                 )
                 .await
                 {
@@ -261,12 +262,13 @@ async fn recover_webhook_provider_inbox(
                     continue;
                 };
 
-                match crate::webhooks::processor::process_webhook_atomically(
-                    repo,
-                    app_id,
-                    webhook.id,
-                    delivery.id,
-                ).await {
+                 match crate::webhooks::processor::process_webhook_atomically(
+                     repo,
+                     app_id,
+                     webhook.id,
+                     delivery.id,
+                     claim_token,
+                 ).await {
                     Ok(Some(canonical)) => {
                         let _ = crate::webhooks::forwarding::forward_webhook(
                             repo,
@@ -902,7 +904,7 @@ pub async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), c
         );
 
         let now_ms = chrono::Utc::now().timestamp_millis();
-        if !SchedulerRepository::mark_subscription_paused(database.as_ref(), id, now_ms).await? {
+        if !SchedulerRepository::mark_subscription_paused(database.as_ref(), app_id, id, now_ms).await? {
             info!(
                 job = "pause_scheduler",
                 app_id = %app_id,

@@ -24,7 +24,7 @@ pub struct SubscriptionStatusSnapshot {
     pub revoked_at: Option<String>,
     pub revocation_reason: Option<String>,
     pub google_requires_price_step_up_consent: Option<bool>,
-    pub google_new_price_cents: Option<i32>,
+    pub google_new_price_cents: Option<i64>,
     pub google_price_step_up_consent_deadline: Option<String>,
     pub google_pending_price_change_new_price_cents: Option<i64>,
     pub google_pending_price_change_currency: Option<String>,

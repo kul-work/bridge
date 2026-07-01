@@ -50,7 +50,7 @@ pub struct PriceStepUpRequest {
 #[derive(Debug, Serialize)]
 pub struct PriceStepUpAcceptResponse {
     pub accepted: bool,
-    pub new_price_cents: i32,
+    pub new_price_cents: i64,
 }
 
 #[derive(Debug, Serialize)]
