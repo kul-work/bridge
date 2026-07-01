@@ -647,7 +647,10 @@ pub async fn get_user_payments(
 ) -> Result<Vec<Payment>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let payments = sqlx::query_as::<_, Payment>(
-        "SELECT * FROM pay.payments 
+        "SELECT id, app_id, external_user_id, provider, provider_transaction_id, subscription_id, product_id,
+                COALESCE(amount_cents, -1) AS amount_cents, COALESCE(currency, 'UNKNOWN') AS currency,
+                status
+         FROM pay.payments 
          WHERE app_id = $1 AND external_user_id = $2 
          ORDER BY webhook_received_at DESC 
          LIMIT $3 OFFSET $4"
@@ -703,7 +706,7 @@ pub async fn list_user_payments_keyset(
             r#"
             SELECT
                 id, external_user_id, subscription_id, provider, provider_transaction_id,
-                amount_cents, currency, status, created_at
+                COALESCE(amount_cents, -1) AS amount_cents, COALESCE(currency, 'UNKNOWN') AS currency, status, created_at
             FROM pay.payments
             WHERE app_id = $1 AND external_user_id = $2
               AND (created_at, id) < ($3, $4)
@@ -724,7 +727,7 @@ pub async fn list_user_payments_keyset(
             r#"
             SELECT
                 id, external_user_id, subscription_id, provider, provider_transaction_id,
-                amount_cents, currency, status, created_at
+                COALESCE(amount_cents, -1) AS amount_cents, COALESCE(currency, 'UNKNOWN') AS currency, status, created_at
             FROM pay.payments
             WHERE app_id = $1 AND external_user_id = $2
             ORDER BY created_at DESC, id DESC
