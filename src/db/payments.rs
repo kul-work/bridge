@@ -780,3 +780,141 @@ pub async fn adopt_stale_payment(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    async fn test_database() -> Result<Option<crate::db::Database>, Box<dyn Error>> {
+        dotenvy::dotenv().ok();
+        let admin_database_url = std::env::var("ADMIN_DATABASE_URL").ok();
+        let environment = std::env::var("ENVIRONMENT")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let is_production = matches!(environment.as_str(), "production" | "prod");
+        let database_url = match std::env::var("BRIDGE_TEST_DATABASE_URL") {
+            Ok(url) => Some(url),
+            Err(_) if !is_production => admin_database_url
+                .clone()
+                .or_else(|| std::env::var("DATABASE_URL").ok()),
+            Err(_) => None,
+        };
+        let Some(database_url) = database_url else {
+            return Ok(None);
+        };
+
+        Ok(Some(
+            crate::db::Database::new(&database_url, admin_database_url.as_deref()).await?,
+        ))
+    }
+
+    async fn insert_test_app(pool: &sqlx::PgPool) -> Result<Uuid, sqlx::Error> {
+        let app_id = Uuid::new_v4();
+        let slug = format!("ack-placeholder-{}", app_id);
+
+        sqlx::query(
+            "INSERT INTO pay.apps (id, slug, display_name, webhook_callback_url, webhook_callback_secret)
+             VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(app_id)
+        .bind(slug)
+        .bind("ACK Placeholder Regression")
+        .bind("http://127.0.0.1:1/callback")
+        .bind("test_callback_secret")
+        .execute(pool)
+        .await?;
+
+        Ok(app_id)
+    }
+
+    async fn delete_test_app(pool: &sqlx::PgPool, app_id: Uuid) {
+        let _ = sqlx::query("DELETE FROM pay.apps WHERE id = $1")
+            .bind(app_id)
+            .execute(pool)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn ack_placeholder_payment_with_null_amount_currency_reads_successfully()
+    -> Result<(), Box<dyn Error>> {
+        let Some(database) = test_database().await? else {
+            eprintln!("skipping DB-backed ACK placeholder regression; set BRIDGE_TEST_DATABASE_URL");
+            return Ok(());
+        };
+
+        let pool = database.pool();
+        let app_id = insert_test_app(pool).await?;
+        let result =
+            run_ack_placeholder_null_amount_currency_regression(pool, app_id).await;
+
+        delete_test_app(pool, app_id).await;
+        result
+    }
+
+    async fn run_ack_placeholder_null_amount_currency_regression(
+        pool: &sqlx::PgPool,
+        app_id: Uuid,
+    ) -> Result<(), Box<dyn Error>> {
+        let external_user_id = "test_ack_user";
+        let provider = "google_play";
+        let txn_id = "GPA.3333-null-amount-test";
+
+        let mut tx = begin_app_tx(pool, app_id).await?;
+
+        record_payment_with_purchase_token_tx(
+            &mut tx,
+            app_id,
+            external_user_id,
+            provider,
+            txn_id,
+            Some("purchase_token_null_amount"),
+            true,
+            None,
+            Some("product_null_amount"),
+            -1,
+            Some("UNKNOWN"),
+            "success",
+        )
+        .await?;
+
+        tx.commit().await?;
+
+        let payments = get_user_payments(pool, app_id, external_user_id, 10, 0).await?;
+        assert!(payments.len() >= 1, "expected at least one payment row");
+
+        let placeholder = payments
+            .iter()
+            .find(|p| p.provider_transaction_id == txn_id)
+            .ok_or("ACK placeholder payment not found in get_user_payments results")?;
+
+        assert_eq!(
+            placeholder.amount_cents, -1,
+            "COALESCE sentinel for NULL amount_cents should be -1"
+        );
+        assert_eq!(
+            placeholder.currency, "UNKNOWN",
+            "COALESCE sentinel for NULL currency should be 'UNKNOWN'"
+        );
+
+        let history = list_user_payments_keyset(pool, app_id, external_user_id, 10, None, None)
+            .await?;
+        assert!(history.len() >= 1, "expected at least one history entry");
+
+        let history_placeholder = history
+            .iter()
+            .find(|p| p.provider_transaction_id == txn_id)
+            .ok_or("ACK placeholder payment not found in keyset history results")?;
+
+        assert_eq!(
+            history_placeholder.amount_cents, -1,
+            "COALESCE sentinel for NULL amount_cents should be -1 in keyset history"
+        );
+        assert_eq!(
+            history_placeholder.currency, "UNKNOWN",
+            "COALESCE sentinel for NULL currency should be 'UNKNOWN' in keyset history"
+        );
+
+        Ok(())
+    }
+}
