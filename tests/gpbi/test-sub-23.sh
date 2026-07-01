@@ -130,8 +130,12 @@ echo ""
 # Step 5: Verify subscription status in DB
 echo -e "${YELLOW}[3/5] Verifying subscription status in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    STATUS \
+    "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND purchase_token = '$DUMMY_TOKEN';" \
+    "cancelled" \
+    10 \
+    1 || true
 
 if [[ "$STATUS" == "cancelled" ]]; then
     echo -e "${GREEN}✓ Success: Subscription status is $STATUS${NC}"

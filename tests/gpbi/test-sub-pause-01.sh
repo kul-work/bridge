@@ -138,8 +138,12 @@ echo ""
 # Step 5: Verify status remains 'active' and google_pause_scheduled_at is set
 echo -e "${YELLOW}[3/5] Verifying pause state in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, (google_pause_scheduled_at IS NOT NULL) as pause_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    RES_DATA \
+    "SELECT status, (google_pause_scheduled_at IS NOT NULL) as pause_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" \
+    "*active*t*" \
+    10 \
+    1 || true
 
 # Expected: active | t
 if [[ "$RES_DATA" == *"active"*"t"* ]]; then

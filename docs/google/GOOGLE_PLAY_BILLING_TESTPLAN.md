@@ -63,6 +63,12 @@ This document outlines comprehensive test scenarios for validating the Google Pl
 
 Ensure ERR-01, ERR-03, ERR-04 are tested with one-time product tokens in addition to subscription tokens.
 
+#### A.4 ACK Identity Row Without Provider Price Data
+
+| ID | Scenario | Steps | Expected Frontend | Backend Validation | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **OTP-06** | **Missing Price Still Creates ACK Row** | **Webhook/DB Test (Backend-only)**<br><br>1. Backend test calls `/api/v1/verify-purchase` with a mock Google Play INAPP purchase token where the Google API response omits price/currency fields.<br>2. Query `pay.payments` for the resulting row.<br>3. Verify the ACK identity row exists with correct fields. | - (Internal backend test; no frontend visible) | - `POST /api/v1/verify-purchase` returns `200 OK` even though Google returned no explicit price/currency.<br>- `pay.payments` row created with:<br>&nbsp;&nbsp;- `provider_purchase_token` = the purchase token (NOT placed in `provider_transaction_id`)<br>&nbsp;&nbsp;- `product_id` = expected product<br>&nbsp;&nbsp;- `ack_required=true`<br>&nbsp;&nbsp;- `status='success'`<br>&nbsp;&nbsp;- `amount_cents=NULL` (unknown money stored as NULL, NOT fake/zero values)<br>- Product ACK worker has durable identity to process the acknowledgment.<br><br>**DB Validation**: `payments` table has row with `status='success'`, `ack_required=true`, `amount_cents IS NULL`, `provider_purchase_token` NOT NULL. `subscriptions` table: No rows created. | **Migration**: Requires `amount_cents` column to be nullable (migration `12_allow_unknown_payment_amount_for_ack.sql`). **Test via**: `tests/gpbi/test-otp-06-missing-price-ack-row.sh` with `MOCK_EXTERNAL_APIS=true`. Guards against a regression where missing provider price data would skip the payment row, leaving the ACK worker with no identity to process — causing Google to auto-refund the unacknowledged purchase. |
+
 ---
 
 ### B. Subscriptions (Auto-Renewing)
@@ -299,7 +305,7 @@ All test scenarios must pass before production deployment:
 
 ### Core Subscription Lifecycle (Required)
 
-- ✅ All one-time purchase scenarios (OTP-01 through OTP-05, including RTDN-01 through RTDN-04) pass with real cards and test cards
+- ✅ All one-time purchase scenarios (OTP-01 through OTP-06, including RTDN-01 through RTDN-04) pass with real cards and test cards
 - ✅ All subscription lifecycle scenarios (SUB-01 through SUB-07) pass
 - ✅ Account Hold after grace period failure (SUB-08) passes
 - ✅ Subscription Revoked via refund (SUB-09) passes

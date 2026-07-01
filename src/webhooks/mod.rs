@@ -2,6 +2,7 @@ pub mod ingress;
 pub mod processor;
 pub mod forwarding;
 pub mod scheduler;
+mod provider_adapter;
 
 #[cfg(test)]
 mod identity_cross_user_tests;

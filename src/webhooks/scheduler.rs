@@ -1,13 +1,44 @@
 use crate::utils::diagnostic_hash;
+use chrono::Utc;
 use std::time::Duration;
 use crate::db::Database;
 use crate::ports::{
     AppLookupRepository, ProviderConfigLookupRepository, SchedulerRepository,
-    WebhookForwardRepository, WebhookProcessingRepository, WebhookWriteRepository,
+    WebhookForwardRepository, WebhookProviderLookupRepository, WebhookWriteRepository,
 };
 use std::sync::Arc;
 use tracing::{info, error, warn, info_span, Instrument};
 use uuid::Uuid;
+
+const WEBHOOK_PROVIDER_RECOVERY_MIN_AGE_SECS: i64 = 300;
+const WEBHOOK_PROVIDER_RECOVERY_LEASE_SECS: i64 = 600;
+const WEBHOOK_DELIVERY_CLAIM_LEASE_SECS: i64 = crate::webhooks::forwarding::WEBHOOK_DELIVERY_LEASE_SECS;
+const SCHEDULER_CLAIM_LEASE_SECS: i64 = 600;
+const PAYMENT_ACK_CLAIM_LEASE_SECS: i64 = 600;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingDeliveryAction {
+    ProcessProviderFirst,
+    ForwardStoredPayload,
+}
+
+fn pending_delivery_action(provider_processed: bool) -> PendingDeliveryAction {
+    if provider_processed {
+        PendingDeliveryAction::ForwardStoredPayload
+    } else {
+        PendingDeliveryAction::ProcessProviderFirst
+    }
+}
+
+fn stored_canonical_payload(
+    delivery: &crate::db::webhooks::WebhookDelivery,
+) -> Result<Option<crate::webhooks::processor::CanonicalWebhookPayload>, serde_json::Error> {
+    delivery
+        .canonical_payload
+        .clone()
+        .map(serde_json::from_value)
+        .transpose()
+}
 
 pub fn spawn_webhook_retry_worker(database: Arc<Database>) {
     let span = info_span!("background_worker", job = "webhook_retry");
@@ -58,17 +89,22 @@ pub fn spawn_reconciliation_worker(database: Arc<Database>) {
 }
 
 pub async fn retry_webhooks(
-    repo: &(
-        impl SchedulerRepository
-        + WebhookForwardRepository
-        + WebhookProcessingRepository
-    ),
+    repo: &Database,
 ) -> Result<(), crate::error::BridgeError> {
     let apps_result = SchedulerRepository::list_enabled_app_ids(repo).await?;
 
     // 2. Iterate apps and retry
     for app_id in apps_result {
-        let deliveries = match SchedulerRepository::list_pending_webhook_deliveries(repo, app_id, 50).await {
+        recover_webhook_provider_inbox(repo, app_id).await;
+
+        let worker_id = crate::webhooks::forwarding::webhook_worker_id("webhook-retry");
+        let deliveries = match SchedulerRepository::claim_pending_webhook_deliveries(
+            repo,
+            app_id,
+            &worker_id,
+            WEBHOOK_DELIVERY_CLAIM_LEASE_SECS,
+            50,
+        ).await {
             Ok(deliveries) => deliveries,
             Err(e) => {
                 error!(
@@ -81,44 +117,204 @@ pub async fn retry_webhooks(
         };
 
         for delivery in deliveries {
-            match crate::webhooks::processor::build_canonical_payload(
-                repo,
-                delivery.webhook_provider_id,
-                app_id,
-            )
-            .await
-            {
+            let Some(claim_token) = delivery.claim_token else {
+                error!(
+                    app_id = %app_id,
+                    webhook_delivery_id = %delivery.id,
+                    "Claimed webhook delivery is missing claim token"
+                );
+                continue;
+            };
+            let provider = match repo.get_webhook_provider(delivery.webhook_provider_id).await {
+                Ok(provider) => provider,
+                Err(e) => {
+                    error!(
+                        app_id = %app_id,
+                        webhook_delivery_id = %delivery.id,
+                        webhook_provider_id = %delivery.webhook_provider_id,
+                        error = %e,
+                        "Failed to load provider webhook for pending delivery"
+                    );
+                    continue;
+                }
+            };
+
+            if pending_delivery_action(provider.processed) == PendingDeliveryAction::ProcessProviderFirst {
+                match crate::webhooks::processor::process_webhook_atomically(
+                    repo,
+                    app_id,
+                    delivery.webhook_provider_id,
+                    delivery.id,
+                    claim_token,
+                )
+                .await
+                {
+                    Ok(Some(canonical)) => {
+                        let _ = crate::webhooks::forwarding::forward_webhook(
+                            repo,
+                            app_id,
+                            delivery.id,
+                            claim_token,
+                            canonical,
+                        )
+                        .await;
+                    }
+                    Ok(None) => {
+                        WebhookForwardRepository::complete_webhook_delivery_attempt(
+                            repo,
+                            delivery.id,
+                            claim_token,
+                            None,
+                            Some("No app callback for provider webhook".to_string()),
+                            true,
+                        )
+                        .await?;
+                    }
+                    Err(e) => {
+                        error!(
+                            app_id = %app_id,
+                            webhook_delivery_id = %delivery.id,
+                            webhook_provider_id = %delivery.webhook_provider_id,
+                            error = %e,
+                            "Failed to process pending webhook delivery"
+                        );
+                    }
+                }
+
+                continue;
+            }
+
+            match stored_canonical_payload(&delivery) {
                 Ok(Some(canonical)) => {
                     let _ = crate::webhooks::forwarding::forward_webhook(
                         repo,
                         app_id,
                         delivery.id,
+                        claim_token,
                         canonical,
                     ).await;
+                    continue;
                 }
                 Ok(None) => {
-                    WebhookForwardRepository::update_webhook_delivery_attempt(
-                        repo,
-                        delivery.id,
-                        None,
-                        Some("Suppressed before retry".to_string()),
-                        true,
-                    )
-                    .await?;
+                    error!(
+                        app_id = %app_id,
+                        webhook_delivery_id = %delivery.id,
+                        webhook_provider_id = %delivery.webhook_provider_id,
+                        "Processed webhook delivery is missing stored canonical payload"
+                    );
+                    continue;
                 }
                 Err(e) => {
                     error!(
                         app_id = %app_id,
                         webhook_delivery_id = %delivery.id,
+                        webhook_provider_id = %delivery.webhook_provider_id,
                         error = %e,
-                        "Failed to rebuild canonical webhook payload for delivery"
+                        "Stored canonical webhook payload is invalid"
                     );
+                    continue;
                 }
             }
         }
     }
 
     Ok(())
+}
+
+async fn recover_webhook_provider_inbox(
+    repo: &Database,
+    app_id: Uuid,
+) {
+    let now = Utc::now();
+    let created_before = now - chrono::Duration::seconds(WEBHOOK_PROVIDER_RECOVERY_MIN_AGE_SECS);
+    let claim_expired_before = now - chrono::Duration::seconds(WEBHOOK_PROVIDER_RECOVERY_LEASE_SECS);
+
+    match SchedulerRepository::claim_unprocessed_webhook_providers(repo, app_id, created_before, claim_expired_before, 50).await {
+        Ok(webhooks) => {
+            for webhook in webhooks {
+                let worker_id = crate::webhooks::forwarding::webhook_worker_id("provider-recovery");
+                let delivery = match repo.create_webhook_delivery(
+                    app_id,
+                    webhook.id,
+                    &worker_id,
+                    WEBHOOK_DELIVERY_CLAIM_LEASE_SECS,
+                ).await {
+                    Ok(delivery) => delivery,
+                    Err(e) => {
+                        error!(
+                            app_id = %app_id,
+                            webhook_provider_id = %webhook.id,
+                            error = %e,
+                            "Failed to create delivery for recovered provider webhook"
+                        );
+                        continue;
+                    }
+                };
+
+                let Some(claim_token) = delivery.claim_token else {
+                    info!(
+                        app_id = %app_id,
+                        webhook_provider_id = %webhook.id,
+                        webhook_delivery_id = %delivery.id,
+                        created = delivery.created,
+                        "Skipping recovered provider webhook because delivery is already owned or queued"
+                    );
+                    continue;
+                };
+
+                 match crate::webhooks::processor::process_webhook_atomically(
+                     repo,
+                     app_id,
+                     webhook.id,
+                     delivery.id,
+                     claim_token,
+                 ).await {
+                    Ok(Some(canonical)) => {
+                        let _ = crate::webhooks::forwarding::forward_webhook(
+                            repo,
+                            app_id,
+                            delivery.id,
+                            claim_token,
+                            canonical,
+                        )
+                        .await;
+                    }
+                    Ok(None) => {
+                        if let Err(e) = WebhookForwardRepository::complete_webhook_delivery_attempt(
+                            repo,
+                            delivery.id,
+                            claim_token,
+                            None,
+                            Some("No app callback for recovered provider webhook".to_string()),
+                            true,
+                        )
+                        .await
+                        {
+                            error!(
+                                app_id = %app_id,
+                                webhook_provider_id = %webhook.id,
+                                webhook_delivery_id = %delivery.id,
+                                error = %e,
+                                "Failed to complete recovered no-callback webhook delivery"
+                            );
+                        }
+                    }
+                    Err(e) => error!(
+                        app_id = %app_id,
+                        webhook_provider_id = %webhook.id,
+                        error = %e,
+                        "Failed to recover unprocessed provider webhook"
+                    ),
+                }
+            }
+        }
+        Err(e) => error!(
+            app_id = %app_id,
+            error = %e,
+            "Failed to load unprocessed provider webhooks"
+        ),
+    }
+
 }
 
 pub async fn retry_google_play_subscription_acknowledgements(
@@ -132,14 +328,35 @@ pub async fn retry_google_play_subscription_acknowledgements(
             Err(_) => continue,
         };
 
-        let candidates = crate::db::payments::list_google_play_subscription_ack_candidates(
+        let worker_id = crate::webhooks::forwarding::webhook_worker_id("google-sub-ack");
+        let candidates = crate::db::payments::claim_google_play_subscription_ack_candidates(
             database.pool(),
             app_id,
+            &worker_id,
+            PAYMENT_ACK_CLAIM_LEASE_SECS,
             50,
         )
         .await?;
 
         for candidate in candidates {
+            if !crate::db::payments::refresh_payment_ack_claim(
+                database.pool(),
+                app_id,
+                candidate.payment_id,
+                candidate.claim_token,
+                PAYMENT_ACK_CLAIM_LEASE_SECS,
+            )
+            .await?
+            {
+                info!(
+                    app_id = %app_id,
+                    subscription_id = %candidate.subscription_id,
+                    purchase_token_hash = %diagnostic_hash(&candidate.purchase_token),
+                    "Skipping Google Play subscription acknowledgement because claim was lost"
+                );
+                continue;
+            }
+
             if let Err(err) = crate::services::provider_api::acknowledge_subscription(
                 "google_play",
                 &candidate.subscription_id,
@@ -158,13 +375,85 @@ pub async fn retry_google_play_subscription_acknowledgements(
                 continue;
             }
 
-            crate::db::payments::mark_payment_acknowledged(
+            let updated = crate::db::payments::mark_payment_acknowledged_with_claim(
                 database.pool(),
                 app_id,
-                "google_play",
-                &candidate.purchase_token,
+                candidate.payment_id,
+                candidate.claim_token,
             )
             .await?;
+            if !updated {
+                info!(
+                    app_id = %app_id,
+                    subscription_id = %candidate.subscription_id,
+                    purchase_token_hash = %diagnostic_hash(&candidate.purchase_token),
+                    "Skipped Google Play subscription acknowledgement completion because claim was lost"
+                );
+            }
+        }
+
+        let worker_id = crate::webhooks::forwarding::webhook_worker_id("google-product-ack");
+        let product_candidates = crate::db::payments::claim_google_play_product_ack_candidates(
+            database.pool(),
+            app_id,
+            &worker_id,
+            PAYMENT_ACK_CLAIM_LEASE_SECS,
+            50,
+        )
+        .await?;
+
+        for candidate in product_candidates {
+            if !crate::db::payments::refresh_payment_ack_claim(
+                database.pool(),
+                app_id,
+                candidate.payment_id,
+                candidate.claim_token,
+                PAYMENT_ACK_CLAIM_LEASE_SECS,
+            )
+            .await?
+            {
+                info!(
+                    app_id = %app_id,
+                    product_id = %candidate.product_id,
+                    purchase_token_hash = %diagnostic_hash(&candidate.purchase_token),
+                    "Skipping Google Play product acknowledgement because claim was lost"
+                );
+                continue;
+            }
+
+            if let Err(err) = crate::services::provider_api::acknowledge_product(
+                "google_play",
+                &candidate.product_id,
+                &candidate.purchase_token,
+                &provider_config.config,
+            )
+            .await
+            {
+                warn!(
+                    app_id = %app_id,
+                    product_id = %candidate.product_id,
+                    purchase_token_hash = %diagnostic_hash(&candidate.purchase_token),
+                    error = %err,
+                    "Retrying Google Play product acknowledgement failed"
+                );
+                continue;
+            }
+
+            let updated = crate::db::payments::mark_payment_acknowledged_with_claim(
+                database.pool(),
+                app_id,
+                candidate.payment_id,
+                candidate.claim_token,
+            )
+            .await?;
+            if !updated {
+                info!(
+                    app_id = %app_id,
+                    product_id = %candidate.product_id,
+                    purchase_token_hash = %diagnostic_hash(&candidate.purchase_token),
+                    "Skipped Google Play product acknowledgement completion because claim was lost"
+                );
+            }
         }
     }
 
@@ -224,6 +513,20 @@ async fn reconcile_app_subscriptions(
 
         match provider_result {
             Ok((provider_status, provider_period_end)) => {
+                // Skip the write-back when the provider returned a status we
+                // cannot map to the canonical set. Persisting a raw/unknown
+                // value would violate the subscriptions_status_check constraint.
+                let Some(provider_status) = provider_status else {
+                    warn!(
+                        job = "reconciliation",
+                        app_id = %app_id,
+                        subscription_id = %sub.subscription_id,
+                        provider = %sub.provider,
+                        "Skipping reconciliation because provider returned an unknown status"
+                    );
+                    continue;
+                };
+
                 let current_db_status = sub.status.clone();
 
                 if current_db_status != provider_status {
@@ -304,6 +607,13 @@ async fn reconcile_app_subscriptions(
                         Some(sub.external_user_id.clone()),
                         sub.purchase_token.clone(),
                         "reconciliation.drift_detected",
+                        deterministic_reconciliation_event_id(
+                            sub.id,
+                            &current_db_status,
+                            &provider_status,
+                            sub.last_event_time,
+                            sub.version,
+                        ),
                         Some(provider_status.clone()),
                         Some(current_db_status),
                         Some(provider_status),
@@ -423,11 +733,30 @@ pub fn spawn_price_step_up_expiry_worker(database: Arc<Database>) {
 }
 
 pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
-    let expired = SchedulerRepository::list_price_step_up_expired_subscriptions(database.as_ref(), 100).await?;
+    let apps = SchedulerRepository::list_enabled_app_ids(database.as_ref()).await?;
 
-    for sub in expired {
+    for app_id in apps {
+        let worker_id = crate::webhooks::forwarding::webhook_worker_id("price-step-up");
+        let expired = SchedulerRepository::claim_price_step_up_expired_subscriptions(
+            database.as_ref(),
+            app_id,
+            &worker_id,
+            SCHEDULER_CLAIM_LEASE_SECS,
+            100,
+        ).await?;
+
+        for sub in expired {
         let id = sub.id;
         let app_id = sub.app_id;
+        let Some(claim_token) = sub.scheduled_job_claim_token else {
+            error!(
+                job = "price_step_up",
+                app_id = %app_id,
+                subscription_id = %sub.subscription_id,
+                "Claimed price step-up subscription is missing claim token"
+            );
+            continue;
+        };
         let external_user_id = sub.external_user_id.clone();
         let subscription_id = sub.subscription_id.clone();
         let provider = sub.provider.clone();
@@ -442,6 +771,26 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
             provider = %provider,
             "Price step-up expired for subscription, auto-cancelling"
         );
+
+        if !crate::db::subscriptions::refresh_subscription_scheduler_claim(
+            database.pool(),
+            app_id,
+            id,
+            claim_token,
+            "price_step_up_expiry",
+            SCHEDULER_CLAIM_LEASE_SECS,
+        )
+        .await?
+        {
+            info!(
+                job = "price_step_up",
+                app_id = %app_id,
+                subscription_id = %subscription_id,
+                provider = %provider,
+                "Skipping price step-up provider cancel because claim was lost"
+            );
+            continue;
+        }
 
         if let Ok(config) = database.as_ref().get_provider_config(app_id, &provider).await {
             if let Err(e) = crate::services::provider_api::cancel_subscription(
@@ -466,7 +815,13 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
         }
 
         let now_ms = chrono::Utc::now().timestamp_millis();
-        if !SchedulerRepository::mark_subscription_price_step_up_expired(database.as_ref(), id, now_ms).await? {
+        if !SchedulerRepository::mark_subscription_price_step_up_expired(
+            database.as_ref(),
+            app_id,
+            id,
+            claim_token,
+            now_ms,
+        ).await? {
             info!(
                 job = "price_step_up",
                 app_id = %app_id,
@@ -484,6 +839,7 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
             Some(external_user_id),
             purchase_token.clone(),
             "subscription.cancelled",
+            deterministic_price_step_up_expiry_event_id(id, google_price_step_up_consent_deadline),
             Some("cancelled".to_string()),
             None,
             None,
@@ -502,6 +858,7 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
                 error = %e,
                 "Failed to forward price step-up expiry callback"
             );
+        }
         }
     }
 
@@ -547,7 +904,7 @@ pub async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), c
         );
 
         let now_ms = chrono::Utc::now().timestamp_millis();
-        if !SchedulerRepository::mark_subscription_paused(database.as_ref(), id, now_ms).await? {
+        if !SchedulerRepository::mark_subscription_paused(database.as_ref(), app_id, id, now_ms).await? {
             info!(
                 job = "pause_scheduler",
                 app_id = %app_id,
@@ -565,6 +922,7 @@ pub async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), c
             Some(external_user_id),
             purchase_token,
             "subscription.paused",
+            deterministic_pause_transition_event_id(id, google_pause_scheduled_at),
             Some("paused".to_string()),
             None,
             None,
@@ -607,6 +965,7 @@ async fn emit_scheduler_callback(
     external_user_id: Option<String>,
     purchase_token: Option<String>,
     event_type: &str,
+    provider_event_id: String,
     status: Option<String>,
     previous_status: Option<String>,
     corrected_status: Option<String>,
@@ -617,7 +976,6 @@ async fn emit_scheduler_callback(
     google_deferred_until: Option<i64>,
 ) -> Result<(), crate::error::BridgeError> {
     let app = repo.get_app(app_id).await?;
-    let provider_event_id = format!("scheduler-{}", Uuid::new_v4());
     let timestamp_epoch_ms = chrono::Utc::now().timestamp_millis();
     let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
         .unwrap_or_else(chrono::Utc::now)
@@ -686,6 +1044,45 @@ async fn emit_scheduler_callback(
     .await
 }
 
+fn deterministic_price_step_up_expiry_event_id(
+    subscription_row_id: Uuid,
+    deadline_epoch_ms: Option<i64>,
+) -> String {
+    format!(
+        "scheduler:price_step_up_expiry:{}:{}",
+        subscription_row_id,
+        deadline_epoch_ms.unwrap_or_default()
+    )
+}
+
+fn deterministic_pause_transition_event_id(
+    subscription_row_id: Uuid,
+    pause_scheduled_at_epoch_ms: Option<i64>,
+) -> String {
+    format!(
+        "scheduler:pause_transition:{}:{}",
+        subscription_row_id,
+        pause_scheduled_at_epoch_ms.unwrap_or_default()
+    )
+}
+
+fn deterministic_reconciliation_event_id(
+    subscription_row_id: Uuid,
+    previous_status: &str,
+    corrected_status: &str,
+    previous_last_event_time: i64,
+    previous_version: i32,
+) -> String {
+    format!(
+        "scheduler:reconciliation_drift:{}:{}:{}:{}:{}",
+        subscription_row_id,
+        previous_status,
+        corrected_status,
+        previous_last_event_time,
+        previous_version
+    )
+}
+
 pub fn spawn_webhook_cleanup_worker(database: Arc<Database>) {
     let span = info_span!("background_worker", job = "cleanup");
 
@@ -711,4 +1108,74 @@ pub async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::err
 
     info!(job = "cleanup", status = "completed", "Data retention cleanup completed");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::{
+        deterministic_pause_transition_event_id, deterministic_price_step_up_expiry_event_id,
+        deterministic_reconciliation_event_id, pending_delivery_action, PendingDeliveryAction,
+    };
+
+    #[test]
+    fn pending_delivery_for_unprocessed_provider_processes_provider_first() {
+        assert_eq!(
+            pending_delivery_action(false),
+            PendingDeliveryAction::ProcessProviderFirst
+        );
+    }
+
+    #[test]
+    fn pending_delivery_for_processed_provider_forwards_stored_payload() {
+        assert_eq!(
+            pending_delivery_action(true),
+            PendingDeliveryAction::ForwardStoredPayload
+        );
+    }
+
+    #[test]
+    fn scheduler_event_ids_are_deterministic_per_cause() {
+        let subscription_id = Uuid::new_v4();
+
+        assert_eq!(
+            deterministic_price_step_up_expiry_event_id(subscription_id, Some(1_000)),
+            deterministic_price_step_up_expiry_event_id(subscription_id, Some(1_000))
+        );
+        assert_ne!(
+            deterministic_price_step_up_expiry_event_id(subscription_id, Some(1_000)),
+            deterministic_price_step_up_expiry_event_id(subscription_id, Some(2_000))
+        );
+
+        assert_eq!(
+            deterministic_pause_transition_event_id(subscription_id, Some(3_000)),
+            deterministic_pause_transition_event_id(subscription_id, Some(3_000))
+        );
+
+        let first = deterministic_reconciliation_event_id(
+            subscription_id,
+            "active",
+            "expired",
+            10,
+            2,
+        );
+        let duplicate = deterministic_reconciliation_event_id(
+            subscription_id,
+            "active",
+            "expired",
+            10,
+            2,
+        );
+        let later_same_status_drift = deterministic_reconciliation_event_id(
+            subscription_id,
+            "active",
+            "expired",
+            11,
+            3,
+        );
+
+        assert_eq!(first, duplicate);
+        assert_ne!(first, later_same_status_drift);
+    }
 }

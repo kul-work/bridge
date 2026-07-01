@@ -1,5 +1,17 @@
 # Release Notes
 
+## [Unreleased] - 2026-07-01
+### Fixes
+- **Configuration**: Add production startup validation for Google Play RSA bypass, clerk authentication, and audience verification.
+- **Error Handling**: Sanitize API error responses to prevent database and provider detail exposure.
+- **Lifecycle Guards**: Reject resume/cancel actions on terminal subscriptions, enforce strict monotonic transitions, and deduplicate processed webhooks.
+- **Google Play Identity**: Resolve Google Play subscription lifecycles strictly by purchase token to eliminate SKU fallbacks.
+- **Security**: Force webhook signature verification outside mock mode, and redact PII in dispute emails by hashing user IDs and hiding customer emails.
+- **Payments**: Explicitly handle unknown amount and currency defaults as -1 and UNKNOWN.
+- **Row Level Security**: Enforce RLS context app-scoping across all background jobs and implement claim-token fencing in the atomic processor.
+- **Database & Schema**: Migration of `payments.amount_cents` and `subscriptions.google_new_price_cents` to `bigint` to satisfy Money design invariants.
+- **Documentation**: Clarify `bridge_admin` `BYPASSRLS` database role requirements for Admin Dashboard data visibility.
+
 ## [0.5.2] - 2026-06-25
 ### Fixes
 - **Webhook Tokens**: Add expiry handling for generated webhook tokens.

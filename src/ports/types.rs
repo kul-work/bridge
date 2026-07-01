@@ -56,7 +56,7 @@ pub enum SubscriptionWebhookTransition {
     PaymentFailed,
     PendingPurchaseCancelled,
     PriceStepUp {
-        google_new_price_cents: Option<i32>,
+        google_new_price_cents: Option<i64>,
         google_price_step_up_consent_deadline: Option<chrono::DateTime<chrono::Utc>>,
     },
     PendingPriceChange {
@@ -80,9 +80,11 @@ pub struct WebhookPaymentRecordRequest<'a> {
     pub external_user_id: &'a str,
     pub provider: &'a str,
     pub provider_transaction_id: &'a str,
+    pub provider_purchase_token: Option<&'a str>,
+    pub ack_required: bool,
     pub subscription_id: Option<&'a str>,
     pub product_id: Option<&'a str>,
-    pub amount_cents: i32,
+    pub amount_cents: i64,
     pub currency: Option<&'a str>,
     pub status: &'a str,
 }
@@ -149,9 +151,11 @@ pub struct OwnedWebhookPaymentRecord {
     pub external_user_id: String,
     pub provider: String,
     pub provider_transaction_id: String,
+    pub provider_purchase_token: Option<String>,
+    pub ack_required: bool,
     pub subscription_id: Option<String>,
     pub product_id: Option<String>,
-    pub amount_cents: i32,
+    pub amount_cents: i64,
     pub currency: Option<String>,
     pub status: String,
 }

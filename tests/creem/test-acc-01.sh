@@ -108,10 +108,10 @@ if test_access_for_status "active"; then
     ACTIVE_PASS="true"
 fi
 
-# Step 3: Test 'trialing' status
-echo -e "${YELLOW}[3/4] Testing 'trialing' status${NC}"
+# Step 3: Test 'trial' status
+echo -e "${YELLOW}[3/4] Testing 'trial' status${NC}"
 TRIAL_PASS="false"
-if test_access_for_status "trialing"; then
+if test_access_for_status "trial"; then
     TRIAL_PASS="true"
 fi
 
@@ -133,7 +133,7 @@ cat > "$REPORT_FILE" <<EOF
   "user_id": "$USER_ID",
   "results": {
     "active_pass": $ACTIVE_PASS,
-    "trialing_pass": $TRIAL_PASS
+    "trial_pass": $TRIAL_PASS
   }
 }
 EOF

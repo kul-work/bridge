@@ -424,12 +424,11 @@ These routed APIs are Bridge-owned behaviors and must be specified alongside the
 11. **Atomic deduplication** (see [§46](#46-webhook-deduplication-db-behavior)):
     - `INSERT INTO webhook_provider (...) ON CONFLICT DO NOTHING`.
     - If duplicate → check status of existing webhook in `webhook_provider`.
-    - If existing but not processed/delivered → **Resume processing/forwarding** in background.
-    - Return `204 No Content` immediately.
-12. **Return `204 No Content`** to provider immediately.
-13. **Spawn async task** to process webhook event:
-    - Route by `event.event_type` to appropriate handler (see §13-§37).
-    - After processing: forward normalized event to app's `webhook_callback_url` (see [§38](#38-webhook-callback-forwarding-bridge--app)).
+    - If existing work is already durable, return ACK and let the worker/retry path finish it.
+12. Create a durable `webhook_delivery` work item for the provider event before ACK.
+    - Processing/routing runs asynchronously from that durable delivery.
+13. **Return `204 No Content`** to provider after the event is durable.
+14. Forward normalized events to the app's `webhook_callback_url` asynchronously/retryably from `webhook_delivery` (see [§38](#38-webhook-callback-forwarding-bridge--app)).
 
 ---
 
@@ -699,9 +698,11 @@ If provider supports enrichment (Google Play):
 **Event type**: `dispute.created`
 
 1. Compose alert email with event details (event_id, amount, customer email).
-2. Send to Bridge admin email / Tyde support.
+2. Collect a post-commit admin alert effect for Bridge admin email / Tyde support.
 3. No subscription status change.
 4. **Forward callback to app**: a dispute notification so app can track it.
+
+Email/admin-alert side effects collected during webhook processing are scheduled only after Bridge commits webhook state and the stored canonical callback payload. They are best-effort unless a durable email outbox is added later.
 
 ---
 
@@ -965,11 +966,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT DO NOTHING
 ```
 
-- `rows_affected=0` → duplicate/existing webhook. Fetch the existing `webhook_provider` row and decide whether to ignore, resume processing, or resume forwarding.
-- `rows_affected=1` → new webhook. Process it asynchronously and mark `processed=true` only after handler completion.
+- `rows_affected=0` → duplicate/existing webhook. Fetch the existing `webhook_provider` row and decide whether to ignore it or enqueue missing durable processing.
+- `rows_affected=1` -> new webhook. Create `webhook_delivery` before provider ACK; process it asynchronously and mark `processed=true` after handler completion.
 - Primary dedupe is app-scoped: `(app_id, provider, provider_webhook_id)`.
 - Do not dedupe by `(purchase_token, event_type)`: Google Play reuses purchase tokens across legitimate subscription renewals.
 - Forwarding/retry/dead-letter state is tracked in `webhook_delivery`, not `webhook_provider`.
+- Background recovery claims old unprocessed provider rows with `recovery_claimed_at` before processing so multiple workers do not recover the same event concurrently.
 
 ---
 

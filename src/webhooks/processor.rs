@@ -3,6 +3,7 @@ use crate::{
     error::BridgeError,
     ports::{
         WebhookProcessingRepository, WebhookProviderSnapshot, WebhookSubscriptionSnapshot,
+        WebhookWriteRepository,
     },
     services::google_play::trace::{hash_token, BpTrace},
 };
@@ -13,16 +14,30 @@ use tracing::{error, info, warn};
 mod event_handlers;
 mod fields;
 mod normalize;
+mod atomic;
 
 use self::{
-    event_handlers::{EventContext, EventEffects, EventHandling},
+    event_handlers::{EventContext, EventEffects, EventHandling, PostCommitEffect},
     fields::{extract_metadata_user_id, extract_webhook_fields},
     normalize::{
-        callback_status_for_event, normalize_event_type_with_payload,
-        normalize_status, parse_rfc3339_utc, status_to_canonical_event,
+        callback_status_for_event, parse_rfc3339_utc, status_to_canonical_event,
     },
 };
+use super::provider_adapter::ProviderWebhookAdapter;
 pub(crate) use self::fields::WebhookFields;
+pub(crate) use self::atomic::process_webhook_atomically;
+
+pub struct EnqueuedWebhook {
+    pub delivery_id: Uuid,
+    pub claim_token: Option<Uuid>,
+    pub canonical: CanonicalWebhookPayload,
+    pub delivery_created: bool,
+}
+
+pub struct ProcessedWebhook {
+    pub canonical: CanonicalWebhookPayload,
+    post_commit: Vec<PostCommitEffect>,
+}
 
 struct UserResolution {
     external_user_id: Option<String>,
@@ -45,7 +60,7 @@ pub enum WebhookEventType {
 
 /// Canonical webhook payload sent to apps
 /// Used for webhook forwarding to app callbacks.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CanonicalWebhookPayload {
     pub event_id: String,
     pub event_type: String,
@@ -55,7 +70,7 @@ pub struct CanonicalWebhookPayload {
     pub product_id: Option<String>,
     pub subscription_id: Option<String>,
     pub external_user_id: Option<String>,
-    pub amount_cents: Option<i32>,
+    pub amount_cents: Option<i64>,
     pub new_price_cents: Option<i64>,
     pub auto_renewing: Option<bool>,
     pub purchase_token: Option<String>,
@@ -154,15 +169,22 @@ async fn send_dispute_admin_alert_email(
         }
     };
 
-    let customer_email = extract_customer_email_for_dispute(webhook)
-        .unwrap_or_else(|| "unknown".to_string());
-    let amount_cents = fields.amount_cents.unwrap_or(0);
+    let show_pii = crate::config::parse_bool_env("ADMIN_DISPUTE_EMAIL_SHOW_CUSTOMER_PII", false).unwrap_or(false);
+    let customer_email = if show_pii {
+        extract_customer_email_for_dispute(webhook)
+            .unwrap_or_else(|| "unknown".to_string())
+    } else {
+        "[REDACTED] (Set ADMIN_DISPUTE_EMAIL_SHOW_CUSTOMER_PII=true to display)".to_string()
+    };
+    let amount_cents = fields.amount_cents.unwrap_or(-1);
     let subscription_id = fields
         .subscription_id
         .as_deref()
         .or(webhook.subscription_id.as_deref())
         .unwrap_or("unknown");
-    let external_user_id = external_user_id.unwrap_or("unknown");
+    let external_user_id_hashed = external_user_id
+        .map(crate::utils::diagnostic_hash)
+        .unwrap_or_else(|| "unknown".to_string());
     let subject = format!(
         "Bridge dispute created: {} ({})",
         app.display_name,
@@ -176,7 +198,7 @@ async fn send_dispute_admin_alert_email(
          Event ID: {}\n\
          Event type: {}\n\
          Subscription ID: {}\n\
-         External user ID: {}\n\
+         External user ID (hashed): {}\n\
          Customer email: {}\n\
          Amount cents: {}\n\
          Timestamp: {}\n",
@@ -186,7 +208,7 @@ async fn send_dispute_admin_alert_email(
         webhook.provider_webhook_id,
         webhook.event_type,
         subscription_id,
-        external_user_id,
+        external_user_id_hashed,
         customer_email,
         amount_cents,
         webhook
@@ -282,12 +304,7 @@ fn google_subscription_transaction_id(
         .unwrap_or_else(|| format!("google_play_rtdn:{}", provider_webhook_id))
 }
 
-fn google_money_to_cents(money: &crate::services::google_play::models::Money) -> Option<i32> {
-    let units = money.units.as_deref().unwrap_or("0").parse::<i64>().ok()?;
-    let nanos = i64::from(money.nanos.unwrap_or(0));
-    let cents = units.checked_mul(100)?.checked_add(nanos / 10_000_000)?;
-    i32::try_from(cents).ok()
-}
+
 
 fn google_money_to_cents_i64(money: &crate::services::google_play::models::Money) -> Option<i64> {
     let units = money.units.as_deref().unwrap_or("0").parse::<i64>().ok()?;
@@ -297,7 +314,7 @@ fn google_money_to_cents_i64(money: &crate::services::google_play::models::Money
 
 fn google_subscription_current_amount_cents(
     resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
-) -> Option<i32> {
+) -> Option<i64> {
     let line_item = resource.line_items.first()?;
 
     if line_item
@@ -313,7 +330,7 @@ fn google_subscription_current_amount_cents(
         .auto_renewing_plan
         .as_ref()
         .and_then(|plan| plan.recurring_price.as_ref())
-        .and_then(google_money_to_cents)
+        .and_then(google_money_to_cents_i64)
 }
 
 fn google_subscription_recurring_currency(
@@ -440,7 +457,7 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
         // Allow test harness to override the price via X-Test-Price-Cents header
         // (injected into payload as _test_price_cents by ingress)
         if let Some(test_price) = webhook.payload.get("_test_price_cents").and_then(|v| v.as_i64()) {
-            fields.amount_cents = Some(test_price as i32);
+            fields.amount_cents = Some(test_price);
         }
 
         if webhook.event_type.starts_with("SUBSCRIPTION_") && fields.provider_transaction_id.is_none() {
@@ -690,16 +707,13 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
     }
     let external_user_id = resolution.external_user_id;
 
-    let mut fields = extract_webhook_fields(&webhook);
+    let mut fields = extract_webhook_fields(&webhook)?;
     if webhook.provider == "google_play" {
         fields = enrich_google_play_fields(repo, app_id, &webhook, fields).await?;
     }
     fill_payment_product_id(repo, app_id, &webhook, &mut fields).await?;
-    let canonical_event = normalize_event_type_with_payload(
-        &webhook.provider,
-        &webhook.event_type,
-        Some(&webhook.payload),
-    );
+    let adapter = ProviderWebhookAdapter::from_provider(&webhook.provider)?;
+    let canonical_event = adapter.canonical_event_type(&webhook.event_type, &webhook.payload);
     let timestamp_epoch_ms = webhook
         .timestamp_epoch_ms
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
@@ -824,7 +838,7 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
         subscription_id: fields.subscription_id.or(webhook.subscription_id.clone()),
         external_user_id,
         amount_cents: fields.amount_cents,
-        new_price_cents: fields.google_new_price_cents.map(i64::from).or_else(|| {
+        new_price_cents: fields.google_new_price_cents.or_else(|| {
             use_pending_price_change_fallback.then_some(fields.google_pending_price_change_new_price_cents).flatten()
         }),
         auto_renewing: canonical_auto_renewing,
@@ -865,24 +879,43 @@ pub async fn build_canonical_payload<R: WebhookProcessingRepository>(
     }))
 }
 
-fn apply_event_effects(
-    effects: EventEffects,
-    callback_event_type: &mut String,
-    callback_status_override: &mut Option<String>,
-    callback_revocation_reason_override: &mut Option<String>,
-    callback_cancellation_mode_override: &mut Option<String>,
-    canonical_subscription: &mut Option<WebhookSubscriptionSnapshot>,
-    should_forward: &mut bool,
-) {
+struct EventEffectTargets<'a> {
+    callback_event_type: &'a mut String,
+    callback_status_override: &'a mut Option<String>,
+    callback_revocation_reason_override: &'a mut Option<String>,
+    callback_cancellation_mode_override: &'a mut Option<String>,
+    canonical_subscription: &'a mut Option<WebhookSubscriptionSnapshot>,
+    should_forward: &'a mut bool,
+    post_commit: &'a mut Vec<PostCommitEffect>,
+}
+
+fn apply_event_effects(effects: EventEffects, targets: EventEffectTargets<'_>) {
     if let Some(event_type) = effects.callback_event_type {
-        *callback_event_type = event_type;
+        *targets.callback_event_type = event_type;
     }
 
-    *callback_status_override = effects.callback_status_override;
-    *callback_revocation_reason_override = effects.callback_revocation_reason_override;
-    *callback_cancellation_mode_override = effects.callback_cancellation_mode_override;
-    *canonical_subscription = effects.canonical_subscription;
-    *should_forward = effects.should_forward;
+    *targets.callback_status_override = effects.callback_status_override;
+    *targets.callback_revocation_reason_override = effects.callback_revocation_reason_override;
+    *targets.callback_cancellation_mode_override = effects.callback_cancellation_mode_override;
+    *targets.canonical_subscription = effects.canonical_subscription;
+    *targets.should_forward = effects.should_forward;
+    targets.post_commit.extend(effects.post_commit);
+}
+
+async fn execute_post_commit_effects(effects: Vec<PostCommitEffect>) {
+    for effect in effects {
+        event_handlers::execute_post_commit_effect(effect).await;
+    }
+}
+
+fn spawn_post_commit_effects(effects: Vec<PostCommitEffect>) {
+    if effects.is_empty() {
+        return;
+    }
+
+    tokio::spawn(async move {
+        execute_post_commit_effects(effects).await;
+    });
 }
 
 fn google_play_notification_type(payload: &serde_json::Value) -> Option<i64> {
@@ -1048,7 +1081,7 @@ pub async fn process_webhook(
     repo: &impl WebhookProcessingRepository,
     webhook_provider_id: Uuid,
     app_id: Uuid,
-) -> Result<Option<CanonicalWebhookPayload>, BridgeError> {
+) -> Result<Option<ProcessedWebhook>, BridgeError> {
     // Step 1: Load webhook + app
     let webhook = repo.get_webhook_provider(webhook_provider_id).await?;
 
@@ -1065,16 +1098,26 @@ pub async fn process_webhook(
         return Ok(None);
     }
 
+    if webhook.processed {
+        info!(
+            webhook_provider_id = %webhook_provider_id,
+            provider = %webhook.provider,
+            provider_webhook_id = %webhook.provider_webhook_id,
+            event_type = %webhook.event_type,
+            outcome = "processed_skipped",
+            "Webhook already processed"
+        );
+        return Ok(None);
+    }
+
+
     let app = repo
         .get_app(app_id)
         .await
         .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    let canonical_event = normalize_event_type_with_payload(
-        &webhook.provider,
-        &webhook.event_type,
-        Some(&webhook.payload),
-    );
+    let adapter = ProviderWebhookAdapter::from_provider(&webhook.provider)?;
+    let canonical_event = adapter.canonical_event_type(&webhook.event_type, &webhook.payload);
 
     let resolution = resolve_user(repo, app_id, &webhook).await;
     if !ensure_resolved_user(repo, webhook_provider_id, &webhook, &resolution).await? {
@@ -1082,7 +1125,7 @@ pub async fn process_webhook(
     }
     let external_user_id = resolution.external_user_id;
 
-    let mut fields = extract_webhook_fields(&webhook);
+    let mut fields = extract_webhook_fields(&webhook)?;
     if webhook.provider == "google_play" {
         fields = enrich_google_play_fields(repo, app_id, &webhook, fields).await?;
     }
@@ -1106,6 +1149,7 @@ pub async fn process_webhook(
     let mut callback_cancellation_mode_override: Option<String> = None;
     let mut canonical_subscription: Option<WebhookSubscriptionSnapshot> = None;
     let mut should_forward = true;
+    let mut post_commit = Vec::new();
     let event_context = EventContext {
         app: &app,
         app_id,
@@ -1129,14 +1173,20 @@ pub async fn process_webhook(
     match handling {
         EventHandling::Handled(effects) => apply_event_effects(
             *effects,
-            &mut callback_event_type,
-            &mut callback_status_override,
-            &mut callback_revocation_reason_override,
-            &mut callback_cancellation_mode_override,
-            &mut canonical_subscription,
-            &mut should_forward,
+            EventEffectTargets {
+                callback_event_type: &mut callback_event_type,
+                callback_status_override: &mut callback_status_override,
+                callback_revocation_reason_override: &mut callback_revocation_reason_override,
+                callback_cancellation_mode_override: &mut callback_cancellation_mode_override,
+                canonical_subscription: &mut canonical_subscription,
+                should_forward: &mut should_forward,
+                post_commit: &mut post_commit,
+            },
         ),
-        EventHandling::ReturnNone => return Ok(None),
+        EventHandling::ReturnNone => {
+            repo.mark_webhook_processed(webhook_provider_id).await?;
+            return Ok(None);
+        }
         EventHandling::NotHandled => {
             info!(
                 app_id = %app_id,
@@ -1207,7 +1257,7 @@ pub async fn process_webhook(
         subscription_id: fields_subscription_id.clone().or(webhook_subscription_id.clone()),
         external_user_id,
         amount_cents: fields.amount_cents,
-        new_price_cents: fields.google_new_price_cents.map(i64::from).or_else(|| {
+        new_price_cents: fields.google_new_price_cents.or_else(|| {
             use_pending_price_change_fallback.then_some(fields.google_pending_price_change_new_price_cents).flatten()
         }),
         auto_renewing: canonical_auto_renewing,
@@ -1243,14 +1293,52 @@ pub async fn process_webhook(
         google_pending_price_change_expected_at,
     };
 
-    // Step 6: Mark webhook as processed
-    repo.mark_webhook_processed(webhook_provider_id).await?;
-
     emit_webhook_trace(app_id, &canonical, &webhook.payload);
 
-    Ok(Some(canonical))
+    Ok(Some(ProcessedWebhook {
+        canonical,
+        post_commit,
+    }))
 }
 
+pub async fn process_and_enqueue_webhook<R>(
+    repo: &R,
+    app_id: Uuid,
+    webhook_provider_id: Uuid,
+) -> Result<Option<EnqueuedWebhook>, BridgeError>
+where
+    R: WebhookProcessingRepository + WebhookWriteRepository,
+{
+    match process_webhook(repo, webhook_provider_id, app_id).await? {
+        Some(processed) => {
+            let delivery = repo
+                .create_webhook_delivery(
+                    app_id,
+                    webhook_provider_id,
+                    &crate::webhooks::forwarding::webhook_worker_id("processor-enqueue"),
+                    crate::webhooks::forwarding::WEBHOOK_DELIVERY_LEASE_SECS,
+                )
+                .await?;
+            let canonical_payload = serde_json::to_value(&processed.canonical)
+                .map_err(|e| BridgeError::InternalServerError(e.to_string()))?;
+            repo.store_webhook_delivery_canonical_payload_and_mark_processed(
+                app_id,
+                delivery.id,
+                webhook_provider_id,
+                canonical_payload,
+            )
+            .await?;
+            spawn_post_commit_effects(processed.post_commit);
+            Ok(Some(EnqueuedWebhook {
+                delivery_id: delivery.id,
+                claim_token: delivery.claim_token,
+                canonical: processed.canonical,
+                delivery_created: delivery.created,
+            }))
+        }
+        None => Ok(None),
+    }
+}
 
 #[cfg(test)]
 mod tests;

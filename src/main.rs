@@ -1,31 +1,11 @@
-mod config;
-mod application;
-mod error;
-mod db;
-mod handlers;
-mod ports;
-mod services;
-mod utils;
-mod webhooks;
-mod middleware;
-mod state;
-
-use axum::{
-    http::StatusCode,
-    response::Redirect,
-    routing::get,
-    Router,
-};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tracing::info;
 
+use axum::Router;
+use tracing::info;
 use tracing_subscriber::fmt::time::OffsetTime;
 
-use config::Config;
-use db::Database;
-use handlers::{health_check, readiness_check};
-use state::AppState;
+use bridge::{build_app, config::Config, db::Database, services, state::AppState, webhooks};
 
 /// Initialize Google Play service account credentials from environment variables.
 ///
@@ -101,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
     if config.mock_external_apis {
         tracing::info!("⚠️ MOCK_EXTERNAL_APIS is ENABLED - Verification checks disabled");
     }
-    let email_provider = std::env::var("EMAIL_PROVIDER").unwrap_or_else(|_| "mock".to_string());
+    let email_provider = services::email::configured_email_provider();
     if email_provider == "mock" {
         tracing::info!("⚠️ EMAIL_PROVIDER is 'mock' - Emails will not be sent");
     }
@@ -110,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize database
     let database = Arc::new(
-        Database::new(&config.database_url, config.admin_database_url.as_deref()).await?
+        Database::new(&config.database_url, config.admin_database_url.as_deref()).await?,
     );
     let app_state = AppState::new(database.clone());
     info!("Connected to PostgreSQL");
@@ -127,91 +107,7 @@ async fn main() -> anyhow::Result<()> {
         info!("Background jobs are disabled (ENABLE_BACKGROUND_JOBS=false)");
     }
 
-
-    // Build protected routes with API key middleware
-    let protected_routes = Router::new()
-        .route("/app/verify", axum::routing::post(handlers::api_key::verify_expected_app))
-        .route("/payment/checkout", axum::routing::post(handlers::checkout::create_checkout))
-        .route("/verify-purchase", axum::routing::post(handlers::verify_purchase::verify_purchase))
-        .route("/subscriptions", axum::routing::get(handlers::subscriptions::list_subscriptions))
-        .route("/subscriptions/:subscription_id", axum::routing::get(handlers::subscriptions::get_subscription))
-        .route("/subscriptions/:subscription_id/cancel", axum::routing::post(handlers::subscriptions_actions::cancel_subscription))
-        .route("/subscriptions/:subscription_id/resume", axum::routing::post(handlers::subscriptions_actions::resume_subscription))
-        .route("/subscriptions/:subscription_id/acknowledge", axum::routing::post(handlers::subscriptions_actions::acknowledge_subscription))
-        .route("/subscriptions/:subscription_id/portal", axum::routing::post(handlers::subscriptions_actions::create_billing_portal))
-        .route("/subscriptions/:subscription_id/price-step-up/accept", axum::routing::post(handlers::subscriptions_actions::accept_price_step_up))
-        .route("/subscriptions/:subscription_id/price-step-up/decline", axum::routing::post(handlers::subscriptions_actions::decline_price_step_up))
-        .route("/payments", axum::routing::get(handlers::payments::get_payments))
-        .route("/purchase/register", axum::routing::post(handlers::payments::register_purchase))
-        .route("/users/:external_user_id/subscription-status", axum::routing::get(handlers::subscriptions::get_subscription_status_snapshot))
-        .route("/users/:external_user_id/anonymize", axum::routing::post(handlers::users::anonymize))
-        .route("/users/:external_user_id/data-export", axum::routing::get(handlers::users::data_export))
-
-        .layer(axum::middleware::from_fn_with_state(
-            app_state.clone(),
-            middleware::rate_limit::api_rate_limit_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            app_state.clone(),
-            handlers::api_key::api_key_auth,
-        ))
-        .layer(axum::middleware::from_fn(
-            middleware::rate_limit::unauthenticated_ip_rate_limit_middleware,
-        ));
-
-    // Admin dashboard page is public (Clerk handles auth client-side).
-    // Admin dashboard page is public (Clerk handles auth client-side).
-    // Admin API routes require Clerk JWT middleware.
-    let admin_page = Router::new()
-        .route("/admin", axum::routing::get(handlers::admin::admin_dashboard))
-        .route("/admin/", axum::routing::get(handlers::admin::admin_dashboard))
-        .route("/admin/favicon.ico", axum::routing::get(|| async { StatusCode::NO_CONTENT }))
-        .with_state(app_state.clone());
-
-    let admin_api = Router::new()
-        .route("/admin/apps", axum::routing::get(handlers::admin::list_apps))
-        .route("/admin/alerts", axum::routing::get(handlers::admin::alert_dashboard))
-        .route("/admin/apps/:app_id/notes", axum::routing::patch(handlers::admin::update_app_notes))
-        .route("/admin/apps/:app_id/webhooks", axum::routing::get(handlers::admin::get_app_webhooks))
-        .route("/admin/webhooks/:webhook_id/payload", axum::routing::get(handlers::admin::get_webhook_payload))
-        .route("/admin/webhooks/:webhook_id/retry", axum::routing::post(handlers::admin::retry_webhook))
-        .route("/admin/trigger-jobs", axum::routing::post(handlers::admin::trigger_jobs))
-        .layer(axum::middleware::from_fn(middleware::rate_limit::admin_rate_limit_middleware))
-        .layer(axum::middleware::from_fn(middleware::admin_auth::admin_auth_middleware))
-        .layer(axum::middleware::from_fn(middleware::rate_limit::admin_auth_ip_rate_limit_middleware))
-        .with_state(app_state.clone());
-
-    let admin_routes = admin_page
-        .merge(admin_api)
-        .layer(axum::middleware::from_fn(handlers::admin::admin_no_store_middleware));
-
-    // Build app
-    let health_routes = Router::new()
-        .route("/health", get(health_check))
-        .route("/ready", get(readiness_check))
-        .layer(axum::middleware::from_fn(
-            middleware::rate_limit::health_ip_rate_limit_middleware,
-        ));
-
-    let mut app = Router::new()
-        .merge(health_routes)
-        .route("/", axum::routing::get(|| async { Redirect::temporary("/admin") }))
-        .route("/favicon.ico", axum::routing::get(|| async { StatusCode::NO_CONTENT }))
-        .merge(admin_routes)
-        .nest("/api/v1", protected_routes)
-        .nest("/webhooks", webhooks::webhook_routes())
-        .route_layer(axum::middleware::from_fn(
-            middleware::observability::capture_matched_path,
-        ))
-        .layer(axum::middleware::from_fn(
-            middleware::observability::request_observability,
-        ));
-
-    if config.mock_external_apis {
-        app = app.nest("/internal/test", handlers::test_log::routes());
-    }
-
-    let app = app.with_state(app_state);
+    let app: Router = build_app(&config, app_state);
 
     // Start server
     let addr = SocketAddr::from((

@@ -178,8 +178,15 @@ echo ""
 # Step 6: Verify final subscription state
 echo -e "${YELLOW}[4/5] Verifying final subscription state in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+STATUS=""
+for attempt in $(seq 1 10); do
+    STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+      -c "SELECT status FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+    if [[ "$STATUS" == "active" ]] || [[ "$STATUS" == "trial" ]]; then
+        break
+    fi
+    sleep 1
+done
 
 if [[ "$STATUS" == "active" ]] || [[ "$STATUS" == "trial" ]]; then
     echo -e "${GREEN}PASS: Subscription status is $STATUS (valid state for Korea)${NC}"
@@ -188,8 +195,12 @@ else
     exit 1
 fi
 
-PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    PAYMENT_COUNT \
+    "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" \
+    "2" \
+    10 \
+    1 || true
 
 if [[ "$PAYMENT_COUNT" == "2" ]]; then
     echo -e "${GREEN}PASS: Payment row count is 2 (initial payment + price update)${NC}"

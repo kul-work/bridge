@@ -220,7 +220,7 @@ impl VerifyPurchaseRepository for db::Database {
                         payment_state,
                         provider_customer_id.as_deref(),
                         event_time_ms,
-                        Some(i64::from(amount_cents)),
+                        Some(amount_cents),
                     )
                     .await?;
 

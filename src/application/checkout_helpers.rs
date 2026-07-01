@@ -4,7 +4,7 @@ use crate::application::checkout_types::CheckoutRedirectUrls;
 use crate::error::BridgeError;
 
 /// Format integer cents as a dollar string (e.g. 999 -> "9.99", 1000 -> "10.00")
-pub(crate) fn format_cents_as_dollars(cents: i32) -> String {
+pub(crate) fn format_cents_as_dollars(cents: i64) -> String {
     let abs = cents.unsigned_abs();
     let dollars = abs / 100;
     let remainder = abs % 100;

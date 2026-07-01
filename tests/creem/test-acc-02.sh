@@ -75,12 +75,12 @@ echo -e "${GREEN}✓ Ready${NC}"
 echo -e "${YELLOW}[2/4] Setting up DB for scheduled cancellation${NC}"
 FUTURE_EXPIRY=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+15 days" 2>/dev/null || date -u -v+15d +"%Y-%m-%dT%H:%M:%SZ")
 
-echo "  Setting status=scheduled_cancel, auto_renewing=false, current_period_end=$FUTURE_EXPIRY..."
+echo "  Setting status=cancelled, auto_renewing=false, current_period_end=$FUTURE_EXPIRY..."
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" > /dev/null
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "INSERT INTO pay.subscriptions (external_user_id, subscription_id, status, provider, auto_renewing, current_period_end, app_id) \
-      VALUES ('$USER_ID', '$PRODUCT_ID_SUB', 'scheduled_cancel', 'creem', false, '$FUTURE_EXPIRY', '$BRIDGE_APP_ID');" > /dev/null
+      VALUES ('$USER_ID', '$PRODUCT_ID_SUB', 'cancelled', 'creem', false, '$FUTURE_EXPIRY', '$BRIDGE_APP_ID');" > /dev/null
 echo -e "${GREEN}✓ DB updated${NC}"
 
 # Step 3: Verify access via Bridge API
@@ -90,13 +90,13 @@ RESPONSE=$(curl -s -X GET "$APP_URL/api/v1/users/$USER_ID/subscription-status" \
 
 STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | head -n 1 | cut -d'"' -f4 || echo "")
 
-if [[ "$STATUS" == "scheduled_cancel" ]]; then
+if [[ "$STATUS" == "cancelled" ]]; then
     echo -e "  ${GREEN}✓ API reports correct status=$STATUS${NC}"
-    # In Bridge logic, if it's scheduled_cancel, the client app should still grant access.
+    # In Bridge logic, if it's cancelled but pre-expiry, the client app should still grant access.
     # We verify Bridge correctly maintains the state.
     ACC_PASS="true"
 else
-    echo -e "  ${RED}✗ API reports unexpected status=$STATUS (Expected: scheduled_cancel)${NC}"
+    echo -e "  ${RED}✗ API reports unexpected status=$STATUS (Expected: cancelled)${NC}"
     echo "  Response: $RESPONSE"
     ACC_PASS="false"
 fi

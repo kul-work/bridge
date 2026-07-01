@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
-    db::{subscriptions::Subscription, webhooks::WebhookDelivery},
+    db::{subscriptions::Subscription, webhooks::{WebhookDelivery, WebhookProvider}},
     error::BridgeError,
 };
 
@@ -10,11 +10,21 @@ use crate::{
 pub trait SchedulerRepository: Send + Sync {
     async fn list_enabled_app_ids(&self) -> Result<Vec<Uuid>, BridgeError>;
 
-    async fn list_pending_webhook_deliveries(
+    async fn claim_pending_webhook_deliveries(
         &self,
         app_id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
         limit: i64,
     ) -> Result<Vec<WebhookDelivery>, BridgeError>;
+
+    async fn claim_unprocessed_webhook_providers(
+        &self,
+        app_id: Uuid,
+        created_before: chrono::DateTime<chrono::Utc>,
+        claim_expired_before: chrono::DateTime<chrono::Utc>,
+        limit: i64,
+    ) -> Result<Vec<WebhookProvider>, BridgeError>;
 
     async fn list_reconciliation_subscriptions(
         &self,
@@ -30,14 +40,19 @@ pub trait SchedulerRepository: Send + Sync {
         event_time_ms: i64,
     ) -> Result<bool, BridgeError>;
 
-    async fn list_price_step_up_expired_subscriptions(
+    async fn claim_price_step_up_expired_subscriptions(
         &self,
+        app_id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
         limit: i64,
     ) -> Result<Vec<Subscription>, BridgeError>;
 
     async fn mark_subscription_price_step_up_expired(
         &self,
+        app_id: Uuid,
         id: Uuid,
+        claim_token: Uuid,
         event_time_ms: i64,
     ) -> Result<bool, BridgeError>;
 
@@ -48,6 +63,7 @@ pub trait SchedulerRepository: Send + Sync {
 
     async fn mark_subscription_paused(
         &self,
+        app_id: Uuid,
         id: Uuid,
         event_time_ms: i64,
     ) -> Result<bool, BridgeError>;

@@ -24,7 +24,7 @@ pub struct SubscriptionStatusSnapshot {
     pub revoked_at: Option<String>,
     pub revocation_reason: Option<String>,
     pub google_requires_price_step_up_consent: Option<bool>,
-    pub google_new_price_cents: Option<i32>,
+    pub google_new_price_cents: Option<i64>,
     pub google_price_step_up_consent_deadline: Option<String>,
     pub google_pending_price_change_new_price_cents: Option<i64>,
     pub google_pending_price_change_currency: Option<String>,
@@ -106,8 +106,8 @@ pub async fn get_subscription_status_snapshot<R: SubscriptionReadRepository + ?S
 
 fn subscription_is_premium(sub: &Subscription) -> bool {
     match sub.status.as_str() {
-        "active" | "trial" | "trialing" | "past_due" => true,
-        "cancelled" | "scheduled_cancel" => {
+        "active" | "trial" | "past_due" => true,
+        "cancelled" => {
             // Cancelled but pre-expiry (still has access)
             if let Some(expiry) = sub.current_period_end {
                 expiry > Utc::now()
@@ -122,12 +122,12 @@ fn subscription_is_premium(sub: &Subscription) -> bool {
 fn snapshot_status_rank(status: &str) -> i32 {
     match status {
         "active" => 0,
-        "trial" | "trialing" => 1,
+        "trial" => 1,
         "past_due" => 2,
         "pending" => 3,
         "on_hold" => 4,
         "paused" => 5,
-        "cancelled" | "scheduled_cancel" => 6,
+        "cancelled" => 6,
         "expired" => 7,
         "revoked" => 8,
         _ => 9,

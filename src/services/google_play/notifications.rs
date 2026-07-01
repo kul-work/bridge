@@ -69,7 +69,7 @@ pub async fn send_email_price_step_up(
     email_service: &dyn EmailService,
     email: &str,
     subscription_id: &str,
-    new_price_cents: i32,
+    new_price_cents: i64,
     deadline: DateTime<Utc>,
     context: EmailContext<'_>,
 ) -> Result<(), BridgeError> {

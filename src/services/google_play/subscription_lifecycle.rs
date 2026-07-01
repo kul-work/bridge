@@ -25,14 +25,23 @@ fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
-fn subscription_id_for_event<'a>(
-    fields: &'a WebhookFields,
-    webhook: &'a WebhookProviderSnapshot,
-) -> Option<&'a str> {
-    fields
-        .subscription_id
+async fn resolve_google_subscription_id_by_token<R: WebhookProcessingLookupRepository + ?Sized>(
+    repo: &R,
+    app_id: Uuid,
+    webhook: &WebhookProviderSnapshot,
+    fields: &WebhookFields,
+) -> Result<Option<String>, BridgeError> {
+    let token = fields
+        .purchase_token
         .as_deref()
-        .or(webhook.subscription_id.as_deref())
+        .or(webhook.purchase_token.as_deref());
+
+    if let Some(token_val) = token {
+        if let Some(sub) = repo.get_subscription_by_purchase_token_for_provider(app_id, &webhook.provider, token_val).await? {
+            return Ok(Some(sub.subscription_id));
+        }
+    }
+    Ok(None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -77,7 +86,7 @@ pub async fn handle_subscription_revoked<
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
-    let Some(subscription_id) = subscription_id_for_event(fields, webhook) else {
+    let Some(subscription_id) = resolve_google_subscription_id_by_token(repo, app_id, webhook, fields).await? else {
         return Ok(None);
     };
 
@@ -102,7 +111,7 @@ pub async fn handle_subscription_revoked<
         app_id,
         external_user_id,
         &webhook.provider,
-        subscription_id,
+        &subscription_id,
         timestamp_epoch_ms,
         SubscriptionWebhookTransition::Revoked {
             revocation_reason: Some(revocation_reason.clone()),
@@ -127,14 +136,15 @@ pub async fn handle_subscription_resumed<
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
-    let Some(subscription_id) = subscription_id_for_event(fields, webhook) else {
-        return Ok(None);
-    };
+    let token = fields
+        .purchase_token
+        .as_deref()
+        .or(webhook.purchase_token.as_deref());
 
-    let Some(subscription) = repo
-        .get_subscription_by_sub_id_and_user_for_provider(app_id, &webhook.provider, subscription_id, external_user_id)
-        .await?
-    else {
+    let Some(subscription) = (match token {
+        Some(t) => repo.get_subscription_by_purchase_token_for_provider(app_id, &webhook.provider, t).await?,
+        None => None,
+    }) else {
         return Ok(None);
     };
 
@@ -152,7 +162,7 @@ pub async fn handle_subscription_resumed<
         app_id,
         external_user_id,
         &webhook.provider,
-        subscription_id,
+        &subscription.subscription_id,
         timestamp_epoch_ms,
         SubscriptionWebhookTransition::Resumed {
             current_period_end: period_end,
@@ -176,7 +186,7 @@ pub async fn handle_subscription_cancelled_with_context<
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
-    let Some(subscription_id) = subscription_id_for_event(fields, webhook) else {
+    let Some(subscription_id) = resolve_google_subscription_id_by_token(repo, app_id, webhook, fields).await? else {
         return Ok(None);
     };
 
@@ -190,7 +200,7 @@ pub async fn handle_subscription_cancelled_with_context<
         app_id,
         external_user_id,
         &webhook.provider,
-        subscription_id,
+        &subscription_id,
         timestamp_epoch_ms,
         SubscriptionWebhookTransition::Cancelled {
             current_period_end: cancel_period_end,
@@ -216,7 +226,7 @@ pub async fn handle_subscription_cancellation_scheduled<
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
-    let Some(subscription_id) = subscription_id_for_event(fields, webhook) else {
+    let Some(subscription_id) = resolve_google_subscription_id_by_token(repo, app_id, webhook, fields).await? else {
         return Ok(None);
     };
 
@@ -225,7 +235,7 @@ pub async fn handle_subscription_cancellation_scheduled<
         app_id,
         external_user_id,
         &webhook.provider,
-        subscription_id,
+        &subscription_id,
         timestamp_epoch_ms,
         SubscriptionWebhookTransition::CancellationScheduled {
             google_cancellation_context: fields.google_cancellation_context.clone(),
@@ -250,7 +260,7 @@ pub async fn handle_price_step_up_consent_required<
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
-    let Some(subscription_id) = subscription_id_for_event(fields, webhook) else {
+    let Some(subscription_id) = resolve_google_subscription_id_by_token(repo, app_id, webhook, fields).await? else {
         return Ok(None);
     };
 
@@ -264,7 +274,7 @@ pub async fn handle_price_step_up_consent_required<
         app_id,
         external_user_id,
         &webhook.provider,
-        subscription_id,
+        &subscription_id,
         timestamp_epoch_ms,
         SubscriptionWebhookTransition::PriceStepUp {
             google_new_price_cents: fields.google_new_price_cents,
@@ -285,7 +295,7 @@ pub async fn handle_subscription_pending_purchase_cancelled<
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
-    let Some(subscription_id) = subscription_id_for_event(fields, webhook) else {
+    let Some(subscription_id) = resolve_google_subscription_id_by_token(repo, app_id, webhook, fields).await? else {
         return Ok(None);
     };
 
@@ -294,7 +304,7 @@ pub async fn handle_subscription_pending_purchase_cancelled<
         app_id,
         external_user_id,
         &webhook.provider,
-        subscription_id,
+        &subscription_id,
         timestamp_epoch_ms,
         SubscriptionWebhookTransition::PendingPurchaseCancelled,
         GooglePlayLifecycleOutcome {
@@ -305,3 +315,78 @@ pub async fn handle_subscription_pending_purchase_cancelled<
     )
     .await
 }
+
+pub async fn handle_subscription_on_hold<
+    R: WebhookProcessingLookupRepository + WebhookProcessingMutationRepository + ?Sized,
+>(
+    repo: &R,
+    app_id: Uuid,
+    external_user_id: &str,
+    webhook: &WebhookProviderSnapshot,
+    fields: &WebhookFields,
+    timestamp_epoch_ms: i64,
+) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
+    let Some(subscription_id) = resolve_google_subscription_id_by_token(repo, app_id, webhook, fields).await? else {
+        return Ok(None);
+    };
+
+    apply_transition_with_outcome(
+        repo,
+        app_id,
+        external_user_id,
+        &webhook.provider,
+        &subscription_id,
+        timestamp_epoch_ms,
+        SubscriptionWebhookTransition::OnHold,
+        GooglePlayLifecycleOutcome {
+            callback_event_type: Some("subscription.on_hold".to_string()),
+            callback_status_override: Some("on_hold".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+pub async fn handle_subscription_paused<
+    R: WebhookProcessingLookupRepository + WebhookProcessingMutationRepository + ?Sized,
+>(
+    repo: &R,
+    app_id: Uuid,
+    external_user_id: &str,
+    webhook: &WebhookProviderSnapshot,
+    fields: &WebhookFields,
+    timestamp_epoch_ms: i64,
+) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
+    let token = fields
+        .purchase_token
+        .as_deref()
+        .or(webhook.purchase_token.as_deref());
+
+    let Some(subscription) = (match token {
+        Some(t) => repo.get_subscription_by_purchase_token_for_provider(app_id, &webhook.provider, t).await?,
+        None => None,
+    }) else {
+        return Ok(None);
+    };
+
+    if subscription.status != "active" && subscription.status != "trial" {
+        return Ok(None);
+    }
+
+    apply_transition_with_outcome(
+        repo,
+        app_id,
+        external_user_id,
+        &webhook.provider,
+        &subscription.subscription_id,
+        timestamp_epoch_ms,
+        SubscriptionWebhookTransition::Paused,
+        GooglePlayLifecycleOutcome {
+            callback_event_type: Some("subscription.paused".to_string()),
+            callback_status_override: Some("paused".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+}
+

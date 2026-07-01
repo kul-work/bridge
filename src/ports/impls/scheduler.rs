@@ -15,12 +15,36 @@ impl SchedulerRepository for db::Database {
         db::apps::list_enabled_app_ids(self.pool()).await
     }
 
-    async fn list_pending_webhook_deliveries(
+    async fn claim_pending_webhook_deliveries(
         &self,
         app_id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
         limit: i64,
     ) -> Result<Vec<WebhookDelivery>, BridgeError> {
-        db::webhooks::list_pending_webhook_deliveries(self.pool(), app_id, limit).await
+        db::webhooks::claim_pending_webhook_deliveries(
+            self.pool(),
+            app_id,
+            worker_id,
+            lease_secs,
+            limit,
+        ).await
+    }
+
+    async fn claim_unprocessed_webhook_providers(
+        &self,
+        app_id: Uuid,
+        created_before: chrono::DateTime<chrono::Utc>,
+        claim_expired_before: chrono::DateTime<chrono::Utc>,
+        limit: i64,
+    ) -> Result<Vec<db::webhooks::WebhookProvider>, BridgeError> {
+        db::webhooks::claim_unprocessed_webhook_providers(
+            self.pool(),
+            app_id,
+            created_before,
+            claim_expired_before,
+            limit,
+        ).await
     }
 
     async fn list_reconciliation_subscriptions(
@@ -49,38 +73,71 @@ impl SchedulerRepository for db::Database {
         .await
     }
 
-    async fn list_price_step_up_expired_subscriptions(
+    async fn claim_price_step_up_expired_subscriptions(
         &self,
+        app_id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
         limit: i64,
     ) -> Result<Vec<Subscription>, BridgeError> {
-        db::subscriptions::list_price_step_up_expired_subscriptions(self.pool(), limit).await
+        db::subscriptions::claim_price_step_up_expired_subscriptions(
+            self.pool(),
+            app_id,
+            worker_id,
+            lease_secs,
+            limit,
+        ).await
     }
 
     async fn mark_subscription_price_step_up_expired(
         &self,
+        app_id: Uuid,
         id: Uuid,
+        claim_token: Uuid,
         event_time_ms: i64,
     ) -> Result<bool, BridgeError> {
-        db::subscriptions::mark_subscription_price_step_up_expired(self.pool(), id, event_time_ms).await
+        db::subscriptions::mark_subscription_price_step_up_expired(
+            self.pool(),
+            app_id,
+            id,
+            claim_token,
+            event_time_ms,
+        ).await
     }
 
     async fn list_pending_pause_subscriptions(
         &self,
         limit: i64,
     ) -> Result<Vec<Subscription>, BridgeError> {
-        db::subscriptions::list_pending_pause_subscriptions(self.pool(), limit).await
+        let app_ids = db::apps::list_enabled_app_ids(self.pool()).await?;
+        let mut all_subs = Vec::new();
+        for app_id in app_ids {
+            let mut subs = db::subscriptions::list_pending_pause_subscriptions(self.pool(), app_id, limit).await?;
+            all_subs.append(&mut subs);
+            if all_subs.len() as i64 >= limit {
+                all_subs.truncate(limit as usize);
+                break;
+            }
+        }
+        Ok(all_subs)
     }
 
     async fn mark_subscription_paused(
         &self,
+        app_id: Uuid,
         id: Uuid,
         event_time_ms: i64,
     ) -> Result<bool, BridgeError> {
-        db::subscriptions::mark_subscription_paused(self.pool(), id, event_time_ms).await
+        db::subscriptions::mark_subscription_paused(self.pool(), app_id, id, event_time_ms).await
     }
 
     async fn delete_orphaned_pending_subscriptions(&self) -> Result<u64, BridgeError> {
-        db::subscriptions::delete_orphaned_pending_subscriptions(self.pool()).await
+        let app_ids = db::apps::list_enabled_app_ids(self.pool()).await?;
+        let mut total_deleted = 0;
+        for app_id in app_ids {
+            total_deleted += db::subscriptions::delete_orphaned_pending_subscriptions(self.pool(), app_id).await?;
+        }
+        Ok(total_deleted)
     }
 
     async fn cleanup_old_webhook_provider(&self) -> Result<(), BridgeError> {
@@ -158,18 +215,20 @@ impl WebhookProcessingTransactionRepository for db::Database {
 
         crate::ports::helpers::with_transaction_impl(pool, request.app_id, move |tx| {
             Box::pin(async move {
-                db::payments::record_payment_tx(
-                    tx,
-                    request.app_id,
-                    &request.external_user_id,
-                    &request.provider,
-                    &request.provider_transaction_id,
-                    request.subscription_id.as_deref(),
-                    request.product_id.as_deref(),
-                    request.amount_cents,
-                    request.currency.as_deref(),
-                    &request.status,
-                )
+                    db::payments::record_payment_with_purchase_token_tx(
+                        tx,
+                        request.app_id,
+                        &request.external_user_id,
+                        &request.provider,
+                        &request.provider_transaction_id,
+                        request.provider_purchase_token.as_deref(),
+                        request.ack_required,
+                        request.subscription_id.as_deref(),
+                        request.product_id.as_deref(),
+                        request.amount_cents,
+                        request.currency.as_deref(),
+                        &request.status,
+                    )
                 .await?;
 
                 Ok(TransactionOutcome::Commit(()))
@@ -229,8 +288,8 @@ impl WebhookProcessingTransactionRepository for db::Database {
                         &payment.external_user_id,
                         &payment.provider,
                         &payment.provider_transaction_id,
-                        purchase_token.as_deref(),
-                        false,
+                        payment.provider_purchase_token.as_deref().or(purchase_token.as_deref()),
+                        payment.ack_required,
                         payment.subscription_id.as_deref(),
                         payment.product_id.as_deref(),
                         payment.amount_cents,

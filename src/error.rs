@@ -108,7 +108,7 @@ impl IntoResponse for BridgeError {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "database_error",
-                    format!("Database error: {}", msg),
+                    "Database error occurred.".to_string(),
                 )
             }
             BridgeError::ValidationError(msg) => (
@@ -137,7 +137,7 @@ impl IntoResponse for BridgeError {
                 (
                     StatusCode::BAD_GATEWAY,
                     "provider_error",
-                    msg.clone(),
+                    "Provider error occurred.".to_string(),
                 )
             }
             BridgeError::WebhookError(msg) => {
@@ -188,7 +188,7 @@ impl IntoResponse for BridgeError {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "config_error",
-                    format!("Configuration error: {}", msg),
+                    "Configuration error occurred.".to_string(),
                 )
             }
             BridgeError::ProviderNotConfigured(msg) => {

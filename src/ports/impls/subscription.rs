@@ -133,16 +133,49 @@ impl SubscriptionWriteRepository for db::Database {
         &self,
         app_id: Uuid,
         id: Uuid,
-    ) -> Result<Subscription, BridgeError> {
+    ) -> Result<Option<Subscription>, BridgeError> {
         db::subscriptions::accept_price_step_up(self.pool(), app_id, id).await
+    }
+
+    async fn claim_price_step_up_decline(
+        &self,
+        app_id: Uuid,
+        id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
+    ) -> Result<Option<Subscription>, BridgeError> {
+        db::subscriptions::claim_price_step_up_decline(
+            self.pool(),
+            app_id,
+            id,
+            worker_id,
+            lease_secs,
+        ).await
+    }
+
+    async fn refresh_price_step_up_decline_claim(
+        &self,
+        app_id: Uuid,
+        id: Uuid,
+        claim_token: Uuid,
+        lease_secs: i64,
+    ) -> Result<bool, BridgeError> {
+        db::subscriptions::refresh_price_step_up_decline_claim(
+            self.pool(),
+            app_id,
+            id,
+            claim_token,
+            lease_secs,
+        ).await
     }
 
     async fn decline_price_step_up(
         &self,
         app_id: Uuid,
         id: Uuid,
-    ) -> Result<Subscription, BridgeError> {
-        db::subscriptions::decline_price_step_up(self.pool(), app_id, id).await
+        claim_token: Uuid,
+    ) -> Result<Option<Subscription>, BridgeError> {
+        db::subscriptions::decline_price_step_up(self.pool(), app_id, id, claim_token).await
     }
 
     async fn clear_payment_failure_notification(

@@ -116,13 +116,45 @@ pub async fn acknowledge_subscription(
     }
 }
 
+/// Acknowledge a one-time product purchase with the payment provider.
+pub async fn acknowledge_product(
+    provider: &str,
+    product_id: &str,
+    purchase_token: &str,
+    config: &Value,
+) -> Result<(), BridgeError> {
+    match provider {
+        "google_play" => {
+            if crate::config::mock_external_apis_enabled() {
+                info!("MOCK_EXTERNAL_APIS: Skipping Google Play product acknowledgement via API");
+                return Ok(());
+            }
+
+            let service_account_path = config_str(config, "service_account_json", "Google Play")?;
+            let package_name = config_str(config, "package_name", "Google Play")?;
+
+            let gp_client = crate::services::google_play::client::GooglePlayClient::new(service_account_path)
+                .map_err(|e| BridgeError::ConfigError(format!("Failed to init Google Play client: {}", e)))?;
+
+            gp_client.acknowledge(package_name, product_id, purchase_token)
+                .await
+                .map_err(|e| BridgeError::ProviderError(format!("Google Play product acknowledgement failed: {}", e)))?;
+
+            info!("Google Play product {} acknowledged via API", product_id);
+            Ok(())
+        }
+
+        _ => Err(BridgeError::ValidationError(format!("Acknowledgement not supported for provider: {}", provider))),
+    }
+}
+
 /// Fetch current subscription status from provider API (for reconciliation)
 pub async fn fetch_subscription_status(
     provider: &str,
     subscription_id: &str,
     _purchase_token: Option<&str>,
     config: &Value,
-) -> Result<(String, Option<chrono::DateTime<chrono::Utc>>), BridgeError> {
+) -> Result<(Option<String>, Option<chrono::DateTime<chrono::Utc>>), BridgeError> {
     match provider {
         "creem" => {
             let creem_client = CreemClient::from_json(config)?;
@@ -149,7 +181,7 @@ pub async fn fetch_subscription_status(
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                 .map(|dt| dt.with_timezone(&chrono::Utc));
 
-            Ok((status, period_end))
+            Ok((Some(status), period_end))
         }
 
         _ => Err(BridgeError::ValidationError(format!("Status fetch not supported for provider: {}", provider))),

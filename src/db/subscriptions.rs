@@ -19,7 +19,7 @@ pub struct Subscription {
     pub payment_state: Option<i32>,
     pub cancel_reason: Option<i32>,
     pub provider_customer_id: Option<String>,
-    
+
     // Cancellation / Revocation
     pub cancellation_initiated_at: Option<DateTime<Utc>>,
     pub revocation_reason: Option<String>,
@@ -30,14 +30,14 @@ pub struct Subscription {
     pub last_event_time: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    
+
     // Google Play specific
     #[serde(default)]
     pub google_requires_price_step_up_consent: Option<bool>,
     #[serde(default)]
     pub google_price_step_up_consent_deadline: Option<DateTime<Utc>>,
     #[serde(default)]
-    pub google_new_price_cents: Option<i32>,
+    pub google_new_price_cents: Option<i64>,
     #[serde(default)]
     pub google_pause_scheduled_at: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -54,6 +54,14 @@ pub struct Subscription {
     pub google_pending_price_change_state: Option<String>,
     #[serde(default)]
     pub google_pending_price_change_expected_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub scheduled_job_claim_token: Option<Uuid>,
+    #[serde(default)]
+    pub scheduled_job_claimed_by: Option<String>,
+    #[serde(default)]
+    pub scheduled_job_claimed_until: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub scheduled_job_claim_kind: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +91,31 @@ pub async fn apply_webhook_transition(
     transition: SubscriptionWebhookTransition,
 ) -> Result<Option<Subscription>, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
+    let result = apply_webhook_transition_tx(
+        &mut tx,
+        app_id,
+        external_user_id,
+        provider,
+        subscription_id,
+        event_time_ms,
+        transition,
+    )
+    .await?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(result)
+}
+
+pub async fn apply_webhook_transition_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+    external_user_id: &str,
+    provider: &str,
+    subscription_id: &str,
+    event_time_ms: i64,
+    transition: SubscriptionWebhookTransition,
+) -> Result<Option<Subscription>, BridgeError> {
     let result = match transition {
         SubscriptionWebhookTransition::Pending => {
             sqlx::query_as::<_, Subscription>(
@@ -100,7 +133,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -125,7 +158,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -156,7 +189,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -177,7 +210,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -199,7 +232,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -227,7 +260,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -256,7 +289,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -282,7 +315,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -319,7 +352,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -328,9 +361,9 @@ pub async fn apply_webhook_transition(
                 "UPDATE pay.subscriptions
                  SET payment_failure_notification = true,
                      version = version + 1,
-                     last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
+                     last_event_time = $1,
                      updated_at = NOW()
-                 WHERE app_id = $2 AND external_user_id = $3 AND provider = $4 AND subscription_id = $5
+                 WHERE app_id = $2 AND external_user_id = $3 AND provider = $4 AND subscription_id = $5 AND last_event_time < $1
                  RETURNING *",
             )
             .bind(event_time_ms)
@@ -338,7 +371,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -348,7 +381,7 @@ pub async fn apply_webhook_transition(
                  SET status = 'cancelled',
                      auto_renewing = false,
                      cancellation_initiated_at = COALESCE(cancellation_initiated_at, NOW()),
-                     revocation_reason = 'pending_purchase_canceled',
+                     revocation_reason = 'pending_purchase_cancelled',
                      google_subscription_state = 1,
                      google_pending_price_change_new_price_cents = NULL,
                      google_pending_price_change_currency = NULL,
@@ -366,7 +399,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -392,7 +425,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -428,7 +461,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -450,7 +483,7 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
@@ -472,13 +505,11 @@ pub async fn apply_webhook_transition(
             .bind(external_user_id)
             .bind(provider)
             .bind(subscription_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|e| BridgeError::DbError(e.to_string()))?
         }
     };
-
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(result)
 }
@@ -518,7 +549,7 @@ pub async fn get_user_subscriptions_keyset(
     let mut tx = begin_app_tx(pool, app_id).await?;
     let subscriptions = sqlx::query_as::<_, Subscription>(
         "SELECT * FROM pay.subscriptions
-         WHERE app_id = $1 AND external_user_id = $2 
+         WHERE app_id = $1 AND external_user_id = $2
            AND (
                $3::timestamptz IS NULL
                OR $4::uuid IS NULL
@@ -609,55 +640,101 @@ pub async fn list_reconciliation_subscriptions(
     pool: &PgPool,
     app_id: Uuid,
 ) -> Result<Vec<Subscription>, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subs = sqlx::query_as::<_, Subscription>(
         "SELECT * FROM pay.subscriptions
          WHERE app_id = $1 AND status IN ('active', 'trial', 'past_due')"
     )
     .bind(app_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    Ok(subs)
 }
 
-pub async fn list_price_step_up_expired_subscriptions(
+pub async fn claim_price_step_up_expired_subscriptions(
     pool: &PgPool,
+    app_id: Uuid,
+    worker_id: &str,
+    lease_secs: i64,
     limit: i64,
 ) -> Result<Vec<Subscription>, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
-        "SELECT * FROM pay.subscriptions
-         WHERE google_requires_price_step_up_consent = true
-           AND google_price_step_up_consent_deadline IS NOT NULL
-           AND google_price_step_up_consent_deadline < NOW()
-         LIMIT $1"
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let subscriptions = sqlx::query_as::<_, Subscription>(
+        "WITH candidates AS (
+             SELECT id
+             FROM pay.subscriptions
+             WHERE app_id = $1
+               AND google_requires_price_step_up_consent = true
+               AND google_price_step_up_consent_deadline IS NOT NULL
+               AND google_price_step_up_consent_deadline < NOW()
+               AND (
+                   scheduled_job_claimed_until IS NULL
+                   OR scheduled_job_claimed_until < NOW()
+               )
+             ORDER BY google_price_step_up_consent_deadline ASC
+             LIMIT $4
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE pay.subscriptions s
+         SET scheduled_job_claim_token = gen_random_uuid(),
+             scheduled_job_claimed_by = $2,
+             scheduled_job_claimed_until = NOW() + ($3 * INTERVAL '1 second'),
+             scheduled_job_claim_kind = 'price_step_up_expiry',
+             updated_at = NOW()
+         FROM candidates
+         WHERE s.id = candidates.id AND s.app_id = $1
+         RETURNING s.*"
     )
+    .bind(app_id)
+    .bind(worker_id)
+    .bind(lease_secs)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscriptions)
 }
 
 pub async fn list_pending_pause_subscriptions(
     pool: &PgPool,
+    app_id: Uuid,
     limit: i64,
 ) -> Result<Vec<Subscription>, BridgeError> {
-    sqlx::query_as::<_, Subscription>(
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let subs = sqlx::query_as::<_, Subscription>(
         "SELECT * FROM pay.subscriptions
-         WHERE google_pause_scheduled_at IS NOT NULL
+         WHERE app_id = $1
+           AND google_pause_scheduled_at IS NOT NULL
            AND google_pause_scheduled_at <= NOW()
            AND status != 'paused'
-         LIMIT $1"
+         LIMIT $2"
     )
+    .bind(app_id)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    Ok(subs)
 }
 
 pub async fn mark_subscription_price_step_up_expired(
     pool: &PgPool,
+    app_id: Uuid,
     id: Uuid,
+    claim_token: Uuid,
     event_time_ms: i64,
 ) -> Result<bool, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
     let result = sqlx::query(
         "UPDATE pay.subscriptions
          SET google_requires_price_step_up_consent = false,
@@ -665,25 +742,156 @@ pub async fn mark_subscription_price_step_up_expired(
              status = 'cancelled',
              revocation_reason = 'price_step_up_expiry',
              auto_renewing = false,
+             scheduled_job_claim_token = NULL,
+             scheduled_job_claimed_by = NULL,
+             scheduled_job_claimed_until = NULL,
+             scheduled_job_claim_kind = NULL,
              version = version + 1,
              last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
              updated_at = NOW()
-         WHERE id = $2"
+         WHERE app_id = $2
+           AND id = $3
+           AND scheduled_job_claim_token = $4
+           AND scheduled_job_claim_kind = 'price_step_up_expiry'
+           AND google_requires_price_step_up_consent = true
+           AND google_price_step_up_consent_deadline IS NOT NULL
+           AND google_price_step_up_consent_deadline < NOW()"
     )
     .bind(event_time_ms)
+    .bind(app_id)
     .bind(id)
-    .execute(pool)
+    .bind(claim_token)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(result.rows_affected() > 0)
 }
 
+pub async fn refresh_subscription_scheduler_claim(
+    pool: &PgPool,
+    app_id: Uuid,
+    id: Uuid,
+    claim_token: Uuid,
+    claim_kind: &str,
+    lease_secs: i64,
+) -> Result<bool, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let result = sqlx::query(
+        "UPDATE pay.subscriptions
+         SET scheduled_job_claimed_until = NOW() + ($5 * INTERVAL '1 second'),
+             updated_at = NOW()
+         WHERE app_id = $1
+           AND id = $2
+           AND scheduled_job_claim_token = $3
+           AND scheduled_job_claim_kind = $4
+           AND google_requires_price_step_up_consent = true
+           AND google_price_step_up_consent_deadline IS NOT NULL
+           AND google_price_step_up_consent_deadline < NOW()"
+    )
+    .bind(app_id)
+    .bind(id)
+    .bind(claim_token)
+    .bind(claim_kind)
+    .bind(lease_secs)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn claim_price_step_up_decline(
+    pool: &PgPool,
+    app_id: Uuid,
+    id: Uuid,
+    worker_id: &str,
+    lease_secs: i64,
+) -> Result<Option<Subscription>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let subscription = sqlx::query_as::<_, Subscription>(
+        "WITH candidate AS (
+             SELECT id
+             FROM pay.subscriptions
+             WHERE app_id = $1
+               AND id = $2
+               AND google_requires_price_step_up_consent = true
+               AND purchase_token IS NOT NULL
+               AND (
+                   scheduled_job_claimed_until IS NULL
+                   OR scheduled_job_claimed_until < NOW()
+               )
+             LIMIT 1
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE pay.subscriptions s
+         SET scheduled_job_claim_token = gen_random_uuid(),
+             scheduled_job_claimed_by = $3,
+             scheduled_job_claimed_until = NOW() + ($4 * INTERVAL '1 second'),
+             scheduled_job_claim_kind = 'price_step_up_decline',
+             updated_at = NOW()
+         FROM candidate
+         WHERE s.app_id = $1 AND s.id = candidate.id
+         RETURNING s.*"
+    )
+    .bind(app_id)
+    .bind(id)
+    .bind(worker_id)
+    .bind(lease_secs)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(subscription)
+}
+
+pub async fn refresh_price_step_up_decline_claim(
+    pool: &PgPool,
+    app_id: Uuid,
+    id: Uuid,
+    claim_token: Uuid,
+    lease_secs: i64,
+) -> Result<bool, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let result = sqlx::query(
+        "UPDATE pay.subscriptions
+         SET scheduled_job_claimed_until = NOW() + ($4 * INTERVAL '1 second'),
+             updated_at = NOW()
+         WHERE app_id = $1
+           AND id = $2
+           AND scheduled_job_claim_token = $3
+           AND scheduled_job_claim_kind = 'price_step_up_decline'
+           AND google_requires_price_step_up_consent = true"
+    )
+    .bind(app_id)
+    .bind(id)
+    .bind(claim_token)
+    .bind(lease_secs)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(result.rows_affected() == 1)
+}
+
 pub async fn mark_subscription_paused(
     pool: &PgPool,
+    app_id: Uuid,
     id: Uuid,
     event_time_ms: i64,
 ) -> Result<bool, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let result = sqlx::query(
         "UPDATE pay.subscriptions
          SET status = 'paused',
@@ -692,28 +900,37 @@ pub async fn mark_subscription_paused(
              version = version + 1,
              last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
              updated_at = NOW()
-         WHERE id = $2 AND status != 'paused'"
+         WHERE app_id = $2 AND id = $3 AND status != 'paused'"
     )
     .bind(event_time_ms)
+    .bind(app_id)
     .bind(id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn delete_orphaned_pending_subscriptions(pool: &PgPool) -> Result<u64, BridgeError> {
+pub async fn delete_orphaned_pending_subscriptions(
+    pool: &PgPool,
+    app_id: Uuid,
+) -> Result<u64, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
     let result = sqlx::query(
         "DELETE FROM pay.subscriptions
-         WHERE status = 'pending'
+         WHERE app_id = $1
+           AND status = 'pending'
            AND purchase_token IS NULL
            AND created_at < NOW() - INTERVAL '30 minutes'"
     )
-    .execute(pool)
+    .bind(app_id)
+    .execute(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
     Ok(result.rows_affected())
 }
 
@@ -747,8 +964,8 @@ pub async fn upsert_subscription_tx(
 
         if let Some(existing_sub) = existing {
             // Update existing subscription found by purchase_token
-            // Only apply if the new event is newer or equal (stale event suppression)
-            if existing_sub.last_event_time <= event_time_ms {
+            // Only apply if the new event is newer (stale event suppression)
+            if existing_sub.last_event_time < event_time_ms {
                 let updated = sqlx::query_as::<_, Subscription>(
                     "UPDATE pay.subscriptions
                      SET status = $1, current_period_end = COALESCE($2, current_period_end),
@@ -872,9 +1089,9 @@ pub async fn upsert_pending_subscription(
          (app_id, external_user_id, subscription_id, provider, status, version, last_event_time)
          VALUES ($1, $2, $3, $4, 'pending', 1, 0)
          ON CONFLICT (app_id, external_user_id, subscription_id, provider)
-         DO UPDATE SET 
+         DO UPDATE SET
            updated_at = NOW()
-         WHERE subscriptions.last_event_time <= EXCLUDED.last_event_time
+         WHERE subscriptions.last_event_time < EXCLUDED.last_event_time
          RETURNING *"
     )
     .bind(app_id)
@@ -973,7 +1190,7 @@ pub async fn cancel_subscription_immediate(
              revocation_reason = 'immediate_cancel',
              revoked_at = NOW(),
              updated_at = NOW()
-         WHERE app_id = $1 AND id = $2
+         WHERE app_id = $1 AND id = $2 AND status NOT IN ('revoked', 'expired')
          RETURNING *",
     )
     .bind(app_id)
@@ -996,7 +1213,7 @@ pub async fn resume_subscription(
     let subscription = sqlx::query_as::<_, Subscription>(
         "UPDATE pay.subscriptions
          SET status = 'active', auto_renewing = true, cancellation_initiated_at = NULL, updated_at = NOW()
-         WHERE app_id = $1 AND id = $2
+         WHERE app_id = $1 AND id = $2 AND status IN ('paused', 'cancelled')
          RETURNING *",
     )
     .bind(app_id)
@@ -1090,20 +1307,30 @@ pub async fn accept_price_step_up(
     pool: &PgPool,
     app_id: Uuid,
     id: Uuid,
-) -> Result<Subscription, BridgeError> {
+) -> Result<Option<Subscription>, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let subscription = sqlx::query_as::<_, Subscription>(
         "UPDATE pay.subscriptions
          SET google_requires_price_step_up_consent = false,
              google_price_step_up_consent_status = 'accepted',
              google_price_step_up_consent_deadline = NULL,
+             scheduled_job_claim_token = NULL,
+             scheduled_job_claimed_by = NULL,
+             scheduled_job_claimed_until = NULL,
+             scheduled_job_claim_kind = NULL,
              updated_at = NOW()
-         WHERE app_id = $1 AND id = $2
+         WHERE app_id = $1
+           AND id = $2
+           AND google_requires_price_step_up_consent = true
+           AND (
+               scheduled_job_claimed_until IS NULL
+               OR scheduled_job_claimed_until < NOW()
+           )
          RETURNING *",
     )
     .bind(app_id)
     .bind(id)
-    .fetch_one(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
@@ -1116,7 +1343,8 @@ pub async fn decline_price_step_up(
     pool: &PgPool,
     app_id: Uuid,
     id: Uuid,
-) -> Result<Subscription, BridgeError> {
+    claim_token: Uuid,
+) -> Result<Option<Subscription>, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let subscription = sqlx::query_as::<_, Subscription>(
         "UPDATE pay.subscriptions
@@ -1127,13 +1355,22 @@ pub async fn decline_price_step_up(
              google_pending_cancellation_at = NOW(),
              auto_renewing = false,
              cancellation_initiated_at = NOW(),
+             scheduled_job_claim_token = NULL,
+             scheduled_job_claimed_by = NULL,
+             scheduled_job_claimed_until = NULL,
+             scheduled_job_claim_kind = NULL,
              updated_at = NOW()
-         WHERE app_id = $1 AND id = $2
+         WHERE app_id = $1
+           AND id = $2
+           AND scheduled_job_claim_token = $3
+           AND scheduled_job_claim_kind = 'price_step_up_decline'
+           AND google_requires_price_step_up_consent = true
          RETURNING *",
     )
     .bind(app_id)
     .bind(id)
-    .fetch_one(&mut *tx)
+    .bind(claim_token)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
@@ -1406,7 +1643,8 @@ pub async fn get_subscription_by_purchase_token_for_provider(
 /// same product have rows that share (app_id, subscription_id). The reconciler
 /// already iterates a concrete DB row, so we mutate that exact row by
 /// (app_id, id) to avoid clobbering another user's same-SKU row. The
-/// high-water stale guard (last_event_time < event_time_ms) is preserved.
+/// high-water stale guard (last_event_time < event_time_ms) is preserved, and
+/// duplicate workers skip rows that another worker already corrected.
 pub async fn update_reconciled_subscription_status(
     pool: &PgPool,
     app_id: Uuid,
@@ -1423,7 +1661,10 @@ pub async fn update_reconciled_subscription_status(
              version = version + 1,
              last_event_time = $3,
              updated_at = NOW()
-         WHERE app_id = $4 AND id = $5 AND last_event_time < $3"
+         WHERE app_id = $4
+           AND id = $5
+           AND status IS DISTINCT FROM $1
+           AND last_event_time < $3"
     )
     .bind(new_status)
     .bind(current_period_end)
@@ -1467,14 +1708,35 @@ pub async fn link_replacement_subscriptions(
     last_event_time: i64,
 ) -> Result<(), BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
+    link_replacement_subscriptions_tx(
+        &mut tx,
+        app_id,
+        external_user_id,
+        current_subscription_id,
+        last_event_time,
+    )
+    .await?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
+pub async fn link_replacement_subscriptions_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+    external_user_id: &str,
+    current_subscription_id: &str,
+    last_event_time: i64,
+) -> Result<(), BridgeError> {
     sqlx::query(
-        "UPDATE pay.subscriptions 
-         SET status = 'replaced', 
+        "UPDATE pay.subscriptions
+         SET status = 'replaced',
              last_event_time = $4,
-             updated_at = NOW() 
-         WHERE app_id = $1 
-           AND external_user_id = $2 
-           AND subscription_id != $3 
+             updated_at = NOW()
+         WHERE app_id = $1
+           AND external_user_id = $2
+           AND subscription_id != $3
            AND status IN ('active', 'trial', 'past_due', 'on_hold')
            AND provider = 'google_play'
            AND last_event_time < $4"
@@ -1483,11 +1745,183 @@ pub async fn link_replacement_subscriptions(
     .bind(external_user_id)
     .bind(current_subscription_id)
     .bind(last_event_time)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
-    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
-
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use sqlx::PgPool;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn price_step_up_decline_claim_fences_provider_action() -> Result<(), Box<dyn Error>> {
+        let Some(database) = test_database().await? else {
+            eprintln!("skipping DB-backed price step-up decline claim regression; set BRIDGE_TEST_DATABASE_URL");
+            return Ok(());
+        };
+
+        let pool = database.pool();
+        let app_id = insert_test_app(pool).await?;
+        let subscription_id = Uuid::new_v4();
+        insert_price_step_up_subscription(pool, app_id, subscription_id).await?;
+
+        let result = run_price_step_up_decline_claim_regression(pool, app_id, subscription_id).await;
+
+        delete_test_app(pool, app_id).await;
+
+        result
+    }
+
+    async fn run_price_step_up_decline_claim_regression(
+        pool: &PgPool,
+        app_id: Uuid,
+        subscription_id: Uuid,
+    ) -> Result<(), Box<dyn Error>> {
+        let claimed = super::claim_price_step_up_decline(
+            pool,
+            app_id,
+            subscription_id,
+            "decline-worker",
+            600,
+        )
+        .await?
+        .ok_or("expected decline claim")?;
+        let claim_token = claimed
+            .scheduled_job_claim_token
+            .ok_or("expected decline claim token")?;
+
+        let duplicate_decline = super::claim_price_step_up_decline(
+            pool,
+            app_id,
+            subscription_id,
+            "duplicate-decline-worker",
+            600,
+        )
+        .await?;
+        assert!(duplicate_decline.is_none(), "active decline claim must block duplicate decline");
+
+        let scheduler_claim = super::claim_price_step_up_expired_subscriptions(
+            pool,
+            app_id,
+            "expiry-worker",
+            600,
+            10,
+        )
+        .await?;
+        assert!(scheduler_claim.is_empty(), "active decline claim must block expiry scheduler");
+
+        assert!(
+            super::refresh_price_step_up_decline_claim(pool, app_id, subscription_id, claim_token, 600)
+                .await?,
+            "current decline claim must refresh before provider cancel"
+        );
+        assert!(
+            !super::refresh_price_step_up_decline_claim(pool, app_id, subscription_id, Uuid::new_v4(), 600)
+                .await?,
+            "wrong decline token must not refresh before provider cancel"
+        );
+        assert!(
+            super::decline_price_step_up(pool, app_id, subscription_id, Uuid::new_v4())
+                .await?
+                .is_none(),
+            "wrong decline token must not complete local transition"
+        );
+        assert!(
+            super::accept_price_step_up(pool, app_id, subscription_id)
+                .await?
+                .is_none(),
+            "active decline claim must block concurrent acceptance"
+        );
+
+        let updated = super::decline_price_step_up(pool, app_id, subscription_id, claim_token)
+            .await?
+            .ok_or("expected decline completion")?;
+        assert_eq!(updated.google_requires_price_step_up_consent, Some(false));
+        assert!(updated.google_price_step_up_consent_deadline.is_none());
+        assert_eq!(updated.auto_renewing, Some(false));
+        assert!(updated.scheduled_job_claim_token.is_none());
+        assert!(updated.scheduled_job_claim_kind.is_none());
+
+        Ok(())
+    }
+
+    async fn test_database() -> Result<Option<crate::db::Database>, Box<dyn Error>> {
+        dotenvy::dotenv().ok();
+        let admin_database_url = std::env::var("ADMIN_DATABASE_URL").ok();
+        let environment = std::env::var("ENVIRONMENT")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let is_production = matches!(environment.as_str(), "production" | "prod");
+        let database_url = match std::env::var("BRIDGE_TEST_DATABASE_URL") {
+            Ok(url) => Some(url),
+            Err(_) if !is_production => admin_database_url
+                .clone()
+                .or_else(|| std::env::var("DATABASE_URL").ok()),
+            Err(_) => None,
+        };
+        let Some(database_url) = database_url else {
+            return Ok(None);
+        };
+
+        Ok(Some(
+            crate::db::Database::new(&database_url, admin_database_url.as_deref()).await?,
+        ))
+    }
+
+    async fn insert_test_app(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
+        let app_id = Uuid::new_v4();
+        let slug = format!("price-step-up-decline-{}", app_id);
+
+        sqlx::query(
+            "INSERT INTO pay.apps (id, slug, display_name, webhook_callback_url, webhook_callback_secret)
+             VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(app_id)
+        .bind(slug)
+        .bind("Price Step-Up Decline Regression")
+        .bind("http://127.0.0.1:1/callback")
+        .bind("test_callback_secret")
+        .execute(pool)
+        .await?;
+
+        Ok(app_id)
+    }
+
+    async fn insert_price_step_up_subscription(
+        pool: &PgPool,
+        app_id: Uuid,
+        id: Uuid,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO pay.subscriptions
+             (id, app_id, external_user_id, subscription_id, provider, purchase_token, status,
+              google_requires_price_step_up_consent, google_price_step_up_consent_deadline,
+              version, last_event_time)
+             VALUES ($1, $2, $3, $4, 'google_play', $5, 'active', true,
+                     NOW() - INTERVAL '5 minutes', 1, 0)"
+        )
+        .bind(id)
+        .bind(app_id)
+        .bind(format!("user_{}", id))
+        .bind("hiha_monthly")
+        .bind(format!("token_{}", id))
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn delete_test_app(pool: &PgPool, app_id: Uuid) {
+        let _ = sqlx::query("DELETE FROM pay.apps WHERE id = $1")
+            .bind(app_id)
+            .execute(pool)
+            .await;
+    }
 }

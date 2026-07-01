@@ -15,7 +15,7 @@ pub struct Payment {
     pub provider_transaction_id: String,
     pub subscription_id: Option<String>,
     pub product_id: Option<String>,
-    pub amount_cents: i32,
+    pub amount_cents: i64,
     pub currency: String,
     pub status: String,
 }
@@ -27,7 +27,7 @@ pub struct PaymentHistoryEntry {
     pub subscription_id: Option<String>,
     pub provider: String,
     pub provider_transaction_id: String,
-    pub amount_cents: i32,
+    pub amount_cents: i64,
     pub currency: String,
     pub status: String,
     pub created_at: DateTime<Utc>,
@@ -35,8 +35,18 @@ pub struct PaymentHistoryEntry {
 
 #[derive(Debug, Clone, FromRow)]
 pub struct GooglePlaySubscriptionAckCandidate {
+    pub payment_id: Uuid,
     pub subscription_id: String,
     pub purchase_token: String,
+    pub claim_token: Uuid,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct GooglePlayProductAckCandidate {
+    pub payment_id: Uuid,
+    pub product_id: String,
+    pub purchase_token: String,
+    pub claim_token: Uuid,
 }
 
 async fn begin_app_tx<'a>(
@@ -60,7 +70,7 @@ pub async fn record_payment_tx(
     provider_transaction_id: &str,
     subscription_id: Option<&str>,
     product_id: Option<&str>,
-    amount_cents: i32,
+    amount_cents: i64,
     currency: Option<&str>,
     status: &str,
 ) -> Result<(), crate::error::BridgeError> {
@@ -92,13 +102,41 @@ pub async fn record_payment_with_purchase_token_tx(
     ack_required: bool,
     subscription_id: Option<&str>,
     product_id: Option<&str>,
-    amount_cents: i32,
+    amount_cents: i64,
     currency: Option<&str>,
     status: &str,
 ) -> Result<(), crate::error::BridgeError> {
+    let currency = currency.map(str::trim).filter(|value| {
+        !value.is_empty() && !value.eq_ignore_ascii_case("N/A") && !value.eq_ignore_ascii_case("UNKNOWN")
+    });
+
+    if currency.is_none() && !ack_required {
+        tracing::info!(
+            app_id = %app_id,
+            provider,
+            status,
+            provider_transaction_id,
+            "Skipping payment record without explicit currency"
+        );
+        return Ok(());
+    };
+
+    let amount_cents = (amount_cents >= 0).then_some(amount_cents);
+
+    if amount_cents.is_none() && !ack_required {
+        tracing::info!(
+            app_id = %app_id,
+            provider,
+            status,
+            provider_transaction_id,
+            "Skipping payment record without explicit amount"
+        );
+        return Ok(());
+    }
+
     let result = sqlx::query(
         "INSERT INTO pay.payments (app_id, external_user_id, provider, provider_transaction_id, provider_purchase_token, ack_required, subscription_id, product_id, amount_cents, currency, status, webhook_received_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE(NULLIF($10, ''), 'N/A'), $11, NOW())
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
          ON CONFLICT (app_id, provider, provider_transaction_id)
          DO UPDATE SET
            status = CASE
@@ -114,8 +152,8 @@ pub async fn record_payment_with_purchase_token_tx(
            ack_required = payments.ack_required OR EXCLUDED.ack_required,
            subscription_id = COALESCE(EXCLUDED.subscription_id, payments.subscription_id),
            product_id = COALESCE(EXCLUDED.product_id, payments.product_id),
-           amount_cents = CASE WHEN EXCLUDED.amount_cents > 0 THEN EXCLUDED.amount_cents ELSE payments.amount_cents END,
-           currency = COALESCE(NULLIF($10, ''), payments.currency),
+           amount_cents = COALESCE(EXCLUDED.amount_cents, payments.amount_cents),
+           currency = COALESCE(EXCLUDED.currency, payments.currency),
            webhook_received_at = NOW()
          WHERE payments.external_user_id = EXCLUDED.external_user_id"
     )
@@ -222,6 +260,7 @@ pub async fn get_payment_currency_for_subscription(
            AND external_user_id = $3
            AND subscription_id = $4
            AND currency != 'N/A'
+           AND currency != 'UNKNOWN'
          ORDER BY created_at DESC
          LIMIT 1"
     )
@@ -248,9 +287,38 @@ pub async fn update_payment_status_for_provider(
     new_status: &str,
 ) -> Result<(), crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
+    update_payment_status_for_provider_tx(
+        &mut tx,
+        app_id,
+        provider,
+        provider_transaction_id,
+        new_status,
+    )
+    .await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(())
+}
+
+pub async fn update_payment_status_for_provider_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+    provider: &str,
+    provider_transaction_id: &str,
+    new_status: &str,
+) -> Result<(), crate::error::BridgeError> {
     sqlx::query(
         "UPDATE pay.payments
-         SET status = $1, webhook_received_at = NOW()
+         SET status = $1,
+             ack_required = CASE
+                 WHEN provider = 'google_play' AND $1 = 'success' AND provider_purchase_token = $4
+                   THEN true
+                 ELSE ack_required
+             END,
+             webhook_received_at = NOW()
          WHERE app_id = $2
            AND provider = $3
            AND (provider_transaction_id = $4 OR provider_purchase_token = $4)"
@@ -259,13 +327,9 @@ pub async fn update_payment_status_for_provider(
     .bind(app_id)
     .bind(provider)
     .bind(provider_transaction_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
-
-    tx.commit()
-        .await
-        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
     Ok(())
 }
@@ -334,30 +398,173 @@ pub async fn mark_payment_acknowledged(
     Ok(())
 }
 
-pub async fn list_google_play_subscription_ack_candidates(
+pub async fn mark_payment_acknowledged_with_claim(
     pool: &sqlx::PgPool,
     app_id: Uuid,
+    payment_id: Uuid,
+    claim_token: Uuid,
+) -> Result<bool, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let result = sqlx::query(
+        "UPDATE pay.payments
+         SET acknowledged_at = COALESCE(acknowledged_at, NOW()),
+             ack_claim_token = NULL,
+             ack_claimed_by = NULL,
+             ack_claimed_until = NULL
+         WHERE app_id = $1
+           AND id = $2
+           AND ack_claim_token = $3
+           AND acknowledged_at IS NULL",
+    )
+    .bind(app_id)
+    .bind(payment_id)
+    .bind(claim_token)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn refresh_payment_ack_claim(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    payment_id: Uuid,
+    claim_token: Uuid,
+    lease_secs: i64,
+) -> Result<bool, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let result = sqlx::query(
+        "UPDATE pay.payments
+         SET ack_claimed_until = NOW() + ($4 * INTERVAL '1 second')
+         WHERE app_id = $1
+           AND id = $2
+           AND ack_claim_token = $3
+           AND acknowledged_at IS NULL",
+    )
+    .bind(app_id)
+    .bind(payment_id)
+    .bind(claim_token)
+    .bind(lease_secs)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn claim_google_play_subscription_ack_candidates(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    worker_id: &str,
+    lease_secs: i64,
     limit: i64,
 ) -> Result<Vec<GooglePlaySubscriptionAckCandidate>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let rows = sqlx::query_as::<_, GooglePlaySubscriptionAckCandidate>(
-        "SELECT s.subscription_id, p.provider_purchase_token AS purchase_token
-         FROM pay.payments p
-         JOIN pay.subscriptions s
-           ON s.app_id = p.app_id
-          AND s.provider = p.provider
-          AND s.purchase_token = p.provider_purchase_token
-         WHERE p.app_id = $1
-           AND p.provider = 'google_play'
-           AND p.status = 'success'
-           AND p.ack_required = true
-           AND p.acknowledged_at IS NULL
-           AND p.provider_purchase_token IS NOT NULL
-           AND s.status IN ('active', 'past_due', 'cancelled', 'on_hold', 'paused')
-         ORDER BY p.created_at ASC
-         LIMIT $2",
+        "WITH candidates AS (
+             SELECT p.id
+             FROM pay.payments p
+             JOIN pay.subscriptions s
+               ON s.app_id = p.app_id
+              AND s.provider = p.provider
+              AND s.purchase_token = p.provider_purchase_token
+             WHERE p.app_id = $1
+               AND p.provider = 'google_play'
+               AND p.status = 'success'
+               AND p.ack_required = true
+               AND p.acknowledged_at IS NULL
+               AND p.provider_purchase_token IS NOT NULL
+               AND s.status IN ('active', 'past_due', 'cancelled', 'on_hold', 'paused')
+               AND (
+                   p.ack_claimed_until IS NULL
+                   OR p.ack_claimed_until < NOW()
+               )
+             ORDER BY p.created_at ASC
+             LIMIT $4
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE pay.payments p
+         SET ack_claim_token = gen_random_uuid(),
+             ack_claimed_by = $2,
+             ack_claimed_until = NOW() + ($3 * INTERVAL '1 second')
+         FROM candidates
+         WHERE p.id = candidates.id AND p.app_id = $1
+         RETURNING p.id AS payment_id,
+                   (SELECT s.subscription_id
+                    FROM pay.subscriptions s
+                    WHERE s.app_id = p.app_id
+                      AND s.provider = p.provider
+                      AND s.purchase_token = p.provider_purchase_token
+                    LIMIT 1) AS subscription_id,
+                   p.provider_purchase_token AS purchase_token,
+                   p.ack_claim_token AS claim_token",
     )
     .bind(app_id)
+    .bind(worker_id)
+    .bind(lease_secs)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
+
+    Ok(rows)
+}
+
+pub async fn claim_google_play_product_ack_candidates(
+    pool: &sqlx::PgPool,
+    app_id: Uuid,
+    worker_id: &str,
+    lease_secs: i64,
+    limit: i64,
+) -> Result<Vec<GooglePlayProductAckCandidate>, crate::error::BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let rows = sqlx::query_as::<_, GooglePlayProductAckCandidate>(
+        "WITH candidates AS (
+             SELECT id
+             FROM pay.payments
+             WHERE app_id = $1
+               AND provider = 'google_play'
+               AND status = 'success'
+               AND ack_required = true
+               AND acknowledged_at IS NULL
+               AND provider_purchase_token IS NOT NULL
+               AND product_id IS NOT NULL
+               AND subscription_id IS NULL
+               AND (
+                   ack_claimed_until IS NULL
+                   OR ack_claimed_until < NOW()
+               )
+             ORDER BY created_at ASC
+             LIMIT $4
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE pay.payments p
+         SET ack_claim_token = gen_random_uuid(),
+             ack_claimed_by = $2,
+             ack_claimed_until = NOW() + ($3 * INTERVAL '1 second')
+         FROM candidates
+         WHERE p.id = candidates.id AND p.app_id = $1
+         RETURNING p.id AS payment_id,
+                   p.product_id,
+                   p.provider_purchase_token AS purchase_token,
+                   p.ack_claim_token AS claim_token",
+    )
+    .bind(app_id)
+    .bind(worker_id)
+    .bind(lease_secs)
     .bind(limit)
     .fetch_all(&mut *tx)
     .await
@@ -440,7 +647,10 @@ pub async fn get_user_payments(
 ) -> Result<Vec<Payment>, crate::error::BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
     let payments = sqlx::query_as::<_, Payment>(
-        "SELECT * FROM pay.payments 
+        "SELECT id, app_id, external_user_id, provider, provider_transaction_id, subscription_id, product_id,
+                COALESCE(amount_cents, -1) AS amount_cents, COALESCE(currency, 'UNKNOWN') AS currency,
+                status
+         FROM pay.payments 
          WHERE app_id = $1 AND external_user_id = $2 
          ORDER BY webhook_received_at DESC 
          LIMIT $3 OFFSET $4"
@@ -496,7 +706,7 @@ pub async fn list_user_payments_keyset(
             r#"
             SELECT
                 id, external_user_id, subscription_id, provider, provider_transaction_id,
-                amount_cents, currency, status, created_at
+                COALESCE(amount_cents, -1) AS amount_cents, COALESCE(currency, 'UNKNOWN') AS currency, status, created_at
             FROM pay.payments
             WHERE app_id = $1 AND external_user_id = $2
               AND (created_at, id) < ($3, $4)
@@ -517,7 +727,7 @@ pub async fn list_user_payments_keyset(
             r#"
             SELECT
                 id, external_user_id, subscription_id, provider, provider_transaction_id,
-                amount_cents, currency, status, created_at
+                COALESCE(amount_cents, -1) AS amount_cents, COALESCE(currency, 'UNKNOWN') AS currency, status, created_at
             FROM pay.payments
             WHERE app_id = $1 AND external_user_id = $2
             ORDER BY created_at DESC, id DESC
@@ -569,4 +779,142 @@ pub async fn adopt_stale_payment(
     .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    async fn test_database() -> Result<Option<crate::db::Database>, Box<dyn Error>> {
+        dotenvy::dotenv().ok();
+        let admin_database_url = std::env::var("ADMIN_DATABASE_URL").ok();
+        let environment = std::env::var("ENVIRONMENT")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let is_production = matches!(environment.as_str(), "production" | "prod");
+        let database_url = match std::env::var("BRIDGE_TEST_DATABASE_URL") {
+            Ok(url) => Some(url),
+            Err(_) if !is_production => admin_database_url
+                .clone()
+                .or_else(|| std::env::var("DATABASE_URL").ok()),
+            Err(_) => None,
+        };
+        let Some(database_url) = database_url else {
+            return Ok(None);
+        };
+
+        Ok(Some(
+            crate::db::Database::new(&database_url, admin_database_url.as_deref()).await?,
+        ))
+    }
+
+    async fn insert_test_app(pool: &sqlx::PgPool) -> Result<Uuid, sqlx::Error> {
+        let app_id = Uuid::new_v4();
+        let slug = format!("ack-placeholder-{}", app_id);
+
+        sqlx::query(
+            "INSERT INTO pay.apps (id, slug, display_name, webhook_callback_url, webhook_callback_secret)
+             VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(app_id)
+        .bind(slug)
+        .bind("ACK Placeholder Regression")
+        .bind("http://127.0.0.1:1/callback")
+        .bind("test_callback_secret")
+        .execute(pool)
+        .await?;
+
+        Ok(app_id)
+    }
+
+    async fn delete_test_app(pool: &sqlx::PgPool, app_id: Uuid) {
+        let _ = sqlx::query("DELETE FROM pay.apps WHERE id = $1")
+            .bind(app_id)
+            .execute(pool)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn ack_placeholder_payment_with_null_amount_currency_reads_successfully()
+    -> Result<(), Box<dyn Error>> {
+        let Some(database) = test_database().await? else {
+            eprintln!("skipping DB-backed ACK placeholder regression; set BRIDGE_TEST_DATABASE_URL");
+            return Ok(());
+        };
+
+        let pool = database.pool();
+        let app_id = insert_test_app(pool).await?;
+        let result =
+            run_ack_placeholder_null_amount_currency_regression(pool, app_id).await;
+
+        delete_test_app(pool, app_id).await;
+        result
+    }
+
+    async fn run_ack_placeholder_null_amount_currency_regression(
+        pool: &sqlx::PgPool,
+        app_id: Uuid,
+    ) -> Result<(), Box<dyn Error>> {
+        let external_user_id = "test_ack_user";
+        let provider = "google_play";
+        let txn_id = "GPA.3333-null-amount-test";
+
+        let mut tx = begin_app_tx(pool, app_id).await?;
+
+        record_payment_with_purchase_token_tx(
+            &mut tx,
+            app_id,
+            external_user_id,
+            provider,
+            txn_id,
+            Some("purchase_token_null_amount"),
+            true,
+            None,
+            Some("product_null_amount"),
+            -1,
+            Some("UNKNOWN"),
+            "success",
+        )
+        .await?;
+
+        tx.commit().await?;
+
+        let payments = get_user_payments(pool, app_id, external_user_id, 10, 0).await?;
+        assert!(payments.len() >= 1, "expected at least one payment row");
+
+        let placeholder = payments
+            .iter()
+            .find(|p| p.provider_transaction_id == txn_id)
+            .ok_or("ACK placeholder payment not found in get_user_payments results")?;
+
+        assert_eq!(
+            placeholder.amount_cents, -1,
+            "COALESCE sentinel for NULL amount_cents should be -1"
+        );
+        assert_eq!(
+            placeholder.currency, "UNKNOWN",
+            "COALESCE sentinel for NULL currency should be 'UNKNOWN'"
+        );
+
+        let history = list_user_payments_keyset(pool, app_id, external_user_id, 10, None, None)
+            .await?;
+        assert!(history.len() >= 1, "expected at least one history entry");
+
+        let history_placeholder = history
+            .iter()
+            .find(|p| p.provider_transaction_id == txn_id)
+            .ok_or("ACK placeholder payment not found in keyset history results")?;
+
+        assert_eq!(
+            history_placeholder.amount_cents, -1,
+            "COALESCE sentinel for NULL amount_cents should be -1 in keyset history"
+        );
+        assert_eq!(
+            history_placeholder.currency, "UNKNOWN",
+            "COALESCE sentinel for NULL currency should be 'UNKNOWN' in keyset history"
+        );
+
+        Ok(())
+    }
 }

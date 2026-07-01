@@ -237,7 +237,7 @@ impl CreemClient {
     pub async fn fetch_subscription_status(
         &self,
         subscription_id: &str,
-    ) -> Result<(String, Option<DateTime<Utc>>), BridgeError> {
+    ) -> Result<(Option<String>, Option<DateTime<Utc>>), BridgeError> {
         let response = self
             .http
             .get(format!(
@@ -286,16 +286,24 @@ impl CreemClient {
     }
 }
 
-/// Normalize raw Creem status to canonical form
-fn normalize_creem_status(raw: &str) -> String {
+/// Normalize raw Creem status to canonical form.
+///
+/// Returns `None` for unknown statuses so the reconciliation caller can skip
+/// the write instead of persisting a value that violates the
+/// `subscriptions_status_check` constraint. Keep this vocabulary in sync with
+/// `normalize_status` in the webhook path and the DB CHECK constraint.
+fn normalize_creem_status(raw: &str) -> Option<String> {
     match raw {
-        "trialing" => "trial".to_string(),
-        "active" | "paid" => "active".to_string(),
-        "past_due" | "unpaid" => "past_due".to_string(),
-        "canceled" | "cancelled" => "cancelled".to_string(),
-        "expired" => "expired".to_string(),
-        "paused" => "paused".to_string(),
-        other => other.to_string(),
+        "trialing" => Some("trial".to_string()),
+        "active" | "paid" => Some("active".to_string()),
+        "past_due" | "unpaid" => Some("past_due".to_string()),
+        "canceled" | "cancelled" => Some("cancelled".to_string()),
+        "expired" => Some("expired".to_string()),
+        "paused" => Some("paused".to_string()),
+        other => {
+            tracing::warn!(raw_status = other, "unknown Creem subscription status ignored");
+            None
+        }
     }
 }
 

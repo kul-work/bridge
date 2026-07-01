@@ -1,54 +1,58 @@
 use super::*;
-use super::normalize::normalize_event_type;
+use crate::webhooks::provider_adapter::ProviderWebhookAdapter;
 
 #[test]
 fn test_normalize_google_play_events() {
+    let adapter = ProviderWebhookAdapter::GooglePlay;
+    let payload = serde_json::Value::Null;
     assert_eq!(
-        normalize_event_type("google_play", "SUBSCRIPTION_PURCHASED"),
+        adapter.canonical_event_type("SUBSCRIPTION_PURCHASED", &payload),
         "subscription.activated"
     );
     assert_eq!(
-        normalize_event_type("google_play", "SUBSCRIPTION_RENEWED"),
+        adapter.canonical_event_type("SUBSCRIPTION_RENEWED", &payload),
         "subscription.renewed"
     );
     assert_eq!(
-        normalize_event_type("google_play", "SUBSCRIPTION_CANCELED"),
+        adapter.canonical_event_type("SUBSCRIPTION_CANCELED", &payload),
         "subscription.cancelled"
     );
     assert_eq!(
-        normalize_event_type("google_play", "SUBSCRIPTION_ON_HOLD"),
+        adapter.canonical_event_type("SUBSCRIPTION_ON_HOLD", &payload),
         "subscription.on_hold"
     );
     assert_eq!(
-        normalize_event_type("google_play", "SUBSCRIPTION_CANCELLATION_SCHEDULED"),
+        adapter.canonical_event_type("SUBSCRIPTION_CANCELLATION_SCHEDULED", &payload),
         "subscription.cancellation_scheduled"
     );
     assert_eq!(
-        normalize_event_type("google_play", "ONE_TIME_PRODUCT_REFUNDED"),
+        adapter.canonical_event_type("ONE_TIME_PRODUCT_REFUNDED", &payload),
         "purchase.one_time_refunded"
     );
 }
 
 #[test]
 fn test_normalize_creem_events() {
+    let adapter = ProviderWebhookAdapter::Creem;
+    let payload = serde_json::Value::Null;
     assert_eq!(
-        normalize_event_type("creem", "subscription.created"),
+        adapter.canonical_event_type("subscription.created", &payload),
         "subscription.created"
     );
     assert_eq!(
-        normalize_event_type("creem", "subscription.active"),
+        adapter.canonical_event_type("subscription.active", &payload),
         "subscription.activated"
     );
     assert_eq!(
-        normalize_event_type("creem", "subscription.trialing"),
+        adapter.canonical_event_type("subscription.trialing", &payload),
         "subscription.trial_started"
     );
     assert_eq!(
-        normalize_event_type("creem", "subscription.cancelled"),
+        adapter.canonical_event_type("subscription.cancelled", &payload),
         "subscription.cancelled"
     );
     assert_eq!(
-        normalize_event_type("creem", "refund.created"),
+        adapter.canonical_event_type("refund.created", &payload),
         "payment.refunded"
     );
 }
@@ -66,7 +70,7 @@ fn test_normalize_creem_checkout_completed_recurring_to_subscription_created() {
     });
 
     assert_eq!(
-        normalize_event_type_with_payload("creem", "checkout.completed", Some(&payload)),
+        ProviderWebhookAdapter::Creem.canonical_event_type("checkout.completed", &payload),
         "subscription.created"
     );
 }
@@ -82,7 +86,7 @@ fn test_normalize_creem_checkout_completed_one_time_to_purchase_one_time() {
     });
 
     assert_eq!(
-        normalize_event_type_with_payload("creem", "checkout.completed", Some(&payload)),
+        ProviderWebhookAdapter::Creem.canonical_event_type("checkout.completed", &payload),
         "purchase.one_time"
     );
 }
@@ -99,7 +103,7 @@ fn test_normalize_creem_refund_created_one_time_to_purchase_one_time_refunded() 
     });
 
     assert_eq!(
-        normalize_event_type_with_payload("creem", "refund.created", Some(&payload)),
+        ProviderWebhookAdapter::Creem.canonical_event_type("refund.created", &payload),
         "purchase.one_time_refunded"
     );
 }
@@ -117,7 +121,7 @@ fn test_normalize_creem_refund_created_subscription_stays_payment_refunded() {
     });
 
     assert_eq!(
-        normalize_event_type_with_payload("creem", "refund.created", Some(&payload)),
+        ProviderWebhookAdapter::Creem.canonical_event_type("refund.created", &payload),
         "payment.refunded"
     );
 }
@@ -153,7 +157,7 @@ fn test_creem_field_extraction_subscription_active() {
         suppressed_reason: None,
     };
 
-    let fields = extract_webhook_fields(&webhook);
+    let fields = extract_webhook_fields(&webhook).unwrap();
     assert_eq!(fields.subscription_id, Some("sub_789".to_string()));
     assert_eq!(fields.product_id, Some("prod_premium".to_string()));
     assert_eq!(fields.status, Some("paid".to_string()));
@@ -197,7 +201,7 @@ fn test_creem_field_extraction_checkout_completed_recurring() {
         suppressed_reason: None,
     };
 
-    let fields = extract_webhook_fields(&webhook);
+    let fields = extract_webhook_fields(&webhook).unwrap();
     assert_eq!(fields.subscription_id, Some("sub_new_456".to_string()));
     assert_eq!(fields.product_id, Some("prod_monthly".to_string()));
     assert_eq!(fields.status, Some("paid".to_string()));
@@ -241,7 +245,7 @@ fn test_creem_recurring_checkout_without_last_transaction_is_state_only() {
         suppressed_reason: None,
     };
 
-    let fields = extract_webhook_fields(&webhook);
+    let fields = extract_webhook_fields(&webhook).unwrap();
     assert_eq!(fields.subscription_id, Some("sub_3UJmiDyIzY1uQJsH4a2jpQ".to_string()));
     assert_eq!(fields.amount_cents, Some(450));
     assert_eq!(fields.provider_transaction_id, None);
@@ -280,7 +284,7 @@ fn test_creem_subscription_paid_uses_last_transaction_id() {
         suppressed_reason: None,
     };
 
-    let fields = extract_webhook_fields(&webhook);
+    let fields = extract_webhook_fields(&webhook).unwrap();
     assert_eq!(fields.subscription_id, Some("sub_3UJmiDyIzY1uQJsH4a2jpQ".to_string()));
     assert_eq!(fields.amount_cents, Some(450));
     assert_eq!(fields.currency, Some("USD".to_string()));
@@ -315,7 +319,7 @@ fn test_creem_field_extraction_checkout_completed_one_time() {
         suppressed_reason: None,
     };
 
-    let fields = extract_webhook_fields(&webhook);
+    let fields = extract_webhook_fields(&webhook).unwrap();
     assert_eq!(fields.subscription_id, None);
     assert_eq!(fields.product_id, Some("prod_lifetime".to_string()));
     assert_eq!(fields.purchase_token, Some("co_otp_001".to_string()));
@@ -346,7 +350,7 @@ fn test_google_play_subscription_field_extraction_does_not_use_purchase_token_as
         suppressed_reason: None,
     };
 
-    let fields = extract_webhook_fields(&webhook);
+    let fields = extract_webhook_fields(&webhook).unwrap();
 
     assert_eq!(fields.purchase_token, Some("shared_purchase_token".to_string()));
     assert_eq!(fields.provider_transaction_id, None);
@@ -363,7 +367,7 @@ fn test_normalize_google_play_voided_otp_to_one_time_refund() {
     });
 
     assert_eq!(
-        normalize_event_type_with_payload("google_play", "VOIDED_PURCHASE", Some(&payload)),
+        ProviderWebhookAdapter::GooglePlay.canonical_event_type("VOIDED_PURCHASE", &payload),
         "purchase.one_time_refunded"
     );
 }
@@ -391,7 +395,7 @@ fn test_google_play_one_time_field_extraction_keeps_token_out_of_transaction_id(
         suppressed_reason: None,
     };
 
-    let fields = extract_webhook_fields(&webhook);
+    let fields = extract_webhook_fields(&webhook).unwrap();
 
     assert_eq!(fields.subscription_id, None);
     assert_eq!(fields.product_id, Some("hiha_one_time".to_string()));
@@ -422,7 +426,7 @@ fn test_google_play_voided_otp_field_extraction_uses_order_id_not_token() {
         suppressed_reason: None,
     };
 
-    let fields = extract_webhook_fields(&webhook);
+    let fields = extract_webhook_fields(&webhook).unwrap();
 
     assert_eq!(fields.subscription_id, None);
     assert_eq!(fields.purchase_token, Some("otp_purchase_token".to_string()));
@@ -557,7 +561,7 @@ fn test_creem_field_extraction_refund_with_amount_fallback() {
         suppressed_reason: None,
     };
 
-    let fields = extract_webhook_fields(&webhook);
+    let fields = extract_webhook_fields(&webhook).unwrap();
     assert_eq!(fields.subscription_id, Some("sub_refunded".to_string()));
     assert_eq!(fields.purchase_token, Some("order_original".to_string()));
     assert_eq!(fields.amount_cents, Some(2999));
@@ -593,7 +597,7 @@ fn test_creem_field_extraction_one_time_refund() {
         suppressed_reason: None,
     };
 
-    let fields = extract_webhook_fields(&webhook);
+    let fields = extract_webhook_fields(&webhook).unwrap();
     assert_eq!(fields.subscription_id, None);
     assert_eq!(fields.product_id, Some("prod_lifetime".to_string()));
     assert_eq!(fields.purchase_token, Some("order_original".to_string()));
@@ -624,10 +628,30 @@ fn test_creem_metadata_user_id_from_checkout_path() {
 
 #[test]
 fn test_normalize_status() {
-    assert_eq!(normalize_status(Some("Trialing")), "trial");
-    assert_eq!(normalize_status(Some(" PAID ")), "active");
-    assert_eq!(normalize_status(Some("canceled")), "cancelled");
-    assert_eq!(normalize_status(None), "pending");
+    let gp = ProviderWebhookAdapter::GooglePlay;
+    let cr = ProviderWebhookAdapter::Creem;
+
+    for adapter in [&gp, &cr] {
+        assert_eq!(adapter.normalize_status(Some("trialing")), Some("trial".to_string()));
+        assert_eq!(adapter.normalize_status(Some("trial")), Some("trial".to_string()));
+        assert_eq!(adapter.normalize_status(Some("active")), Some("active".to_string()));
+        assert_eq!(adapter.normalize_status(Some("paid")), Some("active".to_string()));
+        assert_eq!(adapter.normalize_status(Some("completed")), Some("active".to_string()));
+        assert_eq!(adapter.normalize_status(Some("success")), Some("active".to_string()));
+        assert_eq!(adapter.normalize_status(Some("past_due")), Some("past_due".to_string()));
+        assert_eq!(adapter.normalize_status(Some("grace_period")), Some("past_due".to_string()));
+        assert_eq!(adapter.normalize_status(Some("cancelled")), Some("cancelled".to_string()));
+        assert_eq!(adapter.normalize_status(Some("canceled")), Some("cancelled".to_string()));
+        assert_eq!(adapter.normalize_status(Some("expired")), Some("expired".to_string()));
+        assert_eq!(adapter.normalize_status(Some("on_hold")), Some("on_hold".to_string()));
+        assert_eq!(adapter.normalize_status(Some("on-hold")), Some("on_hold".to_string()));
+        assert_eq!(adapter.normalize_status(Some("paused")), Some("paused".to_string()));
+        assert_eq!(adapter.normalize_status(Some("revoked")), Some("revoked".to_string()));
+        assert_eq!(adapter.normalize_status(Some("pending")), Some("pending".to_string()));
+        assert_eq!(adapter.normalize_status(Some("unpaid")), None);
+        assert_eq!(adapter.normalize_status(Some("unknown_status")), None);
+        assert_eq!(adapter.normalize_status(None), Some("pending".to_string()));
+    }
 }
 
 #[test]

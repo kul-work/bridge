@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ##############################################################################
-# Cleanup for All OTP Tests (OTP-01 to OTP-05 and OTP-RTDN-01/02)
+# Cleanup for All OTP Tests (OTP-01 to OTP-06 and OTP-RTDN-01/02)
 # 
 # Removes all test subscription records and report files
 #
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo -e "${YELLOW}========================================${NC}"
-echo "Cleaning up ALL OTP Tests (OTP-01 to OTP-05, OTP-RTDN-01/02)"
+echo "Cleaning up ALL OTP Tests (OTP-01 to OTP-06, OTP-RTDN-01/02)"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
@@ -46,7 +46,7 @@ echo ""
 echo -e "${YELLOW}[1/4] Removing test report files${NC}"
 
 REMOVED_COUNT=0
-for report in otp-{01..05}-report.json otp-rtdn-{01..02}-report.json otp-suite-summary.json; do
+for report in otp-{01..06}-report.json otp-rtdn-{01..02}-report.json otp-suite-summary.json; do
     if [[ -f "$report" ]]; then
         rm -f "$report"
         echo -e "${GREEN}✓ Removed $report${NC}"
@@ -59,8 +59,8 @@ if [[ $REMOVED_COUNT -eq 0 ]]; then
 fi
 echo ""
 
-# Use the fixed OTP test user prefix shared across OTP-01..05 and RTDN cleanup.
-USER_ID_PREFIX="test_otp_user_"
+# Use the common OTP test user prefix shared across OTP-01..06 and RTDN cleanup.
+USER_ID_PREFIX="test_otp_"
 
 # Remove subscription database records
 echo -e "${YELLOW}[2/4] Removing all subscription records from database${NC}"

@@ -113,8 +113,12 @@ sleep 2
 
 # Step 3: Verify in DB
 echo -e "${YELLOW}[3/3] Verifying status in DB...${NC}"
-STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t | tr -d '[:space:]')
+bridge_wait_for_db_glob \
+    STATUS \
+    "SELECT status FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" \
+    "pending" \
+    10 \
+    1 || true
 
 if [[ "$STATUS" == "pending" ]]; then
     echo -e "${GREEN}✓ Success: Status is 'pending'${NC}"

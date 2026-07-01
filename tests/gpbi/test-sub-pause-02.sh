@@ -118,8 +118,15 @@ echo ""
 # Step 5: Verify status changed to 'paused' and google_paused_at is set
 echo -e "${YELLOW}[3/5] Verifying pause state in Bridge DB${NC}"
 export PGPASSWORD="postgres"
-RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT status, (google_paused_at IS NOT NULL) as is_paused_at_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+RES_DATA=""
+for attempt in $(seq 1 10); do
+    RES_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+      -c "SELECT status, (google_paused_at IS NOT NULL) as is_paused_at_set FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t | tr -d '[:space:]')
+    if [[ "$RES_DATA" == *"paused"*"t"* ]]; then
+        break
+    fi
+    sleep 1
+done
 
 # Expected: paused | t
 if [[ "$RES_DATA" == *"paused"*"t"* ]]; then

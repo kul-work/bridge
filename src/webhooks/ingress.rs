@@ -2,21 +2,37 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
 };
-use base64::Engine;
 use std::sync::Arc;
-use tracing::{debug, error, info, info_span, Instrument};
+use tracing::{error, info, info_span, Instrument};
 use uuid::Uuid;
 
 use crate::{
     db::Database,
     error::BridgeError,
-    ports::{ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository, WebhookWriteRepository},
+    ports::{
+        ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository,
+        WebhookWriteRepository,
+    },
     ports::composites::WebhookIngressRepository,
     state::AppState,
     utils::diagnostic_hash,
 };
+use crate::db::webhooks::WebhookDeliveryEnqueue;
+use crate::webhooks::forwarding::{webhook_worker_id, WEBHOOK_DELIVERY_LEASE_SECS};
+use crate::webhooks::provider_adapter::ProviderWebhookAdapter;
 
 const CREEM_SIGNATURE_HEADERS: [&str; 3] = ["creem-signature", "Webhook-Signature", "x-signature"];
+
+fn retryable_provider_ack_error(
+    provider: &str,
+    event_id: &str,
+    error: BridgeError,
+) -> BridgeError {
+    BridgeError::InternalServerError(format!(
+        "{} webhook {} processing failed after persistence: {}",
+        provider, event_id, error
+    ))
+}
 
 fn google_voided_purchase_product_type(payload: &serde_json::Value) -> Option<i64> {
     payload
@@ -24,97 +40,79 @@ fn google_voided_purchase_product_type(payload: &serde_json::Value) -> Option<i6
         .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
 }
 
-fn spawn_process_and_forward_webhook(
+fn spawn_process_and_forward_delivery(
     database: Arc<Database>,
     app_id: Uuid,
     webhook_id: Uuid,
     provider_name: &'static str,
     event_id: String,
+    delivery: WebhookDeliveryEnqueue,
 ) {
     let span = info_span!(
-        "webhook_process_and_forward",
+        "webhook_process_delivery",
         app_id = %app_id,
         provider = provider_name,
         webhook_provider_id = %webhook_id,
+        webhook_delivery_id = %delivery.id,
         event_id = %event_id,
     );
 
     tokio::spawn(async move {
-        debug!("Begin processing webhook");
-        match crate::webhooks::processor::process_webhook(database.as_ref(), webhook_id, app_id).await {
-            Ok(Some(canonical)) => {
-                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
-                    database.as_ref(),
-                    app_id,
-                    webhook_id,
-                    canonical,
-                )
-                .await
-                {
-                    error!(error = %e, "Failed to forward webhook");
-                }
-            }
-            Ok(None) => info!(
+        if !delivery.created {
+            info!(
                 app_id = %app_id,
                 webhook_provider_id = %webhook_id,
+                webhook_delivery_id = %delivery.id,
                 provider = provider_name,
                 event_id = %event_id,
-                outcome = "suppressed",
-                "Webhook suppressed"
-            ),
-            Err(e) => error!(error = %e, "Webhook processing failed"),
+                outcome = "duplicate_delivery_queued",
+                "Webhook delivery already queued; skipping duplicate immediate processing"
+            );
+            return;
         }
-        debug!("End processing webhook");
-    }.instrument(span));
-}
 
-fn spawn_forward_existing_webhook(
-    database: Arc<Database>,
-    app_id: Uuid,
-    webhook_id: Uuid,
-    provider_name: &'static str,
-    event_id: String,
-) {
-    let span = info_span!(
-        "webhook_resume_forwarding",
-        app_id = %app_id,
-        provider = provider_name,
-        webhook_provider_id = %webhook_id,
-        event_id = %event_id,
-    );
+        let Some(claim_token) = delivery.claim_token else {
+            error!("New webhook delivery was not claimed before immediate processing");
+            return;
+        };
 
-    tokio::spawn(async move {
-        match crate::webhooks::processor::build_canonical_payload(database.as_ref(), webhook_id, app_id).await {
+        match crate::webhooks::processor::process_webhook_atomically(
+            database.as_ref(),
+            app_id,
+            webhook_id,
+            delivery.id,
+            claim_token,
+        )
+        .await
+        {
             Ok(Some(canonical)) => {
-                if let Err(e) = crate::webhooks::forwarding::queue_and_forward_webhook(
+                if let Err(e) = crate::webhooks::forwarding::forward_webhook(
                     database.as_ref(),
                     app_id,
-                    webhook_id,
+                    delivery.id,
+                    claim_token,
                     canonical,
                 )
                 .await
                 {
-                    error!(error = %e, "Failed to resume webhook forwarding");
-                } else {
-                    info!(
-                        app_id = %app_id,
-                        webhook_provider_id = %webhook_id,
-                        provider = provider_name,
-                        event_id = %event_id,
-                        outcome = "forwarding_resumed",
-                        "Webhook forwarding resumed"
-                    );
+                    error!(error = %e, "Failed to forward processed webhook delivery");
                 }
             }
-            Ok(None) => info!(
-                app_id = %app_id,
-                webhook_provider_id = %webhook_id,
-                provider = provider_name,
-                event_id = %event_id,
-                outcome = "suppressed_while_resuming",
-                "Webhook suppressed while resuming"
-            ),
-            Err(e) => error!(error = %e, "Webhook payload rebuild failed"),
+            Ok(None) => {
+                if let Err(e) = database
+                    .complete_webhook_delivery_attempt(
+                        delivery.id,
+                        claim_token,
+                        None,
+                        Some("No app callback for provider webhook".to_string()),
+                        true,
+                    )
+                    .await
+                {
+                    error!(error = %e, "Failed to mark no-callback webhook delivery complete");
+                }
+            }
+            Err(e) => error!(error = %e, "Failed to process webhook delivery"),
         }
     }.instrument(span));
 }
@@ -123,7 +121,6 @@ fn spawn_forward_existing_webhook(
 enum DuplicateWebhookAction {
     Ignore,
     ResumeProcessing,
-    ResumeForwarding,
 }
 
 fn duplicate_webhook_action(
@@ -136,11 +133,7 @@ fn duplicate_webhook_action(
     }
 
     if !processed {
-        return DuplicateWebhookAction::ResumeProcessing;
-    }
-
-    if !has_delivery {
-        return DuplicateWebhookAction::ResumeForwarding;
+        return if has_delivery { DuplicateWebhookAction::Ignore } else { DuplicateWebhookAction::ResumeProcessing };
     }
 
     DuplicateWebhookAction::Ignore
@@ -165,17 +158,16 @@ async fn handle_duplicate_webhook(
                 event_id = event_id,
                 "Duplicate webhook retrying stored unprocessed event"
             );
-            spawn_process_and_forward_webhook(database, app_id, webhook_id, provider_name, event_id.to_string());
-        }
-        DuplicateWebhookAction::ResumeForwarding => {
-            tracing::info!(
-                app_id = %app_id,
-                webhook_provider_id = %webhook_id,
-                provider = provider_name,
-                event_id = event_id,
-                "Duplicate webhook retrying stored undelivered event"
-            );
-            spawn_forward_existing_webhook(database, app_id, webhook_id, provider_name, event_id.to_string());
+            let delivery = database
+                .as_ref()
+                .create_webhook_delivery(
+                    app_id,
+                    webhook_id,
+                    &webhook_worker_id("duplicate-ingress"),
+                    WEBHOOK_DELIVERY_LEASE_SECS,
+                )
+                .await?;
+            spawn_process_and_forward_delivery(database, app_id, webhook_id, provider_name, event_id.to_string(), delivery);
         }
         DuplicateWebhookAction::Ignore => {
             tracing::info!(
@@ -215,15 +207,13 @@ pub async fn handle_google_play(
         .get_provider_config(app.id, "google_play")
         .await?;
 
-    let verify_signature = provider_config
-        .config
-        .get("verify_webhook_signature")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-
-    // Only allow header override in test/mock mode (MOCK_EXTERNAL_APIS=true)
     let verify_signature = if crate::config::mock_external_apis_enabled() {
-        // Priority 1: Request header override (X-Webhook-Verification-Mode: strict/off) - test mode only
+        let db_verify = provider_config
+            .config
+            .get("verify_webhook_signature")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
         headers
             .get("X-Webhook-Verification-Mode")
             .and_then(|h| h.to_str().ok())
@@ -231,13 +221,24 @@ pub async fn handle_google_play(
             .map(|mode| match mode.as_str() {
                 "strict" => true,
                 "off" => false,
-                _ => verify_signature,
+                _ => db_verify,
             })
-            // Priority 2: DB config value
-            .unwrap_or(verify_signature)
+            .unwrap_or(db_verify)
     } else {
-        // Production: always use DB config, ignore headers
-        verify_signature
+        let db_verify = provider_config
+            .config
+            .get("verify_webhook_signature")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        if !db_verify {
+            tracing::warn!(
+                app_id = %app.id,
+                provider = "google_play",
+                "DB config attempted to disable webhook signature verification in non-mock mode; ignoring and forcing verification"
+            );
+        }
+        true
     };
 
     if verify_signature {
@@ -312,46 +313,16 @@ pub async fn handle_google_play(
         BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
     })?;
 
-    let (mut google_play_event, pubsub_message_id) = decode_google_play_payload(&payload, &headers)?;
-    tracing::debug!(
-        target: "BPT-RAW",
-        "Webhook Incoming Payload [google_play]: {}",
-        sanitize_google_play_payload_for_log(&google_play_event)
-    );
-
-    if google_play_event.get("testNotification").is_some() {
-        info!(
-            message_id = pubsub_message_id.as_deref().unwrap_or("unknown"),
-            "Google Play test notification received; no-op"
-        );
+    let Some(normalized_event) = ProviderWebhookAdapter::GooglePlay.decode_and_normalize(payload, &headers)? else {
         return Ok(StatusCode::NO_CONTENT);
-    }
-
-    // Inject test price override into payload for mock-mode enrichment
-    if crate::config::mock_external_apis_enabled() {
-        if let Some(price_str) = headers.get("X-Test-Price-Cents").and_then(|h| h.to_str().ok()) {
-            if let Ok(cents) = price_str.parse::<i64>() {
-                google_play_event["_test_price_cents"] = serde_json::Value::Number(cents.into());
-            }
-        }
-    }
-
-    let event_id = pubsub_message_id
-        .as_deref()
-        .or_else(|| google_play_event["eventId"].as_str())
-        .ok_or_else(|| BridgeError::WebhookError("Missing provider event ID".to_string()))?;
-
-    let event_type = extract_google_event_type(&google_play_event);
-
-    let subscription_id = google_play_event["subscriptionNotification"]["subscriptionId"]
-        .as_str()
-        .map(|s| s.to_string());
-
-    let purchase_token = google_play_event["subscriptionNotification"]["purchaseToken"]
-        .as_str()
-        .or_else(|| google_play_event["oneTimeProductNotification"]["purchaseToken"].as_str())
-        .or_else(|| google_play_event["voidedPurchaseNotification"]["purchaseToken"].as_str())
-        .map(|s| s.to_string());
+    };
+    let provider = normalized_event.provider;
+    let event_id = normalized_event.provider_event_id;
+    let event_type = normalized_event.raw_event_type;
+    let subscription_id = normalized_event.subscription_id;
+    let purchase_token = normalized_event.purchase_token;
+    let timestamp_ms = normalized_event.occurred_at_ms;
+    let google_play_event = normalized_event.payload;
 
     // For voided purchase notifications, lookup subscription_id from purchase_token if not present
     let subscription_id = if subscription_id.is_none()
@@ -372,11 +343,6 @@ pub async fn handle_google_play(
     } else {
         subscription_id
     };
-
-    let timestamp_ms = google_play_event["eventTimeMillis"]
-        .as_str()
-        .and_then(|s| s.parse::<i64>().ok())
-        .or_else(|| google_play_event["eventTimeMillis"].as_i64());
 
     info!(
         app_id = %app.id,
@@ -406,8 +372,8 @@ pub async fn handle_google_play(
         .as_ref()
         .create_webhook_provider(
             app.id,
-            "google_play",
-            event_id,
+            &provider,
+            &event_id,
             &event_type,
             subscription_id,
             purchase_token,
@@ -417,11 +383,41 @@ pub async fn handle_google_play(
         .await?;
 
     if !is_new {
-        handle_duplicate_webhook(database, app.id, webhook_id, "Google Play", event_id).await?;
+        if let Err(e) = handle_duplicate_webhook(database, app.id, webhook_id, "Google Play", &event_id).await {
+            error!(
+                app_id = %app.id,
+                webhook_provider_id = %webhook_id,
+                provider = "Google Play",
+                event_id = event_id,
+                error = %e,
+                "Duplicate webhook recovery failed before provider acknowledgement"
+            );
+            return Err(retryable_provider_ack_error("Google Play", &event_id, e));
+        }
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    spawn_process_and_forward_webhook(database, app.id, webhook_id, "Google Play", event_id.to_string());
+    match database.as_ref().create_webhook_delivery(
+        app.id,
+        webhook_id,
+        &webhook_worker_id("google-ingress"),
+        WEBHOOK_DELIVERY_LEASE_SECS,
+    ).await {
+        Ok(delivery) => {
+            spawn_process_and_forward_delivery(database, app.id, webhook_id, "Google Play", event_id.to_string(), delivery);
+        }
+        Err(e) => {
+            error!(
+                app_id = %app.id,
+                webhook_provider_id = %webhook_id,
+                provider = "Google Play",
+                event_id = event_id,
+                error = %e,
+                "Webhook delivery enqueue failed before provider acknowledgement"
+            );
+            return Err(retryable_provider_ack_error("Google Play", &event_id, e));
+        }
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -450,15 +446,13 @@ pub async fn handle_creem(
         .get_provider_config(app.id, "creem")
         .await?;
 
-    let verify_signature = provider_config
-        .config
-        .get("verify_webhook_signature")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-
-    // Only allow header override in test/mock mode (MOCK_EXTERNAL_APIS=true)
     let verify_signature = if crate::config::mock_external_apis_enabled() {
-        // Priority 1: Request header override (X-Webhook-Verification-Mode: strict/off) - test mode only
+        let db_verify = provider_config
+            .config
+            .get("verify_webhook_signature")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
         headers
             .get("X-Webhook-Verification-Mode")
             .and_then(|h| h.to_str().ok())
@@ -466,13 +460,24 @@ pub async fn handle_creem(
             .map(|mode| match mode.as_str() {
                 "strict" => true,
                 "off" => false,
-                _ => verify_signature,
+                _ => db_verify,
             })
-            // Priority 2: DB config value
-            .unwrap_or(verify_signature)
+            .unwrap_or(db_verify)
     } else {
-        // Production: always use DB config, ignore headers
-        verify_signature
+        let db_verify = provider_config
+            .config
+            .get("verify_webhook_signature")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        if !db_verify {
+            tracing::warn!(
+                app_id = %app.id,
+                provider = "creem",
+                "DB config attempted to disable webhook signature verification in non-mock mode; ignoring and forcing verification"
+            );
+        }
+        true
     };
 
     use hmac::{Hmac, Mac};
@@ -511,35 +516,16 @@ pub async fn handle_creem(
         BridgeError::WebhookError(format!("Invalid JSON payload: {}", e))
     })?;
 
-    let event_id = payload["id"]
-        .as_str()
-        .ok_or_else(|| BridgeError::WebhookError("Missing provider event ID".to_string()))?;
-    let event_type = payload["eventType"].as_str().unwrap_or("unknown");
-
-    let subscription_id = payload["object"]["subscription"]["id"]
-        .as_str()
-        .or_else(|| payload["object"]["subscription_id"].as_str())
-        .or_else(|| payload["object"]["id"].as_str())
-        .map(|s| s.to_string());
-
-    let purchase_token = if event_type.starts_with("subscription.") {
-        payload["object"]["checkout_id"]
-            .as_str()
-            .or_else(|| payload["object"]["order_id"].as_str())
-            .map(|s| s.to_string())
-    } else {
-        payload["object"]["checkout_id"]
-            .as_str()
-            .or_else(|| payload["object"]["order_id"].as_str())
-            .or_else(|| payload["object"]["id"].as_str())
-            .map(|s| s.to_string())
+    let Some(normalized_event) = ProviderWebhookAdapter::Creem.decode_and_normalize(payload, &headers)? else {
+        return Ok(StatusCode::NO_CONTENT);
     };
-
-    let timestamp_ms = payload["createdAt"].as_str().and_then(|s| {
-        chrono::DateTime::parse_from_rfc3339(s)
-            .ok()
-            .map(|dt| dt.timestamp_millis())
-    });
+    let provider = normalized_event.provider;
+    let event_id = normalized_event.provider_event_id;
+    let event_type = normalized_event.raw_event_type;
+    let subscription_id = normalized_event.subscription_id;
+    let purchase_token = normalized_event.purchase_token;
+    let timestamp_ms = normalized_event.occurred_at_ms;
+    let payload = normalized_event.payload;
 
     info!(
         app_id = %app.id,
@@ -548,7 +534,7 @@ pub async fn handle_creem(
         event_id = event_id,
         event_type = event_type,
         subscription_id = subscription_id.as_deref().unwrap_or("missing"),
-        correlation_hash = %diagnostic_hash(purchase_token.as_deref().unwrap_or(event_id)),
+        correlation_hash = %diagnostic_hash(purchase_token.as_deref().unwrap_or(&event_id)),
         event_time_ms = timestamp_ms,
         "Creem webhook received"
     );
@@ -566,9 +552,9 @@ pub async fn handle_creem(
         .as_ref()
         .create_webhook_provider(
             app.id,
-            "creem",
-            event_id,
-            event_type,
+            &provider,
+            &event_id,
+            &event_type,
             subscription_id,
             purchase_token,
             payload.clone(),
@@ -577,137 +563,46 @@ pub async fn handle_creem(
         .await?;
 
     if !is_new {
-        handle_duplicate_webhook(database, app.id, webhook_id, "Creem", event_id).await?;
+        if let Err(e) = handle_duplicate_webhook(database, app.id, webhook_id, "Creem", &event_id).await {
+            error!(
+                app_id = %app.id,
+                webhook_provider_id = %webhook_id,
+                provider = "Creem",
+                event_id = event_id,
+                error = %e,
+                "Duplicate webhook recovery failed before provider acknowledgement"
+            );
+            return Err(retryable_provider_ack_error("Creem", &event_id, e));
+        }
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    spawn_process_and_forward_webhook(database, app.id, webhook_id, "Creem", event_id.to_string());
+    match database.as_ref().create_webhook_delivery(
+        app.id,
+        webhook_id,
+        &webhook_worker_id("creem-ingress"),
+        WEBHOOK_DELIVERY_LEASE_SECS,
+    ).await {
+        Ok(delivery) => {
+            spawn_process_and_forward_delivery(database, app.id, webhook_id, "Creem", event_id.to_string(), delivery);
+        }
+        Err(e) => {
+            error!(
+                app_id = %app.id,
+                webhook_provider_id = %webhook_id,
+                provider = "Creem",
+                event_id = event_id,
+                error = %e,
+                "Webhook delivery enqueue failed before provider acknowledgement"
+            );
+            return Err(retryable_provider_ack_error("Creem", &event_id, e));
+        }
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn decode_base64_flexible(input: &str) -> Result<Vec<u8>, String> {
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(input) {
-        return Ok(decoded);
-    }
-    if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE.decode(input) {
-        return Ok(decoded);
-    }
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(input)
-        .map_err(|e| e.to_string())
-}
 
-fn decode_google_play_payload(
-    payload: &serde_json::Value,
-    headers: &HeaderMap,
-) -> Result<(serde_json::Value, Option<String>), BridgeError> {
-    if payload.get("message").is_some() {
-        let message_data = payload["message"]["data"].as_str().ok_or_else(|| {
-            error!(provider = "google_play", "Missing message.data in webhook");
-            BridgeError::WebhookError("Missing message.data field".to_string())
-        })?;
-
-        let decoded_message = decode_base64_flexible(message_data)
-            .map_err(|e| BridgeError::WebhookError(format!("Invalid message.data: {}", e)))?;
-
-        let google_play_event: serde_json::Value = serde_json::from_slice(&decoded_message).map_err(|e| {
-            error!(error = %e, provider = "google_play", "Failed to parse message.data payload");
-            BridgeError::WebhookError(format!("Invalid Google Play message.data payload: {}", e))
-        })?;
-
-        let message_id = payload["message"]["messageId"]
-            .as_str()
-            .or_else(|| payload["message"]["message_id"].as_str())
-            .map(|s| s.to_string());
-
-        return Ok((google_play_event, message_id));
-    }
-
-    let message_id = headers
-        .get("x-goog-pubsub-message-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-
-    Ok((payload.clone(), message_id))
-}
-
-fn sanitize_google_play_payload_for_log(payload: &serde_json::Value) -> String {
-    let mut sanitized = payload.clone();
-
-    for pointer in [
-        "/subscriptionNotification/purchaseToken",
-        "/oneTimeProductNotification/purchaseToken",
-        "/voidedPurchaseNotification/purchaseToken",
-    ] {
-        if let Some(value) = sanitized.pointer_mut(pointer) {
-            if let Some(token) = value.as_str() {
-                *value = serde_json::Value::String(diagnostic_hash(token));
-            }
-        }
-    }
-
-    let payload = serde_json::to_string(&sanitized).unwrap_or_else(|_| "{}".to_string());
-    crate::utils::scrub_email(&payload)
-}
-
-fn extract_google_event_type(payload: &serde_json::Value) -> String {
-    if let Some(notification_type) = payload["subscriptionNotification"]["notificationType"]
-        .as_i64()
-        .or_else(|| {
-            payload["subscriptionNotification"]["notificationType"]
-                .as_str()
-                .and_then(|s| s.parse::<i64>().ok())
-        })
-    {
-        return match notification_type {
-            1 => "SUBSCRIPTION_RESTORED",
-            2 => "SUBSCRIPTION_RENEWED",
-            3 => "SUBSCRIPTION_CANCELED",
-            4 => "SUBSCRIPTION_PURCHASED",
-            5 => "SUBSCRIPTION_ON_HOLD",
-            6 => "SUBSCRIPTION_IN_GRACE_PERIOD",
-            7 => "SUBSCRIPTION_RESTARTED",
-            8 => "SUBSCRIPTION_PRICE_CHANGE_CONFIRMED",
-            9 => "SUBSCRIPTION_DEFERRED",
-            10 => "SUBSCRIPTION_PAUSED",
-            11 => "SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED",
-            12 => "SUBSCRIPTION_REVOKED",
-            13 => "SUBSCRIPTION_EXPIRED",
-            17 => "SUBSCRIPTION_ITEMS_CHANGED",
-            18 => "SUBSCRIPTION_CANCELLATION_SCHEDULED",
-            19 => "SUBSCRIPTION_PRICE_CHANGE_UPDATED",
-            20 => "SUBSCRIPTION_PENDING_PURCHASE_CANCELED",
-            21 => "SUBSCRIPTION_RENEWAL_PENDING",
-            22 => "SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED",
-            _ => "SUBSCRIPTION_UNKNOWN",
-        }
-        .to_string();
-    }
-
-    if let Some(notification_type) = payload["oneTimeProductNotification"]["notificationType"]
-        .as_i64()
-        .or_else(|| {
-            payload["oneTimeProductNotification"]["notificationType"]
-                .as_str()
-                .and_then(|s| s.parse::<i64>().ok())
-        })
-    {
-        return match notification_type {
-            1 => "ONE_TIME_PRODUCT_PURCHASED",
-            2 => "ONE_TIME_PRODUCT_REFUNDED",
-            14 => "ONE_TIME_PRODUCT_CANCELED",
-            _ => "ONE_TIME_PRODUCT_UNKNOWN",
-        }
-        .to_string();
-    }
-
-    if payload.get("voidedPurchaseNotification").is_some() {
-        return "VOIDED_PURCHASE".to_string();
-    }
-
-    "unknown".to_string()
-}
 
 async fn get_provider_webhook_secret<R: WebhookIngressRepository + ?Sized>(
     repo: &R,
@@ -755,59 +650,14 @@ fn extract_header_value<'a>(headers: &'a HeaderMap, names: &[&str]) -> Option<&'
 #[cfg(test)]
 mod tests {
     use axum::http::{HeaderMap, HeaderValue};
-    use base64::Engine as _;
     use serde_json::json;
 
     use super::{
-        decode_google_play_payload, duplicate_webhook_action, extract_header_value,
+        duplicate_webhook_action, extract_header_value,
         google_voided_purchase_product_type,
         DuplicateWebhookAction, CREEM_SIGNATURE_HEADERS,
     };
 
-    #[test]
-    fn decodes_wrapped_google_play_pubsub_payload() {
-        let headers = HeaderMap::new();
-        let google_event = json!({
-            "version": "1.0",
-            "packageName": "com.hiha.fe",
-            "eventTimeMillis": "1778936707956",
-            "testNotification": { "version": "1.0" }
-        });
-        let payload = json!({
-            "message": {
-                "messageId": "wrapped-message-id",
-                "data": base64::engine::general_purpose::STANDARD.encode(google_event.to_string())
-            },
-            "subscription": "projects/play/subscriptions/play-sub-dev"
-        });
-
-        let (decoded, message_id) = decode_google_play_payload(&payload, &headers).unwrap();
-
-        assert_eq!(message_id.as_deref(), Some("wrapped-message-id"));
-        assert_eq!(decoded["packageName"].as_str(), Some("com.hiha.fe"));
-        assert!(decoded.get("testNotification").is_some());
-    }
-
-    #[test]
-    fn accepts_unwrapped_google_play_pubsub_payload() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-goog-pubsub-message-id",
-            HeaderValue::from_static("unwrapped-message-id"),
-        );
-        let payload = json!({
-            "version": "1.0",
-            "packageName": "com.hiha.fe",
-            "eventTimeMillis": "1778936707956",
-            "testNotification": { "version": "1.0" }
-        });
-
-        let (decoded, message_id) = decode_google_play_payload(&payload, &headers).unwrap();
-
-        assert_eq!(message_id.as_deref(), Some("unwrapped-message-id"));
-        assert_eq!(decoded["packageName"].as_str(), Some("com.hiha.fe"));
-        assert!(decoded.get("testNotification").is_some());
-    }
 
     #[test]
     fn prefers_creem_signature_over_all_others() {
@@ -861,10 +711,18 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_processed_webhook_without_delivery_resumes_forwarding() {
+    fn duplicate_unprocessed_webhook_with_delivery_is_ignored() {
+        assert_eq!(
+            duplicate_webhook_action(false, false, true),
+            DuplicateWebhookAction::Ignore
+        );
+    }
+
+    #[test]
+    fn duplicate_processed_webhook_without_delivery_is_ignored() {
         assert_eq!(
             duplicate_webhook_action(true, false, false),
-            DuplicateWebhookAction::ResumeForwarding
+            DuplicateWebhookAction::Ignore
         );
     }
 

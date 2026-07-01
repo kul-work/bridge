@@ -10,7 +10,7 @@
 - Subscription status MUST be a typed enum, never raw String in domain code.
 - Unknown provider statuses → explicit Unknown(String), NEVER silent fallback.
 - Status transitions are monotonic: newer timestamp_epoch_ms always wins.
-- Webhook replay MUST be idempotent (checked via webhook_log).
+- Webhook replay MUST be idempotent (checked via webhook_provider).
 
 ## Layer Boundaries
 - Handlers: HTTP orchestration only. No business logic. No direct DB writes.
@@ -21,9 +21,11 @@
 
 ## Webhook Processing
 - All webhooks validate provider signature first.
-- Idempotency checked via webhook_log BEFORE any mutation.
+- Idempotency checked via webhook_provider BEFORE any mutation.
 - Stale events suppressed by comparing timestamp_epoch_ms.
+- Provider ACK is sent only after Bridge has a durable provider inbox row and either a durable `webhook_delivery` work item or a terminal suppressed state. Provider enrichment, user resolution, subscription mutation, and app forwarding run after that enqueue point.
 - Callback delivery uses 3-strike retry with exponential backoff.
+- **Google Play identity rule**: Google Play subscription lifecycle identity must strictly be resolved by `purchase_token`. The product SKU (`subscription_id`) is product identity only and must never be used as a fallback lifecycle identity for lookup.
 
 ## Observability / PII
 - Logs and traces stay conservative by default; use hashed diagnostics when sensitive identifiers are needed for correlation.

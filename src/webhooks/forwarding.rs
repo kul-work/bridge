@@ -14,6 +14,43 @@ use uuid::Uuid;
 type HmacSha256 = Hmac<Sha256>;
 
 const WEBHOOK_FORWARD_TIMEOUT_SECS: u64 = 10;
+pub const WEBHOOK_DELIVERY_LEASE_SECS: i64 = 600;
+
+pub fn webhook_worker_id(prefix: &str) -> String {
+    format!("{}-{}", prefix, Uuid::new_v4())
+}
+
+async fn refresh_delivery_claim<R: WebhookForwardRepository + ?Sized>(
+    repo: &R,
+    app_id: Uuid,
+    webhook_delivery_id: Uuid,
+    claim_token: Uuid,
+    payload: &CanonicalWebhookPayload,
+    side_effect: &str,
+) -> Result<bool, BridgeError> {
+    let refreshed = repo
+        .refresh_webhook_delivery_claim(
+            app_id,
+            webhook_delivery_id,
+            claim_token,
+            WEBHOOK_DELIVERY_LEASE_SECS,
+        )
+        .await?;
+
+    if !refreshed {
+        info!(
+            app_id = %app_id,
+            webhook_delivery_id = %webhook_delivery_id,
+            provider = %payload.provider,
+            event_type = %payload.event_type,
+            provider_event_id = %payload.provider_event_id,
+            side_effect,
+            "Skipping webhook delivery side effect because claim was lost"
+        );
+    }
+
+    Ok(refreshed)
+}
 
 /// Forward webhook to app callback URL with HMAC signature
 /// Used for future webhook delivery to app callbacks.
@@ -21,6 +58,7 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
     repo: &R,
     app_id: Uuid,
     webhook_delivery_id: Uuid,
+    claim_token: Uuid,
     payload: CanonicalWebhookPayload,
 ) -> Result<(), BridgeError> {
     // Get app details
@@ -73,10 +111,23 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
 
     if let Some(subscription) = stale_check_subscription {
         if payload.timestamp_epoch_ms < subscription.last_event_time {
+            if !refresh_delivery_claim(
+                repo,
+                app_id,
+                webhook_delivery_id,
+                claim_token,
+                &payload,
+                "stale_suppression",
+            )
+            .await?
+            {
+                return Ok(());
+            }
             repo.suppress_webhook(delivery.webhook_provider_id, "superseded_before_forward")
                 .await?;
-            repo.update_webhook_delivery_attempt(
+            repo.complete_webhook_delivery_attempt(
                 webhook_delivery_id,
+                claim_token,
                 None,
                 Some("Suppressed stale event before forward".to_string()),
                 true,
@@ -133,6 +184,19 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
     let timestamp = Utc::now().timestamp().to_string();
     let signature = create_signature(&payload_json, &app.webhook_callback_secret)?;
 
+    if !refresh_delivery_claim(
+        repo,
+        app_id,
+        webhook_delivery_id,
+        claim_token,
+        &payload,
+        "callback_post",
+    )
+    .await?
+    {
+        return Ok(());
+    }
+
     // Make HTTP request
     let client = Client::builder()
         .timeout(Duration::from_secs(WEBHOOK_FORWARD_TIMEOUT_SECS))
@@ -169,7 +233,13 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
                     status,
                     "Successfully forwarded webhook to app"
                 );
-                repo.update_webhook_delivery_attempt(webhook_delivery_id, Some(status), None, true)
+                repo.complete_webhook_delivery_attempt(
+                    webhook_delivery_id,
+                    claim_token,
+                    Some(status),
+                    None,
+                    true,
+                )
                     .await?;
             } else {
                 let _response_body = resp
@@ -187,8 +257,9 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
                     "Webhook forwarding diagnostics"
                 );
                 let updated_delivery = repo
-                    .update_webhook_delivery_attempt(
+                    .complete_webhook_delivery_attempt(
                         webhook_delivery_id,
+                        claim_token,
                         Some(status),
                         Some(error_msg),
                         false,
@@ -219,7 +290,13 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
                 "Webhook forwarding diagnostics"
             );
             let updated_delivery = repo
-                .update_webhook_delivery_attempt(webhook_delivery_id, None, Some(error_msg), false)
+                .complete_webhook_delivery_attempt(
+                    webhook_delivery_id,
+                    claim_token,
+                    None,
+                    Some(error_msg),
+                    false,
+                )
                 .await?;
             log_persisted_delivery_failure(
                 app_id,
@@ -321,8 +398,14 @@ pub async fn queue_and_forward_webhook<
     webhook_provider_id: Uuid,
     payload: crate::webhooks::processor::CanonicalWebhookPayload,
 ) -> Result<(), BridgeError> {
+    let worker_id = webhook_worker_id("queue-forward");
     let delivery = repo
-        .create_webhook_delivery(app_id, webhook_provider_id)
+        .create_webhook_delivery(
+            app_id,
+            webhook_provider_id,
+            &worker_id,
+            WEBHOOK_DELIVERY_LEASE_SECS,
+        )
         .await?;
 
     if !delivery.created {
@@ -344,7 +427,21 @@ pub async fn queue_and_forward_webhook<
         return Ok(());
     }
 
-    forward_webhook(repo, app_id, delivery.id, payload).await
+    let canonical_payload = serde_json::to_value(&payload)
+        .map_err(|e| BridgeError::InternalServerError(e.to_string()))?;
+    repo.store_webhook_delivery_canonical_payload_and_mark_processed(
+        app_id,
+        delivery.id,
+        webhook_provider_id,
+        canonical_payload,
+    )
+    .await?;
+
+    let claim_token = delivery.claim_token.ok_or_else(|| {
+        BridgeError::InternalServerError("new webhook delivery was not claimed".to_string())
+    })?;
+
+    forward_webhook(repo, app_id, delivery.id, claim_token, payload).await
 }
 
 /// Create a webhook provider record, enqueue a delivery, and forward it.
@@ -363,8 +460,11 @@ pub async fn create_and_forward_webhook<
     timestamp_epoch_ms: Option<i64>,
     canonical_payload: crate::webhooks::processor::CanonicalWebhookPayload,
 ) -> Result<(), BridgeError> {
-    let (webhook_provider_id, is_new) = repo
-        .create_webhook_provider(
+    let canonical_payload_value = serde_json::to_value(&canonical_payload)
+        .map_err(|e| BridgeError::InternalServerError(e.to_string()))?;
+
+    let delivery = repo
+        .create_synthetic_webhook_delivery(
             app_id,
             provider,
             provider_webhook_id,
@@ -373,10 +473,13 @@ pub async fn create_and_forward_webhook<
             purchase_token,
             provider_payload,
             timestamp_epoch_ms,
+            canonical_payload_value,
+            &webhook_worker_id("synthetic"),
+            WEBHOOK_DELIVERY_LEASE_SECS,
         )
         .await?;
 
-    if !is_new {
+    if !delivery.created {
         info!(
             app_id = %app_id,
             provider,
@@ -388,7 +491,11 @@ pub async fn create_and_forward_webhook<
         return Ok(());
     }
 
-    queue_and_forward_webhook(repo, app_id, webhook_provider_id, canonical_payload).await
+    let claim_token = delivery.claim_token.ok_or_else(|| {
+        BridgeError::InternalServerError("new synthetic webhook delivery was not claimed".to_string())
+    })?;
+
+    forward_webhook(repo, app_id, delivery.id, claim_token, canonical_payload).await
 }
 
 /// Create HMAC-SHA256 signature for webhook
@@ -556,6 +663,11 @@ mod stale_suppression_branch_tests {
             dead_letter_reason: None,
             last_http_status: None,
             last_error: None,
+            canonical_payload: None,
+            claim_token: Some(Uuid::nil()),
+            claimed_by: Some("test-worker".to_string()),
+            claimed_until: Some(Utc::now() + chrono::Duration::minutes(10)),
+            next_attempt_at: Some(Utc::now()),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -618,14 +730,35 @@ mod stale_suppression_branch_tests {
             Ok(true)
         }
 
-        async fn update_webhook_delivery_attempt(
+        async fn complete_webhook_delivery_attempt(
             &self,
             delivery_id: Uuid,
+            _claim_token: Uuid,
             _http_status: Option<i32>,
             _error: Option<String>,
             _forwarded: bool,
         ) -> Result<WebhookDelivery, BridgeError> {
             Ok(delivery(self.app_id, delivery_id))
+        }
+
+        async fn refresh_webhook_delivery_claim(
+            &self,
+            _app_id: Uuid,
+            _delivery_id: Uuid,
+            _claim_token: Uuid,
+            _lease_secs: i64,
+        ) -> Result<bool, BridgeError> {
+            Ok(true)
+        }
+
+        async fn claim_webhook_delivery_by_id(
+            &self,
+            _app_id: Uuid,
+            delivery_id: Uuid,
+            _worker_id: &str,
+            _lease_secs: i64,
+        ) -> Result<Option<WebhookDelivery>, BridgeError> {
+            Ok(Some(delivery(self.app_id, delivery_id)))
         }
 
         async fn reset_webhook_delivery(&self, _delivery_id: Uuid) -> Result<bool, BridgeError> {
@@ -676,7 +809,7 @@ mod stale_suppression_branch_tests {
 
         // Event for user A (token_a), newer than A's own row but older than B's.
         let p = payload("google_play", Some("token_a"), 5_000);
-        forward_webhook(&repo, repo.app_id, repo.delivery_id, p).await.unwrap();
+        forward_webhook(&repo, repo.app_id, repo.delivery_id, Uuid::nil(), p).await.unwrap();
 
         assert!(
             !repo.suppressed.load(Ordering::SeqCst),
@@ -691,7 +824,7 @@ mod stale_suppression_branch_tests {
 
         // Event for user A, older than A's own row -> genuinely stale.
         let p = payload("google_play", Some("token_a"), 5_000);
-        forward_webhook(&repo, repo.app_id, repo.delivery_id, p).await.unwrap();
+        forward_webhook(&repo, repo.app_id, repo.delivery_id, Uuid::nil(), p).await.unwrap();
 
         assert!(
             repo.suppressed.load(Ordering::SeqCst),
@@ -706,7 +839,7 @@ mod stale_suppression_branch_tests {
         let repo = mock(vec![], Some(row_b));
 
         let p = payload("google_play", Some("token_unmatched"), 1);
-        forward_webhook(&repo, repo.app_id, repo.delivery_id, p).await.unwrap();
+        forward_webhook(&repo, repo.app_id, repo.delivery_id, Uuid::nil(), p).await.unwrap();
 
         assert!(
             !repo.suppressed.load(Ordering::SeqCst),
@@ -722,7 +855,7 @@ mod stale_suppression_branch_tests {
         let repo = mock(vec![], Some(stored));
 
         let p = payload("creem", None, 5_000);
-        forward_webhook(&repo, repo.app_id, repo.delivery_id, p).await.unwrap();
+        forward_webhook(&repo, repo.app_id, repo.delivery_id, Uuid::nil(), p).await.unwrap();
 
         assert!(
             repo.suppressed.load(Ordering::SeqCst),

@@ -9,6 +9,8 @@ use crate::utils::{diagnostic_hash, scrub_email};
 use backoff::ExponentialBackoff;
 use backoff::future::retry;
 
+const GOOGLE_PLAY_HTTP_TIMEOUT_SECS: u64 = 10;
+
 #[derive(Debug, Deserialize)]
 struct ServiceAccount {
     client_email: String,
@@ -33,7 +35,7 @@ struct TokenResponse {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GoogleOrderPaymentDetails {
-    pub amount_cents: Option<i32>,
+    pub amount_cents: Option<i64>,
     pub currency: Option<String>,
 }
 
@@ -95,7 +97,9 @@ impl GooglePlayClient {
         let service_account: ServiceAccount = serde_json::from_str(&content)?;
 
         Ok(Self {
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(Duration::from_secs(GOOGLE_PLAY_HTTP_TIMEOUT_SECS))
+                .build()?,
             service_account: std::sync::Arc::new(service_account),
             cached_keys: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             verify_aud,
@@ -162,9 +166,11 @@ impl GooglePlayClient {
         let access_token = self.get_access_token().await?;
 
         // V2 API: GET /androidpublisher/v3/applications/{packageName}/purchases/subscriptionsv2/tokens/{token}
+        let package_name_segment = encode_path_segment(package_name);
+        let token_segment = encode_path_segment(token);
         let url = format!(
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/subscriptionsv2/tokens/{}",
-            package_name, token
+            package_name_segment, token_segment
         );
         tracing::debug!("GooglePlayClient: calling API endpoint for subscription");
 
@@ -221,9 +227,12 @@ impl GooglePlayClient {
 
         let access_token = self.get_access_token().await?;
 
+        let package_name_segment = encode_path_segment(package_name);
+        let product_id_segment = encode_path_segment(product_id);
+        let token_segment = encode_path_segment(token);
         let url = format!(
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/products/{}/tokens/{}",
-            package_name, product_id, token
+            package_name_segment, product_id_segment, token_segment
         );
         tracing::debug!("GooglePlayClient: calling API endpoint for product");
 
@@ -270,9 +279,11 @@ impl GooglePlayClient {
 
         let access_token = self.get_access_token().await?;
 
+        let package_name_segment = encode_path_segment(package_name);
+        let order_id_segment = encode_path_segment(order_id);
         let url = format!(
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/orders/{}",
-            package_name, order_id
+            package_name_segment, order_id_segment
         );
 
         let res = self.client
@@ -308,9 +319,12 @@ impl GooglePlayClient {
         
         let access_token = self.get_access_token().await?;
 
+        let package_name_segment = encode_path_segment(package_name);
+        let subscription_id_segment = encode_path_segment(subscription_id);
+        let token_segment = encode_path_segment(token);
         let url = format!(
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/subscriptionsv2/{}/tokens/{}:cancel",
-            package_name, subscription_id, token
+            package_name_segment, subscription_id_segment, token_segment
         );
 
         // Request body with cancellation type: user-initiated (stop renewal)
@@ -363,9 +377,12 @@ impl GooglePlayClient {
             let access_token = self.get_access_token().await
                 .map_err(|e| backoff::Error::transient(anyhow::anyhow!("Failed to get access token: {}", e)))?;
 
+            let package_name_segment = encode_path_segment(package_name);
+            let subscription_id_segment = encode_path_segment(subscription_id);
+            let token_segment = encode_path_segment(token);
             let url = format!(
                 "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/subscriptions/{}/tokens/{}:acknowledge",
-                package_name, subscription_id, token
+                package_name_segment, subscription_id_segment, token_segment
             );
 
             // Empty body for acknowledge
@@ -453,9 +470,12 @@ impl GooglePlayClient {
             let access_token = self.get_access_token().await
                 .map_err(|e| backoff::Error::transient(anyhow::anyhow!("Failed to get access token: {}", e)))?;
 
+            let package_name_segment = encode_path_segment(package_name);
+            let product_id_segment = encode_path_segment(product_id);
+            let token_segment = encode_path_segment(token);
             let url = format!(
                 "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{}/purchases/products/{}/tokens/{}:acknowledge",
-                package_name, product_id, token
+                package_name_segment, product_id_segment, token_segment
             );
 
             // Empty body for acknowledge
@@ -760,8 +780,7 @@ fn order_payment_details_from_payload(order: &serde_json::Value) -> GoogleOrderP
     let total_cents = line_items
         .iter()
         .filter_map(|line_item| money_cents_from_value(&line_item["total"]))
-        .try_fold(0i64, |sum, amount| sum.checked_add(i64::from(amount)))
-        .and_then(|total| i32::try_from(total).ok());
+        .try_fold(0i64, |sum, amount| sum.checked_add(amount));
 
     let currency = consistent_line_item_currency(line_items);
 
@@ -788,7 +807,7 @@ fn consistent_line_item_currency(line_items: &[serde_json::Value]) -> Option<Str
     currency
 }
 
-fn money_cents_from_value(value: &serde_json::Value) -> Option<i32> {
+fn money_cents_from_value(value: &serde_json::Value) -> Option<i64> {
     let units = value["units"].as_str()?.parse::<i64>().ok()?;
     if units < 0 {
         return None;
@@ -796,7 +815,7 @@ fn money_cents_from_value(value: &serde_json::Value) -> Option<i32> {
 
     let nanos = i64::from(value["nanos"].as_i64().unwrap_or(0) as i32).clamp(0, 999_999_999);
     let cents = units.checked_mul(100)?.checked_add(nanos / 10_000_000)?;
-    i32::try_from(cents).ok()
+    Some(cents)
 }
 
 fn scrub_reqwest_error(err: reqwest::Error, token: &str) -> anyhow::Error {
@@ -811,10 +830,30 @@ fn scrub_google_body(text: &str, token: &str) -> String {
     scrub_email(text).replace(token, &diagnostic_hash(token))
 }
 
+fn encode_path_segment(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn encodes_google_api_path_segments() {
+        assert_eq!(encode_path_segment("com.example.app"), "com.example.app");
+        assert_eq!(encode_path_segment("premium/monthly token"), "premium%2Fmonthly%20token");
+        assert_eq!(encode_path_segment("token+with?query#frag"), "token%2Bwith%3Fquery%23frag");
+    }
 
     #[test]
     fn order_payment_details_include_amount_and_currency() {

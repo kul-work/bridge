@@ -35,6 +35,31 @@ pub trait WebhookWriteRepository: Send + Sync {
         &self,
         app_id: Uuid,
         webhook_provider_id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
+    ) -> Result<WebhookDeliveryEnqueue, BridgeError>;
+
+    async fn store_webhook_delivery_canonical_payload_and_mark_processed(
+        &self,
+        app_id: Uuid,
+        delivery_id: Uuid,
+        webhook_provider_id: Uuid,
+        canonical_payload: serde_json::Value,
+    ) -> Result<(), BridgeError>;
+
+    async fn create_synthetic_webhook_delivery(
+        &self,
+        app_id: Uuid,
+        provider: &str,
+        provider_webhook_id: &str,
+        event_type: &str,
+        subscription_id: Option<String>,
+        purchase_token: Option<String>,
+        provider_payload: serde_json::Value,
+        timestamp_epoch_ms: Option<i64>,
+        canonical_payload: serde_json::Value,
+        worker_id: &str,
+        lease_secs: i64,
     ) -> Result<WebhookDeliveryEnqueue, BridgeError>;
 }
 
@@ -50,13 +75,30 @@ pub trait WebhookForwardRepository:
     async fn webhook_delivery_exists(&self, webhook_provider_id: Uuid)
     -> Result<bool, BridgeError>;
 
-    async fn update_webhook_delivery_attempt(
+    async fn complete_webhook_delivery_attempt(
         &self,
         delivery_id: Uuid,
+        claim_token: Uuid,
         http_status: Option<i32>,
         error: Option<String>,
         forwarded: bool,
     ) -> Result<WebhookDelivery, BridgeError>;
+
+    async fn refresh_webhook_delivery_claim(
+        &self,
+        app_id: Uuid,
+        delivery_id: Uuid,
+        claim_token: Uuid,
+        lease_secs: i64,
+    ) -> Result<bool, BridgeError>;
+
+    async fn claim_webhook_delivery_by_id(
+        &self,
+        app_id: Uuid,
+        delivery_id: Uuid,
+        worker_id: &str,
+        lease_secs: i64,
+    ) -> Result<Option<WebhookDelivery>, BridgeError>;
 
     async fn reset_webhook_delivery(&self, delivery_id: Uuid) -> Result<bool, BridgeError>;
 }

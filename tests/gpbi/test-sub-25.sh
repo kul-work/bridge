@@ -133,8 +133,15 @@ sleep 2
 
 # Step 3: Verify in DB
 echo -e "${YELLOW}[3/4] Verifying google_deferred_until in DB...${NC}"
-DEFERRED_UNTIL=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT google_deferred_until FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t | tr -d '[:space:]')
+DEFERRED_UNTIL=""
+for attempt in $(seq 1 10); do
+    DEFERRED_UNTIL=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+      -c "SELECT google_deferred_until FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t | tr -d '[:space:]')
+    if [[ -n "$DEFERRED_UNTIL" ]]; then
+        break
+    fi
+    sleep 1
+done
 
 if [[ -n "$DEFERRED_UNTIL" && "$DEFERRED_UNTIL" != "" ]]; then
     echo -e "${GREEN}PASS: google_deferred_until is set to $DEFERRED_UNTIL${NC}"
