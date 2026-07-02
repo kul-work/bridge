@@ -65,17 +65,12 @@ pub async fn verify_expected_app(
     let database = state.database();
     let pool = database.pool();
 
-    let summaries = sqlx::query!(
-        r#"SELECT id, slug FROM pay.list_app_summaries_bootstrap()"#
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+    let summaries = crate::db::apps::list_app_summaries(pool).await?;
 
     let expected_app_id = summaries
         .iter()
-        .find(|s| s.slug.as_deref() == Some(expected_slug))
-        .and_then(|s| s.id);
+        .find(|s| s.slug == expected_slug)
+        .map(|s| s.id);
 
     let expected_app = if let Some(app_id) = expected_app_id {
         Some(database.as_ref().get_app(app_id).await?)

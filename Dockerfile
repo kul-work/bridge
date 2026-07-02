@@ -33,6 +33,13 @@ COPY --from=builder /app/target/release/bridge .
 # Copy runtime assets
 COPY migrations ./migrations
 
+# TLS root certs for managed Postgres (Neon/Supabase) SSL connections.
+# database.rs sets ssl_root_cert to ./certs/isrgrootx1.pem for neon.tech hosts
+# (and prod-ca-2021.crt otherwise) when the URL uses sslmode=require, so these
+# must exist in the runtime image. Copy only the CA roots, NOT the provider
+# service-account JSONs in certs/.
+COPY certs/isrgrootx1.pem certs/prod-ca-2021.crt ./certs/
+
 # Set environment variables
 ENV PORT=3000
 ARG ENVIRONMENT=production

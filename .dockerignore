@@ -1,0 +1,26 @@
+# Secrets - never bake provider service-account keys or env files into the image.
+# Only certs/isrgrootx1.pem and certs/prod-ca-2021.crt are COPY'd explicitly.
+certs/*.json
+.env
+.env.*
+!.env.sample
+
+# Rust build output (huge; image is built fresh in the builder stage)
+target/
+
+# VCS and local tooling
+.git/
+.gitignore
+.agents/
+.amp/
+.codex/
+.crush/
+.codesight/
+.code-review-graph/
+.playwright/
+
+# Docs, notes, tests, logs - not needed at build/runtime
+docs/
+docs.notes/
+logs/
+tests/
