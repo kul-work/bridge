@@ -94,7 +94,7 @@ Depending on checkout mode, also needed:
 
 Optional:
 - `verify_webhook_signature` (defaults to true behavior when absent)
-- `api_url` (default fallback: `https://api.creem.com`)
+- `api_url` (default fallback: `https://api.creem.io/v1`. **Note**: For sandbox/test environments, use `https://test-api.creem.io/v1`)
 
 ```sql
 INSERT INTO pay.provider_configs (app_id, provider, config, enabled)
@@ -103,7 +103,7 @@ VALUES (
   'creem',
   '{
     "api_key":"creem_live_xxx",
-    "api_url":"https://api.creem.com",
+    "api_url":"https://api.creem.io/v1",
     "product_id":"premium_monthly",
     "offer_id":"offer_123",
     "otp_id":"otp_456",
@@ -113,6 +113,28 @@ VALUES (
   true
 );
 ```
+
+> [!TIP]
+> **Dynamic Configuration on Neon/Render**:
+> If you are onboarding on a cloud DB like Neon, you can build your provider configs dynamically in SQL (e.g. using `jsonb_build_object`) to automatically pull the generated `webhook_ingress_token` for your `pub_sub_audience` URL:
+> ```sql
+> INSERT INTO pay.provider_configs (app_id, provider, config, enabled)
+> VALUES (
+>   (SELECT id FROM pay.apps WHERE slug = 'household'),
+>   'google_play',
+>   (
+>     SELECT jsonb_build_object(
+>       'package_name', 'com.tyde.household',
+>       'verify_audience', true,
+>       'pub_sub_audience', 'https://pay.tydecode.com/webhooks/' || webhook_ingress_token || '/google_play',
+>       'service_account_json', '/etc/secrets/play-billing-482519-28c007356bc6.json',
+>       'verify_webhook_signature', true
+>     )
+>     FROM pay.apps WHERE slug = 'household'
+>   ),
+>   true
+> );
+> ```
 
 ## 3) Create API key row in `pay.api_keys`
 
