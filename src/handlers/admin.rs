@@ -49,11 +49,15 @@ pub async fn admin_dashboard(
     let bypass_enabled = crate::config::parse_bool_env("BYPASS_ADMIN_AUTH", false).unwrap_or(false);
     let bypass_allowed = crate::middleware::admin_auth::admin_auth_bypass_allowed(&environment, bypass_enabled);
 
+    let allow_emergency = crate::config::parse_bool_env("ALLOW_EMERGENCY_CLEANUP", false).unwrap_or(false);
+    let show_emergency = if allow_emergency { "block" } else { "none" };
+
     let html = include_str!("../../templates/admin.html");
     let html = html
         .replace("{{CLERK_PUBLISHABLE_KEY}}", &publishable_key)
         .replace("{{CSP_NONCE}}", &csp_nonce)
-        .replace("{{BYPASS_ADMIN_AUTH}}", &bypass_allowed.to_string());
+        .replace("{{BYPASS_ADMIN_AUTH}}", &bypass_allowed.to_string())
+        .replace("{{SHOW_EMERGENCY_CLEANUP}}", show_emergency);
     Ok((admin_security_headers(&csp_nonce), Html(html)))
 }
 
@@ -432,6 +436,11 @@ pub async fn trigger_jobs(
         "price_step_up",
         "pause_scheduler",
         "cleanup",
+        "webhook_retry_cleanup",
+        "reconciliation_cleanup",
+        "price_step_up_cleanup",
+        "pause_scheduler_cleanup",
+        "reset_stuck_workers",
     ];
 
     let jobs: Vec<String> = if payload.jobs.iter().any(|j| j == "all") {
@@ -442,14 +451,27 @@ pub async fn trigger_jobs(
 
     if jobs.is_empty() {
         return Err(BridgeError::ValidationError(
-            "No jobs specified. Valid jobs: webhook_retry, reconciliation, price_step_up, pause_scheduler, cleanup, all".to_string(),
+            "No jobs specified. Valid jobs: webhook_retry, reconciliation, price_step_up, pause_scheduler, cleanup, webhook_retry_cleanup, reconciliation_cleanup, price_step_up_cleanup, pause_scheduler_cleanup, reset_stuck_workers, all".to_string(),
         ));
     }
 
     for job in &jobs {
         if job != "all" && !VALID_JOBS.contains(&job.as_str()) {
             return Err(BridgeError::ValidationError(format!(
-                "Unknown job: '{}'. Valid jobs: webhook_retry, reconciliation, price_step_up, pause_scheduler, cleanup, all",
+                "Unknown job: '{}'. Valid jobs: webhook_retry, reconciliation, price_step_up, pause_scheduler, cleanup, webhook_retry_cleanup, reconciliation_cleanup, price_step_up_cleanup, pause_scheduler_cleanup, reset_stuck_workers, all",
+                job
+            )));
+        }
+    }
+
+    let environment = std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
+    let is_prod = crate::config::is_production_environment(&environment);
+    let allow_emergency = crate::config::parse_bool_env("ALLOW_EMERGENCY_CLEANUP", false).unwrap_or(false);
+
+    for job in &jobs {
+        if is_prod && job.ends_with("_cleanup") && !allow_emergency {
+            return Err(BridgeError::ValidationError(format!(
+                "Emergency cleanup job '{}' is disabled in production. Set ALLOW_EMERGENCY_CLEANUP=true in env to override this.",
                 job
             )));
         }
@@ -575,6 +597,66 @@ pub async fn trigger_jobs(
                         admin_org = ?admin.org_id,
                         action = "run_background_job",
                         job = "cleanup",
+                        error = %e,
+                        "Manual background job failed"
+                    );
+                    Some(e.to_string())
+                }
+            },
+            "webhook_retry_cleanup" => match crate::webhooks::scheduler::cleanup_webhook_retry(&db).await {
+                Ok(()) => None,
+                Err(e) => {
+                    error!(
+                        admin_subject = %admin.subject,
+                        admin_org = ?admin.org_id,
+                        action = "run_background_job",
+                        job = "webhook_retry_cleanup",
+                        error = %e,
+                        "Manual background job failed"
+                    );
+                    Some(e.to_string())
+                }
+            },
+            "reconciliation_cleanup" => {
+                finish_admin_operation("trigger_job:reconciliation").await;
+                None
+            }
+            "price_step_up_cleanup" => match crate::webhooks::scheduler::cleanup_price_step_up(&db).await {
+                Ok(()) => None,
+                Err(e) => {
+                    error!(
+                        admin_subject = %admin.subject,
+                        admin_org = ?admin.org_id,
+                        action = "run_background_job",
+                        job = "price_step_up_cleanup",
+                        error = %e,
+                        "Manual background job failed"
+                    );
+                    Some(e.to_string())
+                }
+            },
+            "pause_scheduler_cleanup" => match crate::webhooks::scheduler::cleanup_pause_scheduler(&db).await {
+                Ok(()) => None,
+                Err(e) => {
+                    error!(
+                        admin_subject = %admin.subject,
+                        admin_org = ?admin.org_id,
+                        action = "run_background_job",
+                        job = "pause_scheduler_cleanup",
+                        error = %e,
+                        "Manual background job failed"
+                    );
+                    Some(e.to_string())
+                }
+            },
+            "reset_stuck_workers" => match crate::webhooks::scheduler::reset_stuck_workers(&db).await {
+                Ok(()) => None,
+                Err(e) => {
+                    error!(
+                        admin_subject = %admin.subject,
+                        admin_org = ?admin.org_id,
+                        action = "run_background_job",
+                        job = "reset_stuck_workers",
                         error = %e,
                         "Manual background job failed"
                     );

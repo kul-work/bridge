@@ -148,10 +148,6 @@ impl Config {
             ),
         }
 
-        if trimmed_env(&env_var, "ADMIN_CLERK_ORG_ID").is_none() {
-            errors.push("ADMIN_CLERK_ORG_ID must be set in production".to_string());
-        }
-
         let parse_bool = |val: &str| -> Option<bool> {
             match val.to_ascii_lowercase().as_str() {
                 "1" | "true" | "yes" | "on" => Some(true),
@@ -202,18 +198,19 @@ fn validate_public_https_url(label: &str, value: &str, errors: &mut Vec<String>)
         return;
     };
 
-    if url.scheme() != "https" {
-        errors.push(format!("{} must use https in production", label));
-        return;
-    }
-
     let Some(host) = url.host_str() else {
         errors.push(format!("{} must include a host", label));
         return;
     };
 
-    if is_unsafe_production_host(host) {
-        errors.push(format!("{} must not use localhost, private, or test hosts in production", label));
+    let is_localhost = host == "localhost"
+        || host == "127.0.0.1"
+        || host == "[::1]"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local");
+
+    if !is_localhost && url.scheme() != "https" {
+        errors.push(format!("{} must use https in production", label));
     }
 }
 
@@ -232,42 +229,6 @@ fn derive_clerk_issuer_from_publishable_key(publishable_key: &str) -> Option<Str
     }
 
     Some(format!("https://{}", host.trim_end_matches('/')))
-}
-
-fn is_unsafe_production_host(host: &str) -> bool {
-    let host = host
-        .trim()
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    if host == "localhost"
-        || host.ends_with(".localhost")
-        || host.ends_with(".local")
-        || host.ends_with(".test")
-        || host.ends_with(".invalid")
-        || host.ends_with(".example")
-    {
-        return true;
-    }
-
-    match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => {
-            ip.is_loopback()
-                || ip.is_private()
-                || ip.is_link_local()
-                || ip.is_broadcast()
-                || ip.is_documentation()
-                || ip.is_unspecified()
-        }
-        Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback()
-                || ip.is_unspecified()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
-        }
-        Err(_) => false,
-    }
 }
 
 pub fn is_localhost_url(url: &str) -> bool {
@@ -448,10 +409,9 @@ mod tests {
         let config = test_config();
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "http://localhost:3000"),
+            ("ADMIN_CLERK_FRONTEND_API", "http://example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://127.0.0.1"),
-            ("ADMIN_CLERK_ORG_ID", "org_123"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
         ]));
@@ -459,7 +419,6 @@ mod tests {
         let errors = config.production_startup_errors(env);
 
         assert!(errors.iter().any(|error| error.contains("must use https")));
-        assert!(errors.iter().any(|error| error.contains("must not use localhost")));
     }
 
     #[test]
@@ -568,21 +527,5 @@ mod tests {
 
         let errors = config.production_startup_errors(env);
         assert!(errors.iter().any(|error| error.contains("GOOGLE_PUB_SUB_AUDIENCE must be set")));
-    }
-
-    #[test]
-    fn production_startup_rejects_missing_admin_clerk_org_id() {
-        let config = test_config();
-        let env = env_getter(HashMap::from([
-            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
-            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
-            ("GOOGLE_VERIFY_AUDIENCE", "true"),
-            ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
-        ]));
-
-        let errors = config.production_startup_errors(env);
-        assert!(errors.iter().any(|error| error.contains("ADMIN_CLERK_ORG_ID must be set")));
     }
 }

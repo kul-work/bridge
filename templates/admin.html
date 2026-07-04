@@ -48,6 +48,15 @@
     background: var(--accent-hover);
     border-color: var(--accent-hover);
   }
+  button.danger {
+    background: #db2777;
+    color: #fff;
+    border-color: #db2777;
+  }
+  button.danger:hover {
+    background: #be185d;
+    border-color: #be185d;
+  }
 
   /* Header */
   .header {
@@ -337,6 +346,48 @@
               <td><code>cleanup</code></td>
               <td>Clean up old webhook logs and purged fraud prevention data</td>
               <td><button class="primary job-trigger" data-job="cleanup">Trigger</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section" style="display: {{SHOW_EMERGENCY_CLEANUP}};">
+      <h2 style="color: var(--danger);">Emergency Cleanup Operations (Danger Zone)</h2>
+      <div class="card" style="border-left: 4px solid var(--danger);">
+        <table>
+          <thead>
+            <tr>
+              <th>Emergency Job</th>
+              <th>Description / Recovery Effect</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>reset_stuck_workers</code></td>
+              <td><strong style="color: var(--success);">SAFE:</strong> Reset all expired worker claim tokens and leases across webhook deliveries, payments, and subscriptions (safe to run on production if a server crashes).</td>
+              <td><button class="primary job-trigger" data-job="reset_stuck_workers">Reset Claims</button></td>
+            </tr>
+            <tr>
+              <td><code>webhook_retry_cleanup</code></td>
+              <td><strong style="color: var(--danger);">HIGH RISK:</strong> Force dead-letter all pending webhook deliveries and resolve all pending Google Play acknowledgements to stop retry loops.</td>
+              <td><button class="danger job-trigger" data-job="webhook_retry_cleanup">Force Cleanup</button></td>
+            </tr>
+            <tr>
+              <td><code>reconciliation_cleanup</code></td>
+              <td>Release/clear the manual run lock for subscription reconciliation in case it is stuck in-memory.</td>
+              <td><button class="danger job-trigger" data-job="reconciliation_cleanup">Clear Lock</button></td>
+            </tr>
+            <tr>
+              <td><code>price_step_up_cleanup</code></td>
+              <td><strong style="color: var(--danger);">RISK:</strong> Cancel active price step-up expiry claims and clear the consent requirements from all subscriptions to bypass cancellation.</td>
+              <td><button class="danger job-trigger" data-job="price_step_up_cleanup">Bypass Step-up</button></td>
+            </tr>
+            <tr>
+              <td><code>pause_scheduler_cleanup</code></td>
+              <td><strong style="color: var(--danger);">RISK:</strong> Cancel scheduled pause dates for all subscriptions and purge pending subscriptions older than 5 minutes with no purchase token.</td>
+              <td><button class="danger job-trigger" data-job="pause_scheduler_cleanup">Purge/Bypass Pauses</button></td>
             </tr>
           </tbody>
         </table>
@@ -861,7 +912,13 @@ async function retryWebhook(webhookId) {
 }
 
 async function triggerJob(job) {
-  if (!confirm("Trigger '" + job + "' job? It will run synchronously — the page will wait until it finishes.")) return;
+  let confirmMessage = "Trigger '" + job + "' job? It will run synchronously — the page will wait until it finishes.";
+  if (job.endsWith("_cleanup")) {
+    confirmMessage = "⚠️ WARNING: You are triggering an EMERGENCY CLEANUP ('" + job + "')!\n\n" +
+                     "This operation can modify critical database state and bypass scheduled tasks/webhooks.\n" +
+                     "Are you absolutely sure you want to force this cleanup?";
+  }
+  if (!confirm(confirmMessage)) return;
   try {
     const res = await authedFetch("/admin/trigger-jobs", {
       method: "POST",
