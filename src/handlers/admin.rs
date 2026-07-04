@@ -45,10 +45,15 @@ pub async fn admin_dashboard(
     })?;
     let csp_nonce = Uuid::new_v4().simple().to_string();
 
+    let environment = std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
+    let bypass_enabled = crate::config::parse_bool_env("BYPASS_ADMIN_AUTH", false).unwrap_or(false);
+    let bypass_allowed = crate::middleware::admin_auth::admin_auth_bypass_allowed(&environment, bypass_enabled);
+
     let html = include_str!("../../templates/admin.html");
     let html = html
         .replace("{{CLERK_PUBLISHABLE_KEY}}", &publishable_key)
-        .replace("{{CSP_NONCE}}", &csp_nonce);
+        .replace("{{CSP_NONCE}}", &csp_nonce)
+        .replace("{{BYPASS_ADMIN_AUTH}}", &bypass_allowed.to_string());
     Ok((admin_security_headers(&csp_nonce), Html(html)))
 }
 

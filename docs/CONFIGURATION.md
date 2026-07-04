@@ -47,6 +47,7 @@ Admin routes under `/admin` require a Clerk session JWT from the configured Cler
 - `ADMIN_MUTATION_RATE_LIMIT_PER_MINUTE` (default: `10`) - Per-admin-actor rate limit for admin mutating requests such as `POST` and `PATCH`.
 - `ADMIN_AUTH_IP_LIMIT` (default: `10`) - Per-IP limit for failed or missing admin Clerk JWT attempts before JWT parsing. The rolling window is fixed at 60 seconds.
 - `RATE_LIMIT_DISABLE` (default: `false`) - Set to `true` to completely disable all rate limiting middlewares (useful for local development, staging, or automated security scans).
+- `BYPASS_ADMIN_AUTH` (default: `false`) - Set to `true` to bypass Clerk admin authentication in non-production environments (useful for automated security scanning of admin endpoints). This option is strictly rejected and disabled in production environments.
 
 Issuer fallback order is:
 

@@ -28,6 +28,7 @@ pub struct Config {
     pub swagger_enabled: bool,
     pub enable_background_jobs: bool,
     pub rate_limit_disabled: bool,
+    pub bypass_admin_auth: bool,
 }
 
 impl Config {
@@ -61,6 +62,7 @@ impl Config {
             swagger_enabled: parse_bool_env("SWAGGER_ENABLED", false)?,
             enable_background_jobs: parse_bool_env("ENABLE_BACKGROUND_JOBS", true)?,
             rate_limit_disabled: parse_bool_env("RATE_LIMIT_DISABLE", false)?,
+            bypass_admin_auth: parse_bool_env("BYPASS_ADMIN_AUTH", false)?,
         })
     }
 
@@ -92,6 +94,10 @@ impl Config {
 
         if self.swagger_enabled {
             errors.push("SWAGGER_ENABLED=true is not allowed in production".to_string());
+        }
+
+        if self.bypass_admin_auth {
+            errors.push("BYPASS_ADMIN_AUTH=true is not allowed in production".to_string());
         }
 
         if env_var("DATABASE_URL").is_none() {
@@ -326,6 +332,7 @@ mod tests {
             swagger_enabled: false,
             enable_background_jobs: true,
             rate_limit_disabled: false,
+            bypass_admin_auth: false,
         }
     }
 
@@ -453,6 +460,25 @@ mod tests {
         let errors = config.production_startup_errors(env);
 
         assert!(errors.iter().any(|error| error.contains("SWAGGER_ENABLED")));
+    }
+
+    #[test]
+    fn production_startup_rejects_bypass_admin_auth() {
+        let mut config = test_config();
+        config.bypass_admin_auth = true;
+        let env = env_getter(HashMap::from([
+            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_ORG_ID", "org_123"),
+            ("GOOGLE_VERIFY_AUDIENCE", "true"),
+            ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
+        ]));
+
+        let errors = config.production_startup_errors(env);
+
+        assert!(errors.iter().any(|error| error.contains("BYPASS_ADMIN_AUTH")));
     }
 
     #[test]

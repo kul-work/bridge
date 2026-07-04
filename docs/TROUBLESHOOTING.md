@@ -213,3 +213,7 @@ If you are running an automated security scanner like OWASP ZAP, you may encount
    - **Type**: `Request Header (will add if not present)`
    - **Match**: `Authorization`
    - **Replacement**: `Bearer <dev_api_key>` (e.g. `sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm` from dev/test config)
+
+4. **Scanning Admin Endpoints (/admin)**
+   Clerk authentication requires interactive loading of external scripts which can fail or expire during scanning.
+   - Set `BYPASS_ADMIN_AUTH=true` in `.env` in non-production environments to completely bypass Clerk validation and mock the admin session. This allows ZAP to crawl and scan all admin endpoints directly. **Note**: This setting is strictly rejected and disabled in production.

@@ -298,6 +298,7 @@ mod tests {
             swagger_enabled: false,
             enable_background_jobs: true,
             rate_limit_disabled: false,
+            bypass_admin_auth: false,
         }
     }
 

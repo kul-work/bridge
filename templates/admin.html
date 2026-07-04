@@ -412,6 +412,8 @@
         src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
         type="text/javascript"></script>
 <script nonce="{{CSP_NONCE}}">
+window.BYPASS_ADMIN_AUTH = {{BYPASS_ADMIN_AUTH}};
+
 let adminApps = [];
 let editingNotesAppId = null;
 let adminEventsBound = false;
@@ -435,7 +437,12 @@ function waitForClerk() {
     setTimeout(waitForClerk, 50);
   }
 }
-waitForClerk();
+
+if (window.BYPASS_ADMIN_AUTH) {
+  showDashboard();
+} else {
+  waitForClerk();
+}
 
 function showSignIn() {
   document.getElementById("auth-screen").classList.remove("hidden");
@@ -454,7 +461,7 @@ async function showDashboard() {
   bindAdminHandlers();
 
   const nameEl = document.getElementById("user-name");
-  const name = Clerk.user?.firstName || Clerk.user?.username || Clerk.user?.id || "Admin";
+  const name = (window.Clerk && Clerk.user) ? (Clerk.user.firstName || Clerk.user.username || Clerk.user.id || "Admin") : "Mock Admin";
   nameEl.textContent = name;
 
   await loadAlerts();
@@ -517,8 +524,13 @@ async function refreshToken() {
 }
 
 async function authedFetch(url, options = {}) {
-  const authToken = await refreshToken();
-  if (!authToken) throw new Error("Admin session is not available");
+  let authToken;
+  if (window.BYPASS_ADMIN_AUTH) {
+    authToken = "bypass-token";
+  } else {
+    authToken = await refreshToken();
+    if (!authToken) throw new Error("Admin session is not available");
+  }
   options.headers = options.headers || {};
   options.headers["Authorization"] = "Bearer " + authToken;
   return fetch(url, options);
@@ -875,6 +887,10 @@ async function triggerJob(job) {
 }
 
 async function signOut() {
+  if (window.BYPASS_ADMIN_AUTH) {
+    window.location.assign("/admin");
+    return;
+  }
   await Clerk.signOut({ redirectUrl: "/admin" });
   window.location.assign("/admin");
 }
