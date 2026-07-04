@@ -1,5 +1,18 @@
 # Release Notes
 
+## [0.6.2] - 2026-07-04
+### Features
+- **Admin Cleanup**: Add gated emergency cleanup operations for webhook retries, worker claim resets, price step-up jobs, pause scheduler jobs, and reconciliation lock recovery.
+
+### Fixes
+- **Mock Mode**: Extend `MOCK_EXTERNAL_APIS` coverage to checkout, provider API, forwarding, and scheduler background paths.
+- **Google Play Payments**: Persist price-change audit rows even when provider events do not include amount or currency values.
+
+### Tests and docs
+- **Creem Tests**: Stabilize OTP and subscription cancellation fixtures with explicit currencies and per-run subscription IDs.
+- **Google Play Tests**: Refresh context-aware mock tokens and strengthen price-change audit coverage.
+- **Documentation**: Document emergency cleanup risks, setup, and provider billing-event payment audit semantics.
+
 ## [0.6.1] - 2026-07-04
 ### Features
 - **Scanner Routes**: Add a plain routes link and handler for manual route discovery.
