@@ -105,6 +105,9 @@ PAYLOAD=$(cat <<EOF
       "user_id": "$USER_ID"
     },
     "product_id": "$PRODUCT_ID_OTP",
+    "product": {
+      "currency": "USD"
+    },
     "status": "refunded",
     "amount": 2999
   }
