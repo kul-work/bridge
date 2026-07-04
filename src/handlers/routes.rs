@@ -74,6 +74,35 @@ pub async fn openapi_spec(headers: HeaderMap) -> Response {
     Json(build_openapi(&headers)).into_response()
 }
 
+/// `GET /routes/plain` — raw list of fully-resolved URLs, one per line.
+/// Intended for manual importing or scanning in tools like Burp Suite.
+pub async fn plain_routes(headers: HeaderMap) -> Response {
+    let base_url = server_url(&headers).unwrap_or_else(|| "http://localhost:5566".to_string());
+    let routes = known_routes();
+
+    // Resolve path parameters to demo values and build full URLs
+    let mut urls: Vec<String> = routes
+        .iter()
+        .map(|route| {
+            let resolved_path = resolve_path(&route.path);
+            format!("{}{}", base_url, resolved_path)
+        })
+        .collect();
+
+    // Deduplicate to avoid repeating URLs that support multiple HTTP methods
+    urls.sort();
+    urls.dedup();
+
+    let body = urls.join("\n");
+
+    (
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        body,
+    )
+        .into_response()
+}
+
+
 fn build_openapi(headers: &HeaderMap) -> serde_json::Value {
     let routes = known_routes();
     let mut paths = serde_json::Map::new();
@@ -154,6 +183,28 @@ fn openapi_path(path: &str) -> String {
         .collect::<Vec<_>>()
         .join("/")
 }
+
+/// Resolves Axum path template parameters (`:param`) to concrete test/demo values
+/// so scanner tools can issue real requests.
+fn resolve_path(path: &str) -> String {
+    path.split('/')
+        .map(|seg| {
+            if let Some(name) = seg.strip_prefix(':') {
+                match name {
+                    "app_id" | "webhook_id" => "00000000-0000-0000-0000-000000000000",
+                    "subscription_id" => "demo_subscription_id",
+                    "external_user_id" => "user_demoExternalUserId",
+                    "token" => "demo-webhook-token",
+                    _ => "sample",
+                }
+            } else {
+                seg
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 
 /// Path-param entries with concrete `example` values so ZAP/Swagger issue real
 /// requests without manual substitution. Schema is derived from param
@@ -750,5 +801,37 @@ mod tests {
         assert!(doc["components"]["securitySchemes"]["adminAuth"].is_object());
         // Server URL derived from Host.
         assert_eq!(doc["servers"][0]["url"], "http://127.0.0.1:5566");
+    }
+
+    #[test]
+    fn resolve_path_substitutes_params() {
+        assert_eq!(
+            resolve_path("/api/v1/subscriptions/:subscription_id"),
+            "/api/v1/subscriptions/demo_subscription_id"
+        );
+        assert_eq!(
+            resolve_path("/webhooks/:token/google_play"),
+            "/webhooks/demo-webhook-token/google_play"
+        );
+        assert_eq!(resolve_path("/health"), "/health");
+    }
+
+    #[tokio::test]
+    async fn plain_routes_returns_newline_separated_urls() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, "127.0.0.1:5566".parse().unwrap());
+        let response = plain_routes(headers).await;
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let text = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(text.contains("http://127.0.0.1:5566/health\n"));
+        assert!(text.contains("http://127.0.0.1:5566/api/v1/subscriptions/demo_subscription_id\n"));
+        assert!(text.contains("http://127.0.0.1:5566/webhooks/demo-webhook-token/google_play"));
+
+        // Check that all lines are valid URLs
+        for line in text.lines() {
+            assert!(line.starts_with("http://127.0.0.1:5566/"));
+        }
     }
 }

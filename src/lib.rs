@@ -18,7 +18,7 @@ use axum::{http::StatusCode, response::Redirect, routing::get, Router};
 use crate::{
     config::{is_production_environment, Config},
     handlers::{
-        health_check, list_routes, openapi_spec, readiness_check, RouteDescriptor,
+        health_check, list_routes, openapi_spec, plain_routes, readiness_check, RouteDescriptor,
     },
     state::AppState,
 };
@@ -266,7 +266,8 @@ pub fn build_app(config: &Config, app_state: AppState) -> Router {
     if swagger_routes_enabled(config) {
         app = app
             .route("/routes", get(list_routes))
-            .route("/routes/openapi", get(openapi_spec));
+            .route("/routes/openapi", get(openapi_spec))
+            .route("/routes/plain", get(plain_routes));
     }
 
     if config.mock_external_apis {
