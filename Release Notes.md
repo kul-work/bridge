@@ -4,7 +4,6 @@
 ### Features
 - **API Keys**: Add an API key handler path for app credential management flows.
 - **Scanner Routes**: Add an internal Swagger route index and OpenAPI spec for scanner/manual route discovery, guarded behind explicit opt-in.
-- **Scanner Routes**: Add a plain text route listing at `/routes/plain` for quick manual importing into Burp Suite or other security tools.
 - **Creem Tests**: Add automated Creem bridge subscription access scripts for staging/regression checks.
 
 ### Fixes
