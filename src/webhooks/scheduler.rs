@@ -485,6 +485,15 @@ async fn reconcile_app_subscriptions(
     repo: &(impl SchedulerRepository + WebhookForwardRepository + AppLookupRepository + ProviderConfigLookupRepository + WebhookWriteRepository),
     app_id: uuid::Uuid,
 ) -> Result<(), crate::error::BridgeError> {
+    if crate::config::mock_external_apis_enabled() {
+        info!(
+            job = "reconciliation",
+            app_id = %app_id,
+            "MOCK_EXTERNAL_APIS: Skipping subscription reconciliation provider fetches"
+        );
+        return Ok(());
+    }
+
     let active_subs = SchedulerRepository::list_reconciliation_subscriptions(repo, app_id).await?;
 
     for sub in active_subs {

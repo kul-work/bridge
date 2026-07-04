@@ -1,5 +1,6 @@
 use crate::error::BridgeError;
 use crate::services::creem::client::CreemClient;
+use crate::services::creem::config::CreemConfig;
 use serde_json::Value;
 use tracing::info;
 
@@ -8,6 +9,32 @@ fn config_str<'a>(config: &'a Value, key: &str, provider: &str) -> Result<&'a st
     config.get(key)
         .and_then(|v| v.as_str())
         .ok_or_else(|| BridgeError::ConfigError(format!("Missing {} {} config", provider, key)))
+}
+
+fn configured_provider_api_url_is_localhost(provider: &str, config: &Value) -> bool {
+    match provider {
+        "creem" => CreemConfig::from_json(config)
+            .map(|creem_config| crate::config::is_localhost_url(creem_config.base_url()))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn should_skip_non_localhost_provider_call(provider: &str, operation: &str, config: &Value) -> bool {
+    if !crate::config::mock_external_apis_enabled() {
+        return false;
+    }
+
+    if configured_provider_api_url_is_localhost(provider, config) {
+        return false;
+    }
+
+    info!(
+        provider,
+        operation,
+        "MOCK_EXTERNAL_APIS: Skipping non-localhost provider API call"
+    );
+    true
 }
 
 /// Cancel subscription with the payment provider
@@ -21,6 +48,10 @@ pub async fn cancel_subscription(
 ) -> Result<(), BridgeError> {
     match provider {
         "creem" => {
+            if should_skip_non_localhost_provider_call(provider, "cancel_subscription", config) {
+                return Ok(());
+            }
+
             let creem_client = CreemClient::from_json(config)?;
             creem_client.cancel_subscription(subscription_id, mode, on_execute).await?;
             info!("Creem subscription {} cancelled via API", subscription_id);
@@ -28,6 +59,10 @@ pub async fn cancel_subscription(
         }
 
         "google_play" => {
+            if should_skip_non_localhost_provider_call(provider, "cancel_subscription", config) {
+                return Ok(());
+            }
+
             let service_account_path = config_str(config, "service_account_json", "Google Play")?;
             let package_name = config_str(config, "package_name", "Google Play")?;
             let token = purchase_token
@@ -56,6 +91,10 @@ pub async fn resume_subscription(
 ) -> Result<(), BridgeError> {
     match provider {
         "creem" => {
+            if should_skip_non_localhost_provider_call(provider, "resume_subscription", config) {
+                return Ok(());
+            }
+
             let creem_client = CreemClient::from_json(config)?;
             creem_client.resume_subscription(subscription_id).await?;
             info!("Creem subscription {} resumed via API", subscription_id);
@@ -74,6 +113,10 @@ pub async fn create_billing_portal(
 ) -> Result<String, BridgeError> {
     match provider {
         "creem" => {
+            if should_skip_non_localhost_provider_call(provider, "create_billing_portal", config) {
+                return Ok("http://localhost/mock-billing-portal".to_string());
+            }
+
             let creem_client = CreemClient::from_json(config)?;
             creem_client.create_billing_portal(provider_customer_id).await
         }
@@ -91,10 +134,7 @@ pub async fn acknowledge_subscription(
 ) -> Result<(), BridgeError> {
     match provider {
         "google_play" => {
-            if crate::config::mock_external_apis_enabled() {
-                info!(
-                    "MOCK_EXTERNAL_APIS: Skipping Google Play subscription acknowledgement via API"
-                );
+            if should_skip_non_localhost_provider_call(provider, "acknowledge_subscription", config) {
                 return Ok(());
             }
 
@@ -125,8 +165,7 @@ pub async fn acknowledge_product(
 ) -> Result<(), BridgeError> {
     match provider {
         "google_play" => {
-            if crate::config::mock_external_apis_enabled() {
-                info!("MOCK_EXTERNAL_APIS: Skipping Google Play product acknowledgement via API");
+            if should_skip_non_localhost_provider_call(provider, "acknowledge_product", config) {
                 return Ok(());
             }
 
@@ -157,11 +196,19 @@ pub async fn fetch_subscription_status(
 ) -> Result<(Option<String>, Option<chrono::DateTime<chrono::Utc>>), BridgeError> {
     match provider {
         "creem" => {
+            if should_skip_non_localhost_provider_call(provider, "fetch_subscription_status", config) {
+                return Ok((None, None));
+            }
+
             let creem_client = CreemClient::from_json(config)?;
             creem_client.fetch_subscription_status(subscription_id).await
         }
 
         "google_play" => {
+            if should_skip_non_localhost_provider_call(provider, "fetch_subscription_status", config) {
+                return Ok((None, None));
+            }
+
             let service_account_path = config_str(config, "service_account_json", "Google Play")?;
             let package_name = config_str(config, "package_name", "Google Play")?;
             let token = _purchase_token

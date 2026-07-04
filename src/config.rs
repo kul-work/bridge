@@ -235,7 +235,12 @@ fn derive_clerk_issuer_from_publishable_key(publishable_key: &str) -> Option<Str
 }
 
 fn is_unsafe_production_host(host: &str) -> bool {
-    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let host = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
     if host == "localhost"
         || host.ends_with(".localhost")
         || host.ends_with(".local")
@@ -263,6 +268,27 @@ fn is_unsafe_production_host(host: &str) -> bool {
         }
         Err(_) => false,
     }
+}
+
+pub fn is_localhost_url(url: &str) -> bool {
+    let Ok(parsed) = Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+
+    let host = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+
+    host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 fn admin_test_env_path(value: Option<&str>) -> Option<&str> {
@@ -303,7 +329,7 @@ pub fn mock_external_apis_enabled() -> bool {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{admin_test_env_path, Config};
+    use super::{admin_test_env_path, is_localhost_url, Config};
 
     #[test]
     fn admin_test_env_requires_explicit_path() {
@@ -318,6 +344,18 @@ mod tests {
             admin_test_env_path(Some(" tests/admin/.env ")),
             Some("tests/admin/.env")
         );
+    }
+
+    #[test]
+    fn localhost_url_detection_only_allows_loopback_hosts() {
+        assert!(is_localhost_url("http://localhost:3000/callback"));
+        assert!(is_localhost_url("https://app.localhost/callback"));
+        assert!(is_localhost_url("http://127.0.0.1:8080/callback"));
+        assert!(is_localhost_url("http://[::1]:8080/callback"));
+
+        assert!(!is_localhost_url("https://api.creem.com/callback"));
+        assert!(!is_localhost_url("http://192.168.1.10/callback"));
+        assert!(!is_localhost_url("not-a-url"));
     }
 
     fn test_config() -> Config {
