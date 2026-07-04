@@ -61,7 +61,7 @@ fn admin_security_headers(csp_nonce: &str) -> HeaderMap {
          connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://api.clerk.com https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
          frame-src https://*.clerk.accounts.dev https://*.clerk.com https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
          img-src 'self' data: blob: https://img.clerk.com https://images.clerk.dev https://*.clerk.com https://*.clerk.accounts.dev https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
-         font-src 'self' data: https://*.clerk.com https://*.clerk.accounts.dev; \
+         font-src 'self' data: https://*.clerk.com https://*.clerk.accounts.dev https://*.perplexity.ai; \
          worker-src 'self' blob:; \
          object-src 'none'; \
          base-uri 'none'; \
