@@ -27,6 +27,7 @@ pub struct Config {
     pub mock_external_apis: bool,
     pub swagger_enabled: bool,
     pub enable_background_jobs: bool,
+    pub rate_limit_disabled: bool,
 }
 
 impl Config {
@@ -59,6 +60,7 @@ impl Config {
             mock_external_apis: parse_bool_env("MOCK_EXTERNAL_APIS", false)?,
             swagger_enabled: parse_bool_env("SWAGGER_ENABLED", false)?,
             enable_background_jobs: parse_bool_env("ENABLE_BACKGROUND_JOBS", true)?,
+            rate_limit_disabled: parse_bool_env("RATE_LIMIT_DISABLE", false)?,
         })
     }
 
@@ -323,6 +325,7 @@ mod tests {
             mock_external_apis: false,
             swagger_enabled: false,
             enable_background_jobs: true,
+            rate_limit_disabled: false,
         }
     }
 
