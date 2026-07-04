@@ -41,8 +41,8 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TEST_RUN_ID="otp-04-${TIMESTAMP}-$$"
-DUMMY_TOKEN="test-inapp-slow-4567"
 PRODUCT_ID="$PRODUCT_ID_OTP"
+DUMMY_TOKEN="test-inapp-slow-4567"
 PROVIDER="$PROVIDER"
 REPORT_FILE="otp-04-report.json"
 

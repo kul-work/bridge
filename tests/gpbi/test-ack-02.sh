@@ -46,7 +46,7 @@ PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 REPORT_FILE="ack-02-report.json"
 USER_ID="${USER_ID:-test_ack_02_user_$TEST_RUN_ID}"
-DUMMY_TOKEN="test-ack-02-token-$TEST_RUN_ID"
+DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-ack-02-token-$TEST_RUN_ID"
 
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"

@@ -39,8 +39,8 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TEST_RUN_ID="sub-19b-${TIMESTAMP}-$$"
-DUMMY_TOKEN="resubscribe-linking-required-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+DUMMY_TOKEN="resubscribe-linking-required-$TEST_RUN_ID"
 REPORT_FILE="sub-19b-report.json"
 
 echo -e "${YELLOW}========================================${NC}"

@@ -129,11 +129,28 @@ sleep 2
 COUNT_1=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE app_id = '$APP_ID' AND provider = '$PROVIDER' AND external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" -t 2>/dev/null | tr -d ' ')
 
 MESSAGE_ID_2="msg-whk-06-2-$TEST_RUN_ID"
+# Regenerate notification JSON with new timestamp to bypass stale event suppression
+NOTIFICATION_JSON_2=$(cat <<EOF
+{
+  "version": "1.0",
+  "packageName": "$PACKAGE_NAME",
+  "eventTimeMillis": "$(date +%s000)",
+  "subscriptionNotification": {
+    "version": "1.0",
+    "notificationType": 2,
+    "purchaseToken": "$PURCHASE_TOKEN",
+    "subscriptionId": "$PRODUCT_ID"
+  }
+}
+EOF
+)
+NOTIFICATION_B64_2=$(echo -n "$NOTIFICATION_JSON_2" | base64 -w 0)
+
 RESPONSE_2=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/google_play" \
   -H "X-Webhook-Verification-Mode: off" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
-  -d "{\"message\": {\"data\": \"$NOTIFICATION_B64\", \"message_id\": \"$MESSAGE_ID_2\", \"attributes\": {}}, \"subscription\": \"projects/test-project/pay.subscriptions/test-sub\"}")
+  -d "{\"message\": {\"data\": \"$NOTIFICATION_B64_2\", \"message_id\": \"$MESSAGE_ID_2\", \"attributes\": {}}, \"subscription\": \"projects/test-project/pay.subscriptions/test-sub\"}")
 
 HTTP_CODE_2=$(echo "$RESPONSE_2" | tail -n1)
 echo "Second webhook response: HTTP $HTTP_CODE_2"

@@ -44,8 +44,8 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TEST_RUN_ID="sub-pause-01-${TIMESTAMP}-$$"
-DUMMY_TOKEN="test-sub-pause-01-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-sub-pause-01-$TEST_RUN_ID"
 REPORT_FILE="sub-pause-01-report.json"
 
 echo -e "${YELLOW}========================================${NC}"

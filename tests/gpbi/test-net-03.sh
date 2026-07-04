@@ -48,7 +48,7 @@ PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 REPORT_FILE="net-03-report.json"
 USER_ID="${USER_ID:-test_net_03_user_$TEST_RUN_ID}"
-DUMMY_TOKEN="test-net-03-token-$TEST_RUN_ID"
+DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-net-03-token-$TEST_RUN_ID"
 WEBHOOK_ID="webhook-net-03-$TEST_RUN_ID"
 
 # Defaults
@@ -83,7 +83,7 @@ echo ""
 # Step 2: Setup - ensure subscription record exists
 echo -e "${YELLOW}[2/6] Setting up test subscription${NC}"
 
-PURCHASE_TOKEN="test-net-03-timeout-$(date +%s)"
+PURCHASE_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-net-03-timeout-$(date +%s)"
 
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
 

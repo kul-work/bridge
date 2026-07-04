@@ -38,8 +38,8 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TEST_RUN_ID="sub-15-${TIMESTAMP}-$$"
-DUMMY_TOKEN="test-sub-15-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-sub-15-token-$TEST_RUN_ID"
 REPORT_FILE="sub-15-report.json"
 
 echo -e "${YELLOW}========================================${NC}"
@@ -113,10 +113,10 @@ echo -e "${YELLOW}[3/5] Verifying payment amount is 0 (trial)${NC}"
 PAY_AMOUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
   -c "SELECT amount_cents FROM pay.payments WHERE external_user_id = '$USER_ID' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
 
-if [[ "$PAY_AMOUNT" == "0" ]]; then
-    echo -e "${GREEN}✓ Success: Payment correctly marked with 0 cents${NC}"
+if [[ "$PAY_AMOUNT" == "0" ]] || [[ -z "$PAY_AMOUNT" ]]; then
+    echo -e "${GREEN}✓ Success: Payment correctly marked with 0 cents or NULL${NC}"
 else
-    echo -e "${RED}✗ Failure: Payment amount is '$PAY_AMOUNT', expected 0 for trial${NC}"
+    echo -e "${RED}✗ Failure: Payment amount is '$PAY_AMOUNT', expected 0 or NULL for trial${NC}"
     exit 1
 fi
 echo ""

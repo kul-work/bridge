@@ -88,7 +88,7 @@ SUB_EXISTS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -
 
 if [[ -z "$SUB_EXISTS" ]] || [[ "$SUB_EXISTS" == *"(0 rows)"* ]]; then
     echo -e "${YELLOW}⚠ No subscription found, creating test record...${NC}"
-    DUMMY_TOKEN="test-subscription-whk-01d-$TEST_RUN_ID"
+    DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-subscription-whk-01d-$TEST_RUN_ID"
     psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, purchase_token, provider, auto_renewing, created_at, updated_at) VALUES ('$APP_ID', '$USER_ID', '$PRODUCT_ID', 'active', '$DUMMY_TOKEN', '$PROVIDER', true, NOW(), NOW()) ON CONFLICT (app_id, external_user_id, subscription_id, provider) DO UPDATE SET status = 'active', purchase_token = EXCLUDED.purchase_token, auto_renewing = EXCLUDED.auto_renewing, updated_at = NOW();" > /dev/null
     echo -e "${GREEN}✓ Created test subscription record${NC}"
     PURCHASE_TOKEN="$DUMMY_TOKEN"

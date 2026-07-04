@@ -46,7 +46,7 @@ PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 REPORT_FILE="err-04-report.json"
 USER_ID="${USER_ID:-test_err_04_user_$TEST_RUN_ID}"
-DUMMY_TOKEN="test-err-04-token-$TEST_RUN_ID"
+DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-err-04-token-$TEST_RUN_ID"
 WEBHOOK_ID="webhook-err-04-$TEST_RUN_ID"
 
 # Defaults

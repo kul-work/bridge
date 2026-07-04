@@ -138,14 +138,14 @@ Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyd
 | `api_keys` | API key auth (hashed) |
 | `provider_configs` | Per-app provider credentials |
 | `subscriptions` | Subscription lifecycle source of truth |
-| `payments` | Immutable payment records |
+| `payments` | Immutable payment and provider billing audit records |
 | `webhook_provider` | Webhook audit + deduplication (ingress) |
 | `webhook_delivery` | Callback forwarding state + dead letter queue |
 
 **Key design decisions**:
 
 - **Subscriptions**: One row per (app_id, external_user_id, subscription_id, provider). Unique constraint on this tuple. `purchase_token` also unique (fraud prevention). Includes `payment_failure_notification` flag for tracking payment failure events.
-- **Payments**: One row per provider transaction. Atomic UPSERT with fraud detection (mismatched `external_user_id` returns 409).
+- **Payments**: One row per provider transaction or explicit provider billing audit event such as Google Play `price_changed`. Atomic UPSERT with fraud detection (mismatched `external_user_id` returns 409). Audit-only rows may have unknown amount/currency when the provider event does not include money fields.
 - **Webhook_provider**: Unique constraint on `(app_id, provider, provider_webhook_id)` prevents exact provider delivery duplicates. Purchase token + event type is not a valid deduplication key for renewable subscriptions because providers such as Google Play reuse purchase tokens across renewal events.
 - **Webhook_delivery**: Tracks callback forwarding state with dead letter queue support. `dead_lettered` flag marks exhausted retries.
 - **Checkout_idempotency**: Prevents duplicate checkout requests via unique constraint on idempotency key.

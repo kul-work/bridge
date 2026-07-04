@@ -31,8 +31,8 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TEST_RUN_ID="net-05-${TIMESTAMP}-$$"
-DUMMY_TOKEN="test-net-05-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-net-05-token-$TEST_RUN_ID"
 REPORT_FILE="net-05-report.json"
 USER_ID="test_net_user_$TEST_RUN_ID"
 

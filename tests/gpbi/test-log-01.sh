@@ -79,7 +79,7 @@ echo ""
 # Step 2: Clean up and prepare
 echo -e "${YELLOW}[2/7] Preparing test environment${NC}"
 
-PURCHASE_TOKEN="test-log-01-lifecycle-$(date +%s)"
+PURCHASE_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-log-01-lifecycle-$(date +%s)"
 
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" 2>/dev/null
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.payments WHERE external_user_id = '$USER_ID';" 2>/dev/null
