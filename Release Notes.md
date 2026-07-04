@@ -1,5 +1,18 @@
 # Release Notes
 
+## [0.6.1] - 2026-07-04
+### Features
+- **Scanner Routes**: Add a plain routes link and handler for manual route discovery.
+- **Admin Auth**: Add `BYPASS_ADMIN_AUTH` support for local development and test environments, with production startup validation.
+
+### Fixes
+- **Rate Limiting**: Restore `RATE_LIMIT_DISABLE` configuration support.
+- **Admin Dashboard**: Relax Clerk-related CSP font handling for hosted admin assets.
+- **Security Headers**: Add anti-sniffing MIME protection.
+
+### Tests and docs
+- **Documentation**: Add ZAP scanner troubleshooting instructions and document the admin-auth bypass flag.
+
 ## [0.6.0] - 2026-07-02
 ### Features
 - **API Keys**: Add an API key handler path for app credential management flows.
