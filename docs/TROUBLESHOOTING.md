@@ -190,3 +190,26 @@ Check:
 3. Check `webhook_delivery` table for any queued or `dead_lettered` callbacks.
 4. For webhook signature issues, verify app callback secret and provider configs.
 5. If the issue is provider-specific, search logs with the purchase token's `diagnostic_hash`.
+
+## Security Scanning (OWASP ZAP)
+
+If you are running an automated security scanner like OWASP ZAP, you may encounter issues such as rate-limit blocks (HTTP 429) or orphaned browser processes on Windows.
+
+### Troubleshooting ZAP Scans on Windows
+
+1. **Rate Limiting (HTTP 429)**
+   ZAP sends request bursts that exceed the default unauthenticated rate limit (10 requests/min).
+   - Set `RATE_LIMIT_DISABLE=true` in `.env` to bypass all rate limit checks during the scan.
+
+2. **Orphaned Firefox / Geckodriver Processes**
+   When using ZAP's active browser scanning on Windows, it might spawn and orphan multiple browser and driver instances. Run these commands to clean up the environment:
+   ```cmd
+   taskkill /F /IM firefox.exe
+   taskkill /F /IM geckodriver.exe
+   ```
+
+3. **Scanning Protected Endpoints**
+   Configure ZAP's **Replacer** tool to inject a test API key header to authenticate requests under `/api/v1`:
+   - **Type**: `Request Header (will add if not present)`
+   - **Match**: `Authorization`
+   - **Replacement**: `Bearer <dev_api_key>` (e.g. `sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm` from dev/test config)
