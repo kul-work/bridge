@@ -13,7 +13,7 @@ pub mod state;
 mod utils;
 pub mod webhooks;
 
-use axum::{http::StatusCode, response::Redirect, routing::get, Router};
+use axum::{http::StatusCode, routing::get, Router};
 
 use crate::{
     config::{is_production_environment, Config},
@@ -245,7 +245,6 @@ pub fn build_app(config: &Config, app_state: AppState) -> Router {
 
     let mut app = Router::new()
         .merge(health_routes)
-        .route("/", axum::routing::get(|| async { Redirect::temporary("/admin") }))
         .route(
             "/favicon.ico",
             axum::routing::get(|| async { StatusCode::NO_CONTENT }),
