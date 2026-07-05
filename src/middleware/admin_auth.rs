@@ -460,12 +460,33 @@ fn internal_error_response(message: &str) -> (StatusCode, Json<serde_json::Value
     )
 }
 
+pub fn admin_auth_bypass_allowed(environment: &str, bypass_enabled: bool) -> bool {
+    if !bypass_enabled {
+        return false;
+    }
+    let env_lower = environment.trim().to_ascii_lowercase();
+    matches!(env_lower.as_str(), "development" | "dev" | "local")
+}
+
 /// Clerk admin authentication middleware
 /// Validates that request is from Tyde's internal Clerk organization
 pub async fn admin_auth_middleware(
     mut request: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let environment = env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
+    let bypass_enabled = crate::config::parse_bool_env("BYPASS_ADMIN_AUTH", false).unwrap_or(false);
+
+    if admin_auth_bypass_allowed(&environment, bypass_enabled) {
+        let admin = AdminAuthContext {
+            subject: "mock_admin_user".to_string(),
+            org_id: Some("mock_org".to_string()),
+        };
+        request.extensions_mut().insert(admin.clone());
+        let mut response = next.run(request).await;
+        response.extensions_mut().insert(admin);
+        return Ok(response);
+    }
     let authorization = match request
         .headers()
         .get("authorization")
@@ -700,5 +721,31 @@ mod tests {
         let err = validate_claim_timestamps(&claims, 1_000).unwrap_err();
 
         assert_eq!(err, "Clerk JWT is not valid yet");
+    }
+
+    #[test]
+    fn test_admin_auth_bypass_allowed() {
+        use super::admin_auth_bypass_allowed;
+
+        // bypass_enabled = false should always be false
+        assert!(!admin_auth_bypass_allowed("development", false));
+        assert!(!admin_auth_bypass_allowed("production", false));
+
+        // bypass_enabled = true and dev/local environments should be true
+        assert!(admin_auth_bypass_allowed("development", true));
+        assert!(admin_auth_bypass_allowed("dev", true));
+        assert!(admin_auth_bypass_allowed("local", true));
+        assert!(admin_auth_bypass_allowed(" DEVELOPMENT ", true));
+        assert!(admin_auth_bypass_allowed("Dev", true));
+
+        // production and prod variants should be false
+        assert!(!admin_auth_bypass_allowed("production", true));
+        assert!(!admin_auth_bypass_allowed("prod", true));
+        assert!(!admin_auth_bypass_allowed(" PROD ", true));
+
+        // unknown/staging should be false
+        assert!(!admin_auth_bypass_allowed("staging", true));
+        assert!(!admin_auth_bypass_allowed("demo", true));
+        assert!(!admin_auth_bypass_allowed("unknown", true));
     }
 }

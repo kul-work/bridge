@@ -110,7 +110,7 @@ pub async fn record_payment_with_purchase_token_tx(
         !value.is_empty() && !value.eq_ignore_ascii_case("N/A") && !value.eq_ignore_ascii_case("UNKNOWN")
     });
 
-    if currency.is_none() && !ack_required {
+    if currency.is_none() && !ack_required && status != "price_changed" {
         tracing::info!(
             app_id = %app_id,
             provider,
@@ -123,7 +123,7 @@ pub async fn record_payment_with_purchase_token_tx(
 
     let amount_cents = (amount_cents >= 0).then_some(amount_cents);
 
-    if amount_cents.is_none() && !ack_required {
+    if amount_cents.is_none() && !ack_required && status != "price_changed" {
         tracing::info!(
             app_id = %app_id,
             provider,

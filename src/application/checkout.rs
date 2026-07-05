@@ -89,10 +89,11 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
     let checkout_id = Uuid::new_v4().to_string();
     let checkout_urls = resolve_checkout_redirect_urls(app.app_url.as_deref());
 
+    let mut should_cache_checkout_response = true;
+
     let response = match provider.as_str() {
         "creem" => {
             let creem_config = CreemConfig::from_json(&provider_config.config)?;
-            let creem_client = CreemClient::new(creem_config.clone())?;
 
             let product_selector = product_type.as_deref().unwrap_or(product_id.as_str());
             let selected_product_id = match product_selector {
@@ -111,26 +112,47 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
                 _ => product_id.as_str(),
             };
 
-            let metadata = serde_json::json!({
-                "user_id": external_user_id,
-                "external_user_id": external_user_id,
-                "product_id": product_id,
-            });
-
-            let (session_id, redirect_url) = creem_client
-                .create_checkout(
+            if crate::config::mock_external_apis_enabled()
+                && !crate::config::is_localhost_url(creem_config.base_url())
+            {
+                should_cache_checkout_response = false;
+                tracing::info!(
+                    provider = %provider,
+                    product_id = %product_id,
                     selected_product_id,
-                    &email,
-                    metadata,
-                    &checkout_urls.success_url,
-                )
-                .await?;
+                    "MOCK_EXTERNAL_APIS: Returning local Creem checkout placeholder"
+                );
 
-            CheckoutResponse {
-                checkout_id: if session_id.is_empty() { checkout_id } else { session_id },
-                provider: provider.clone(),
-                redirect_url: Some(redirect_url),
-                mobile_checkout_data: None,
+                CheckoutResponse {
+                    checkout_id: checkout_id.clone(),
+                    provider: provider.clone(),
+                    redirect_url: Some(format!("http://localhost/mock-checkout/{}", checkout_id)),
+                    mobile_checkout_data: None,
+                }
+            } else {
+                let creem_client = CreemClient::new(creem_config.clone())?;
+
+                let metadata = serde_json::json!({
+                    "user_id": external_user_id,
+                    "external_user_id": external_user_id,
+                    "product_id": product_id,
+                });
+
+                let (session_id, redirect_url) = creem_client
+                    .create_checkout(
+                        selected_product_id,
+                        &email,
+                        metadata,
+                        &checkout_urls.success_url,
+                    )
+                    .await?;
+
+                CheckoutResponse {
+                    checkout_id: if session_id.is_empty() { checkout_id } else { session_id },
+                    provider: provider.clone(),
+                    redirect_url: Some(redirect_url),
+                    mobile_checkout_data: None,
+                }
             }
         }
         "google_play" => {
@@ -201,11 +223,13 @@ pub async fn create_checkout<R: CheckoutHandlerRepository + ?Sized>(
         }
     };
 
-    if let Some(key) = payload.idempotency_key.as_deref() {
-        let response_json = serde_json::to_value(&response)
-            .map_err(|e| BridgeError::InternalServerError(format!("Failed to serialize checkout response: {}", e)))?;
-        repo.cache_checkout_response(app_id, key.trim(), &request_fingerprint, &response_json)
-        .await?;
+    if should_cache_checkout_response {
+        if let Some(key) = payload.idempotency_key.as_deref() {
+            let response_json = serde_json::to_value(&response)
+                .map_err(|e| BridgeError::InternalServerError(format!("Failed to serialize checkout response: {}", e)))?;
+            repo.cache_checkout_response(app_id, key.trim(), &request_fingerprint, &response_json)
+            .await?;
+        }
     }
 
     tracing::info!(

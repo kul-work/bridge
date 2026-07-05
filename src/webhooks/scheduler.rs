@@ -485,6 +485,15 @@ async fn reconcile_app_subscriptions(
     repo: &(impl SchedulerRepository + WebhookForwardRepository + AppLookupRepository + ProviderConfigLookupRepository + WebhookWriteRepository),
     app_id: uuid::Uuid,
 ) -> Result<(), crate::error::BridgeError> {
+    if crate::config::mock_external_apis_enabled() {
+        info!(
+            job = "reconciliation",
+            app_id = %app_id,
+            "MOCK_EXTERNAL_APIS: Skipping subscription reconciliation provider fetches"
+        );
+        return Ok(());
+    }
+
     let active_subs = SchedulerRepository::list_reconciliation_subscriptions(repo, app_id).await?;
 
     for sub in active_subs {
@@ -1109,6 +1118,175 @@ pub async fn cleanup_old_data(database: &Arc<Database>) -> Result<(), crate::err
     info!(job = "cleanup", status = "completed", "Data retention cleanup completed");
     Ok(())
 }
+
+pub async fn cleanup_webhook_retry(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
+    info!(job = "webhook_retry_cleanup", status = "start", "Starting webhook retry emergency cleanup");
+
+    let pool = database.pool();
+    let rows_updated_deliveries = sqlx::query(
+        "UPDATE pay.webhook_delivery
+         SET dead_lettered = true,
+             dead_lettered_at = NOW(),
+             dead_letter_reason = 'manual_emergency_cleanup',
+             claim_token = NULL,
+             claimed_by = NULL,
+             claimed_until = NULL
+         WHERE forwarded = false AND dead_lettered = false"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?
+    .rows_affected();
+
+    let rows_updated_acks = sqlx::query(
+        "UPDATE pay.payments
+         SET acknowledged_at = COALESCE(acknowledged_at, NOW()),
+             ack_required = false,
+             ack_claim_token = NULL,
+             ack_claimed_by = NULL,
+             ack_claimed_until = NULL
+         WHERE provider = 'google_play'
+           AND ack_required = true
+           AND acknowledged_at IS NULL"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?
+    .rows_affected();
+
+    info!(
+        job = "webhook_retry_cleanup",
+        status = "completed",
+        dead_lettered_deliveries = rows_updated_deliveries,
+        resolved_payment_acknowledgements = rows_updated_acks,
+        "Webhook retry emergency cleanup completed"
+    );
+    Ok(())
+}
+
+pub async fn cleanup_price_step_up(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
+    info!(job = "price_step_up_cleanup", status = "start", "Starting price step-up emergency cleanup");
+
+    let pool = database.pool();
+    let rows_affected = sqlx::query(
+        "UPDATE pay.subscriptions
+         SET scheduled_job_claim_token = NULL,
+             scheduled_job_claimed_by = NULL,
+             scheduled_job_claimed_until = NULL,
+             scheduled_job_claim_kind = NULL,
+             google_requires_price_step_up_consent = false,
+             google_price_step_up_consent_deadline = NULL
+         WHERE google_requires_price_step_up_consent = true"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?
+    .rows_affected();
+
+    info!(
+        job = "price_step_up_cleanup",
+        status = "completed",
+        cleared_consents = rows_affected,
+        "Price step-up emergency cleanup completed"
+    );
+    Ok(())
+}
+
+pub async fn cleanup_pause_scheduler(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
+    info!(job = "pause_scheduler_cleanup", status = "start", "Starting pause scheduler emergency cleanup");
+
+    let pool = database.pool();
+    let rows_pauses = sqlx::query(
+        "UPDATE pay.subscriptions
+         SET google_pause_scheduled_at = NULL,
+             scheduled_job_claim_token = NULL,
+             scheduled_job_claimed_by = NULL,
+             scheduled_job_claimed_until = NULL,
+             scheduled_job_claim_kind = NULL
+         WHERE google_pause_scheduled_at IS NOT NULL"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?
+    .rows_affected();
+
+    let rows_deleted = sqlx::query(
+        "DELETE FROM pay.subscriptions
+         WHERE status = 'pending'
+           AND purchase_token IS NULL
+           AND created_at < NOW() - INTERVAL '5 minutes'"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?
+    .rows_affected();
+
+    info!(
+        job = "pause_scheduler_cleanup",
+        status = "completed",
+        cleared_pauses = rows_pauses,
+        deleted_pending_subs = rows_deleted,
+        "Pause scheduler emergency cleanup completed"
+    );
+    Ok(())
+}
+
+pub async fn reset_stuck_workers(database: &Arc<Database>) -> Result<(), crate::error::BridgeError> {
+    info!(job = "reset_stuck_workers", status = "start", "Starting worker claims reset");
+
+    let pool = database.pool();
+    
+    let deliveries_reset = sqlx::query(
+        "UPDATE pay.webhook_delivery
+         SET claim_token = NULL,
+             claimed_by = NULL,
+             claimed_until = NULL
+         WHERE claim_token IS NOT NULL
+           AND claimed_until < NOW()"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?
+    .rows_affected();
+
+    let payments_reset = sqlx::query(
+        "UPDATE pay.payments
+         SET ack_claim_token = NULL,
+             ack_claimed_by = NULL,
+             ack_claimed_until = NULL
+         WHERE ack_claim_token IS NOT NULL
+           AND ack_claimed_until < NOW()"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?
+    .rows_affected();
+
+    let subs_reset = sqlx::query(
+        "UPDATE pay.subscriptions
+         SET scheduled_job_claim_token = NULL,
+             scheduled_job_claimed_by = NULL,
+             scheduled_job_claimed_until = NULL,
+             scheduled_job_claim_kind = NULL
+         WHERE scheduled_job_claim_token IS NOT NULL
+           AND scheduled_job_claimed_until < NOW()"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::BridgeError::DbError(e.to_string()))?
+    .rows_affected();
+
+    info!(
+        job = "reset_stuck_workers",
+        status = "completed",
+        deliveries_reset,
+        payments_reset,
+        subs_reset,
+        "Worker claims reset completed"
+    );
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {

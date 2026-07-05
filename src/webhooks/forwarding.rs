@@ -155,6 +155,44 @@ pub async fn forward_webhook<R: WebhookForwardRepository + AppLookupRepository +
         }
     }
 
+    if crate::config::mock_external_apis_enabled()
+        && !crate::config::is_localhost_url(&app.webhook_callback_url)
+    {
+        if !refresh_delivery_claim(
+            repo,
+            app_id,
+            webhook_delivery_id,
+            claim_token,
+            &payload,
+            "mock_external_callback_skip",
+        )
+        .await?
+        {
+            return Ok(());
+        }
+
+        repo.complete_webhook_delivery_attempt(
+            webhook_delivery_id,
+            claim_token,
+            None,
+            Some("Skipped non-localhost callback in mock mode".to_string()),
+            true,
+        )
+        .await?;
+
+        info!(
+            app_id = %app_id,
+            webhook_delivery_id = %webhook_delivery_id,
+            provider = %payload.provider,
+            event_type = %payload.event_type,
+            provider_event_id = %payload.provider_event_id,
+            callback_url = %app.webhook_callback_url,
+            outcome = "mock_external_callback_skip",
+            "MOCK_EXTERNAL_APIS: Skipping non-localhost webhook callback"
+        );
+        return Ok(());
+    }
+
     if delivery.forward_attempts > 0 {
         info!(
             app_id = %app_id,

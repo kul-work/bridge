@@ -39,9 +39,9 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TEST_RUN_ID="sub-16-${TIMESTAMP}-$$"
-OLD_TOKEN="test-sub-16-old-token-$TEST_RUN_ID"
-NEW_TOKEN="test-sub-16-new-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+OLD_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-sub-16-old-token-$TEST_RUN_ID"
+NEW_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-sub-16-new-token-$TEST_RUN_ID"
 REPORT_FILE="sub-16-report.json"
 
 echo -e "${YELLOW}========================================${NC}"

@@ -183,6 +183,36 @@ Check:
 - `ENABLE_BACKGROUND_JOBS=true` in environment variables.
 - Reconciliation polling API quotas are not exhausted.
 
+## Emergency Cleanup & Recovery Operations (Danger Zone)
+
+In case of extraordinary situations on production or test environments, the admin dashboard `/admin` exposes **Emergency Cleanup Operations** to reset locks or purge/bypass pending queues.
+
+The table below describes what each emergency cleanup operation does, along with the consequences/risks on production (Prod-wise) and staging/development environments (Stage/Dev-wise):
+
+| Emergency Job | Action / Effect | Consequences on PRODUCTION (Prod-wise) | Consequences on STAGE/DEV |
+| :--- | :--- | :--- | :--- |
+| **`reset_stuck_workers`** | **Safe Lock Reset:** Resets all expired worker claim tokens (`claim_token = NULL`) across webhooks, payments, and subscriptions. | **Zero Risk:** Re-queues stuck items without altering financial data or core states. | Useful to unblock stuck test scenarios. |
+| **`webhook_retry_cleanup`** | **DLQ / Discard:** Forcibly dead-letters all pending webhook deliveries and marks pending Google Play payments as resolved/acknowledged. | **Critical Risk:** Client apps will not receive pending webhooks (e.g. renewals/cancellations), breaking state consistency. | Useful for clearing old notifications that block tests due to mock/decoupled APIs. |
+| **`reconciliation_cleanup`** | Releases the manual in-memory lock (`trigger_job:reconciliation`) in case the manual run got stuck. | **Low Risk:** Allows immediate re-run of the reconciliation. | Safe to run at any time. |
+| **`price_step_up_cleanup`** | Resets active worker claims and clears the price step-up consent requirement in the DB for all subscriptions. | **Medium Risk:** Avoids auto-cancellation in Bridge, but may create asymmetry if Google Play cancels the subscription anyway due to lack of consent. | Safe and useful for resetting test states. |
+| **`pause_scheduler_cleanup`** | Cancels scheduled pauses for all subscriptions and deletes pending subscriptions without a purchase token created more than 5 minutes ago. | **Medium Risk:** Subscriptions scheduled for pause will not suspend in Bridge, potentially granting unearned premium access. | Safe and useful for resetting test states. |
+
+### How to Trigger
+These actions can be triggered synchronously via:
+1. The **Emergency Cleanup Operations (Danger Zone)** panel on the `/admin` dashboard (requires confirmation).
+2. The POST `/admin/trigger-jobs` API endpoint by passing the respective job name in the request body (e.g. `{"jobs": ["webhook_retry_cleanup"]}`).
+
+### Production Safety Gate (Break-Glass Override)
+On production environments (`ENVIRONMENT=production` or `prod`), all emergency jobs (ending in `_cleanup`) are **disabled by default** in the backend to prevent accidental fat-finger operations. 
+
+To run them in a production emergency, you must configure the following environment variable:
+```text
+ALLOW_EMERGENCY_CLEANUP=true
+```
+If this variable is not set to `true`, any emergency cleanup trigger on production will return a validation error. 
+
+*Note: The safe `reset_stuck_workers` operation does not require this flag and remains always enabled on all environments.*
+
 ## Quick launch-window routine
 
 1. Confirm `/health` and `/ready`.
@@ -190,3 +220,30 @@ Check:
 3. Check `webhook_delivery` table for any queued or `dead_lettered` callbacks.
 4. For webhook signature issues, verify app callback secret and provider configs.
 5. If the issue is provider-specific, search logs with the purchase token's `diagnostic_hash`.
+
+## Security Scanning (OWASP ZAP)
+
+If you are running an automated security scanner like OWASP ZAP, you may encounter issues such as rate-limit blocks (HTTP 429) or orphaned browser processes on Windows.
+
+### Troubleshooting ZAP Scans on Windows
+
+1. **Rate Limiting (HTTP 429)**
+   ZAP sends request bursts that exceed the default unauthenticated rate limit (10 requests/min).
+   - Set `RATE_LIMIT_DISABLE=true` in `.env` to bypass all rate limit checks during the scan.
+
+2. **Orphaned Firefox / Geckodriver Processes**
+   When using ZAP's active browser scanning on Windows, it might spawn and orphan multiple browser and driver instances. Run these commands to clean up the environment:
+   ```cmd
+   taskkill /F /IM firefox.exe
+   taskkill /F /IM geckodriver.exe
+   ```
+
+3. **Scanning Protected Endpoints**
+   Configure ZAP's **Replacer** tool to inject a test API key header to authenticate requests under `/api/v1`:
+   - **Type**: `Request Header (will add if not present)`
+   - **Match**: `Authorization`
+   - **Replacement**: `Bearer <dev_api_key>` (e.g. `sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm` from dev/test config)
+
+4. **Scanning Admin Endpoints (/admin)**
+   Clerk authentication requires interactive loading of external scripts which can fail or expire during scanning.
+   - Set `BYPASS_ADMIN_AUTH=true` in `.env` in non-production environments to completely bypass Clerk validation and mock the admin session. This allows ZAP to crawl and scan all admin endpoints directly. **Note**: This setting is strictly rejected and disabled in production.

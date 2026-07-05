@@ -60,6 +60,11 @@ pub async fn request_observability(mut req: Request, next: Next) -> Response {
             .insert(HeaderName::from_static(REQUEST_ID_HEADER), value);
     }
 
+    response.headers_mut().insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+
     tracing::info!(
         request_id = %request_id,
         method = %method,

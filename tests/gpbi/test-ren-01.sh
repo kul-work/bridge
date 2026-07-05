@@ -49,7 +49,7 @@ INGRESS_TOKEN="${WEBHOOK_INGRESS_TOKEN:-${WEBHOOK_TOKEN:-}}"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 USER_ID="${USER_ID:-test_ren_01_user_$TEST_RUN_ID}"
-PURCHASE_TOKEN="test-ren-01-token-$TEST_RUN_ID"
+PURCHASE_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-ren-01-token-$TEST_RUN_ID"
 PRICE_CENTS="${PRICE_CENTS:-549}"
 
 if [[ -z "${BRIDGE_API_KEY:-}" ]]; then

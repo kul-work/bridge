@@ -41,8 +41,8 @@ TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TEST_RUN_ID="acc-03-${TIMESTAMP}-$$"
 USER_A_ID="test_acc_03_user_a_$TEST_RUN_ID"
 USER_B_ID="test_acc_03_user_b_$TEST_RUN_ID"
-PURCHASE_TOKEN="test-acc-03-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+PURCHASE_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-acc-03-token-$TEST_RUN_ID"
 REPORT_FILE="acc-03-report.json"
 
 echo -e "${YELLOW}========================================${NC}"

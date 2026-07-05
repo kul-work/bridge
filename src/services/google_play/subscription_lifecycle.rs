@@ -186,7 +186,13 @@ pub async fn handle_subscription_cancelled_with_context<
     fields: &WebhookFields,
     timestamp_epoch_ms: i64,
 ) -> Result<Option<GooglePlayLifecycleOutcome>, BridgeError> {
-    let Some(subscription_id) = resolve_google_subscription_id_by_token(repo, app_id, webhook, fields).await? else {
+    let mut subscription_id = resolve_google_subscription_id_by_token(repo, app_id, webhook, fields).await?;
+
+    if subscription_id.is_none() && !webhook.provider.eq_ignore_ascii_case("google_play") {
+        subscription_id = fields.subscription_id.clone().or_else(|| webhook.subscription_id.clone());
+    }
+
+    let Some(subscription_id) = subscription_id else {
         return Ok(None);
     };
 

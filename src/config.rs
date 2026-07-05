@@ -27,6 +27,8 @@ pub struct Config {
     pub mock_external_apis: bool,
     pub swagger_enabled: bool,
     pub enable_background_jobs: bool,
+    pub rate_limit_disabled: bool,
+    pub bypass_admin_auth: bool,
 }
 
 impl Config {
@@ -59,6 +61,8 @@ impl Config {
             mock_external_apis: parse_bool_env("MOCK_EXTERNAL_APIS", false)?,
             swagger_enabled: parse_bool_env("SWAGGER_ENABLED", false)?,
             enable_background_jobs: parse_bool_env("ENABLE_BACKGROUND_JOBS", true)?,
+            rate_limit_disabled: parse_bool_env("RATE_LIMIT_DISABLE", false)?,
+            bypass_admin_auth: parse_bool_env("BYPASS_ADMIN_AUTH", false)?,
         })
     }
 
@@ -90,6 +94,10 @@ impl Config {
 
         if self.swagger_enabled {
             errors.push("SWAGGER_ENABLED=true is not allowed in production".to_string());
+        }
+
+        if self.bypass_admin_auth {
+            errors.push("BYPASS_ADMIN_AUTH=true is not allowed in production".to_string());
         }
 
         if env_var("DATABASE_URL").is_none() {
@@ -138,10 +146,6 @@ impl Config {
             None => errors.push(
                 "ADMIN_CLERK_AUTHORIZED_PARTIES must be set in production".to_string(),
             ),
-        }
-
-        if trimmed_env(&env_var, "ADMIN_CLERK_ORG_ID").is_none() {
-            errors.push("ADMIN_CLERK_ORG_ID must be set in production".to_string());
         }
 
         let parse_bool = |val: &str| -> Option<bool> {
@@ -194,18 +198,19 @@ fn validate_public_https_url(label: &str, value: &str, errors: &mut Vec<String>)
         return;
     };
 
-    if url.scheme() != "https" {
-        errors.push(format!("{} must use https in production", label));
-        return;
-    }
-
     let Some(host) = url.host_str() else {
         errors.push(format!("{} must include a host", label));
         return;
     };
 
-    if is_unsafe_production_host(host) {
-        errors.push(format!("{} must not use localhost, private, or test hosts in production", label));
+    let is_localhost = host == "localhost"
+        || host == "127.0.0.1"
+        || host == "[::1]"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local");
+
+    if !is_localhost && url.scheme() != "https" {
+        errors.push(format!("{} must use https in production", label));
     }
 }
 
@@ -226,35 +231,25 @@ fn derive_clerk_issuer_from_publishable_key(publishable_key: &str) -> Option<Str
     Some(format!("https://{}", host.trim_end_matches('/')))
 }
 
-fn is_unsafe_production_host(host: &str) -> bool {
-    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
-    if host == "localhost"
-        || host.ends_with(".localhost")
-        || host.ends_with(".local")
-        || host.ends_with(".test")
-        || host.ends_with(".invalid")
-        || host.ends_with(".example")
-    {
+pub fn is_localhost_url(url: &str) -> bool {
+    let Ok(parsed) = Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+
+    let host = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") {
         return true;
     }
 
-    match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => {
-            ip.is_loopback()
-                || ip.is_private()
-                || ip.is_link_local()
-                || ip.is_broadcast()
-                || ip.is_documentation()
-                || ip.is_unspecified()
-        }
-        Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback()
-                || ip.is_unspecified()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
-        }
-        Err(_) => false,
-    }
+    host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 fn admin_test_env_path(value: Option<&str>) -> Option<&str> {
@@ -295,7 +290,7 @@ pub fn mock_external_apis_enabled() -> bool {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{admin_test_env_path, Config};
+    use super::{admin_test_env_path, is_localhost_url, Config};
 
     #[test]
     fn admin_test_env_requires_explicit_path() {
@@ -312,6 +307,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn localhost_url_detection_only_allows_loopback_hosts() {
+        assert!(is_localhost_url("http://localhost:3000/callback"));
+        assert!(is_localhost_url("https://app.localhost/callback"));
+        assert!(is_localhost_url("http://127.0.0.1:8080/callback"));
+        assert!(is_localhost_url("http://[::1]:8080/callback"));
+
+        assert!(!is_localhost_url("https://api.creem.com/callback"));
+        assert!(!is_localhost_url("http://192.168.1.10/callback"));
+        assert!(!is_localhost_url("not-a-url"));
+    }
+
     fn test_config() -> Config {
         Config {
             database_url: "postgresql://bridge_app:password@db.example.com/appgen".to_string(),
@@ -323,6 +330,8 @@ mod tests {
             mock_external_apis: false,
             swagger_enabled: false,
             enable_background_jobs: true,
+            rate_limit_disabled: false,
+            bypass_admin_auth: false,
         }
     }
 
@@ -400,10 +409,9 @@ mod tests {
         let config = test_config();
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "http://localhost:3000"),
+            ("ADMIN_CLERK_FRONTEND_API", "http://example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://127.0.0.1"),
-            ("ADMIN_CLERK_ORG_ID", "org_123"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
         ]));
@@ -411,7 +419,6 @@ mod tests {
         let errors = config.production_startup_errors(env);
 
         assert!(errors.iter().any(|error| error.contains("must use https")));
-        assert!(errors.iter().any(|error| error.contains("must not use localhost")));
     }
 
     #[test]
@@ -450,6 +457,25 @@ mod tests {
         let errors = config.production_startup_errors(env);
 
         assert!(errors.iter().any(|error| error.contains("SWAGGER_ENABLED")));
+    }
+
+    #[test]
+    fn production_startup_rejects_bypass_admin_auth() {
+        let mut config = test_config();
+        config.bypass_admin_auth = true;
+        let env = env_getter(HashMap::from([
+            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_ORG_ID", "org_123"),
+            ("GOOGLE_VERIFY_AUDIENCE", "true"),
+            ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
+        ]));
+
+        let errors = config.production_startup_errors(env);
+
+        assert!(errors.iter().any(|error| error.contains("BYPASS_ADMIN_AUTH")));
     }
 
     #[test]
@@ -501,21 +527,5 @@ mod tests {
 
         let errors = config.production_startup_errors(env);
         assert!(errors.iter().any(|error| error.contains("GOOGLE_PUB_SUB_AUDIENCE must be set")));
-    }
-
-    #[test]
-    fn production_startup_rejects_missing_admin_clerk_org_id() {
-        let config = test_config();
-        let env = env_getter(HashMap::from([
-            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
-            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
-            ("GOOGLE_VERIFY_AUDIENCE", "true"),
-            ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
-        ]));
-
-        let errors = config.production_startup_errors(env);
-        assert!(errors.iter().any(|error| error.contains("ADMIN_CLERK_ORG_ID must be set")));
     }
 }

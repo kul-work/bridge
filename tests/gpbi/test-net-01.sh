@@ -46,7 +46,7 @@ PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 REPORT_FILE="net-01-report.json"
 USER_ID="${USER_ID:-test_net_01_user_$TEST_RUN_ID}"
-DUMMY_TOKEN="test-net-01-token-$TEST_RUN_ID"
+DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-net-01-token-$TEST_RUN_ID"
 WEBHOOK_ID="webhook-net-01-$TEST_RUN_ID"
 
 # Defaults
@@ -81,7 +81,7 @@ echo ""
 # Step 2: Clean up any existing subscription data
 echo -e "${YELLOW}[2/6] Cleaning up previous test data${NC}"
 
-PURCHASE_TOKEN="test-net-01-webhook-first-$(date +%s)"
+PURCHASE_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-net-01-webhook-first-$(date +%s)"
 
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID';" 2>/dev/null
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "DELETE FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" 2>/dev/null

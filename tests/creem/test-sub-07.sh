@@ -36,6 +36,7 @@ TEST_RUN_ID="creem-sub-07-${TIMESTAMP}-$$"
 REPORT_FILE="test-sub-07-report.json"
 EMAIL="creem_user_${TEST_RUN_ID}@example.com"
 USER_ID=""
+SUBSCRIPTION_ID="sub_$TEST_RUN_ID"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -74,7 +75,7 @@ SUB_EXISTS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT"
 
 if [[ -z "$SUB_EXISTS" ]]; then
     echo -e "${YELLOW}No active sub found for $USER_ID. Running SUB-01 first...${NC}"
-    ./test-sub-01.sh --user-id "$USER_ID"
+    SUBSCRIPTION_ID="$SUBSCRIPTION_ID" ./test-sub-01.sh --user-id "$USER_ID"
 fi
 
 echo -e "${GREEN}✓ Ready${NC}"

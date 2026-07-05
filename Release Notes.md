@@ -1,16 +1,60 @@
 # Release Notes
 
-## [Unreleased] - 2026-07-01
+## [0.6.2] - 2026-07-04
+### Features
+- **Admin Cleanup**: Add gated emergency cleanup operations for webhook retries, worker claim resets, price step-up jobs, pause scheduler jobs, and reconciliation lock recovery.
+
+### Fixes
+- **Mock Mode**: Extend `MOCK_EXTERNAL_APIS` coverage to checkout, provider API, forwarding, and scheduler background paths.
+- **Google Play Payments**: Persist price-change audit rows even when provider events do not include amount or currency values.
+
+### Tests and docs
+- **Creem Tests**: Stabilize OTP and subscription cancellation fixtures with explicit currencies and per-run subscription IDs.
+- **Google Play Tests**: Refresh context-aware mock tokens and strengthen price-change audit coverage.
+- **Documentation**: Document emergency cleanup risks, setup, and provider billing-event payment audit semantics.
+
+## [0.6.1] - 2026-07-04
+### Features
+- **Scanner Routes**: Add a plain routes link and handler for manual route discovery.
+- **Admin Auth**: Add `BYPASS_ADMIN_AUTH` support for local development and test environments, with production startup validation.
+
+### Fixes
+- **Rate Limiting**: Restore `RATE_LIMIT_DISABLE` configuration support.
+- **Admin Dashboard**: Relax Clerk-related CSP font handling for hosted admin assets.
+- **Security Headers**: Add anti-sniffing MIME protection.
+
+### Tests and docs
+- **Documentation**: Add ZAP scanner troubleshooting instructions and document the admin-auth bypass flag.
+
+## [0.6.0] - 2026-07-02
+### Features
+- **API Keys**: Add an API key handler path for app credential management flows.
+- **Scanner Routes**: Add an internal Swagger route index and OpenAPI spec for scanner/manual route discovery, guarded behind explicit opt-in.
+- **Creem Tests**: Add automated Creem bridge subscription access scripts for staging/regression checks.
+
 ### Fixes
 - **Configuration**: Add production startup validation for Google Play RSA bypass, clerk authentication, and audience verification.
+- **Configuration**: Preserve Clerk issuer fallback during startup validation.
 - **Error Handling**: Sanitize API error responses to prevent database and provider detail exposure.
 - **Lifecycle Guards**: Reject resume/cancel actions on terminal subscriptions, enforce strict monotonic transitions, and deduplicate processed webhooks.
 - **Google Play Identity**: Resolve Google Play subscription lifecycles strictly by purchase token to eliminate SKU fallbacks.
+- **Google Play Security**: Encode outbound API path segments and harden Google Play mock URL handling.
 - **Security**: Force webhook signature verification outside mock mode, and redact PII in dispute emails by hashing user IDs and hiding customer emails.
 - **Payments**: Explicitly handle unknown amount and currency defaults as -1 and UNKNOWN.
+- **Payments**: COALESCE nullable ACK placeholder amount/currency reads to avoid NULL decode crashes.
+- **Webhook Atomicity**: Provider ACK now waits for durable enqueue, callback payloads persist before forwarding, worker side effects are claim-fenced, and lifecycle emails send only after webhook commit.
+- **Webhook Adapter**: Introduce the provider webhook adapter boundary for normalized provider ingress handling.
+- **Subscriptions**: Constrain canonical subscription status writes and fence Google price step-up decline actions.
 - **Row Level Security**: Enforce RLS context app-scoping across all background jobs and implement claim-token fencing in the atomic processor.
 - **Database & Schema**: Migration of `payments.amount_cents` and `subscriptions.google_new_price_cents` to `bigint` to satisfy Money design invariants.
+- **Database & Schema**: Isolate business-logic schema migrations from RLS policy migrations.
+- **Docker**: Add Docker ignore handling and certificate/runtime improvements.
 - **Documentation**: Clarify `bridge_admin` `BYPASSRLS` database role requirements for Admin Dashboard data visibility.
+
+### Tests and docs
+- **Google Play Regression**: Add same-SKU cross-user identity regression coverage and OTP-06 missing-price ACK row coverage.
+- **Webhook Regression**: Add retry-action coverage for unprocessed delivery rows and stabilize subscription webhook suite checks.
+- **Documentation**: Update Google Play billing test plan, DB onboarding, provider adapter notes, webhook architecture, and behavioral specs for the new hardening.
 
 ## [0.5.2] - 2026-06-25
 ### Fixes

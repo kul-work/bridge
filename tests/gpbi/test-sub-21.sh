@@ -45,8 +45,8 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TEST_RUN_ID="sub-21-${TIMESTAMP}-$$"
-DUMMY_TOKEN="test-sub-21-trial-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-sub-21-trial-$TEST_RUN_ID"
 REPORT_FILE="sub-21-report.json"
 NEW_PRICE_CENTS=1200000 # 12,000 KRW (Google Play represents this as 12,000,000,000 micros)
 NEW_PRICE_MICROS=$((NEW_PRICE_CENTS * 10000))
@@ -209,13 +209,18 @@ else
     exit 1
 fi
 
-PAYMENT_CURRENCY=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
-  -c "SELECT currency FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
+LATEST_PAYMENT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
+  -c "SELECT status, ack_required, amount_cents IS NULL, currency FROM pay.payments WHERE external_user_id = '$USER_ID' AND subscription_id = '$PRODUCT_ID' ORDER BY created_at DESC LIMIT 1;" -t)
 
-if [[ "$PAYMENT_CURRENCY" == "KRW" ]]; then
-    echo -e "${GREEN}PASS: Payment currency is KRW${NC}"
+PAYMENT_STATUS=$(echo "$LATEST_PAYMENT" | awk -F '|' '{print $1}' | tr -d '[:space:]')
+PAYMENT_ACK_REQUIRED=$(echo "$LATEST_PAYMENT" | awk -F '|' '{print $2}' | tr -d '[:space:]')
+PAYMENT_AMOUNT_IS_NULL=$(echo "$LATEST_PAYMENT" | awk -F '|' '{print $3}' | tr -d '[:space:]')
+PAYMENT_CURRENCY=$(echo "$LATEST_PAYMENT" | awk -F '|' '{print $4}' | tr -d '[:space:]')
+
+if [[ "$PAYMENT_STATUS" == "price_changed" && "$PAYMENT_ACK_REQUIRED" == "f" && "$PAYMENT_AMOUNT_IS_NULL" == "t" && "$PAYMENT_CURRENCY" == "KRW" ]]; then
+    echo -e "${GREEN}PASS: Latest payment is a non-ACK price_changed audit row with inherited KRW currency and unknown amount${NC}"
 else
-    echo -e "${RED}FAIL: Payment currency is $PAYMENT_CURRENCY, expected KRW${NC}"
+    echo -e "${RED}FAIL: Latest payment audit row mismatch: status=$PAYMENT_STATUS ack_required=$PAYMENT_ACK_REQUIRED amount_is_null=$PAYMENT_AMOUNT_IS_NULL currency=$PAYMENT_CURRENCY${NC}"
     exit 1
 fi
 echo ""

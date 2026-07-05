@@ -24,6 +24,7 @@ struct TestRepo {
     app: AppSnapshot,
     provider_config: ProviderConfigSnapshot,
     live_subscription_exists: bool,
+    cache_writes: Arc<Mutex<usize>>,
 }
 
 #[async_trait]
@@ -66,6 +67,7 @@ impl CheckoutRepository for TestRepo {
         _request_fingerprint: &str,
         _response_payload: &Value,
     ) -> Result<(), BridgeError> {
+        *self.cache_writes.lock().expect("cache write counter mutex poisoned") += 1;
         Ok(())
     }
 
@@ -120,6 +122,15 @@ fn build_test_repo(app_id: Uuid, api_url: &str) -> TestRepo {
             }),
         },
         live_subscription_exists: false,
+        cache_writes: Arc::new(Mutex::new(0)),
+    }
+}
+
+fn restore_mock_external_apis(original: Option<String>) {
+    if let Some(value) = original {
+        std::env::set_var("MOCK_EXTERNAL_APIS", value);
+    } else {
+        std::env::remove_var("MOCK_EXTERNAL_APIS");
     }
 }
 
@@ -191,4 +202,32 @@ async fn creem_checkout_uses_offer_id_when_offer_selector_is_requested() {
 
     assert_eq!(recorded["product_id"], "prod_offer");
     assert_eq!(recorded["metadata"]["product_id"], "prod_requested");
+}
+
+#[tokio::test]
+async fn mock_creem_checkout_placeholder_is_not_cached() {
+    let original_mock = std::env::var("MOCK_EXTERNAL_APIS").ok();
+    std::env::set_var("MOCK_EXTERNAL_APIS", "true");
+
+    let app_id = Uuid::new_v4();
+    let repo = build_test_repo(app_id, "https://api.creem.com");
+
+    let response = checkout::create_checkout(&repo, app_id, CheckoutRequest {
+        external_user_id: "user_123".to_string(),
+        email: "user@example.com".to_string(),
+        provider: "creem".to_string(),
+        product_id: "prod_requested".to_string(),
+        product_type: None,
+        idempotency_key: Some("checkout-key-1".to_string()),
+    })
+    .await
+    .expect("mock checkout should return a local placeholder");
+
+    restore_mock_external_apis(original_mock);
+
+    assert!(response
+        .redirect_url
+        .as_deref()
+        .is_some_and(|url| url.starts_with("http://localhost/mock-checkout/")));
+    assert_eq!(*repo.cache_writes.lock().expect("cache write counter mutex poisoned"), 0);
 }

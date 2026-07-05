@@ -123,9 +123,9 @@ echo ""
 
 # Check for error response (HTTP 200 with error payload due to mobile client requirements)
 # Backend returns 200 OK with error details in JSON for mobile client handling
-if echo "$VERIFY_BODY" | grep -qi "PAYMENT_PROVIDER_ERROR\|declined\|failed"; then
+if [[ "$HTTP_CODE" == "502" ]] && echo "$VERIFY_BODY" | grep -qi "provider_error"; then
     echo -e "${GREEN}✓ verify_purchase correctly rejected declined token${NC}"
-    echo -e "${GREEN}✓ Response contains error code: PAYMENT_PROVIDER_ERROR${NC}"
+    echo -e "${GREEN}✓ Response contains error code: provider_error${NC}"
 else
     echo -e "${RED}✗ Expected payment provider error for declined payment, got: $VERIFY_BODY${NC}"
     exit 1

@@ -44,8 +44,8 @@ NC='\033[0m' # No Color
 TIMESTAMP=$(date +%s)
 TEST_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 TEST_RUN_ID="sub-09-${TIMESTAMP}-$$"
-DUMMY_TOKEN="test-sub-09-token-$TEST_RUN_ID"
 PRODUCT_ID="$PRODUCT_ID_SUB"
+DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-sub-09-token-$TEST_RUN_ID"
 ORDER_ID="GPA.1234-5678-9012-SUB09"
 REPORT_FILE="sub-09-report.json"
 

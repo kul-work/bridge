@@ -99,6 +99,9 @@ PAYLOAD=$(cat <<EOF
       "user_id": "$USER_ID"
     },
     "product_id": "$PRODUCT_ID_OTP",
+    "product": {
+      "currency": "USD"
+    },
     "status": "completed",
     "last_transaction": {
       "id": "creem_tx_otp_01",

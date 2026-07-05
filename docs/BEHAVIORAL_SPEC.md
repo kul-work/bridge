@@ -770,7 +770,7 @@ Email/admin-alert side effects collected during webhook processing are scheduled
 **Event type**: `subscription.price_changed`
 
 1. Lookup user by `subscription_id`.
-2. Record payment with `status="price_changed"` (audit trail).
+2. Record payment with `status="price_changed"` (audit trail). If Google Play does not provide an amount in the event/resource, `amount_cents` is stored as unknown; currency is inherited from the latest explicit payment for the subscription when available.
 3. **Forward callback to app**: informational event with `new_price_cents`.
 
 ---

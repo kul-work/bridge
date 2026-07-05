@@ -18,7 +18,7 @@ use axum::{http::StatusCode, response::Redirect, routing::get, Router};
 use crate::{
     config::{is_production_environment, Config},
     handlers::{
-        health_check, list_routes, openapi_spec, readiness_check, RouteDescriptor,
+        health_check, list_routes, openapi_spec, plain_routes, readiness_check, RouteDescriptor,
     },
     state::AppState,
 };
@@ -88,7 +88,7 @@ fn rd(method: &str, path: &str, group: &'static str, auth: &'static str) -> Rout
 /// and the opt-in Swagger route index.
 pub fn build_app(config: &Config, app_state: AppState) -> Router {
     // Build protected routes with API key middleware
-    let protected_routes = Router::new()
+    let mut protected_routes = Router::new()
         .route(
             "/app/verify",
             axum::routing::post(handlers::api_key::verify_expected_app),
@@ -152,18 +152,25 @@ pub fn build_app(config: &Config, app_state: AppState) -> Router {
         .route(
             "/users/:external_user_id/data-export",
             axum::routing::get(handlers::users::data_export),
-        )
-        .route_layer(axum::middleware::from_fn_with_state(
+        );
+
+    if !config.rate_limit_disabled {
+        protected_routes = protected_routes.route_layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
             middleware::rate_limit::api_rate_limit_middleware,
-        ))
-        .route_layer(axum::middleware::from_fn_with_state(
-            app_state.clone(),
-            handlers::api_key::api_key_auth,
-        ))
-        .route_layer(axum::middleware::from_fn(
+        ));
+    }
+
+    protected_routes = protected_routes.route_layer(axum::middleware::from_fn_with_state(
+        app_state.clone(),
+        handlers::api_key::api_key_auth,
+    ));
+
+    if !config.rate_limit_disabled {
+        protected_routes = protected_routes.route_layer(axum::middleware::from_fn(
             middleware::rate_limit::unauthenticated_ip_rate_limit_middleware,
         ));
+    }
 
     // Admin dashboard page is public (Clerk handles auth client-side).
     // Admin API routes require Clerk JWT middleware.
@@ -176,7 +183,7 @@ pub fn build_app(config: &Config, app_state: AppState) -> Router {
         )
         .with_state(app_state.clone());
 
-    let admin_api = Router::new()
+    let mut admin_api = Router::new()
         .route("/admin/apps", axum::routing::get(handlers::admin::list_apps))
         .route(
             "/admin/alerts",
@@ -201,29 +208,40 @@ pub fn build_app(config: &Config, app_state: AppState) -> Router {
         .route(
             "/admin/trigger-jobs",
             axum::routing::post(handlers::admin::trigger_jobs),
-        )
-        .route_layer(axum::middleware::from_fn(
+        );
+
+    if !config.rate_limit_disabled {
+        admin_api = admin_api.route_layer(axum::middleware::from_fn(
             middleware::rate_limit::admin_rate_limit_middleware,
-        ))
-        .route_layer(axum::middleware::from_fn(
-            middleware::admin_auth::admin_auth_middleware,
-        ))
-        .route_layer(axum::middleware::from_fn(
+        ));
+    }
+
+    admin_api = admin_api.route_layer(axum::middleware::from_fn(
+        middleware::admin_auth::admin_auth_middleware,
+    ));
+
+    if !config.rate_limit_disabled {
+        admin_api = admin_api.route_layer(axum::middleware::from_fn(
             middleware::rate_limit::admin_auth_ip_rate_limit_middleware,
-        ))
-        .with_state(app_state.clone());
+        ));
+    }
+
+    let admin_api = admin_api.with_state(app_state.clone());
 
     let admin_routes = admin_page
         .merge(admin_api)
         .layer(axum::middleware::from_fn(handlers::admin::admin_no_store_middleware));
 
     // Build app
-    let health_routes = Router::new()
+    let mut health_routes = Router::new()
         .route("/health", get(health_check))
-        .route("/ready", get(readiness_check))
-        .layer(axum::middleware::from_fn(
+        .route("/ready", get(readiness_check));
+
+    if !config.rate_limit_disabled {
+        health_routes = health_routes.layer(axum::middleware::from_fn(
             middleware::rate_limit::health_ip_rate_limit_middleware,
         ));
+    }
 
     let mut app = Router::new()
         .merge(health_routes)
@@ -248,7 +266,8 @@ pub fn build_app(config: &Config, app_state: AppState) -> Router {
     if swagger_routes_enabled(config) {
         app = app
             .route("/routes", get(list_routes))
-            .route("/routes/openapi", get(openapi_spec));
+            .route("/routes/openapi", get(openapi_spec))
+            .route("/routes/plain", get(plain_routes));
     }
 
     if config.mock_external_apis {
@@ -279,6 +298,8 @@ mod tests {
             mock_external_apis: false,
             swagger_enabled: false,
             enable_background_jobs: true,
+            rate_limit_disabled: false,
+            bypass_admin_auth: false,
         }
     }
 

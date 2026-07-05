@@ -46,7 +46,7 @@ PRODUCT_ID="$PRODUCT_ID_SUB"
 PROVIDER="$PROVIDER"
 REPORT_FILE="ack-03-report.json"
 USER_ID="${USER_ID:-test_ack_03_user_$TEST_RUN_ID}"
-DUMMY_TOKEN="test-ack-03-token-$TEST_RUN_ID"
+DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-ack-03-token-$TEST_RUN_ID"
 WEBHOOK_ID="webhook-ack-03-$TEST_RUN_ID"
 
 # Defaults
