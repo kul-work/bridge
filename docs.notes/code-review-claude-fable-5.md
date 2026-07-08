@@ -15,19 +15,13 @@ All findings below were confirmed by reading the actual code (line numbers verif
 |---|----------|------|----------|
 | 1 | High | GP JWT auth | Pub/Sub JWT accepted without verifying service-account `email` / `email_verified` |
 | 2 | High | GP webhook | `packageName` never checked — cross-app RTDN acceptance |
-| 3 | High | Reconciliation | Unknown Google status silently mapped to `active` (keeps paid access) |
-| 4 | High | Verify path | Unknown Google status silently mapped to `expired` (revokes paid access) |
-| 5 | High | Money identity | `provider_transaction_id` falls back to purchase token / RTDN message id |
 | 6 | High | RLS | `list_user_subscriptions_to_cancel` bypasses app context → returns zero rows |
 | 7 | High | Scheduler | Terminal (cancelled/revoked) subs can be flipped to `paused` |
 | 8 | High | Scheduler | Scheduler callbacks lost if enqueue fails after state mutation |
-| 9 | Medium | Status norm | `normalize_status` collapses unknown → `None`, missing → `pending` |
 | 10 | Medium | GP webhook | Test notifications ACKed with no durable inbox/suppressed row |
-| 11 | Medium | Config | Production URL validation allows `http://localhost` |
 | 12 | Medium | DB constraint | Global `purchase_token UNIQUE` breaks app isolation |
 | 13 | Low | Email | Poisoned mutex `.expect()` panics production email path |
 | 14 | Low | Rate limit | Spoofable `X-Forwarded-For` + unbounded key growth |
-| 15 | — | Tests | Several tests assert/lock in the buggy behavior above |
 
 ---
 
