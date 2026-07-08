@@ -65,6 +65,8 @@ All findings below were confirmed by reading the actual code (line numbers verif
 
 ## 5. High — `provider_transaction_id` polluted with non-economic identifiers
 
+**Current status:** Fixed. Verify purchase no longer falls back to purchase token, Google subscription RTDN enrichment no longer fabricates `google_play_rtdn:*`, Google OTP purchased handling records a payment only when a provider order/transaction id is present, and `subscription.price_changed` no longer falls back to subscription id or webhook id. The related #15 test was updated to assert no RTDN-message-id fallback.
+
 Three call sites store a non-order value as `payments.provider_transaction_id`, violating the money-identity invariant ("`provider_transaction_id` is the provider's economic transaction/order id … purchase tokens must use dedicated token fields").
 
 **5a. Verify commit falls back to purchase token**
@@ -208,15 +210,15 @@ let txn_id = fields.provider_transaction_id.as_deref()
 
 ## 15. Tests that lock in the bugs above
 
-Current status: partially fixed. The Finding 9 test lock-in was updated with the #3/#4/#9 status-normalization fix; the remaining bullets still pass because the corresponding bugs or verification gaps are unresolved.
+Current status: partially fixed. The Finding 9 and Finding 5b test lock-ins have been updated; the remaining bullets still pass because the corresponding verification gaps or bugs are unresolved.
 
 Resolved:
 
 - [src/webhooks/processor/tests.rs#L630-L653](file:///c%3A/share/tyde/bridge/src/webhooks/processor/tests.rs#L630-L653) `test_normalize_status` no longer asserts unknown→`None` or missing→`pending`. It now asserts typed status normalization (`Known`, `Unknown`, `Missing`) for Finding 9.
+- [src/webhooks/processor/tests.rs#L471-L479](file:///c%3A/share/tyde/bridge/src/webhooks/processor/tests.rs#L471-L479) the Google subscription transaction-id test no longer asserts RTDN message id fallback. It now asserts that missing Google order id yields no synthetic transaction id for Finding 5b.
 
 Still open:
 
-- [src/webhooks/processor/tests.rs#L471-L479](file:///c%3A/share/tyde/bridge/src/webhooks/processor/tests.rs#L471-L479) `test_google_subscription_transaction_id_falls_back_to_rtdn_message_id` still asserts the RTDN-message-id-as-transaction-id behavior (Finding 5b).
 - [tests/creem_webhook_tests.rs](file:///c%3A/share/tyde/bridge/tests/creem_webhook_tests.rs) — `test_creem_signature_header_variations` (currently around L193) and `test_creem_status_normalization` (currently around L246) still assert against local fixture helpers, not the real ingress verifier / adapter, so they'd stay green if production Creem signature verification or status mapping regressed. Convert to integration tests that call the real code paths.
 - [src/middleware/rate_limit.rs](file:///c%3A/share/tyde/bridge/src/middleware/rate_limit.rs) `client_ip_prefers_x_forwarded_for` (currently around L564) still reinforces the spoofable behavior in Finding 14.
 

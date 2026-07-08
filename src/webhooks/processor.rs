@@ -290,12 +290,8 @@ fn google_subscription_expiry_time(
 
 fn google_subscription_transaction_id(
     resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
-    provider_webhook_id: &str,
-) -> String {
-    resource
-        .latest_order_id
-        .clone()
-        .unwrap_or_else(|| format!("google_play_rtdn:{}", provider_webhook_id))
+) -> Option<String> {
+    resource.latest_order_id.clone()
 }
 
 
@@ -454,8 +450,13 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
             fields.amount_cents = Some(test_price);
         }
 
-        if webhook.event_type.starts_with("SUBSCRIPTION_") && fields.provider_transaction_id.is_none() {
-            fields.provider_transaction_id = Some(format!("google_play_rtdn:{}", webhook.provider_webhook_id));
+        // Mock mode never reaches the real Google API call below that populates
+        // provider_transaction_id from latest_order_id. Simulate it for
+        // SUBSCRIPTION_* events so renewals/price-changes still record a payment
+        // row. Token-derived to stay distinct from the verify-purchase order id
+        // (mock-google-play-order:<token>) and avoid cross-user dedup collisions.
+        if webhook.event_type.starts_with("SUBSCRIPTION_") {
+            fields.provider_transaction_id = Some(format!("mock-google-play-renewal:{}", purchase_token));
         }
 
         return Ok(fields);
@@ -475,10 +476,7 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     }
 
     if webhook.event_type.starts_with("SUBSCRIPTION_") {
-        fields.provider_transaction_id = Some(google_subscription_transaction_id(
-            &resource,
-            &webhook.provider_webhook_id,
-        ));
+        fields.provider_transaction_id = google_subscription_transaction_id(&resource);
     }
 
     if fields.amount_cents.is_none() {

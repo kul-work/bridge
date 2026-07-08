@@ -138,6 +138,14 @@ pub(super) fn activation_subscription_status(provider: &str, raw_status: Option<
     }
 }
 
+fn activation_payment_transaction_id(fields: &WebhookFields) -> Option<&str> {
+    fields.provider_transaction_id.as_deref()
+}
+
+fn price_changed_payment_transaction_id(fields: &WebhookFields) -> Option<&str> {
+    fields.provider_transaction_id.as_deref()
+}
+
 impl LifecycleEmailKind {
     fn event_type(&self) -> &'static str {
         match self {
@@ -454,12 +462,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 (false, 86400)
             };
 
-            let payment_provider_transaction_id = if ctx.provider == "creem" {
-                ctx.fields.provider_transaction_id.as_deref()
-            } else {
-                Some(ctx.fields.provider_transaction_id.as_deref()
-                    .unwrap_or(&ctx.webhook.provider_webhook_id))
-            };
+            let payment_provider_transaction_id = activation_payment_transaction_id(ctx.fields);
             let payment = payment_provider_transaction_id.map(|provider_transaction_id| {
                 WebhookPaymentRecordRequest {
                     app_id: ctx.app_id,
@@ -1107,41 +1110,40 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
 
         "subscription.price_changed" => {
             if let Some(user_id) = ctx.external_user_id.as_deref() {
-                let txn_id = ctx.fields.provider_transaction_id.as_deref()
-                    .or(ctx.fields.subscription_id.as_deref())
-                    .unwrap_or(&ctx.webhook.provider_webhook_id);
-                let sub_id = ctx.fields.subscription_id.as_deref();
-                let existing_currency = if ctx.fields.currency.is_none() {
-                    if let Some(sub_id) = sub_id {
-                        repo.get_payment_currency_for_subscription(
-                            ctx.app_id,
-                            ctx.provider,
-                            user_id,
-                            sub_id,
-                        )
-                        .await?
+                if let Some(txn_id) = price_changed_payment_transaction_id(ctx.fields) {
+                    let sub_id = ctx.fields.subscription_id.as_deref();
+                    let existing_currency = if ctx.fields.currency.is_none() {
+                        if let Some(sub_id) = sub_id {
+                            repo.get_payment_currency_for_subscription(
+                                ctx.app_id,
+                                ctx.provider,
+                                user_id,
+                                sub_id,
+                            )
+                            .await?
+                        } else {
+                            None
+                        }
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
-                let currency = ctx.fields.currency.as_deref().or(existing_currency.as_deref());
-                let _ = repo
-                    .record_webhook_payment(WebhookPaymentRecordRequest {
-                        app_id: ctx.app_id,
-                        external_user_id: user_id,
-                        provider: ctx.provider,
-                        provider_transaction_id: txn_id,
-                        provider_purchase_token: None,
-                        ack_required: false,
-                        subscription_id: sub_id,
-                        product_id: ctx.fields.product_id.as_deref(),
-                        amount_cents: ctx.fields.amount_cents.unwrap_or(-1),
-                        currency: currency.or(Some("UNKNOWN")),
-                        status: "price_changed",
-                    })
-                    .await;
+                    };
+                    let currency = ctx.fields.currency.as_deref().or(existing_currency.as_deref());
+                    let _ = repo
+                        .record_webhook_payment(WebhookPaymentRecordRequest {
+                            app_id: ctx.app_id,
+                            external_user_id: user_id,
+                            provider: ctx.provider,
+                            provider_transaction_id: txn_id,
+                            provider_purchase_token: None,
+                            ack_required: false,
+                            subscription_id: sub_id,
+                            product_id: ctx.fields.product_id.as_deref(),
+                            amount_cents: ctx.fields.amount_cents.unwrap_or(-1),
+                            currency: currency.or(Some("UNKNOWN")),
+                            status: "price_changed",
+                        })
+                        .await;
+                }
             }
 
             Ok(EventHandling::handled(EventEffects::default()))
@@ -1575,6 +1577,44 @@ mod tests {
         assert_eq!(activation_subscription_status("creem", None), Some("active".to_string()));
         assert_eq!(activation_subscription_status("creem", Some("unpaid")), None);
         assert_eq!(activation_subscription_status("google_play", Some("ignored")), Some("active".to_string()));
+    }
+
+    #[test]
+    fn activation_payment_transaction_id_does_not_fall_back_to_webhook_id() {
+        let fields = WebhookFields::default();
+
+        assert_eq!(activation_payment_transaction_id(&fields), None);
+
+        let fields = WebhookFields {
+            provider_transaction_id: Some("GPA.1234-5678-9012-34567".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            activation_payment_transaction_id(&fields),
+            Some("GPA.1234-5678-9012-34567")
+        );
+    }
+
+    #[test]
+    fn price_changed_payment_transaction_id_does_not_fall_back_to_subscription_or_webhook_id() {
+        let fields = WebhookFields {
+            subscription_id: Some("premium_monthly".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(price_changed_payment_transaction_id(&fields), None);
+
+        let fields = WebhookFields {
+            subscription_id: Some("premium_monthly".to_string()),
+            provider_transaction_id: Some("GPA.1234-5678-9012-34567".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            price_changed_payment_transaction_id(&fields),
+            Some("GPA.1234-5678-9012-34567")
+        );
     }
 
     #[test]

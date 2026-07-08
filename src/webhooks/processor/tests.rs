@@ -462,19 +462,16 @@ fn test_google_subscription_transaction_id_prefers_latest_order_id() {
     };
 
     assert_eq!(
-        google_subscription_transaction_id(&resource, "19071854013335023"),
-        "GPA.1234-5678-9012-34567"
+        google_subscription_transaction_id(&resource),
+        Some("GPA.1234-5678-9012-34567".to_string())
     );
 }
 
 #[test]
-fn test_google_subscription_transaction_id_falls_back_to_rtdn_message_id() {
+fn test_google_subscription_transaction_id_does_not_fall_back_to_rtdn_message_id() {
     let resource = crate::services::google_play::models::SubscriptionPurchaseV2::default();
 
-    assert_eq!(
-        google_subscription_transaction_id(&resource, "19071854013335023"),
-        "google_play_rtdn:19071854013335023"
-    );
+    assert_eq!(google_subscription_transaction_id(&resource), None);
 }
 
 #[test]
