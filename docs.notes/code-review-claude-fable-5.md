@@ -14,7 +14,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 | # | Severity | Area | One-line |
 |---|----------|------|----------|
 | 1 | High | GP JWT auth | Pub/Sub JWT accepted without verifying service-account `email` / `email_verified` |
-| 2 | High | GP webhook | `packageName` never checked — cross-app RTDN acceptance |
 | 6 | High | RLS | `list_user_subscriptions_to_cancel` bypasses app context → returns zero rows |
 | 7 | High | Scheduler | Terminal (cancelled/revoked) subs can be flipped to `paused` |
 | 8 | High | Scheduler | Scheduler callbacks lost if enqueue fails after state mutation |
@@ -38,22 +37,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 **Smallest safe fix.** Add an expected Pub/Sub service-account email to provider/client config. Extend `PubSubClaims` with `email_verified: Option<bool>`. After signature+audience checks, require `claims.email.as_deref() == Some(expected)` and `claims.email_verified == Some(true)`. Fail closed when verification is enabled but no expected email is configured.
 
 **Regression test.** Yes — accept when all claims match; reject on `email` mismatch; reject when `email_verified` missing/false.
-
----
-
-## 2. High — Google Play `packageName` never validated (cross-app / cross-tenant acceptance)
-
-**File:** [src/services/google_play/provider.rs#L1291-L1400](file:///c%3A/share/tyde/bridge/src/services/google_play/provider.rs#L1291-L1400) — `verify_and_parse_webhook`
-
-**What is wrong.** The RTDN `DeveloperNotification.packageName` is logged for "audit trail" but never compared to the provider config's expected package before the event is mapped and returned.
-
-**Why it's a real bug.** RTDN `packageName` is the app-identity field. Accepting a notification for a different package under the wrong provider config violates tenant isolation; downstream mutation then proceeds on purchase-token lookup.
-
-**Failure scenario.** App A = `com.tyde.hiha`, App B = `com.tyde.household`. A signed notification for B is routed to A's provider endpoint (topic/subscription misconfig or injection via a valid Pub/Sub identity). Bridge logs the mismatch but still returns a `WebhookEvent`, applying B's lifecycle changes under A's context.
-
-**Smallest safe fix.** Immediately after parsing `DeveloperNotification`, reject when `dev_notification.package_name != self.package_name` with a verification (not parse) error, so retries/config problems surface as auth/routing failures.
-
-**Regression test.** Yes — matching package accepted; mismatch rejected before a `WebhookEvent` is produced (both direct and Pub/Sub-wrapped forms).
 
 ---
 
