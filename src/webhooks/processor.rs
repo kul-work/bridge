@@ -5,6 +5,9 @@ use crate::{
         WebhookProcessingRepository, WebhookProviderSnapshot, WebhookSubscriptionSnapshot,
         WebhookWriteRepository,
     },
+    services::google_play::status::{
+        subscription_state_to_canonical_status, GoogleSubscriptionStateStatus,
+    },
     services::google_play::trace::{hash_token, BpTrace},
 };
 use serde_json::json;
@@ -237,19 +240,10 @@ fn mock_google_play_renewal_period_end(
 }
 
 fn google_subscription_state_to_status(subscription_state: Option<&str>) -> Option<String> {
-    let state = subscription_state?;
-    let normalized = match state {
-        "SUBSCRIPTION_STATE_ACTIVE" => "active",
-        "SUBSCRIPTION_STATE_CANCELED" => "cancelled",
-        "SUBSCRIPTION_STATE_IN_GRACE_PERIOD" => "past_due",
-        "SUBSCRIPTION_STATE_ON_HOLD" => "on_hold",
-        "SUBSCRIPTION_STATE_PAUSED" => "paused",
-        "SUBSCRIPTION_STATE_PENDING" => "pending",
-        "SUBSCRIPTION_STATE_EXPIRED" => "expired",
-        _ => return None,
-    };
-
-    Some(normalized.to_string())
+    match subscription_state_to_canonical_status(subscription_state) {
+        GoogleSubscriptionStateStatus::Known(status) => Some(status.to_string()),
+        GoogleSubscriptionStateStatus::Unknown(_) | GoogleSubscriptionStateStatus::Missing => None,
+    }
 }
 
 fn google_cancellation_context_from_resource(

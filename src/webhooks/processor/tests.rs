@@ -1,5 +1,5 @@
 use super::*;
-use crate::webhooks::provider_adapter::ProviderWebhookAdapter;
+use crate::webhooks::provider_adapter::{NormalizedProviderStatus, ProviderWebhookAdapter};
 
 #[test]
 fn test_normalize_google_play_events() {
@@ -632,25 +632,25 @@ fn test_normalize_status() {
     let cr = ProviderWebhookAdapter::Creem;
 
     for adapter in [&gp, &cr] {
-        assert_eq!(adapter.normalize_status(Some("trialing")), Some("trial".to_string()));
-        assert_eq!(adapter.normalize_status(Some("trial")), Some("trial".to_string()));
-        assert_eq!(adapter.normalize_status(Some("active")), Some("active".to_string()));
-        assert_eq!(adapter.normalize_status(Some("paid")), Some("active".to_string()));
-        assert_eq!(adapter.normalize_status(Some("completed")), Some("active".to_string()));
-        assert_eq!(adapter.normalize_status(Some("success")), Some("active".to_string()));
-        assert_eq!(adapter.normalize_status(Some("past_due")), Some("past_due".to_string()));
-        assert_eq!(adapter.normalize_status(Some("grace_period")), Some("past_due".to_string()));
-        assert_eq!(adapter.normalize_status(Some("cancelled")), Some("cancelled".to_string()));
-        assert_eq!(adapter.normalize_status(Some("canceled")), Some("cancelled".to_string()));
-        assert_eq!(adapter.normalize_status(Some("expired")), Some("expired".to_string()));
-        assert_eq!(adapter.normalize_status(Some("on_hold")), Some("on_hold".to_string()));
-        assert_eq!(adapter.normalize_status(Some("on-hold")), Some("on_hold".to_string()));
-        assert_eq!(adapter.normalize_status(Some("paused")), Some("paused".to_string()));
-        assert_eq!(adapter.normalize_status(Some("revoked")), Some("revoked".to_string()));
-        assert_eq!(adapter.normalize_status(Some("pending")), Some("pending".to_string()));
-        assert_eq!(adapter.normalize_status(Some("unpaid")), None);
-        assert_eq!(adapter.normalize_status(Some("unknown_status")), None);
-        assert_eq!(adapter.normalize_status(None), Some("pending".to_string()));
+        assert_eq!(adapter.normalize_status(Some("trialing")), NormalizedProviderStatus::Known("trial".to_string()));
+        assert_eq!(adapter.normalize_status(Some("trial")), NormalizedProviderStatus::Known("trial".to_string()));
+        assert_eq!(adapter.normalize_status(Some("active")), NormalizedProviderStatus::Known("active".to_string()));
+        assert_eq!(adapter.normalize_status(Some("paid")), NormalizedProviderStatus::Known("active".to_string()));
+        assert_eq!(adapter.normalize_status(Some("completed")), NormalizedProviderStatus::Known("active".to_string()));
+        assert_eq!(adapter.normalize_status(Some("success")), NormalizedProviderStatus::Known("active".to_string()));
+        assert_eq!(adapter.normalize_status(Some("past_due")), NormalizedProviderStatus::Known("past_due".to_string()));
+        assert_eq!(adapter.normalize_status(Some("grace_period")), NormalizedProviderStatus::Known("past_due".to_string()));
+        assert_eq!(adapter.normalize_status(Some("cancelled")), NormalizedProviderStatus::Known("cancelled".to_string()));
+        assert_eq!(adapter.normalize_status(Some("canceled")), NormalizedProviderStatus::Known("cancelled".to_string()));
+        assert_eq!(adapter.normalize_status(Some("expired")), NormalizedProviderStatus::Known("expired".to_string()));
+        assert_eq!(adapter.normalize_status(Some("on_hold")), NormalizedProviderStatus::Known("on_hold".to_string()));
+        assert_eq!(adapter.normalize_status(Some("on-hold")), NormalizedProviderStatus::Known("on_hold".to_string()));
+        assert_eq!(adapter.normalize_status(Some("paused")), NormalizedProviderStatus::Known("paused".to_string()));
+        assert_eq!(adapter.normalize_status(Some("revoked")), NormalizedProviderStatus::Known("revoked".to_string()));
+        assert_eq!(adapter.normalize_status(Some("pending")), NormalizedProviderStatus::Known("pending".to_string()));
+        assert_eq!(adapter.normalize_status(Some("unpaid")), NormalizedProviderStatus::Unknown("unpaid".to_string()));
+        assert_eq!(adapter.normalize_status(Some("unknown_status")), NormalizedProviderStatus::Unknown("unknown_status".to_string()));
+        assert_eq!(adapter.normalize_status(None), NormalizedProviderStatus::Missing);
     }
 }
 

@@ -19,7 +19,7 @@ use super::{
     parse_rfc3339_utc, send_dispute_admin_alert_email,
     status_to_canonical_event, WebhookFields,
 };
-use crate::webhooks::provider_adapter::ProviderWebhookAdapter;
+use crate::webhooks::provider_adapter::{NormalizedProviderStatus, ProviderWebhookAdapter};
 
 const LIFECYCLE_EMAIL_LOOKUP_RETRY_DELAY: Duration = Duration::from_millis(500);
 
@@ -126,12 +126,15 @@ fn effects_from_google_lifecycle_outcome(outcome: GooglePlayLifecycleOutcome) ->
     }
 }
 
-pub(super) fn activation_subscription_status(provider: &str, raw_status: Option<&str>) -> String {
+pub(super) fn activation_subscription_status(provider: &str, raw_status: Option<&str>) -> Option<String> {
     if provider == "creem" {
-        raw_status.and_then(|status| ProviderWebhookAdapter::Creem.normalize_status(Some(status)))
-            .unwrap_or_else(|| "active".to_string())
+        match ProviderWebhookAdapter::Creem.normalize_status(raw_status) {
+            NormalizedProviderStatus::Known(status) => Some(status),
+            NormalizedProviderStatus::Missing => Some("active".to_string()),
+            NormalizedProviderStatus::Unknown(_) => None,
+        }
     } else {
-        "active".to_string()
+        Some("active".to_string())
     }
 }
 
@@ -435,7 +438,9 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                 .map(|dt| dt.with_timezone(&chrono::Utc));
             let sub_id_fallback = ctx.webhook.subscription_id.clone().unwrap_or_default();
             let sub_id_str = ctx.fields.subscription_id.as_deref().unwrap_or(&sub_id_fallback);
-            let subscription_status = activation_subscription_status(ctx.provider, ctx.fields.status.as_deref());
+            let Some(subscription_status) = activation_subscription_status(ctx.provider, ctx.fields.status.as_deref()) else {
+                return Ok(EventHandling::ReturnNone);
+            };
 
             let (adopt_stale_payment, stale_payment_window_secs) = if ctx.provider == "creem" {
                 let window_secs = repo
@@ -950,7 +955,7 @@ pub(super) async fn handle_subscription_event<R: WebhookProcessingRepository + ?
                     return Ok(EventHandling::ReturnNone);
                 };
                 let adapter = ProviderWebhookAdapter::from_provider(ctx.provider)?;
-                let Some(status) = adapter.normalize_status(Some(raw_status)) else {
+                let Some(status) = adapter.normalize_status(Some(raw_status)).known() else {
                     return Ok(EventHandling::ReturnNone);
                 };
                 let sub_id = ctx.fields.subscription_id.clone()
@@ -1559,6 +1564,17 @@ mod tests {
             suppressed: false,
             suppressed_reason: None,
         }
+    }
+
+    #[test]
+    fn activation_status_does_not_turn_unknown_creem_status_active() {
+        assert_eq!(
+            activation_subscription_status("creem", Some("paid")),
+            Some("active".to_string())
+        );
+        assert_eq!(activation_subscription_status("creem", None), Some("active".to_string()));
+        assert_eq!(activation_subscription_status("creem", Some("unpaid")), None);
+        assert_eq!(activation_subscription_status("google_play", Some("ignored")), Some("active".to_string()));
     }
 
     #[test]

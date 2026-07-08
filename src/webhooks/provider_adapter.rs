@@ -165,6 +165,22 @@ pub(crate) enum ProviderWebhookAdapter {
     Creem,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NormalizedProviderStatus {
+    Known(String),
+    Unknown(String),
+    Missing,
+}
+
+impl NormalizedProviderStatus {
+    pub(crate) fn known(self) -> Option<String> {
+        match self {
+            Self::Known(status) => Some(status),
+            Self::Unknown(_) | Self::Missing => None,
+        }
+    }
+}
+
 impl ProviderWebhookAdapter {
     pub(crate) fn from_provider(provider: &str) -> Result<Self, BridgeError> {
         match provider {
@@ -360,22 +376,22 @@ impl ProviderWebhookAdapter {
         }
     }
 
-    pub(crate) fn normalize_status(&self, raw_status: Option<&str>) -> Option<String> {
-        let Some(s) = raw_status else { return Some("pending".to_string()); };
+    pub(crate) fn normalize_status(&self, raw_status: Option<&str>) -> NormalizedProviderStatus {
+        let Some(s) = raw_status else { return NormalizedProviderStatus::Missing; };
         let cleaned = s.trim().to_ascii_lowercase();
         match cleaned.as_str() {
-            "trialing" | "trial" => Some("trial".to_string()),
-            "active" | "paid" | "completed" | "success" => Some("active".to_string()),
-            "past_due" | "grace_period" => Some("past_due".to_string()),
-            "cancelled" | "canceled" => Some("cancelled".to_string()),
-            "expired" => Some("expired".to_string()),
-            "on_hold" | "on-hold" => Some("on_hold".to_string()),
-            "paused" => Some("paused".to_string()),
-            "revoked" => Some("revoked".to_string()),
-            "pending" => Some("pending".to_string()),
+            "trialing" | "trial" => NormalizedProviderStatus::Known("trial".to_string()),
+            "active" | "paid" | "completed" | "success" => NormalizedProviderStatus::Known("active".to_string()),
+            "past_due" | "grace_period" => NormalizedProviderStatus::Known("past_due".to_string()),
+            "cancelled" | "canceled" => NormalizedProviderStatus::Known("cancelled".to_string()),
+            "expired" => NormalizedProviderStatus::Known("expired".to_string()),
+            "on_hold" | "on-hold" => NormalizedProviderStatus::Known("on_hold".to_string()),
+            "paused" => NormalizedProviderStatus::Known("paused".to_string()),
+            "revoked" => NormalizedProviderStatus::Known("revoked".to_string()),
+            "pending" => NormalizedProviderStatus::Known("pending".to_string()),
             _ => {
                 tracing::warn!(raw_status = s, cleaned_status = %cleaned, provider = ?self, "unknown status ignored");
-                None
+                NormalizedProviderStatus::Unknown(s.to_string())
             }
         }
     }
@@ -785,4 +801,3 @@ mod tests {
         assert!(decoded.get("testNotification").is_some());
     }
 }
-
