@@ -63,46 +63,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 
 ---
 
-## 3. High — Unknown Google subscription status silently mapped to `active` (reconciliation)
-
-**File:** [src/services/provider_api.rs#L238-L249](file:///c%3A/share/tyde/bridge/src/services/provider_api.rs#L238-L249) — `normalize_google_status`
-
-```rust
-_ => "active".to_string(), // Default to active for unknown to avoid false expiry
-```
-
-**What is wrong.** Any unrecognized or future Google `SUBSCRIPTION_STATE_*` value becomes `active`.
-
-**Why it's a real bug.** Violates INVARIANTS.md ("Unknown provider statuses → explicit Unknown(String), NEVER silent fallback"). This is the scary one: it silently **preserves paid entitlement** for a provider state Bridge does not understand.
-
-**Failure scenario.** Reconciliation fetches a subscription Google reports as `SUBSCRIPTION_STATE_REVOKED` (or a new state). It normalizes to `active`, and Bridge keeps/refreshes access it should have removed.
-
-**Smallest safe fix.** Return `Option<String>`/typed unknown; on unknown, do not write `active` — leave status unchanged or surface an explicit unknown for operator attention.
-
-**Regression test.** Yes — an unknown Google state must not normalize to `active`.
-
----
-
-## 4. High — Unknown Google status silently mapped to `expired` (verify path)
-
-**File:** [src/application/verify_purchase_provider.rs#L289-L298](file:///c%3A/share/tyde/bridge/src/application/verify_purchase_provider.rs#L289-L298) — `map_google_subscription_verification` (subscriptions); same pattern for one-time products at [L372-L378](file:///c%3A/share/tyde/bridge/src/application/verify_purchase_provider.rs#L372-L378) — `map_google_product_verification`
-
-```rust
-_ => "expired",
-```
-
-**What is wrong.** Unknown/missing Google subscription state → `expired`; unknown one-time `purchase_state` code → `expired`.
-
-**Why it's a real bug.** Same invariant violation as #3, opposite direction — this **revokes** entitlement. A valid subscription can be marked expired merely because Google returned a state Bridge doesn't enumerate. Note the inconsistency with #3 (reconciliation defaults unknown→active; verify defaults unknown→expired), so the same unknown state produces opposite outcomes depending on codepath.
-
-**Failure scenario.** Google returns a new/undocumented state during verify; the user loses premium access despite a live subscription. For OTP, a new `purchase_state=3` suppresses a legitimate entitlement grant.
-
-**Smallest safe fix.** Replace `_ => "expired"` with explicit unknown handling (typed `Unknown`, or return a provider/validation error) rather than committing a terminal status.
-
-**Regression test.** Yes — unknown subscription state and unknown OTP `purchase_state` must not yield `expired`/terminal success.
-
----
-
 ## 5. High — `provider_transaction_id` polluted with non-economic identifiers
 
 Three call sites store a non-order value as `payments.provider_transaction_id`, violating the money-identity invariant ("`provider_transaction_id` is the provider's economic transaction/order id … purchase tokens must use dedicated token fields").
@@ -187,20 +147,6 @@ let txn_id = fields.provider_transaction_id.as_deref()
 **Smallest safe fix.** Create the callback/outbox delivery atomically with the state transition (same tx), or keep a "scheduler-callback-pending" marker cleared only after the delivery row is created, so the work remains retryable. Inline HTTP retry is not sufficient — the durable record is what's lost.
 
 **Regression test.** Yes — when `mark_subscription_*` succeeds but callback creation fails before a delivery row exists, assert the work stays retryable (or a durable delivery/outbox row exists).
-
----
-
-## 9. Medium — `normalize_status` loses unknown statuses and invents `pending`
-
-**File:** [src/webhooks/provider_adapter.rs#L363-L380](file:///c%3A/share/tyde/bridge/src/webhooks/provider_adapter.rs#L363-L380) — `ProviderWebhookAdapter::normalize_status`
-
-**What is wrong.** Unknown raw status → `None` (indistinguishable from "no status"); missing status → `Some("pending")` (a fabricated lifecycle state).
-
-**Why it's a real bug.** Same class as #3/#4 at the webhook boundary. A newly introduced provider status (e.g. Creem `unpaid`, `payment_retrying`) is dropped instead of surfaced, and absent-status events are misclassified as `pending`.
-
-**Smallest safe fix.** Use a typed status with `Unknown(String)`; at minimum return an explicit unknown marker distinct from absence, and don't default missing status to `pending` unless the event type means pending.
-
-**Regression test.** Yes — unknown raw status preserved as explicit unknown; absent status not defaulted to `pending` (except a deliberately pending event).
 
 ---
 
