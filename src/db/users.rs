@@ -9,16 +9,22 @@ pub async fn list_user_subscriptions_to_cancel(
     app_id: Uuid,
     external_user_id: &str,
 ) -> Result<Vec<UserSubscriptionCancellationSnapshot>, BridgeError> {
-    sqlx::query_as::<_, (String, String, Option<String>)>(
+    let mut tx = pool.begin().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    set_local_app_id(&mut tx, app_id).await?;
+
+    let rows = sqlx::query_as::<_, (String, String, Option<String>)>(
         "SELECT subscription_id, provider, purchase_token FROM pay.subscriptions
          WHERE app_id = $1 AND external_user_id = $2 AND status IN ('active', 'trial', 'past_due')"
     )
     .bind(app_id)
     .bind(external_user_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| BridgeError::DbError(e.to_string()))
-    .map(|rows| {
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(
         rows.into_iter()
             .map(|(subscription_id, provider, purchase_token)| UserSubscriptionCancellationSnapshot {
                 subscription_id,
@@ -26,7 +32,7 @@ pub async fn list_user_subscriptions_to_cancel(
                 purchase_token,
             })
             .collect()
-    })
+    )
 }
 
 pub async fn anonymize_user_records(
