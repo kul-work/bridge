@@ -63,47 +63,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 
 ---
 
-## 5. High — `provider_transaction_id` polluted with non-economic identifiers
-
-**Current status:** Fixed. Verify purchase no longer falls back to purchase token, Google subscription RTDN enrichment no longer fabricates `google_play_rtdn:*`, Google OTP purchased handling records a payment only when a provider order/transaction id is present, and `subscription.price_changed` no longer falls back to subscription id or webhook id. The related #15 test was updated to assert no RTDN-message-id fallback.
-
-Three call sites store a non-order value as `payments.provider_transaction_id`, violating the money-identity invariant ("`provider_transaction_id` is the provider's economic transaction/order id … purchase tokens must use dedicated token fields").
-
-**5a. Verify commit falls back to purchase token**
-[src/application/verify_purchase.rs#L321-L325](file:///c%3A/share/tyde/bridge/src/application/verify_purchase.rs#L321-L325) — `verify_purchase`
-```rust
-provider_transaction_id: verified
-    .provider_transaction_id
-    .as_deref()
-    .unwrap_or(&payload.purchase_token),
-```
-The purchase token is passed separately and stored in `provider_purchase_token`, so this fallback only pollutes the economic-id column.
-
-**5b. Subscription RTDN fabricates from Pub/Sub message id**
-[src/webhooks/processor.rs#L300-L305](file:///c%3A/share/tyde/bridge/src/webhooks/processor.rs#L300-L305) and [#L463-L465](file:///c%3A/share/tyde/bridge/src/webhooks/processor.rs#L463-L465)
-```rust
-.unwrap_or_else(|| format!("google_play_rtdn:{}", provider_webhook_id))
-...
-fields.provider_transaction_id = Some(format!("google_play_rtdn:{}", webhook.provider_webhook_id));
-```
-
-**5c. OTP lifecycle falls back to webhook id**
-[src/services/google_play/product_lifecycle.rs#L46-L58](file:///c%3A/share/tyde/bridge/src/services/google_play/product_lifecycle.rs#L46-L58) — `handle_otp_purchased`
-```rust
-let txn_id = fields.provider_transaction_id.as_deref()
-    .unwrap_or(&webhook.provider_webhook_id);
-```
-
-**Why it's a real bug.** The RTDN message id changes per delivery/event; the purchase token is a lifecycle handle. When the real Google `orderId` later arrives, Bridge sees a different id and can create a **second payment row for the same economic transaction**, corrupting dedup, refund lookup, reporting, and audit.
-
-**Failure scenario.** A renewal RTDN arrives before `latest_order_id` is available → payment recorded as `google_play_rtdn:<msgid>`. A later event/reconciliation carries the real order id → duplicate payment.
-
-**Smallest safe fix.** Make `provider_transaction_id` optional through the commit/record path. Write a payment row only when a real economic id exists; otherwise update by `provider_purchase_token` or defer to enrichment/reconciliation. Never substitute token or message id.
-
-**Regression test.** Yes — when the provider yields no order id, assert no payment row is written with `provider_transaction_id` equal to the purchase token or `google_play_rtdn:*`.
-
----
-
 ## 6. High — `list_user_subscriptions_to_cancel` bypasses RLS app context → silently returns no rows
 
 **File:** [src/db/users.rs#L7-L29](file:///c%3A/share/tyde/bridge/src/db/users.rs#L7-L29) — `list_user_subscriptions_to_cancel`
@@ -205,22 +164,6 @@ let txn_id = fields.provider_transaction_id.as_deref()
 **Smallest safe fix.** Honor forwarded headers only when the socket peer is a configured trusted proxy; otherwise use `ConnectInfo` peer. After pruning, `remove` empty keys and/or cap total keys.
 
 **Regression test.** Yes — spoofed `X-Forwarded-For` from an untrusted peer maps to the same bucket; stale empty keys are evicted.
-
----
-
-## 15. Tests that lock in the bugs above
-
-Current status: partially fixed. The Finding 9 and Finding 5b test lock-ins have been updated; the remaining bullets still pass because the corresponding verification gaps or bugs are unresolved.
-
-Resolved:
-
-- [src/webhooks/processor/tests.rs#L630-L653](file:///c%3A/share/tyde/bridge/src/webhooks/processor/tests.rs#L630-L653) `test_normalize_status` no longer asserts unknown→`None` or missing→`pending`. It now asserts typed status normalization (`Known`, `Unknown`, `Missing`) for Finding 9.
-- [src/webhooks/processor/tests.rs#L471-L479](file:///c%3A/share/tyde/bridge/src/webhooks/processor/tests.rs#L471-L479) the Google subscription transaction-id test no longer asserts RTDN message id fallback. It now asserts that missing Google order id yields no synthetic transaction id for Finding 5b.
-
-Still open:
-
-- [tests/creem_webhook_tests.rs](file:///c%3A/share/tyde/bridge/tests/creem_webhook_tests.rs) — `test_creem_signature_header_variations` (currently around L193) and `test_creem_status_normalization` (currently around L246) still assert against local fixture helpers, not the real ingress verifier / adapter, so they'd stay green if production Creem signature verification or status mapping regressed. Convert to integration tests that call the real code paths.
-- [src/middleware/rate_limit.rs](file:///c%3A/share/tyde/bridge/src/middleware/rate_limit.rs) `client_ip_prefers_x_forwarded_for` (currently around L564) still reinforces the spoofable behavior in Finding 14.
 
 ---
 
