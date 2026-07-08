@@ -22,6 +22,7 @@ All findings below were confirmed by reading the actual code (line numbers verif
 | 12 | Medium | DB constraint | Global `purchase_token UNIQUE` breaks app isolation |
 | 13 | Low | Email | Poisoned mutex `.expect()` panics production email path |
 | 14 | Low | Rate limit | Spoofable `X-Forwarded-For` + unbounded key growth |
+| 16 | Low | Creem webhook | `refund.created` / `dispute.created` normalized callbacks missing `currency` (and `amount_cents` for refunds) |
 
 ---
 
@@ -161,10 +162,63 @@ All findings below were confirmed by reading the actual code (line numbers verif
 
 ---
 
+## 16. Low — Creem `refund.created` / `dispute.created` normalized callbacks missing `currency` (and `amount_cents` for refunds)
+
+**File:** [src/webhooks/provider_adapter.rs#L529-L542](file:///c%3A/share/tyde/bridge/src/webhooks/provider_adapter.rs#L529-L542) — `extract_fields` (Creem branch)
+
+**Verified from code + official Creem webhook schema** ([docs.creem.io/code/webhooks](https://docs.creem.io/code/webhooks)). This finding was promoted from "Needs verification" item 3 after tracing the currency/amount paths against Creem's actual payload schema.
+
+**What is wrong.** Currency is extracted from a single path — `object.product.currency` — with zero fallbacks, while `amount_cents` has four fallbacks. Verified against Creem's official webhook payloads:
+
+| Event | `object.product.currency` | Currency extracted? | Amount extracted? |
+|---|---|---|---|
+| `subscription.active` / `paid` / `canceled` / `scheduled_cancel` / `past_due` | present | yes | yes |
+| `checkout.completed` | present | yes | yes |
+| **`refund.created`** | **absent** | **no** | **no** — schema uses `object.refund_amount` + `object.transaction` (not `last_transaction`); none of the 4 amount fallbacks match |
+| **`dispute.created`** | **absent** | **no** | yes — 4th fallback `obj.get("amount")` matches, creating an asymmetric payload (`amount_cents: 1331, currency: null`) |
+
+**Why it's a real bug.** Normalized callbacks to app backends for refund/dispute events arrive with `currency: null` (and `amount_cents: null` for refunds). An app backend cannot render "You were refunded €12.10" from the callback alone.
+
+**Impact (Low).** The original payment's currency is already stored from the initial `checkout.completed` / `subscription.paid` event (which extracts currency correctly), so the subscription/payment record has the right currency. Only the normalized callback payload for these two event types is incomplete. The raw payload is preserved in `pay.webhook_provider.payload` for audit.
+
+**Smallest safe fix.** Mirror the amount fallback chain for currency, and extend amount to cover `refund_amount` and the `transaction` (not `last_transaction`) field used by refunds:
+
+```rust
+// Currency: mirror amount's multi-path fallback
+let currency = obj.get("product").and_then(|v| v.get("currency")).and_then(|v| v.as_str())
+    .or_else(|| obj.get("transaction").and_then(|v| v.get("currency")).and_then(|v| v.as_str()))
+    .or_else(|| obj.get("order").and_then(|v| v.get("currency")).and_then(|v| v.as_str()))
+    .or_else(|| obj.get("refund_currency").and_then(|v| v.as_str()))
+    .or_else(|| obj.get("currency").and_then(|v| v.as_str()))
+    .map(|s| s.to_string());
+
+// Amount: add refund_amount and transaction.amount_paid (Creem uses "transaction", not "last_transaction", for refunds)
+let amount_cents = obj.get("last_transaction")
+    .and_then(|v| v.get("amount_paid").or_else(|| v.get("amount")))
+    .and_then(|v| v.as_i64())
+    .or_else(|| obj.get("transaction").and_then(|v| v.get("amount_paid").or_else(|| v.get("amount"))).and_then(|v| v.as_i64()))
+    .or_else(|| obj.get("refund_amount").and_then(|v| v.as_i64()))
+    .or_else(|| obj.get("order").and_then(|v| v.get("amount")).and_then(|v| v.as_i64()))
+    .or_else(|| obj.get("product").and_then(|v| v.get("price")).and_then(|v| v.as_i64()))
+    .or_else(|| obj.get("amount").and_then(|v| v.as_i64()));
+```
+
+**Regression test.** Yes — feed `refund.created` and `dispute.created` payloads from Creem's official schema samples and assert both `currency` and `amount_cents` are non-null in the normalized `WebhookFields`.
+
+---
+
 ## Needs verification (not proven from code alone)
+
+> **Update 2026-07-08:** All three items below were verified by tracing source, docs, the official Creem webhook schema, and the HiHa/HouseHold receiver-side code. Verdicts appended to each item.
 
 1. **Callback HMAC does not cover the timestamp.** In [src/webhooks/forwarding.rs#L221-L246](file:///c%3A/share/tyde/bridge/src/webhooks/forwarding.rs#L221-L246) and `#L540-L548`, `X-Pay-Timestamp` is sent but `create_signature` signs only the JSON body. If app backends rely on the timestamp for replay-window checks, they cannot authenticate it. Needs the receiver-side verification contract (app backend or API docs) to confirm whether this is exploitable.
 
+   **Verdict: NOT a bug (not exploitable).** Verified receiver-side: both HiHa ([hiha/src/handlers/webhooks.rs#L77-L96](file:///c%3A/share/tyde/hiha/src/handlers/webhooks.rs#L77-L96)) and HouseHold ([household/src/handlers/webhooks.rs#L579-L604](file:///c%3A/share/tyde/household/src/handlers/webhooks.rs#L579-L604)) compute HMAC over `body.as_bytes()` only and do NOT read `X-Pay-Timestamp`. Replay protection uses `timestamp_epoch_ms` from inside the **signed body** + `event_id` idempotency (HiHa: `last_bridge_event_ms` upsert guard; HouseHold: `validate_timestamp_epoch_ms`). `API_CONTRACT.md#L590` instructs apps to use `timestamp_epoch_ms` (signed, in-body) for staleness — not the header. The header is informational only. Minor doc inconsistency: `WEBHOOK_ARCHITECTURE.md#L213` says `HMAC-SHA256(secret, payload + timestamp)` which is incorrect — code signs only `payload_json`; `API_CONTRACT.md#L22` is correct.
+
 2. **`duplicate_webhook_action(false,false,true) => Ignore`** in [src/webhooks/ingress.rs#L126-L140](file:///c%3A/share/tyde/bridge/src/webhooks/ingress.rs#L126-L140) may suppress a provider retry when a prior delivery row exists but is expired/dead-lettered/stuck. Confirming requires tracing `db/webhooks.rs` delivery retry/dead-letter semantics against the scheduler.
 
+   **Verdict: NOT a bug (Ignore is safe).** When `processed=false`, `forward_attempts` is always 0 (incremented only by `complete_webhook_delivery_attempt`, which runs only after `process_webhook_atomically` returns `Ok(Some(...))` i.e. after `processed=true`). A delivery with `forward_attempts=0` can never be dead-lettered (requires `>= 3`). The feared "expired/dead-lettered/stuck" state cannot coexist with `processed=false`. The background worker (`scheduler.rs#L142-L185`) re-runs `process_webhook_atomically` when `provider.processed=false`, so the existing delivery is auto-recovered. Claim lease is 600s, worker polls every 300s — worst-case recovery ~15 min. Ignore is correct: creating a second delivery would hit the same processing error.
+
 3. **Creem currency extraction completeness.** The amount path uses integer `as_i64()` (invariant-safe), but I did not fully verify currency-field extraction against Creem's payload schema.
+
+   **Verdict: CONFIRMED bug — promoted to finding #15 above.** Verified against Creem's official webhook schema ([docs.creem.io/code/webhooks](https://docs.creem.io/code/webhooks)): `refund.created` and `dispute.created` payloads do not contain `object.product.currency`, so the single-path currency extraction returns `null`. Refunds also miss `amount_cents` (schema uses `refund_amount` + `transaction`, not `last_transaction`). Severity Low: original payment currency is already stored from the initial event. See finding #15 for the fix.
