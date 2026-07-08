@@ -460,6 +460,96 @@ mod tests {
     }
 
     #[test]
+    fn production_startup_rejects_http_localhost_with_both_errors() {
+        let config = test_config();
+        let env = env_getter(HashMap::from([
+            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
+            ("ADMIN_CLERK_FRONTEND_API", "http://localhost:3000"),
+            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("GOOGLE_VERIFY_AUDIENCE", "true"),
+            ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
+        ]));
+
+        let errors = config.production_startup_errors(env);
+
+        // A non-https localhost URL must trigger both independent checks,
+        // not short-circuit on the localhost exemption that used to skip
+        // the https requirement entirely.
+        assert!(
+            errors.iter().any(|error| error.contains("must use https")),
+            "expected https error, got {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("must not use localhost")),
+            "expected localhost error, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn production_startup_rejects_local_domain_in_authorized_parties() {
+        let config = test_config();
+        let env = env_getter(HashMap::from([
+            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://ADMIN.LOCAL, https://svc.internal.local."),
+            ("GOOGLE_VERIFY_AUDIENCE", "true"),
+            ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
+        ]));
+
+        let errors = config.production_startup_errors(env);
+
+        let local_errors: Vec<_> = errors
+            .iter()
+            .filter(|error| {
+                error.contains("ADMIN_CLERK_AUTHORIZED_PARTIES")
+                    && error.contains("must not use localhost")
+            })
+            .collect();
+        // Both comma-separated parties are local (.local domains, one with
+        // uppercase host and one with a trailing dot) and must each be
+        // rejected independently.
+        assert_eq!(
+            local_errors.len(),
+            2,
+            "expected both local-domain parties to be rejected, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn production_startup_accepts_host_containing_but_not_ending_in_local() {
+        let config = test_config();
+        let env = env_getter(HashMap::from([
+            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://locally-hosted.example.com"),
+            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("GOOGLE_VERIFY_AUDIENCE", "true"),
+            ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
+        ]));
+
+        let errors = config.production_startup_errors(env);
+
+        // "locally-hosted.example.com" merely contains "local" as a
+        // substring; the suffix check must not produce a false positive.
+        assert!(
+            errors.is_empty(),
+            "did not expect local-domain rejection for a non-local host, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn is_localhost_url_is_case_and_trailing_dot_insensitive() {
+        assert!(is_localhost_url("http://LOCALHOST:3000"));
+        assert!(is_localhost_url("http://LOCALHOST.:3000"));
+        assert!(is_localhost_url("http://Sub.LocalHost/path"));
+        assert!(is_localhost_url("http://[::1]:8080/callback"));
+
+        assert!(!is_localhost_url("https://notlocalhost.example.com"));
+    }
+
+    #[test]
     fn production_startup_rejects_mock_external_apis() {
         let mut config = test_config();
         config.mock_external_apis = true;
