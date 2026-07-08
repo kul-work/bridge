@@ -40,6 +40,41 @@ fn google_voided_purchase_product_type(payload: &serde_json::Value) -> Option<i6
         .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
 }
 
+fn validate_google_play_package_name(
+    app_id: Uuid,
+    provider_config: &serde_json::Value,
+    payload: &serde_json::Value,
+) -> Result<(), BridgeError> {
+    let expected_package_name = provider_config
+        .get("package_name")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            BridgeError::ConfigError("Missing Google Play package_name in provider config".to_string())
+        })?;
+    let received_package_name = payload
+        .get("packageName")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            BridgeError::WebhookError("Missing Google Play packageName".to_string())
+        })?;
+
+    if received_package_name != expected_package_name {
+        tracing::warn!(
+            app_id = %app_id,
+            expected_package_name,
+            received_package_name,
+            "Rejecting Google Play webhook for unexpected packageName"
+        );
+        return Err(BridgeError::WebhookError(
+            "Google Play packageName mismatch".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 fn spawn_process_and_forward_delivery(
     database: Arc<Database>,
     app_id: Uuid,
@@ -316,6 +351,9 @@ pub async fn handle_google_play(
     let Some(normalized_event) = ProviderWebhookAdapter::GooglePlay.decode_and_normalize(payload, &headers)? else {
         return Ok(StatusCode::NO_CONTENT);
     };
+
+    validate_google_play_package_name(app.id, &provider_config.config, &normalized_event.payload)?;
+
     let provider = normalized_event.provider;
     let event_id = normalized_event.provider_event_id;
     let event_type = normalized_event.raw_event_type;
@@ -655,6 +693,7 @@ mod tests {
     use super::{
         duplicate_webhook_action, extract_header_value,
         google_voided_purchase_product_type,
+        validate_google_play_package_name,
         DuplicateWebhookAction, CREEM_SIGNATURE_HEADERS,
     };
 
@@ -757,5 +796,36 @@ mod tests {
 
         assert_eq!(google_voided_purchase_product_type(&numeric_payload), Some(2));
         assert_eq!(google_voided_purchase_product_type(&string_payload), Some(2));
+    }
+
+    #[test]
+    fn accepts_google_play_webhook_for_configured_package_name() {
+        let app_id = uuid::Uuid::new_v4();
+        let config = json!({ "package_name": "com.tyde.household" });
+        let payload = json!({ "packageName": "com.tyde.household" });
+
+        assert!(validate_google_play_package_name(app_id, &config, &payload).is_ok());
+    }
+
+    #[test]
+    fn rejects_google_play_webhook_for_wrong_package_name() {
+        let app_id = uuid::Uuid::new_v4();
+        let config = json!({ "package_name": "com.tyde.hiha" });
+        let payload = json!({ "packageName": "com.tyde.household" });
+
+        let result = validate_google_play_package_name(app_id, &config, &payload);
+
+        assert!(matches!(result, Err(crate::error::BridgeError::WebhookError(_))));
+    }
+
+    #[test]
+    fn rejects_google_play_webhook_when_configured_package_name_is_missing() {
+        let app_id = uuid::Uuid::new_v4();
+        let config = json!({});
+        let payload = json!({ "packageName": "com.tyde.household" });
+
+        let result = validate_google_play_package_name(app_id, &config, &payload);
+
+        assert!(matches!(result, Err(crate::error::BridgeError::ConfigError(_))));
     }
 }
