@@ -198,10 +198,12 @@ impl ProviderWebhookAdapter {
         match self {
             Self::GooglePlay => {
                 let (mut decoded_payload, pubsub_message_id) = decode_google_play_payload(&payload, headers)?;
+                let auth_diagnostics = google_play_pubsub_auth_diagnostics(headers);
                 tracing::debug!(
                     target: "BPT-RAW",
-                    "Webhook Incoming Payload [google_play]: {}",
-                    sanitize_google_play_payload_for_log(&decoded_payload)
+                    "Webhook Incoming Payload [google_play]: {}, pubsub_auth={}",
+                    sanitize_google_play_payload_for_log(&decoded_payload),
+                    auth_diagnostics
                 );
                 if decoded_payload.get("testNotification").is_some() {
                     info!(
@@ -637,6 +639,54 @@ fn sanitize_google_play_payload_for_log(payload: &serde_json::Value) -> String {
     crate::utils::scrub_email(&payload)
 }
 
+fn google_play_pubsub_auth_diagnostics(headers: &HeaderMap) -> String {
+    let Some(header) = headers.get("authorization").and_then(|value| value.to_str().ok()) else {
+        return "missing".to_string();
+    };
+    let Some(token) = header.strip_prefix("Bearer ") else {
+        return "invalid_format".to_string();
+    };
+
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        return "invalid_jwt".to_string();
+    }
+
+    let Ok(payload_bytes) = decode_base64_flexible(parts[1]) else {
+        return "invalid_jwt_payload_base64".to_string();
+    };
+    let Ok(claims) = serde_json::from_slice::<serde_json::Value>(&payload_bytes) else {
+        return "invalid_jwt_payload_json".to_string();
+    };
+
+    let email_hash = claims
+        .get("email")
+        .and_then(|value| value.as_str())
+        .filter(|email| !email.trim().is_empty())
+        .map(diagnostic_hash)
+        .unwrap_or_else(|| "missing".to_string());
+    let email_verified = claims
+        .get("email_verified")
+        .and_then(|value| value.as_bool())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "missing".to_string());
+    let aud = claims
+        .get("aud")
+        .and_then(|value| value.as_str())
+        .map(crate::utils::scrub_email)
+        .unwrap_or_else(|| "missing".to_string());
+    let iss = claims
+        .get("iss")
+        .and_then(|value| value.as_str())
+        .map(crate::utils::scrub_email)
+        .unwrap_or_else(|| "missing".to_string());
+
+    format!(
+        "email_hash={}, email_verified={}, aud={}, iss={}",
+        email_hash, email_verified, aud, iss
+    )
+}
+
 
 fn decode_base64_flexible(input: &str) -> Result<Vec<u8>, String> {
     if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(input) {
@@ -816,5 +866,36 @@ mod tests {
         assert_eq!(message_id.as_deref(), Some("unwrapped-message-id"));
         assert_eq!(decoded["packageName"].as_str(), Some("com.hiha.fe"));
         assert!(decoded.get("testNotification").is_some());
+    }
+
+    #[test]
+    fn google_play_pubsub_auth_diagnostics_exposes_identity_claim_presence_without_raw_email() {
+        use axum::http::{HeaderMap, HeaderValue};
+        use base64::Engine as _;
+        use super::google_play_pubsub_auth_diagnostics;
+
+        let claims = json!({
+            "iss": "https://accounts.google.com",
+            "aud": "https://bridge.example.com/webhooks/google-play",
+            "email": "pubsub-push@example-project.iam.gserviceaccount.com",
+            "email_verified": true
+        });
+        let token = format!(
+            "header.{}.signature",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string())
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        );
+
+        let diagnostics = google_play_pubsub_auth_diagnostics(&headers);
+
+        assert!(diagnostics.contains("email_hash="));
+        assert!(diagnostics.contains("email_verified=true"));
+        assert!(diagnostics.contains("aud=https://bridge.example.com/webhooks/google-play"));
+        assert!(diagnostics.contains("iss=https://accounts.google.com"));
+        assert!(!diagnostics.contains("pubsub-push@example-project.iam.gserviceaccount.com"));
     }
 }

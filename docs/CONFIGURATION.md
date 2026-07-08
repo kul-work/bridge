@@ -87,10 +87,12 @@ Older docs and `.env.sample` mention these process env vars:
 
 - `GOOGLE_VERIFY_WEBHOOK_SIGNATURE`
 - `GOOGLE_VERIFY_AUDIENCE`
+- `GOOGLE_VERIFY_PUBSUB_IDENTITY`
 - `GOOGLE_PUB_SUB_AUDIENCE`
+- `GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL`
 - `GOOGLE_SKIP_RSA_VERIFICATION`
 
-Current active webhook ingress reads these controls from `pay.provider_configs.config` per app, not from process env. Keep Google provider controls in the DB config described below.
+Keep Google provider controls in `pay.provider_configs.config` per app where possible. The active webhook ingress also supports process-wide overrides for Pub/Sub audience and service-account email as described below.
 
 ### Legacy Or Sample-Only Env Vars
 
@@ -144,12 +146,15 @@ Required `config` keys:
 
 - `package_name` - Android package name, for example `app.hiha`.
 - `service_account_json` - Path to the Google service account JSON file.
+- `pub_sub_service_account_email` - Expected Pub/Sub authenticated push service account email. Required when Google webhook signature verification is enabled in non-mock mode; can be overridden process-wide with `GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL`.
 
 Optional `config` keys:
 
 - `verify_webhook_signature` (default behavior: `true`) - Verifies Google Pub/Sub JWT signatures for RTDN webhooks.
+- `pub_sub_audience` - Expected Pub/Sub JWT audience when `GOOGLE_VERIFY_AUDIENCE=true`; can be overridden process-wide with `GOOGLE_PUB_SUB_AUDIENCE`.
+- `verify_pubsub_identity` - Verifies the JWT `email` claim matches the configured Pub/Sub push service account and `email_verified=true`. Non-mock mode forces this on whenever Google webhook signature verification is enabled; `false` is honored only for local/mock testing. Can be overridden process-wide with `GOOGLE_VERIFY_PUBSUB_IDENTITY`.
 
-The migration comment also documents planned/legacy keys such as `verify_audience` and `pub_sub_audience`. Confirm active code paths before relying on those.
+When Pub/Sub identity verification is enabled, the Pub/Sub JWT must be Google-signed and must include both `email` matching the configured push service account and `email_verified=true`.
 
 Example:
 
@@ -157,6 +162,8 @@ Example:
 {
   "package_name": "app.hiha",
   "service_account_json": "C:/secure/hiha-google-play-service-account.json",
+  "pub_sub_service_account_email": "pubsub-push@your-project.iam.gserviceaccount.com",
+  "pub_sub_audience": "https://api.yourdomain.com/webhooks/google",
   "verify_webhook_signature": true
 }
 ```

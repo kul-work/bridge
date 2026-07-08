@@ -40,6 +40,31 @@ fn google_voided_purchase_product_type(payload: &serde_json::Value) -> Option<i6
         .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
 }
 
+fn google_pubsub_identity_env_override() -> Result<(Option<bool>, Option<String>), BridgeError> {
+    let Some(raw) = std::env::var("GOOGLE_VERIFY_PUBSUB_IDENTITY").ok() else {
+        return Ok((None, None));
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok((None, None));
+    }
+
+    match raw.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok((Some(true), None)),
+        "0" | "false" | "no" | "off" => Ok((Some(false), None)),
+        _ if raw.contains('@') => {
+            tracing::warn!(
+                "GOOGLE_VERIFY_PUBSUB_IDENTITY contains an email; treating it as GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL for backward compatibility"
+            );
+            Ok((Some(true), Some(raw.to_string())))
+        }
+        _ => Err(BridgeError::ConfigError(format!(
+            "Failed to parse GOOGLE_VERIFY_PUBSUB_IDENTITY as bool: {}",
+            raw
+        ))),
+    }
+}
+
 fn validate_google_play_package_name(
     app_id: Uuid,
     provider_config: &serde_json::Value,
@@ -303,14 +328,50 @@ pub async fn handle_google_play(
                 .unwrap_or_default()
                 .to_string()
         });
+        let (env_verify_pubsub_identity, legacy_pub_sub_service_account_email) = google_pubsub_identity_env_override()?;
+        let pub_sub_service_account_email = std::env::var("GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL")
+            .ok()
+            .and_then(|email| {
+                let email = email.trim().to_string();
+                (!email.is_empty()).then_some(email)
+            })
+            .or(legacy_pub_sub_service_account_email)
+            .or_else(|| {
+                provider_config
+                    .config
+                    .get("pub_sub_service_account_email")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|email| !email.is_empty())
+                    .map(ToOwned::to_owned)
+            });
+        let db_verify_pubsub_identity = provider_config
+            .config
+            .get("verify_pubsub_identity")
+            .and_then(|v| v.as_bool());
+        let requested_verify_pubsub_identity = env_verify_pubsub_identity.or(db_verify_pubsub_identity);
+        let verify_pubsub_identity = if crate::config::mock_external_apis_enabled() {
+            requested_verify_pubsub_identity.unwrap_or(false)
+        } else {
+            if requested_verify_pubsub_identity == Some(false) {
+                tracing::warn!(
+                    app_id = %app.id,
+                    provider = "google_play",
+                    "Config attempted to disable Pub/Sub identity verification in non-mock mode; ignoring and forcing verification"
+                );
+            }
+            true
+        };
         let skip_rsa_verification = crate::config::parse_bool_env("GOOGLE_SKIP_RSA_VERIFICATION", false)
             .map_err(|e| BridgeError::ConfigError(e.to_string()))?;
 
         let client = tokio::task::spawn_blocking(move || {
-            crate::services::google_play::client::GooglePlayClient::with_config(
+            crate::services::google_play::client::GooglePlayClient::with_config_and_pubsub_identity(
                 &service_account_path_owned,
                 verify_audience,
                 pub_sub_audience,
+                verify_pubsub_identity,
+                pub_sub_service_account_email,
                 skip_rsa_verification,
             )
         })
@@ -692,7 +753,7 @@ mod tests {
 
     use super::{
         duplicate_webhook_action, extract_header_value,
-        google_voided_purchase_product_type,
+        google_pubsub_identity_env_override, google_voided_purchase_product_type,
         validate_google_play_package_name,
         DuplicateWebhookAction, CREEM_SIGNATURE_HEADERS,
     };
@@ -796,6 +857,24 @@ mod tests {
 
         assert_eq!(google_voided_purchase_product_type(&numeric_payload), Some(2));
         assert_eq!(google_voided_purchase_product_type(&string_payload), Some(2));
+    }
+
+    #[test]
+    fn pubsub_identity_env_accepts_legacy_email_value() {
+        let key = "GOOGLE_VERIFY_PUBSUB_IDENTITY";
+        let old_value = std::env::var(key).ok();
+        std::env::set_var(key, "pubsub-push@example.iam.gserviceaccount.com");
+
+        let parsed = google_pubsub_identity_env_override().unwrap();
+
+        assert_eq!(parsed.0, Some(true));
+        assert_eq!(parsed.1.as_deref(), Some("pubsub-push@example.iam.gserviceaccount.com"));
+
+        if let Some(value) = old_value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 
     #[test]
