@@ -208,12 +208,17 @@ let txn_id = fields.provider_transaction_id.as_deref()
 
 ## 15. Tests that lock in the bugs above
 
-These tests pass *because* the code is wrong, so they will actively resist fixes. Update them alongside the corresponding fix.
+Current status: partially fixed. The Finding 9 test lock-in was updated with the #3/#4/#9 status-normalization fix; the remaining bullets still pass because the corresponding bugs or verification gaps are unresolved.
 
-- [src/webhooks/processor/tests.rs#L470-L477](file:///c%3A/share/tyde/bridge/src/webhooks/processor/tests.rs#L470-L477) `test_google_subscription_transaction_id_falls_back_to_rtdn_message_id` — asserts the RTDN-message-id-as-transaction-id behavior (Finding 5b).
-- [src/webhooks/processor/tests.rs#L630-L653](file:///c%3A/share/tyde/bridge/src/webhooks/processor/tests.rs#L630-L653) `test_normalize_status` — asserts unknown→`None` and `None`→`pending` (Finding 9).
-- [tests/creem_webhook_tests.rs](file:///c%3A/share/tyde/bridge/tests/creem_webhook_tests.rs) — `test_creem_signature_header_variations` (L202) and `test_creem_status_normalization` (L260) assert against local fixture helpers, not the real ingress verifier / adapter, so they'd stay green if production Creem signature verification or status mapping regressed. Convert to integration tests that call the real code paths.
-- [src/middleware/rate_limit.rs](file:///c%3A/share/tyde/bridge/src/middleware/rate_limit.rs) `client_ip_prefers_x_forwarded_for` — reinforces the spoofable behavior in Finding 14.
+Resolved:
+
+- [src/webhooks/processor/tests.rs#L630-L653](file:///c%3A/share/tyde/bridge/src/webhooks/processor/tests.rs#L630-L653) `test_normalize_status` no longer asserts unknown→`None` or missing→`pending`. It now asserts typed status normalization (`Known`, `Unknown`, `Missing`) for Finding 9.
+
+Still open:
+
+- [src/webhooks/processor/tests.rs#L471-L479](file:///c%3A/share/tyde/bridge/src/webhooks/processor/tests.rs#L471-L479) `test_google_subscription_transaction_id_falls_back_to_rtdn_message_id` still asserts the RTDN-message-id-as-transaction-id behavior (Finding 5b).
+- [tests/creem_webhook_tests.rs](file:///c%3A/share/tyde/bridge/tests/creem_webhook_tests.rs) — `test_creem_signature_header_variations` (currently around L193) and `test_creem_status_normalization` (currently around L246) still assert against local fixture helpers, not the real ingress verifier / adapter, so they'd stay green if production Creem signature verification or status mapping regressed. Convert to integration tests that call the real code paths.
+- [src/middleware/rate_limit.rs](file:///c%3A/share/tyde/bridge/src/middleware/rate_limit.rs) `client_ip_prefers_x_forwarded_for` (currently around L564) still reinforces the spoofable behavior in Finding 14.
 
 ---
 
