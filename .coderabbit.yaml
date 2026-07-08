@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+reviews:
+    profile: chill                     # less aggressive overall
+    request_changes_workflow: false    # don't block PRs
+    collapse_walkthrough: true         # keep walkthrough concise
+    estimate_code_review_effort: false
+    auto_apply_labels: false
+    suggested_reviewers: false
+    in_progress_fortune: false
+    poem: false
+
+    finishing_touches:
+      unit_tests:
+        enabled: false                 # <- THIS stops automatic test generation
+
+    path_instructions:
+      - path: "**/*"
+        instructions: >
+          - Do not suggest or generate unit tests unless explicitly asked.
+          - Restrict feedback to correctness, security, or functionality-breaking problems.
+          - Do not post comments on code style, formatting, or non-critical improvements.
+          - When in doubt, err on the side of fewer comments.
+
+auto_review:
+    auto_incremental_review: true
+    enabled: false                     # only review on request
