@@ -713,7 +713,7 @@ pub async fn list_pending_pause_subscriptions(
          WHERE app_id = $1
            AND google_pause_scheduled_at IS NOT NULL
            AND google_pause_scheduled_at <= NOW()
-           AND status != 'paused'
+           AND status IN ('active', 'trial', 'past_due', 'on_hold')
          LIMIT $2"
     )
     .bind(app_id)
@@ -768,6 +768,82 @@ pub async fn mark_subscription_price_step_up_expired(
     tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(result.rows_affected() > 0)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn mark_subscription_price_step_up_expired_and_enqueue_callback(
+    pool: &PgPool,
+    app_id: Uuid,
+    id: Uuid,
+    claim_token: Uuid,
+    event_time_ms: i64,
+    provider: &str,
+    provider_webhook_id: &str,
+    event_type: &str,
+    subscription_id: Option<String>,
+    purchase_token: Option<String>,
+    provider_payload: serde_json::Value,
+    callback_timestamp_epoch_ms: Option<i64>,
+    canonical_payload: serde_json::Value,
+    worker_id: &str,
+    lease_secs: i64,
+) -> Result<Option<crate::db::webhooks::WebhookDeliveryEnqueue>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+
+    let result = sqlx::query(
+        "UPDATE pay.subscriptions
+         SET google_requires_price_step_up_consent = false,
+             google_price_step_up_consent_deadline = NULL,
+             status = 'cancelled',
+             revocation_reason = 'price_step_up_expiry',
+             auto_renewing = false,
+             scheduled_job_claim_token = NULL,
+             scheduled_job_claimed_by = NULL,
+             scheduled_job_claimed_until = NULL,
+             scheduled_job_claim_kind = NULL,
+             version = version + 1,
+             last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
+             updated_at = NOW()
+         WHERE app_id = $2
+           AND id = $3
+           AND scheduled_job_claim_token = $4
+           AND scheduled_job_claim_kind = 'price_step_up_expiry'
+           AND google_requires_price_step_up_consent = true
+           AND google_price_step_up_consent_deadline IS NOT NULL
+           AND google_price_step_up_consent_deadline < NOW()"
+    )
+    .bind(event_time_ms)
+    .bind(app_id)
+    .bind(id)
+    .bind(claim_token)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+        return Ok(None);
+    }
+
+    let delivery = crate::db::webhooks::create_synthetic_webhook_delivery_tx(
+        &mut tx,
+        app_id,
+        provider,
+        provider_webhook_id,
+        event_type,
+        subscription_id,
+        purchase_token,
+        provider_payload,
+        callback_timestamp_epoch_ms,
+        canonical_payload,
+        worker_id,
+        lease_secs,
+    )
+    .await?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(Some(delivery))
 }
 
 pub async fn refresh_subscription_scheduler_claim(
@@ -898,9 +974,12 @@ pub async fn mark_subscription_paused(
              auto_renewing = false,
              google_paused_at = NOW(),
              version = version + 1,
-             last_event_time = CASE WHEN last_event_time < $1 THEN $1 ELSE last_event_time END,
+             last_event_time = $1,
              updated_at = NOW()
-         WHERE app_id = $2 AND id = $3 AND status != 'paused'"
+         WHERE app_id = $2
+           AND id = $3
+           AND status IN ('active', 'trial', 'past_due', 'on_hold')
+           AND last_event_time < $1"
     )
     .bind(event_time_ms)
     .bind(app_id)
@@ -911,6 +990,69 @@ pub async fn mark_subscription_paused(
 
     tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
     Ok(result.rows_affected() > 0)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn mark_subscription_paused_and_enqueue_callback(
+    pool: &PgPool,
+    app_id: Uuid,
+    id: Uuid,
+    event_time_ms: i64,
+    provider: &str,
+    provider_webhook_id: &str,
+    event_type: &str,
+    subscription_id: Option<String>,
+    purchase_token: Option<String>,
+    provider_payload: serde_json::Value,
+    callback_timestamp_epoch_ms: Option<i64>,
+    canonical_payload: serde_json::Value,
+    worker_id: &str,
+    lease_secs: i64,
+) -> Result<Option<crate::db::webhooks::WebhookDeliveryEnqueue>, BridgeError> {
+    let mut tx = begin_app_tx(pool, app_id).await?;
+    let result = sqlx::query(
+        "UPDATE pay.subscriptions
+         SET status = 'paused',
+             auto_renewing = false,
+             google_paused_at = NOW(),
+             version = version + 1,
+             last_event_time = $1,
+             updated_at = NOW()
+         WHERE app_id = $2
+           AND id = $3
+           AND status IN ('active', 'trial', 'past_due', 'on_hold')
+           AND last_event_time < $1"
+    )
+    .bind(event_time_ms)
+    .bind(app_id)
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+        return Ok(None);
+    }
+
+    let delivery = crate::db::webhooks::create_synthetic_webhook_delivery_tx(
+        &mut tx,
+        app_id,
+        provider,
+        provider_webhook_id,
+        event_type,
+        subscription_id,
+        purchase_token,
+        provider_payload,
+        callback_timestamp_epoch_ms,
+        canonical_payload,
+        worker_id,
+        lease_secs,
+    )
+    .await?;
+
+    tx.commit().await.map_err(|e| BridgeError::DbError(e.to_string()))?;
+    Ok(Some(delivery))
 }
 
 pub async fn delete_orphaned_pending_subscriptions(
@@ -1779,6 +1921,196 @@ mod tests {
         result
     }
 
+    #[tokio::test]
+    async fn scheduled_pause_does_not_apply_to_terminal_or_newer_rows() -> Result<(), Box<dyn Error>> {
+        let Some(database) = test_database().await? else {
+            eprintln!("skipping DB-backed scheduled pause terminal-state regression; set BRIDGE_TEST_DATABASE_URL");
+            return Ok(());
+        };
+
+        let pool = database.pool();
+        let app_id = insert_test_app(pool).await?;
+        let active_id = Uuid::new_v4();
+        let revoked_id = Uuid::new_v4();
+        let cancelled_id = Uuid::new_v4();
+        let stale_active_id = Uuid::new_v4();
+        let pause_event_ms = chrono::Utc::now().timestamp_millis() - 60_000;
+        insert_pause_scheduled_subscription(pool, app_id, active_id, "active", 0).await?;
+        insert_pause_scheduled_subscription(pool, app_id, revoked_id, "revoked", 0).await?;
+        insert_pause_scheduled_subscription(pool, app_id, cancelled_id, "cancelled", 0).await?;
+        insert_pause_scheduled_subscription(pool, app_id, stale_active_id, "active", pause_event_ms + 1).await?;
+
+        let result = run_scheduled_pause_terminal_regression(
+            pool,
+            app_id,
+            active_id,
+            revoked_id,
+            cancelled_id,
+            stale_active_id,
+            pause_event_ms,
+        ).await;
+
+        delete_test_app(pool, app_id).await;
+
+        result
+    }
+
+    #[tokio::test]
+    async fn scheduler_transitions_enqueue_callbacks_in_same_transaction() -> Result<(), Box<dyn Error>> {
+        let Some(database) = test_database().await? else {
+            eprintln!("skipping DB-backed scheduler callback durability regression; set BRIDGE_TEST_DATABASE_URL");
+            return Ok(());
+        };
+
+        let pool = database.pool();
+        let app_id = insert_test_app(pool).await?;
+        let pause_id = Uuid::new_v4();
+        let price_step_up_id = Uuid::new_v4();
+        insert_pause_scheduled_subscription(pool, app_id, pause_id, "active", 0).await?;
+        insert_price_step_up_subscription(pool, app_id, price_step_up_id).await?;
+
+        let result = run_scheduler_transition_enqueue_regression(&database, pool, app_id, pause_id, price_step_up_id).await;
+
+        delete_test_app(pool, app_id).await;
+
+        result
+    }
+
+    async fn run_scheduled_pause_terminal_regression(
+        pool: &PgPool,
+        app_id: Uuid,
+        active_id: Uuid,
+        revoked_id: Uuid,
+        cancelled_id: Uuid,
+        stale_active_id: Uuid,
+        pause_event_ms: i64,
+    ) -> Result<(), Box<dyn Error>> {
+        let pending = super::list_pending_pause_subscriptions(pool, app_id, 10).await?;
+        let pending_ids = pending.iter().map(|sub| sub.id).collect::<Vec<_>>();
+
+        assert!(pending_ids.contains(&active_id), "active scheduled pause should be selected");
+        assert!(pending_ids.contains(&stale_active_id), "stale active row is filtered by update high-water guard");
+        assert!(!pending_ids.contains(&revoked_id), "revoked subscription must not be selected for pause");
+        assert!(!pending_ids.contains(&cancelled_id), "cancelled subscription must not be selected for pause");
+
+        assert!(super::mark_subscription_paused(pool, app_id, active_id, pause_event_ms).await?);
+        assert!(!super::mark_subscription_paused(pool, app_id, revoked_id, pause_event_ms).await?);
+        assert!(!super::mark_subscription_paused(pool, app_id, cancelled_id, pause_event_ms).await?);
+        assert!(!super::mark_subscription_paused(pool, app_id, stale_active_id, pause_event_ms).await?);
+
+        assert_eq!(subscription_status(pool, active_id).await?.as_deref(), Some("paused"));
+        assert_eq!(subscription_status(pool, revoked_id).await?.as_deref(), Some("revoked"));
+        assert_eq!(subscription_status(pool, cancelled_id).await?.as_deref(), Some("cancelled"));
+        assert_eq!(subscription_status(pool, stale_active_id).await?.as_deref(), Some("active"));
+
+        Ok(())
+    }
+
+    async fn run_scheduler_transition_enqueue_regression(
+        database: &crate::db::Database,
+        pool: &PgPool,
+        app_id: Uuid,
+        pause_id: Uuid,
+        price_step_up_id: Uuid,
+    ) -> Result<(), Box<dyn Error>> {
+        let pause_event_id = format!("test-scheduler-pause-{}", pause_id);
+        let pause_event_ms = chrono::Utc::now().timestamp_millis() - 60_000;
+        let pause_delivery = super::mark_subscription_paused_and_enqueue_callback(
+            pool,
+            app_id,
+            pause_id,
+            pause_event_ms,
+            "google_play",
+            &pause_event_id,
+            "subscription.paused",
+            Some(format!("pause_sub_{}", pause_id)),
+            Some(format!("pause_token_{}", pause_id)),
+            scheduler_provider_payload("subscription.paused"),
+            Some(pause_event_ms),
+            scheduler_canonical_payload("subscription.paused", &pause_event_id, "paused"),
+            "scheduler-test",
+            600,
+        )
+        .await?
+        .ok_or("expected pause transition to enqueue callback")?;
+
+        assert!(pause_delivery.created);
+        assert!(pause_delivery.claim_token.is_some());
+        assert_eq!(subscription_status(pool, pause_id).await?.as_deref(), Some("paused"));
+        assert_scheduler_callback_delivery(pool, app_id, &pause_event_id, "subscription.paused").await?;
+
+        let claimed = super::claim_price_step_up_expired_subscriptions(
+            pool,
+            app_id,
+            "scheduler-test",
+            600,
+            10,
+        )
+        .await?;
+        let price_step_up_claim = claimed
+            .into_iter()
+            .find(|sub| sub.id == price_step_up_id)
+            .ok_or("expected price step-up subscription claim")?;
+        let claim_token = price_step_up_claim
+            .scheduled_job_claim_token
+            .ok_or("expected price step-up claim token")?;
+        let price_step_up_event_id = format!("test-price-step-up-{}", price_step_up_id);
+        let price_step_up_canonical = scheduler_canonical_payload(
+            "subscription.cancelled",
+            &price_step_up_event_id,
+            "cancelled",
+        );
+        let price_step_up_ms = price_step_up_canonical["timestamp_epoch_ms"]
+            .as_i64()
+            .ok_or("expected canonical timestamp")?;
+        let price_step_up_delivery = super::mark_subscription_price_step_up_expired_and_enqueue_callback(
+            pool,
+            app_id,
+            price_step_up_id,
+            claim_token,
+            price_step_up_ms,
+            "google_play",
+            &price_step_up_event_id,
+            "subscription.cancelled",
+            Some("hiha_monthly".to_string()),
+            Some(format!("token_{}", price_step_up_id)),
+            scheduler_provider_payload("subscription.cancelled"),
+            Some(price_step_up_ms),
+            price_step_up_canonical.clone(),
+            "scheduler-test",
+            600,
+        )
+        .await?
+        .ok_or("expected price step-up transition to enqueue callback")?;
+
+        assert!(price_step_up_delivery.created);
+        assert!(price_step_up_delivery.claim_token.is_some());
+        assert_eq!(subscription_status(pool, price_step_up_id).await?.as_deref(), Some("cancelled"));
+        assert_scheduler_callback_delivery(pool, app_id, &price_step_up_event_id, "subscription.cancelled").await?;
+
+        let canonical = serde_json::from_value(price_step_up_canonical)?;
+        crate::webhooks::forwarding::forward_webhook(
+            database,
+            app_id,
+            price_step_up_delivery.id,
+            price_step_up_delivery.claim_token.ok_or("expected price step-up delivery claim token")?,
+            canonical,
+        )
+        .await?;
+        let forwarded_attempt = crate::db::webhooks::get_webhook_delivery(pool, price_step_up_delivery.id).await?;
+        assert!(!forwarded_attempt.forwarded, "fresh scheduler callback must not self-suppress as stale");
+        assert!(
+            forwarded_attempt
+                .last_error
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("Request error:"),
+            "closed callback port should fail as an HTTP attempt, not as stale suppression"
+        );
+
+        Ok(())
+    }
+
     async fn run_price_step_up_decline_claim_regression(
         pool: &PgPool,
         app_id: Uuid,
@@ -1916,6 +2248,113 @@ mod tests {
         .await?;
 
         Ok(())
+    }
+
+    async fn insert_pause_scheduled_subscription(
+        pool: &PgPool,
+        app_id: Uuid,
+        id: Uuid,
+        status: &str,
+        last_event_time: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO pay.subscriptions
+             (id, app_id, external_user_id, subscription_id, provider, purchase_token, status,
+              google_pause_scheduled_at, version, last_event_time)
+             VALUES ($1, $2, $3, $4, 'google_play', $5, $6,
+                     NOW() - INTERVAL '5 minutes', 1, $7)"
+        )
+        .bind(id)
+        .bind(app_id)
+        .bind(format!("user_{}", id))
+        .bind(format!("pause_sub_{}", id))
+        .bind(format!("pause_token_{}", id))
+        .bind(status)
+        .bind(last_event_time)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn subscription_status(pool: &PgPool, id: Uuid) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT status FROM pay.subscriptions WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+    }
+
+    async fn assert_scheduler_callback_delivery(
+        pool: &PgPool,
+        app_id: Uuid,
+        provider_event_id: &str,
+        event_type: &str,
+    ) -> Result<(), Box<dyn Error>> {
+        let row: (bool, Option<serde_json::Value>, i64) = sqlx::query_as(
+            "SELECT wp.processed, wd.canonical_payload, COUNT(*) OVER ()
+             FROM pay.webhook_provider wp
+             JOIN pay.webhook_delivery wd ON wd.webhook_provider_id = wp.id
+             WHERE wp.app_id = $1
+               AND wp.provider_webhook_id = $2
+               AND wp.event_type = $3",
+        )
+        .bind(app_id)
+        .bind(provider_event_id)
+        .bind(event_type)
+        .fetch_one(pool)
+        .await?;
+
+        assert!(row.0, "scheduler callback provider row must be marked processed");
+        assert!(row.1.is_some(), "scheduler callback delivery must store canonical payload for retry");
+        assert_eq!(row.2, 1, "scheduler callback must enqueue exactly one delivery");
+
+        Ok(())
+    }
+
+    fn scheduler_provider_payload(event_type: &str) -> serde_json::Value {
+        serde_json::json!({
+            "source": "scheduler",
+            "event_type": event_type,
+        })
+    }
+
+    fn scheduler_canonical_payload(
+        event_type: &str,
+        provider_event_id: &str,
+        status: &str,
+    ) -> serde_json::Value {
+        let now = chrono::Utc::now();
+        serde_json::json!({
+            "event_id": format!("google_play-{}", provider_event_id),
+            "event_type": event_type,
+            "timestamp": now.to_rfc3339(),
+            "timestamp_epoch_ms": now.timestamp_millis(),
+            "app_slug": "test",
+            "product_id": null,
+            "subscription_id": "hiha_monthly",
+            "external_user_id": "test_user",
+            "amount_cents": null,
+            "new_price_cents": null,
+            "auto_renewing": null,
+            "purchase_token": null,
+            "current_period_end": null,
+            "status": status,
+            "provider": "google_play",
+            "provider_event_id": provider_event_id,
+            "previous_status": null,
+            "corrected_status": null,
+            "reconciliation_source": null,
+            "revocation_reason": null,
+            "cancellation_mode": null,
+            "google_price_step_up_consent_deadline": null,
+            "google_pause_scheduled_at": null,
+            "google_deferred_until": null,
+            "google_pending_price_change_new_price_cents": null,
+            "google_pending_price_change_currency": null,
+            "google_pending_price_change_mode": null,
+            "google_pending_price_change_state": null,
+            "google_pending_price_change_expected_at": null,
+        })
     }
 
     async fn delete_test_app(pool: &PgPool, app_id: Uuid) {

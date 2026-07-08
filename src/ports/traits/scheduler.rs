@@ -48,25 +48,10 @@ pub trait SchedulerRepository: Send + Sync {
         limit: i64,
     ) -> Result<Vec<Subscription>, BridgeError>;
 
-    async fn mark_subscription_price_step_up_expired(
-        &self,
-        app_id: Uuid,
-        id: Uuid,
-        claim_token: Uuid,
-        event_time_ms: i64,
-    ) -> Result<bool, BridgeError>;
-
     async fn list_pending_pause_subscriptions(
         &self,
         limit: i64,
     ) -> Result<Vec<Subscription>, BridgeError>;
-
-    async fn mark_subscription_paused(
-        &self,
-        app_id: Uuid,
-        id: Uuid,
-        event_time_ms: i64,
-    ) -> Result<bool, BridgeError>;
 
     async fn delete_orphaned_pending_subscriptions(&self) -> Result<u64, BridgeError>;
 

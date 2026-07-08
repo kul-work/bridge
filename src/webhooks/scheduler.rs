@@ -10,6 +10,12 @@ use std::sync::Arc;
 use tracing::{info, error, warn, info_span, Instrument};
 use uuid::Uuid;
 
+struct SchedulerCallback {
+    provider_event_id: String,
+    provider_payload: serde_json::Value,
+    canonical: crate::webhooks::processor::CanonicalWebhookPayload,
+}
+
 const WEBHOOK_PROVIDER_RECOVERY_MIN_AGE_SECS: i64 = 300;
 const WEBHOOK_PROVIDER_RECOVERY_LEASE_SECS: i64 = 600;
 const WEBHOOK_DELIVERY_CLAIM_LEASE_SECS: i64 = crate::webhooks::forwarding::WEBHOOK_DELIVERY_LEASE_SECS;
@@ -823,24 +829,7 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
             }
         }
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        if !SchedulerRepository::mark_subscription_price_step_up_expired(
-            database.as_ref(),
-            app_id,
-            id,
-            claim_token,
-            now_ms,
-        ).await? {
-            info!(
-                job = "price_step_up",
-                app_id = %app_id,
-                subscription_id = %subscription_id,
-                "Skipped price step-up expiry transition because state was already updated"
-            );
-            continue;
-        }
-
-        if let Err(e) = emit_scheduler_callback(
+        let callback = build_scheduler_callback(
             database.as_ref(),
             app_id,
             &provider,
@@ -857,6 +846,44 @@ pub async fn process_price_step_up_expiry(database: &Arc<Database>) -> Result<()
             google_price_step_up_consent_deadline,
             sub.google_pause_scheduled_at.map(|date| date.timestamp_millis()),
             sub.google_deferred_until.map(|date| date.timestamp_millis()),
+        )
+        .await?;
+        let canonical_payload = serde_json::to_value(&callback.canonical)
+            .map_err(|e| crate::error::BridgeError::InternalServerError(e.to_string()))?;
+
+        let event_time_ms = callback.canonical.timestamp_epoch_ms;
+        let delivery = crate::db::subscriptions::mark_subscription_price_step_up_expired_and_enqueue_callback(
+            database.pool(),
+            app_id,
+            id,
+            claim_token,
+            event_time_ms,
+            &provider,
+            &callback.provider_event_id,
+            "subscription.cancelled",
+            Some(subscription_id.clone()),
+            purchase_token.clone(),
+            callback.provider_payload,
+            Some(event_time_ms),
+            canonical_payload,
+            &crate::webhooks::forwarding::webhook_worker_id("scheduler-callback"),
+            WEBHOOK_DELIVERY_CLAIM_LEASE_SECS,
+        ).await?;
+        let Some(delivery) = delivery else {
+            info!(
+                job = "price_step_up",
+                app_id = %app_id,
+                subscription_id = %subscription_id,
+                "Skipped price step-up expiry transition because state was already updated"
+            );
+            continue;
+        };
+
+        if let Err(e) = forward_scheduler_callback_delivery(
+            database.as_ref(),
+            app_id,
+            delivery,
+            callback.canonical,
         )
         .await
         {
@@ -912,24 +939,18 @@ pub async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), c
             "Transitioning subscription to paused (scheduled pause)"
         );
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        if !SchedulerRepository::mark_subscription_paused(database.as_ref(), app_id, id, now_ms).await? {
-            info!(
-                job = "pause_scheduler",
-                app_id = %app_id,
-                subscription_id = %subscription_id,
-                "Skipped pause transition because state was already updated"
-            );
-            continue;
-        }
-
-        if let Err(e) = emit_scheduler_callback(
+        // Use the provider's scheduled pause time as the subscription high-water mark.
+        // The callback payload is emitted at processing time, so a real provider event
+        // after the scheduled pause but before this worker tick can still win.
+        let event_time_ms = google_pause_scheduled_at
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+        let callback = build_scheduler_callback(
             database.as_ref(),
             app_id,
             &provider,
             &subscription_id,
             Some(external_user_id),
-            purchase_token,
+            purchase_token.clone(),
             "subscription.paused",
             deterministic_pause_transition_event_id(id, google_pause_scheduled_at),
             Some("paused".to_string()),
@@ -940,6 +961,41 @@ pub async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), c
             sub.google_price_step_up_consent_deadline.map(|date| date.timestamp_millis()),
             google_pause_scheduled_at,
             sub.google_deferred_until.map(|date| date.timestamp_millis()),
+        )
+        .await?;
+        let canonical_payload = serde_json::to_value(&callback.canonical)
+            .map_err(|e| crate::error::BridgeError::InternalServerError(e.to_string()))?;
+        let delivery = crate::db::subscriptions::mark_subscription_paused_and_enqueue_callback(
+            database.pool(),
+            app_id,
+            id,
+            event_time_ms,
+            &provider,
+            &callback.provider_event_id,
+            "subscription.paused",
+            Some(subscription_id.clone()),
+            purchase_token.clone(),
+            callback.provider_payload,
+            Some(callback.canonical.timestamp_epoch_ms),
+            canonical_payload,
+            &crate::webhooks::forwarding::webhook_worker_id("scheduler-callback"),
+            WEBHOOK_DELIVERY_CLAIM_LEASE_SECS,
+        ).await?;
+        let Some(delivery) = delivery else {
+            info!(
+                job = "pause_scheduler",
+                app_id = %app_id,
+                subscription_id = %subscription_id,
+                "Skipped pause transition because state was already updated"
+            );
+            continue;
+        };
+
+        if let Err(e) = forward_scheduler_callback_delivery(
+            database.as_ref(),
+            app_id,
+            delivery,
+            callback.canonical,
         )
         .await
         {
@@ -966,8 +1022,8 @@ pub async fn process_pause_transitions(database: &Arc<Database>) -> Result<(), c
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn emit_scheduler_callback(
-    repo: &(impl WebhookForwardRepository + AppLookupRepository + WebhookWriteRepository),
+async fn build_scheduler_callback(
+    repo: &impl AppLookupRepository,
     app_id: Uuid,
     provider: &str,
     subscription_id: &str,
@@ -983,7 +1039,7 @@ async fn emit_scheduler_callback(
     google_price_step_up_consent_deadline: Option<i64>,
     google_pause_scheduled_at: Option<i64>,
     google_deferred_until: Option<i64>,
-) -> Result<(), crate::error::BridgeError> {
+) -> Result<SchedulerCallback, crate::error::BridgeError> {
     let app = repo.get_app(app_id).await?;
     let timestamp_epoch_ms = chrono::Utc::now().timestamp_millis();
     let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_epoch_ms)
@@ -1038,16 +1094,96 @@ async fn emit_scheduler_callback(
         google_pending_price_change_expected_at: None,
     };
 
+    Ok(SchedulerCallback {
+        provider_event_id,
+        provider_payload: payload,
+        canonical,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn emit_scheduler_callback(
+    repo: &(impl WebhookForwardRepository + AppLookupRepository + WebhookWriteRepository),
+    app_id: Uuid,
+    provider: &str,
+    subscription_id: &str,
+    external_user_id: Option<String>,
+    purchase_token: Option<String>,
+    event_type: &str,
+    provider_event_id: String,
+    status: Option<String>,
+    previous_status: Option<String>,
+    corrected_status: Option<String>,
+    reconciliation_source: Option<String>,
+    revocation_reason: Option<String>,
+    google_price_step_up_consent_deadline: Option<i64>,
+    google_pause_scheduled_at: Option<i64>,
+    google_deferred_until: Option<i64>,
+) -> Result<(), crate::error::BridgeError> {
+    let callback = build_scheduler_callback(
+        repo,
+        app_id,
+        provider,
+        subscription_id,
+        external_user_id,
+        purchase_token.clone(),
+        event_type,
+        provider_event_id,
+        status,
+        previous_status,
+        corrected_status,
+        reconciliation_source,
+        revocation_reason,
+        google_price_step_up_consent_deadline,
+        google_pause_scheduled_at,
+        google_deferred_until,
+    )
+    .await?;
+
     crate::webhooks::forwarding::create_and_forward_webhook(
         repo,
         app_id,
         provider,
-        &provider_event_id,
+        &callback.provider_event_id,
         event_type,
         Some(subscription_id.to_string()),
         purchase_token.clone(),
-        payload,
-        Some(timestamp_epoch_ms),
+        callback.provider_payload,
+        Some(callback.canonical.timestamp_epoch_ms),
+        callback.canonical,
+    )
+    .await
+}
+
+async fn forward_scheduler_callback_delivery(
+    repo: &(impl WebhookForwardRepository + AppLookupRepository),
+    app_id: Uuid,
+    delivery: crate::db::webhooks::WebhookDeliveryEnqueue,
+    canonical: crate::webhooks::processor::CanonicalWebhookPayload,
+) -> Result<(), crate::error::BridgeError> {
+    if !delivery.created {
+        info!(
+            app_id = %app_id,
+            webhook_delivery_id = %delivery.id,
+            provider = %canonical.provider,
+            event_type = %canonical.event_type,
+            provider_event_id = %canonical.provider_event_id,
+            "Scheduler callback delivery already exists; retry worker owns delivery"
+        );
+        return Ok(());
+    }
+
+    let claim_token = delivery.claim_token.ok_or_else(|| {
+        crate::error::BridgeError::InternalServerError(
+            "new scheduler callback delivery was not claimed".to_string(),
+        )
+    })?;
+
+    crate::webhooks::forwarding::forward_webhook(
+        repo,
+        app_id,
+        delivery.id,
+        claim_token,
         canonical,
     )
     .await
