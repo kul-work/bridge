@@ -22,7 +22,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 | 12 | Medium | DB constraint | Global `purchase_token UNIQUE` breaks app isolation |
 | 13 | Low | Email | Poisoned mutex `.expect()` panics production email path |
 | 14 | Low | Rate limit | Spoofable `X-Forwarded-For` + unbounded key growth |
-| 16 | Low | Creem webhook | `refund.created` / `dispute.created` normalized callbacks missing `currency` (and `amount_cents` for refunds) |
 
 ---
 
@@ -159,49 +158,4 @@ All findings below were confirmed by reading the actual code (line numbers verif
 **Smallest safe fix.** Honor forwarded headers only when the socket peer is a configured trusted proxy; otherwise use `ConnectInfo` peer. After pruning, `remove` empty keys and/or cap total keys.
 
 **Regression test.** Yes — spoofed `X-Forwarded-For` from an untrusted peer maps to the same bucket; stale empty keys are evicted.
-
----
-
-## 16. Low — Creem `refund.created` / `dispute.created` normalized callbacks missing `currency` (and `amount_cents` for refunds)
-
-**File:** [src/webhooks/provider_adapter.rs#L529-L542](file:///c%3A/share/tyde/bridge/src/webhooks/provider_adapter.rs#L529-L542) — `extract_fields` (Creem branch)
-
-**Verified from code + official Creem webhook schema** ([docs.creem.io/code/webhooks](https://docs.creem.io/code/webhooks)). This finding was promoted from "Needs verification" item 3 after tracing the currency/amount paths against Creem's actual payload schema.
-
-**What is wrong.** Currency is extracted from a single path — `object.product.currency` — with zero fallbacks, while `amount_cents` has four fallbacks. Verified against Creem's official webhook payloads:
-
-| Event | `object.product.currency` | Currency extracted? | Amount extracted? |
-|---|---|---|---|
-| `subscription.active` / `paid` / `canceled` / `scheduled_cancel` / `past_due` | present | yes | yes |
-| `checkout.completed` | present | yes | yes |
-| **`refund.created`** | **absent** | **no** | **no** — schema uses `object.refund_amount` + `object.transaction` (not `last_transaction`); none of the 4 amount fallbacks match |
-| **`dispute.created`** | **absent** | **no** | yes — 4th fallback `obj.get("amount")` matches, creating an asymmetric payload (`amount_cents: 1331, currency: null`) |
-
-**Why it's a real bug.** Normalized callbacks to app backends for refund/dispute events arrive with `currency: null` (and `amount_cents: null` for refunds). An app backend cannot render "You were refunded €12.10" from the callback alone.
-
-**Impact (Low).** The original payment's currency is already stored from the initial `checkout.completed` / `subscription.paid` event (which extracts currency correctly), so the subscription/payment record has the right currency. Only the normalized callback payload for these two event types is incomplete. The raw payload is preserved in `pay.webhook_provider.payload` for audit.
-
-**Smallest safe fix.** Mirror the amount fallback chain for currency, and extend amount to cover `refund_amount` and the `transaction` (not `last_transaction`) field used by refunds:
-
-```rust
-// Currency: mirror amount's multi-path fallback
-let currency = obj.get("product").and_then(|v| v.get("currency")).and_then(|v| v.as_str())
-    .or_else(|| obj.get("transaction").and_then(|v| v.get("currency")).and_then(|v| v.as_str()))
-    .or_else(|| obj.get("order").and_then(|v| v.get("currency")).and_then(|v| v.as_str()))
-    .or_else(|| obj.get("refund_currency").and_then(|v| v.as_str()))
-    .or_else(|| obj.get("currency").and_then(|v| v.as_str()))
-    .map(|s| s.to_string());
-
-// Amount: add refund_amount and transaction.amount_paid (Creem uses "transaction", not "last_transaction", for refunds)
-let amount_cents = obj.get("last_transaction")
-    .and_then(|v| v.get("amount_paid").or_else(|| v.get("amount")))
-    .and_then(|v| v.as_i64())
-    .or_else(|| obj.get("transaction").and_then(|v| v.get("amount_paid").or_else(|| v.get("amount"))).and_then(|v| v.as_i64()))
-    .or_else(|| obj.get("refund_amount").and_then(|v| v.as_i64()))
-    .or_else(|| obj.get("order").and_then(|v| v.get("amount")).and_then(|v| v.as_i64()))
-    .or_else(|| obj.get("product").and_then(|v| v.get("price")).and_then(|v| v.as_i64()))
-    .or_else(|| obj.get("amount").and_then(|v| v.as_i64()));
-```
-
-**Regression test.** Yes — feed `refund.created` and `dispute.created` payloads from Creem's official schema samples and assert both `currency` and `amount_cents` are non-null in the normalized `WebhookFields`.
 
