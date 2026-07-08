@@ -13,27 +13,11 @@ All findings below were confirmed by reading the actual code (line numbers verif
 
 | # | Severity | Area | One-line |
 |---|----------|------|----------|
-| 1 | High | GP JWT auth | Pub/Sub JWT accepted without verifying service-account `email` / `email_verified` |
 | 10 | Medium | GP webhook | Test notifications ACKed with no durable inbox/suppressed row |
 | 12 | Medium | DB constraint | Global `purchase_token UNIQUE` breaks app isolation |
 | 13 | Low | Email | Poisoned mutex `.expect()` panics production email path |
 | 14 | Low | Rate limit | Spoofable `X-Forwarded-For` + unbounded key growth |
 
----
-
-## 1. High — Pub/Sub JWT accepted without verifying issuer identity (`email` / `email_verified`)
-
-**File:** [src/services/google_play/client.rs#L674-L693](file:///c%3A/share/tyde/bridge/src/services/google_play/client.rs#L674-L693) — `verify_jwt_with_jwk` / `verify_pubsub_signature`
-
-**What is wrong.** The production JWT path verifies the RS256 signature against Google's JWKs, checks `iss = https://accounts.google.com`, `exp`, and (optionally) `aud`. It never verifies that the token's `email` claim equals the configured Pub/Sub push service account, nor that `email_verified == true`. `PubSubClaims` even carries `email: Option<String>` but it is only logged, never compared.
-
-**Why it's a real bug.** Google's authenticated-push contract requires validating **both** `aud` and the service-account `email`/`email_verified`. Any Google-signed OIDC token minted for the same audience — obtainable by other GCP identities — passes. This is a signature/authenticity control on a money-mutating ingress.
-
-**Failure scenario.** A GCP identity (misconfigured internal service, or an attacker able to mint an OIDC token for the Bridge audience) POSTs a crafted RTDN body. Bridge accepts it because it is Google-signed and audience-matched, then processes fake cancellation/revocation/price-change events.
-
-**Smallest safe fix.** Add an expected Pub/Sub service-account email to provider/client config. Extend `PubSubClaims` with `email_verified: Option<bool>`. After signature+audience checks, require `claims.email.as_deref() == Some(expected)` and `claims.email_verified == Some(true)`. Fail closed when verification is enabled but no expected email is configured.
-
-**Regression test.** Yes — accept when all claims match; reject on `email` mismatch; reject when `email_verified` missing/false.
 
 ---
 
