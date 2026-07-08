@@ -602,6 +602,108 @@ fn test_creem_field_extraction_one_time_refund() {
 }
 
 #[test]
+fn test_creem_field_extraction_refund_created_real_schema() {
+    // Real Creem refund.created payload shape (from docs.creem.io/code/webhooks):
+    // currency lives at object.refund_currency / object.transaction.currency,
+    // amount lives at object.refund_amount / object.transaction.amount_paid.
+    // object.product.currency is absent — the pre-fix single-path extraction
+    // returned currency=null and amount_cents=null for this event.
+    let payload = serde_json::json!({
+        "id": "evt_refund_real",
+        "eventType": "refund.created",
+        "created_at": 1728734351631_i64,
+        "object": {
+            "id": "ref_3DB9NQFvk18TJwSqd0N6bd",
+            "object": "refund",
+            "status": "succeeded",
+            "refund_amount": 1210,
+            "refund_currency": "EUR",
+            "reason": "requested_by_customer",
+            "subscription": { "id": "sub_6pC2lNB6joCRQIZ1aMrTpi" },
+            "transaction": {
+                "id": "tran_5yMaWzAl3jxuGJMCOrYWwk",
+                "object": "transaction",
+                "amount": 1000,
+                "amount_paid": 1210,
+                "currency": "EUR",
+                "status": "refunded",
+                "order": "ord_4aDwWXjMLpes4Kj4XqNnUA",
+                "subscription": "sub_6pC2lNB6joCRQIZ1aMrTpi"
+            }
+        }
+    });
+
+    let webhook = WebhookProviderSnapshot {
+        provider: "creem".to_string(),
+        provider_webhook_id: "wh_refund_real".to_string(),
+        event_type: "refund.created".to_string(),
+        subscription_id: Some("sub_6pC2lNB6joCRQIZ1aMrTpi".to_string()),
+        purchase_token: None,
+        payload,
+        processed: false,
+        timestamp_epoch_ms: Some(1728734351631),
+        suppressed: false,
+        suppressed_reason: None,
+    };
+
+    let fields = extract_webhook_fields(&webhook).unwrap();
+    assert_eq!(fields.amount_cents, Some(1210), "refund_amount must be extracted");
+    assert_eq!(fields.currency, Some("EUR".to_string()), "refund_currency must be extracted");
+}
+
+#[test]
+fn test_creem_field_extraction_dispute_created_real_schema() {
+    // Real Creem dispute.created payload shape (from docs.creem.io/code/webhooks):
+    // currency lives at object.currency / object.transaction.currency,
+    // amount lives at object.amount. object.product.currency is absent.
+    let payload = serde_json::json!({
+        "id": "evt_dispute_real",
+        "eventType": "dispute.created",
+        "created_at": 1750941264812_i64,
+        "object": {
+            "id": "disp_6vSsOdTANP5PhOzuDlUuXE",
+            "object": "dispute",
+            "amount": 1331,
+            "currency": "EUR",
+            "transaction": {
+                "id": "tran_4Dk8CxWFdceRUQgMFhCCXX",
+                "object": "transaction",
+                "amount": 1100,
+                "amount_paid": 1331,
+                "currency": "EUR",
+                "status": "chargeback",
+                "order": "ord_57bf8042UmG8fFypxZrfnj",
+                "subscription": "sub_5sD6zM482uwOaEoyEUDDJs"
+            },
+            "subscription": { "id": "sub_5sD6zM482uwOaEoyEUDDJs" },
+            "order": {
+                "id": "ord_57bf8042UmG8fFypxZrfnj",
+                "amount": 1100,
+                "currency": "EUR",
+                "status": "paid"
+            }
+        }
+    });
+
+    let webhook = WebhookProviderSnapshot {
+        provider: "creem".to_string(),
+        provider_webhook_id: "wh_dispute_real".to_string(),
+        event_type: "dispute.created".to_string(),
+        subscription_id: Some("sub_5sD6zM482uwOaEoyEUDDJs".to_string()),
+        purchase_token: None,
+        payload,
+        processed: false,
+        timestamp_epoch_ms: Some(1750941264812),
+        suppressed: false,
+        suppressed_reason: None,
+    };
+
+    let fields = extract_webhook_fields(&webhook).unwrap();
+    assert_eq!(fields.amount_cents, Some(1331), "top-level amount must be extracted");
+    assert_eq!(fields.currency, Some("EUR".to_string()), "top-level currency must be extracted");
+}
+
+#[test]
 fn test_creem_metadata_user_id_from_checkout_path() {
     let payload = serde_json::json!({
         "id": "evt_123",

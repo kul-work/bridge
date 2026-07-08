@@ -526,9 +526,15 @@ impl ProviderWebhookAdapter {
 
                 // Prefer actual cash collected when Creem sends a transaction object.
                 // Trial invoices can have amount_paid = 0 while amount is the recurring list price.
+                // Refunds/disputes use `refund_amount` + a `transaction` (not `last_transaction`)
+                // object, so those paths are covered as fallbacks.
                 let amount_cents = obj.get("last_transaction")
                     .and_then(|v| v.get("amount_paid").or_else(|| v.get("amount")))
                     .and_then(|v| v.as_i64())
+                    .or_else(|| obj.get("refund_amount").and_then(|v| v.as_i64()))
+                    .or_else(|| obj.get("transaction")
+                        .and_then(|v| v.get("amount_paid").or_else(|| v.get("amount")))
+                        .and_then(|v| v.as_i64()))
                     .or_else(|| obj.get("order")
                         .and_then(|v| v.get("amount"))
                         .and_then(|v| v.as_i64()))
@@ -536,9 +542,20 @@ impl ProviderWebhookAdapter {
                         .and_then(|v| v.get("price"))
                         .and_then(|v| v.as_i64()))
                     .or_else(|| obj.get("amount").and_then(|v| v.as_i64()));
+                // Currency mirrors the amount fallback chain: refunds use `refund_currency`
+                // or `transaction.currency`, disputes use top-level `currency`, checkout uses
+                // `order.currency`. `product.currency` covers subscription/checkout events.
                 let currency = obj.get("product")
                     .and_then(|v| v.get("currency"))
                     .and_then(|v| v.as_str())
+                    .or_else(|| obj.get("transaction")
+                        .and_then(|v| v.get("currency"))
+                        .and_then(|v| v.as_str()))
+                    .or_else(|| obj.get("order")
+                        .and_then(|v| v.get("currency"))
+                        .and_then(|v| v.as_str()))
+                    .or_else(|| obj.get("refund_currency").and_then(|v| v.as_str()))
+                    .or_else(|| obj.get("currency").and_then(|v| v.as_str()))
                     .map(|s| s.to_string());
 
                 // Extract purchase_token (checkout_id for OTP, order_id for refunds)
