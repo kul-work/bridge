@@ -453,10 +453,14 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
         // Mock mode never reaches the real Google API call below that populates
         // provider_transaction_id from latest_order_id. Simulate it for
         // SUBSCRIPTION_* events so renewals/price-changes still record a payment
-        // row. Token-derived to stay distinct from the verify-purchase order id
-        // (mock-google-play-order:<token>) and avoid cross-user dedup collisions.
+        // row. Include provider_webhook_id (message_id) to mimic the per-renewal
+        // uniqueness of real latest_order_id, while staying distinct from the
+        // verify-purchase order id (mock-google-play-order:<token>).
         if webhook.event_type.starts_with("SUBSCRIPTION_") {
-            fields.provider_transaction_id = Some(format!("mock-google-play-renewal:{}", purchase_token));
+            fields.provider_transaction_id = Some(format!(
+                "mock-google-play-renewal:{}:{}",
+                purchase_token, webhook.provider_webhook_id
+            ));
         }
 
         return Ok(fields);
