@@ -203,15 +203,27 @@ fn validate_public_https_url(label: &str, value: &str, errors: &mut Vec<String>)
         return;
     };
 
-    let is_localhost = host == "localhost"
-        || host == "127.0.0.1"
-        || host == "[::1]"
-        || host.ends_with(".localhost")
-        || host.ends_with(".local");
+    let normalized_host = normalize_host_for_local_checks(host);
+    let is_localhost = is_localhost_url(value);
+    // Public production auth/origin URLs are stricter than generic callback localhost detection:
+    // mDNS/.local names are local-network addresses and must not pass production startup.
+    let is_local_domain = normalized_host.ends_with(".local");
 
-    if !is_localhost && url.scheme() != "https" {
+    if url.scheme() != "https" {
         errors.push(format!("{} must use https in production", label));
     }
+    if is_localhost || is_local_domain {
+        errors.push(format!("{} must not use localhost or .local hosts in production", label));
+    }
+}
+
+fn normalize_host_for_local_checks(host: &str) -> String {
+    host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
 }
 
 fn derive_clerk_issuer_from_publishable_key(publishable_key: &str) -> Option<String> {
@@ -239,12 +251,7 @@ pub fn is_localhost_url(url: &str) -> bool {
         return false;
     };
 
-    let host = host
-        .trim()
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
+    let host = normalize_host_for_local_checks(host);
     if host == "localhost" || host.ends_with(".localhost") {
         return true;
     }
@@ -419,6 +426,127 @@ mod tests {
         let errors = config.production_startup_errors(env);
 
         assert!(errors.iter().any(|error| error.contains("must use https")));
+    }
+
+    #[test]
+    fn production_startup_rejects_local_admin_urls() {
+        for local_url in [
+            "http://localhost:3000",
+            "https://localhost:3000",
+            "https://localhost.:3000",
+            "https://127.0.0.1:3000",
+            "https://127.0.0.2:3000",
+            "https://[::1]:3000",
+            "https://admin.localhost",
+            "https://admin.local",
+        ] {
+            let config = test_config();
+            let env = env_getter(HashMap::from([
+                ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
+                ("ADMIN_CLERK_FRONTEND_API", local_url),
+                ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
+                ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+                ("GOOGLE_VERIFY_AUDIENCE", "true"),
+                ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
+            ]));
+
+            let errors = config.production_startup_errors(env);
+
+            assert!(
+                errors.iter().any(|error| error.contains("must not use localhost")),
+                "expected {local_url} to be rejected, got {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn production_startup_rejects_http_localhost_with_both_errors() {
+        let config = test_config();
+        let env = env_getter(HashMap::from([
+            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
+            ("ADMIN_CLERK_FRONTEND_API", "http://localhost:3000"),
+            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("GOOGLE_VERIFY_AUDIENCE", "true"),
+            ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
+        ]));
+
+        let errors = config.production_startup_errors(env);
+
+        // A non-https localhost URL must trigger both independent checks,
+        // not short-circuit on the localhost exemption that used to skip
+        // the https requirement entirely.
+        assert!(
+            errors.iter().any(|error| error.contains("must use https")),
+            "expected https error, got {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|error| error.contains("must not use localhost")),
+            "expected localhost error, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn production_startup_rejects_local_domain_in_authorized_parties() {
+        let config = test_config();
+        let env = env_getter(HashMap::from([
+            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://ADMIN.LOCAL, https://svc.internal.local."),
+            ("GOOGLE_VERIFY_AUDIENCE", "true"),
+            ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
+        ]));
+
+        let errors = config.production_startup_errors(env);
+
+        let local_errors: Vec<_> = errors
+            .iter()
+            .filter(|error| {
+                error.contains("ADMIN_CLERK_AUTHORIZED_PARTIES")
+                    && error.contains("must not use localhost")
+            })
+            .collect();
+        // Both comma-separated parties are local (.local domains, one with
+        // uppercase host and one with a trailing dot) and must each be
+        // rejected independently.
+        assert_eq!(
+            local_errors.len(),
+            2,
+            "expected both local-domain parties to be rejected, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn production_startup_accepts_host_containing_but_not_ending_in_local() {
+        let config = test_config();
+        let env = env_getter(HashMap::from([
+            ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://locally-hosted.example.com"),
+            ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("GOOGLE_VERIFY_AUDIENCE", "true"),
+            ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
+        ]));
+
+        let errors = config.production_startup_errors(env);
+
+        // "locally-hosted.example.com" merely contains "local" as a
+        // substring; the suffix check must not produce a false positive.
+        assert!(
+            errors.is_empty(),
+            "did not expect local-domain rejection for a non-local host, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn is_localhost_url_is_case_and_trailing_dot_insensitive() {
+        assert!(is_localhost_url("http://LOCALHOST:3000"));
+        assert!(is_localhost_url("http://LOCALHOST.:3000"));
+        assert!(is_localhost_url("http://Sub.LocalHost/path"));
+        assert!(is_localhost_url("http://[::1]:8080/callback"));
+
+        assert!(!is_localhost_url("https://notlocalhost.example.com"));
     }
 
     #[test]
