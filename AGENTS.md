@@ -112,6 +112,20 @@ Avoid:
 - **Consistency first:** Match existing code style before optimizing
 - **Surgical changes:** Keep changes as minimal as possible to minimize risk and respect the history of working code. Never reformat working blocks (e.g., collapsing multi-line `if` or `match` blocks)
 
+### Backend Bash Test Suites (BE projects only)
+
+After a fix touching a codepath covered by `./tests/` bash suites (each subfolder has a README mapping test → what it validates):
+
+1. Read the relevant subfolder README, pick tests that exercise the changed code, run them.
+2. If Bridge runs the old binary → say so, leave the exact command ready, and wait for the user to rebuild+restart.
+3. For critical/high-severity fixes with no existing bash coverage → propose a new test in the matching subfolder (existing style); let the human decide whether to add it.
+4. When adding a new bash test, wire it fully (don't leave it orphaned):
+   - `docs/<provider>/<...>TESTPLAN.md` — add test ID + description
+   - `tests/<suite>/README.md` — add a row in the Tests Highlights table
+   - `tests/<suite>/run-all-<suite>-tests.sh` — add the script to the `TESTS=(...)` array
+   - `tests/<suite>/cleanup-all-<suite>.sh` — add cleanup for the test's data (event ID / user_id)
+   - `tests/<suite>/test-runner.sh` — only if it's a smoke candidate (add to `run_smoke_tests` array)
+
 ### Release Notes Guidelines
 
 When updating `Release Notes.md`:
