@@ -205,20 +205,3 @@ let amount_cents = obj.get("last_transaction")
 
 **Regression test.** Yes — feed `refund.created` and `dispute.created` payloads from Creem's official schema samples and assert both `currency` and `amount_cents` are non-null in the normalized `WebhookFields`.
 
----
-
-## Needs verification (not proven from code alone)
-
-> **Update 2026-07-08:** All three items below were verified by tracing source, docs, the official Creem webhook schema, and the HiHa/HouseHold receiver-side code. Verdicts appended to each item.
-
-1. **Callback HMAC does not cover the timestamp.** In [src/webhooks/forwarding.rs#L221-L246](file:///c%3A/share/tyde/bridge/src/webhooks/forwarding.rs#L221-L246) and `#L540-L548`, `X-Pay-Timestamp` is sent but `create_signature` signs only the JSON body. If app backends rely on the timestamp for replay-window checks, they cannot authenticate it. Needs the receiver-side verification contract (app backend or API docs) to confirm whether this is exploitable.
-
-   **Verdict: NOT a bug (not exploitable).** Verified receiver-side: both HiHa ([hiha/src/handlers/webhooks.rs#L77-L96](file:///c%3A/share/tyde/hiha/src/handlers/webhooks.rs#L77-L96)) and HouseHold ([household/src/handlers/webhooks.rs#L579-L604](file:///c%3A/share/tyde/household/src/handlers/webhooks.rs#L579-L604)) compute HMAC over `body.as_bytes()` only and do NOT read `X-Pay-Timestamp`. Replay protection uses `timestamp_epoch_ms` from inside the **signed body** + `event_id` idempotency (HiHa: `last_bridge_event_ms` upsert guard; HouseHold: `validate_timestamp_epoch_ms`). `API_CONTRACT.md#L590` instructs apps to use `timestamp_epoch_ms` (signed, in-body) for staleness — not the header. The header is informational only. Minor doc inconsistency: `WEBHOOK_ARCHITECTURE.md#L213` says `HMAC-SHA256(secret, payload + timestamp)` which is incorrect — code signs only `payload_json`; `API_CONTRACT.md#L22` is correct.
-
-2. **`duplicate_webhook_action(false,false,true) => Ignore`** in [src/webhooks/ingress.rs#L126-L140](file:///c%3A/share/tyde/bridge/src/webhooks/ingress.rs#L126-L140) may suppress a provider retry when a prior delivery row exists but is expired/dead-lettered/stuck. Confirming requires tracing `db/webhooks.rs` delivery retry/dead-letter semantics against the scheduler.
-
-   **Verdict: NOT a bug (Ignore is safe).** When `processed=false`, `forward_attempts` is always 0 (incremented only by `complete_webhook_delivery_attempt`, which runs only after `process_webhook_atomically` returns `Ok(Some(...))` i.e. after `processed=true`). A delivery with `forward_attempts=0` can never be dead-lettered (requires `>= 3`). The feared "expired/dead-lettered/stuck" state cannot coexist with `processed=false`. The background worker (`scheduler.rs#L142-L185`) re-runs `process_webhook_atomically` when `provider.processed=false`, so the existing delivery is auto-recovered. Claim lease is 600s, worker polls every 300s — worst-case recovery ~15 min. Ignore is correct: creating a second delivery would hit the same processing error.
-
-3. **Creem currency extraction completeness.** The amount path uses integer `as_i64()` (invariant-safe), but I did not fully verify currency-field extraction against Creem's payload schema.
-
-   **Verdict: CONFIRMED bug — promoted to finding #15 above.** Verified against Creem's official webhook schema ([docs.creem.io/code/webhooks](https://docs.creem.io/code/webhooks)): `refund.created` and `dispute.created` payloads do not contain `object.product.currency`, so the single-path currency extraction returns `null`. Refunds also miss `amount_cents` (schema uses `refund_amount` + `transaction`, not `last_transaction`). Severity Low: original payment currency is already stored from the initial event. See finding #15 for the fix.
