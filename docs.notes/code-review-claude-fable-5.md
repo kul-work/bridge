@@ -218,20 +218,6 @@ let txn_id = fields.provider_transaction_id.as_deref()
 
 ---
 
-## 11. Medium — Production URL validation accepts `http://localhost`
-
-**File:** [src/config.rs#L195-L214](file:///c%3A/share/tyde/bridge/src/config.rs#L195-L214) — `validate_public_https_url`
-
-**What is wrong.** In production validation, hosts `localhost`, `127.0.0.1`, `[::1]`, `*.localhost`, `*.local` skip the HTTPS requirement, so `http://localhost:3000` passes for `ADMIN_CLERK_FRONTEND_API`, `CLERK_FRONTEND_API`, and `ADMIN_CLERK_AUTHORIZED_PARTIES`.
-
-**Why it's a real bug.** These are production auth/origin security boundaries. Allowing localhost/plain-HTTP masks a production misconfig that should fail startup.
-
-**Smallest safe fix.** When `is_production_environment`, reject localhost/private/`.local` hosts and require `https` unconditionally for these values; keep the localhost allowance for non-production only.
-
-**Regression test.** Yes — production startup rejects `http://localhost` / `http://127.0.0.1` / `http://app.localhost` for these keys.
-
----
-
 ## 12. Medium — Global `purchase_token UNIQUE` breaks app isolation
 
 **File:** [migrations/02_create_subscriptions.sql#L13](file:///c%3A/share/tyde/bridge/migrations/02_create_subscriptions.sql#L13) — `purchase_token TEXT UNIQUE`
