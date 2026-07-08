@@ -14,7 +14,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 | # | Severity | Area | One-line |
 |---|----------|------|----------|
 | 1 | High | GP JWT auth | Pub/Sub JWT accepted without verifying service-account `email` / `email_verified` |
-| 6 | High | RLS | `list_user_subscriptions_to_cancel` bypasses app context → returns zero rows |
 | 7 | High | Scheduler | Terminal (cancelled/revoked) subs can be flipped to `paused` |
 | 8 | High | Scheduler | Scheduler callbacks lost if enqueue fails after state mutation |
 | 10 | Medium | GP webhook | Test notifications ACKed with no durable inbox/suppressed row |
@@ -37,22 +36,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 **Smallest safe fix.** Add an expected Pub/Sub service-account email to provider/client config. Extend `PubSubClaims` with `email_verified: Option<bool>`. After signature+audience checks, require `claims.email.as_deref() == Some(expected)` and `claims.email_verified == Some(true)`. Fail closed when verification is enabled but no expected email is configured.
 
 **Regression test.** Yes — accept when all claims match; reject on `email` mismatch; reject when `email_verified` missing/false.
-
----
-
-## 6. High — `list_user_subscriptions_to_cancel` bypasses RLS app context → silently returns no rows
-
-**File:** [src/db/users.rs#L7-L29](file:///c%3A/share/tyde/bridge/src/db/users.rs#L7-L29) — `list_user_subscriptions_to_cancel`
-
-**What is wrong.** This function queries `pay.subscriptions` directly on `pool` without opening a transaction and calling `set_local_app_id` — unlike every other subscription query (which use `begin_app_tx`).
-
-**Why it's a real bug (confirmed).** `pay.subscriptions` has `ENABLE` + `FORCE ROW LEVEL SECURITY` ([migrations/91_fix_rls_current_app_id_cast.sql#L15,L93](file:///c%3A/share/tyde/bridge/migrations/91_fix_rls_current_app_id_cast.sql#L15)) with policy `app_id = pay.current_app_id()`, and the app connects as `bridge_app` ([.env.sample#L2](file:///c%3A/share/tyde/bridge/.env.sample#L2)). With no `bridge.current_app_id` set on the session, `current_app_id()` doesn't match and RLS filters out **all** rows. The `WHERE app_id = $1` predicate does not help because RLS is applied on top.
-
-**Failure scenario.** A user deletion/cancellation flow calls this to find provider subscriptions to cancel. It returns an empty list even when the user has active subscriptions, so Bridge **skips provider-side cancellation** and the user keeps being billed.
-
-**Smallest safe fix.** Mirror the other functions: `begin_app_tx(pool, app_id)` (or `pool.begin()` + `set_local_app_id`), run the query on the tx, commit.
-
-**Regression test.** Yes — under a role/session where RLS applies, insert an active subscription and assert the row is returned.
 
 ---
 
