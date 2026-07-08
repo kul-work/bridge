@@ -14,8 +14,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 | # | Severity | Area | One-line |
 |---|----------|------|----------|
 | 1 | High | GP JWT auth | Pub/Sub JWT accepted without verifying service-account `email` / `email_verified` |
-| 7 | High | Scheduler | Terminal (cancelled/revoked) subs can be flipped to `paused` |
-| 8 | High | Scheduler | Scheduler callbacks lost if enqueue fails after state mutation |
 | 10 | Medium | GP webhook | Test notifications ACKed with no durable inbox/suppressed row |
 | 12 | Medium | DB constraint | Global `purchase_token UNIQUE` breaks app isolation |
 | 13 | Low | Email | Poisoned mutex `.expect()` panics production email path |
@@ -36,38 +34,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 **Smallest safe fix.** Add an expected Pub/Sub service-account email to provider/client config. Extend `PubSubClaims` with `email_verified: Option<bool>`. After signature+audience checks, require `claims.email.as_deref() == Some(expected)` and `claims.email_verified == Some(true)`. Fail closed when verification is enabled but no expected email is configured.
 
 **Regression test.** Yes — accept when all claims match; reject on `email` mismatch; reject when `email_verified` missing/false.
-
----
-
-## 7. High — Scheduled pause can overwrite terminal (cancelled/revoked) subscriptions
-
-**File:** [src/db/subscriptions.rs#L705-L730](file:///c%3A/share/tyde/bridge/src/db/subscriptions.rs#L705-L730) — `list_pending_pause_subscriptions`; [#L888-L913](file:///c%3A/share/tyde/bridge/src/db/subscriptions.rs#L888-L913) — `mark_subscription_paused`; caller [src/webhooks/scheduler.rs#L894-L917](file:///c%3A/share/tyde/bridge/src/webhooks/scheduler.rs#L894-L917)
-
-**What is wrong.** Selection uses only `google_pause_scheduled_at <= NOW() AND status != 'paused'`; the update sets `status='paused'` for any non-paused row. Neither excludes terminal states (`cancelled`, `expired`, `revoked`, `replaced`). The monotonicity guard is applied only to `last_event_time` (via `CASE`), not to the status write, and the caller passes `now_ms` rather than the scheduled event time, so the pause almost always looks "newer".
-
-**Why it's a real bug.** Violates the monotonic-transition invariant and terminal-state integrity: a stale scheduled pause can resurrect a cancelled/revoked subscription to `paused` and emit a false `subscription.paused` callback.
-
-**Failure scenario.** Pause scheduled for tomorrow → Google sends revoke today → Bridge sets `revoked` but the stale `google_pause_scheduled_at` remains → scheduler runs tomorrow → the revoked row is selected and flipped to `paused`.
-
-**Smallest safe fix.** Restrict both the SELECT and the UPDATE to pausable statuses (`'active','trial','past_due','on_hold'`) and add a monotonic guard on status. Prefer using the scheduled-pause timestamp (not `now_ms`) as the transition time. Clearing `google_pause_scheduled_at` on terminal transitions is a good defense-in-depth follow-up.
-
-**Regression test.** Yes — a row with `google_pause_scheduled_at <= NOW()` and status `revoked`/`cancelled` must not become `paused`, and no paused callback is enqueued.
-
----
-
-## 8. High — Scheduler state transitions can lose their callback (no durable work item)
-
-**File:** [src/webhooks/scheduler.rs#L794-L870](file:///c%3A/share/tyde/bridge/src/webhooks/scheduler.rs#L794-L870) — `process_price_step_up_expiry`; [#L894-L953](file:///c%3A/share/tyde/bridge/src/webhooks/scheduler.rs#L894-L953) — `process_pause_transitions`
-
-**What is wrong.** Both mark the subscription's new state durably first (`mark_subscription_*` → status changes so the row leaves the candidate set), then call `emit_scheduler_callback`, whose error is only `error!`-logged. `emit_scheduler_callback` can fail **before** `create_and_forward_webhook` creates the durable `webhook_delivery` row (e.g. `repo.get_app(app_id).await?`). The 3-strike retry only protects deliveries that already exist.
-
-**Why it's a real bug.** The state mutation and the durable callback are not atomic and there is no retry once the row is no longer eligible. The app backend never learns of the cancellation/pause → stale entitlement.
-
-**Failure scenario.** Price step-up deadline expires → `mark_subscription_price_step_up_expired` sets `cancelled` → `emit_scheduler_callback` fails loading app data → error logged → next tick skips the row (no longer expired-candidate) → app never receives `subscription.cancelled`.
-
-**Smallest safe fix.** Create the callback/outbox delivery atomically with the state transition (same tx), or keep a "scheduler-callback-pending" marker cleared only after the delivery row is created, so the work remains retryable. Inline HTTP retry is not sufficient — the durable record is what's lost.
-
-**Regression test.** Yes — when `mark_subscription_*` succeeds but callback creation fails before a delivery row exists, assert the work stays retryable (or a durable delivery/outbox row exists).
 
 ---
 
