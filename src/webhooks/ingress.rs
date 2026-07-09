@@ -362,6 +362,28 @@ pub async fn handle_google_play(
             }
             true
         };
+        // Misconfig guard: identity verification is enabled (forced on in
+        // non-mock) but no expected service account email is resolvable from
+        // any source (env, legacy var, or DB provider config). Without the
+        // email every Google Play webhook for this app is rejected as a
+        // signature failure — but the per-request error reads like an attack,
+        // not a missing config. Surface the real cause once per app so the
+        // operator can set GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL (or the DB
+        // provider_config field) instead of chasing a false "bad signature".
+        if verify_pubsub_identity && pub_sub_service_account_email.is_none() {
+            static WARNED_MISSING_EMAIL: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+                std::sync::OnceLock::new();
+            let warned = WARNED_MISSING_EMAIL.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+            if warned.lock().unwrap().insert(app.id.to_string()) {
+                tracing::warn!(
+                    app_id = %app.id,
+                    provider = "google_play",
+                    "Google Pub/Sub identity verification is enabled but no expected service account email is configured. \
+                     Set GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL (env) or provider_config.config.pub_sub_service_account_email (DB). \
+                     Until then, all Google Play webhooks for this app are rejected as signature failures."
+                );
+            }
+        }
         let skip_rsa_verification = crate::config::parse_bool_env("GOOGLE_SKIP_RSA_VERIFICATION", false)
             .map_err(|e| BridgeError::ConfigError(e.to_string()))?;
 
