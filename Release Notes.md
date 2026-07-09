@@ -1,5 +1,15 @@
 # Release Notes
 
+## [0.7.1] - 2026-07-09
+### Fixes
+- **Creem Lifecycle**: Resolve Creem subscriptions by subscription_id (not just purchase_token) in cancellation_scheduled and other lifecycle handlers, fixing silent callback drops for Creem.
+- **Creem Payments**: Extract `provider_transaction_id` from Creem `payment.failed` webhooks so failed payments are recorded in `pay.payments`.
+
+### Tests and docs
+- **Creem Snapshot Test**: Align test inserts and assertions with canonical DB status values (`trial`, `cancelled`) introduced by migration 10.
+- **Google Callback Body Test**: Use `mock-google-play-subscription:` token prefix required by mock validation added in a0236b0.
+- **Admin Test Runner**: Auto-start mock Clerk server and pre-flight check that Bridge enforces JWT auth before running admin auth tests.
+
 ## [0.7.0] - 2026-07-09
 ### Features
 - **Scheduler Callbacks**: Commit scheduled subscription state transitions and callback enqueue in one transaction.
