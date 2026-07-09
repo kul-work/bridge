@@ -22,6 +22,50 @@ echo ""
 echo -e "${CYAN}Time:  $(date -u +%Y-%m-%dT%H:%M:%SZ)${NC}"
 echo ""
 
+# --- Start mock Clerk server ---
+MOCK_CLERK_PID=""
+if curl -s -f "$MOCK_CLERK_URL/token" >/dev/null 2>&1; then
+    echo -e "${GREEN}Mock Clerk already running on port $MOCK_CLERK_PORT${NC}"
+else
+    echo -e "${YELLOW}Starting mock Clerk server on port $MOCK_CLERK_PORT...${NC}"
+    python "$SCRIPT_DIR/mock_clerk.py" "$MOCK_CLERK_PORT" &
+    MOCK_CLERK_PID=$!
+    for i in {1..10}; do
+        if curl -s -f "$MOCK_CLERK_URL/token" >/dev/null 2>&1; then
+            echo -e "${GREEN}Mock Clerk started (PID $MOCK_CLERK_PID)${NC}"
+            break
+        fi
+        if [[ "$i" -eq 10 ]]; then
+            echo -e "${RED}FAIL: Mock Clerk server did not start${NC}"
+            exit 1
+        fi
+        sleep 1
+    done
+fi
+
+# --- Pre-flight: verify Bridge is not in bypass mode ---
+PREFLIGHT_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+  "$BRIDGE_API_URL/admin/trigger-jobs" \
+  -H "Content-Type: application/json" \
+  -d '{"jobs": ["webhook_retry"]}' 2>/dev/null || echo "000")
+
+if [[ "$PREFLIGHT_CODE" != "401" && "$PREFLIGHT_CODE" != "403" ]]; then
+    echo -e "${RED}FAIL: Bridge admin auth is not enforcing JWT checks.${NC}"
+    echo -e "${RED}       Got HTTP $PREFLIGHT_CODE for unauthenticated request (expected 401/403).${NC}"
+    echo -e "${YELLOW}       Ensure .env has:${NC}"
+    echo -e "${YELLOW}         BYPASS_ADMIN_AUTH=false${NC}"
+    echo -e "${YELLOW}         ADMIN_CLERK_FRONTEND_API=http://localhost:5577${NC}"
+    echo -e "${YELLOW}         ADMIN_CLERK_AUTHORIZED_PARTIES=https://admin.bridge.example.com${NC}"
+    echo -e "${YELLOW}         ADMIN_CLERK_ORG_ID=org_test${NC}"
+    echo -e "${YELLOW}       Then restart Bridge.${NC}"
+    if [[ -n "$MOCK_CLERK_PID" ]]; then
+        kill "$MOCK_CLERK_PID" >/dev/null 2>&1 || true
+    fi
+    exit 1
+fi
+echo -e "${GREEN}Pre-flight: Bridge admin auth is enforcing JWT checks ✓${NC}"
+echo ""
+
 TESTS_PASSED=0
 TESTS_FAILED=0
 RESULTS=()
@@ -112,6 +156,12 @@ echo "Summary report saved to: admin-suite-summary.json"
 echo ""
 cat admin-suite-summary.json
 echo ""
+
+# --- Stop mock Clerk if we started it ---
+if [[ -n "$MOCK_CLERK_PID" ]]; then
+    kill "$MOCK_CLERK_PID" >/dev/null 2>&1 || true
+    echo -e "${YELLOW}Mock Clerk server stopped (PID $MOCK_CLERK_PID)${NC}"
+fi
 
 if [[ $TESTS_FAILED -gt 0 ]]; then exit 1; fi
 exit 0
