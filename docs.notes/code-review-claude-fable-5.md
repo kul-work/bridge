@@ -15,7 +15,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 |---|----------|------|----------|
 | 10 | Medium | GP webhook | Test notifications ACKed with no durable inbox/suppressed row |
 | 12 | Medium | DB constraint | Global `purchase_token UNIQUE` breaks app isolation |
-| 14 | Low | Rate limit | Spoofable `X-Forwarded-For` + unbounded key growth |
 
 
 ---
@@ -45,18 +44,3 @@ All findings below were confirmed by reading the actual code (line numbers verif
 **Smallest safe fix.** Decide the intended invariant. If app-scoped: replace with a partial unique index on `(app_id, provider, purchase_token) WHERE purchase_token IS NOT NULL`. If truly global: document it explicitly and confirm all fraud/restore code depends on it. Flagging for a decision rather than a blind change.
 
 **Regression test.** Yes (whichever direction) — two apps with the same token both succeed (app-scoped) OR the second is rejected (global), plus duplicate within `(app_id, provider)` fails.
-
----
-
-## 14. Low — Rate limiter: spoofable client IP + unbounded key growth
-
-**File:** [src/middleware/rate_limit.rs#L129-L149](file:///c%3A/share/tyde/bridge/src/middleware/rate_limit.rs#L129-L149) — `extract_client_ip`; store at [#L49-L120](file:///c%3A/share/tyde/bridge/src/middleware/rate_limit.rs#L49-L120)
-
-**What is wrong.** (a) `X-Forwarded-For` / `X-Real-IP` are trusted before the socket peer, with no trusted-proxy gate (the code comment acknowledges the hazard). (b) The static rate-limit `HashMap` never removes keys, even after their timestamp vectors are pruned empty.
-
-**Why it's a real bug.** If Bridge is ever reachable without a header-stripping proxy in front, an attacker rotates `X-Forwarded-For` to bypass the admin-auth IP guard and public-endpoint limiter, and simultaneously grows the map unboundedly (memory exhaustion). Both are conditional on deployment topology, hence Low.
-
-**Smallest safe fix.** Honor forwarded headers only when the socket peer is a configured trusted proxy; otherwise use `ConnectInfo` peer. After pruning, `remove` empty keys and/or cap total keys.
-
-**Regression test.** Yes — spoofed `X-Forwarded-For` from an untrusted peer maps to the same bucket; stale empty keys are evicted.
-
