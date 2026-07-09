@@ -34,6 +34,8 @@ GRANT EXECUTE ON FUNCTION pay.webhook_delivery_exists_bootstrap(UUID) TO bridge_
 GRANT EXECUTE ON FUNCTION pay.get_app_by_webhook_token_bootstrap(UUID) TO bridge_app;
 GRANT EXECUTE ON FUNCTION pay.list_enabled_app_ids_bootstrap() TO bridge_app;
 GRANT EXECUTE ON FUNCTION pay.list_app_summaries_bootstrap() TO bridge_app;
+GRANT EXECUTE ON FUNCTION pay.update_app_notes_bootstrap(UUID, TEXT) TO bridge_app;
+GRANT EXECUTE ON FUNCTION pay.count_enabled_provider_configs_bootstrap() TO bridge_app;
 GRANT EXECUTE ON FUNCTION pay.get_api_key_auth_candidates_bootstrap(TEXT) TO bridge_app;
 
 REVOKE SELECT ON pay.v_data_retention_stats FROM bridge_app;
