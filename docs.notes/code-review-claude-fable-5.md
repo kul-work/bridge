@@ -15,7 +15,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 |---|----------|------|----------|
 | 10 | Medium | GP webhook | Test notifications ACKed with no durable inbox/suppressed row |
 | 12 | Medium | DB constraint | Global `purchase_token UNIQUE` breaks app isolation |
-| 13 | Low | Email | Poisoned mutex `.expect()` panics production email path |
 | 14 | Low | Rate limit | Spoofable `X-Forwarded-For` + unbounded key growth |
 
 
@@ -46,20 +45,6 @@ All findings below were confirmed by reading the actual code (line numbers verif
 **Smallest safe fix.** Decide the intended invariant. If app-scoped: replace with a partial unique index on `(app_id, provider, purchase_token) WHERE purchase_token IS NOT NULL`. If truly global: document it explicitly and confirm all fraud/restore code depends on it. Flagging for a decision rather than a blind change.
 
 **Regression test.** Yes (whichever direction) — two apps with the same token both succeed (app-scoped) OR the second is rejected (global), plus duplicate within `(app_id, provider)` fails.
-
----
-
-## 13. Low — Poisoned-mutex `.expect()` panics production email path
-
-**File:** [src/services/email.rs#L94-L106](file:///c%3A/share/tyde/bridge/src/services/email.rs#L94-L106) — `start_provider_rate_limit_cooldown`, `provider_rate_limit_cooldown_remaining_seconds`
-
-**What is wrong.** `.lock().expect("email provider cooldown lock poisoned")` on the send path. Violates "No unwrap() in production paths" (expect is the same panic class).
-
-**Failure scenario.** A task panics while holding `provider_rate_limit_cooldown_until`; every subsequent Resend email call then panics instead of returning a `BridgeError`.
-
-**Smallest safe fix.** Return `Result` and map poison to `BridgeError::InternalServerError(...)`, or recover the guard via `into_inner()`.
-
-**Regression test.** Yes — poison a test mutex and assert the helper returns an error, not a panic.
 
 ---
 

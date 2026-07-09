@@ -881,7 +881,7 @@ mod tests {
         tx.commit().await?;
 
         let payments = get_user_payments(pool, app_id, external_user_id, 10, 0).await?;
-        assert!(payments.len() >= 1, "expected at least one payment row");
+        assert!(!payments.is_empty(), "expected at least one payment row");
 
         let placeholder = payments
             .iter()
@@ -899,7 +899,7 @@ mod tests {
 
         let history = list_user_payments_keyset(pool, app_id, external_user_id, 10, None, None)
             .await?;
-        assert!(history.len() >= 1, "expected at least one history entry");
+        assert!(!history.is_empty(), "expected at least one history entry");
 
         let history_placeholder = history
             .iter()
