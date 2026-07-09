@@ -14,6 +14,10 @@ reviews:
       unit_tests:
         enabled: false                 # <- THIS stops automatic test generation
 
+    auto_review:
+      auto_incremental_review: true
+      enabled: false                   # only review on request
+
     path_instructions:
       - path: "**/*"
         instructions: >
@@ -21,7 +25,3 @@ reviews:
           - Restrict feedback to correctness, security, or functionality-breaking problems.
           - Do not post comments on code style, formatting, or non-critical improvements.
           - When in doubt, err on the side of fewer comments.
-
-auto_review:
-    auto_incremental_review: true
-    enabled: false                     # only review on request
