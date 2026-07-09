@@ -585,7 +585,7 @@ impl ProviderWebhookAdapter {
                         .clone()
                         .or_else(|| object_checkout_id.clone())
                         .or_else(|| object_id.clone()),
-                    "payment.refunded" | "payment.partially_refunded" => object_transaction_id
+                    "payment.refunded" | "payment.partially_refunded" | "payment.failed" => object_transaction_id
                         .clone()
                         .or_else(|| obj.get("last_transaction_id")
                             .and_then(|v| v.as_str())
