@@ -86,25 +86,25 @@ echo "Testing: active"
 assert_field "is_premium" "$SNAPSHOT" ".is_premium" "true"
 assert_field "status" "$SNAPSHOT" ".status" "active"
 
-# 1.2 TRIALING
+# 1.2 TRIAL
 cleanup_user
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, provider, current_period_end) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID_SUB', 'trialing', 'creem', NOW() + INTERVAL '7 days');" > /dev/null
+  -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, provider, current_period_end) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID_SUB', 'trial', 'creem', NOW() + INTERVAL '7 days');" > /dev/null
 
 SNAPSHOT=$(get_snapshot)
-echo "Testing: trialing"
+echo "Testing: trial"
 assert_field "is_premium" "$SNAPSHOT" ".is_premium" "true"
-assert_field "status" "$SNAPSHOT" ".status" "trialing"
+assert_field "status" "$SNAPSHOT" ".status" "trial"
 
-# 1.3 SCHEDULED_CANCEL (Pre-expiry)
+# 1.3 CANCELLED (Pre-expiry)
 cleanup_user
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, provider, current_period_end, auto_renewing) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID_SUB', 'scheduled_cancel', 'creem', NOW() + INTERVAL '10 days', false);" > /dev/null
+  -c "INSERT INTO pay.subscriptions (app_id, external_user_id, subscription_id, status, provider, current_period_end, auto_renewing) VALUES ('$BRIDGE_APP_ID', '$USER_ID', '$PRODUCT_ID_SUB', 'cancelled', 'creem', NOW() + INTERVAL '10 days', false);" > /dev/null
 
 SNAPSHOT=$(get_snapshot)
-echo "Testing: scheduled_cancel (Pre-expiry)"
+echo "Testing: cancelled (Pre-expiry)"
 assert_field "is_premium" "$SNAPSHOT" ".is_premium" "true"
-assert_field "status" "$SNAPSHOT" ".status" "scheduled_cancel"
+assert_field "status" "$SNAPSHOT" ".status" "cancelled"
 
 echo ""
 
@@ -133,19 +133,19 @@ assert_field "is_premium" "$SNAPSHOT" ".is_premium" "false"
 echo ""
 
 # Step 3: Ranking
-echo -e "${BLUE}[3/3] Testing Ranking (Active vs Trialing)${NC}"
+echo -e "${BLUE}[3/3] Testing Ranking (Active vs Trial)${NC}"
 cleanup_user
 
-# Insert one TRIALING and one ACTIVE
-# ACTIVE should be ranked higher than TRIALING in snapshot_status_rank
+# Insert one TRIAL and one ACTIVE
+# ACTIVE should be ranked higher than TRIAL in snapshot_status_rank
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
-  -c "INSERT INTO pay.subscriptions (id, app_id, external_user_id, subscription_id, status, provider, current_period_end, created_at) VALUES ('$(uuidgen 2>/dev/null || echo "00000000-0000-0000-0000-000000000003")', '$BRIDGE_APP_ID', '$USER_ID', 'creem_trial', 'trialing', 'creem', NOW() + INTERVAL '7 days', NOW() - INTERVAL '1 day');" > /dev/null
+  -c "INSERT INTO pay.subscriptions (id, app_id, external_user_id, subscription_id, status, provider, current_period_end, created_at) VALUES ('$(uuidgen 2>/dev/null || echo "00000000-0000-0000-0000-000000000003")', '$BRIDGE_APP_ID', '$USER_ID', 'creem_trial', 'trial', 'creem', NOW() + INTERVAL '7 days', NOW() - INTERVAL '1 day');" > /dev/null
 
 psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" \
   -c "INSERT INTO pay.subscriptions (id, app_id, external_user_id, subscription_id, status, provider, current_period_end, created_at) VALUES ('$(uuidgen 2>/dev/null || echo "00000000-0000-0000-0000-000000000004")', '$BRIDGE_APP_ID', '$USER_ID', 'creem_active', 'active', 'creem', NOW() + INTERVAL '1 month', NOW());" > /dev/null
 
 SNAPSHOT=$(get_snapshot)
-echo "Testing: Ranking (Active vs Trialing)"
+echo "Testing: Ranking (Active vs Trial)"
 assert_field "status" "$SNAPSHOT" ".status" "active"
 assert_field "subscription_id" "$SNAPSHOT" ".subscription_id" "creem_active"
 
