@@ -47,6 +47,7 @@ Admin routes under `/admin` require a Clerk session JWT from the configured Cler
 - `ADMIN_MUTATION_RATE_LIMIT_PER_MINUTE` (default: `10`) - Per-admin-actor rate limit for admin mutating requests such as `POST` and `PATCH`.
 - `ADMIN_AUTH_IP_LIMIT` (default: `10`) - Per-IP limit for failed or missing admin Clerk JWT attempts before JWT parsing. The rolling window is fixed at 60 seconds.
 - `RATE_LIMIT_DISABLE` (default: `false`) - Set to `true` to completely disable all rate limiting middlewares (useful for local development, staging, or automated security scans).
+- `TRUSTED_PROXIES` (default: unset) - Comma-separated **IP literals** (not CIDR ranges) of reverse proxies trusted to set forwarded IP headers (`X-Forwarded-For`, `X-Real-IP`) for per-IP rate limiting. When unset, forwarded headers are ignored and the TCP socket peer IP is used directly. Set this to the address of the proxy in front of Bridge (e.g. `127.0.0.1` for the local nginx proxy, or the Railway proxy address) so real client IPs are honored; without it, per-IP buckets collapse to the peer address (API-key and admin-actor limiters are unaffected). `X-Forwarded-For` is parsed right-to-left, skipping entries that are themselves trusted proxies, so a client-injected leftmost entry cannot spoof the bucket key when the proxy appends (nginx `$proxy_add_x_forwarded_for`). Invalid entries (CIDR ranges, typos) fail loudly at first use rather than being silently dropped.
 - `BYPASS_ADMIN_AUTH` (default: `false`) - Set to `true` to bypass Clerk admin authentication in non-production environments (useful for automated security scanning of admin endpoints). This option is strictly rejected and disabled in production environments.
 
 Issuer fallback order is:
@@ -99,7 +100,7 @@ Keep Google provider controls in `pay.provider_configs.config` per app where pos
 These appear in older docs or `.env.sample`, but active runtime paths do not currently read them:
 
 - `APP_EMAIL_SUPPORT` - Use `ADMIN_ALERT_EMAIL` or `TYDE_SUPPORT_EMAIL` for alert destinations.
-- `RATE_LIMIT_CLEANUP_HOURS` - No active cleanup interval reads this env var.
+- `RATE_LIMIT_CLEANUP_HOURS` - No active cleanup interval reads this env var. Drained rate-limit buckets are evicted lazily on their next touch instead.
 
 ## Database Configuration
 
