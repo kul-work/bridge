@@ -11,7 +11,7 @@ use crate::{
     error::BridgeError,
     ports::{
         ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository,
-        WebhookWriteRepository,
+        WebhookSuppressionRepository, WebhookWriteRepository,
     },
     ports::composites::WebhookIngressRepository,
     state::AppState,
@@ -19,7 +19,7 @@ use crate::{
 };
 use crate::db::webhooks::WebhookDeliveryEnqueue;
 use crate::webhooks::forwarding::{webhook_worker_id, WEBHOOK_DELIVERY_LEASE_SECS};
-use crate::webhooks::provider_adapter::ProviderWebhookAdapter;
+use crate::webhooks::provider_adapter::{ProviderWebhookAdapter, GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE};
 
 const CREEM_SIGNATURE_HEADERS: [&str; 3] = ["creem-signature", "Webhook-Signature", "x-signature"];
 
@@ -480,7 +480,10 @@ pub async fn handle_google_play(
         "Google Play webhook received"
     );
 
-    if subscription_id.is_none() && purchase_token.is_none() {
+    if subscription_id.is_none()
+        && purchase_token.is_none()
+        && event_type != GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE
+    {
         tracing::warn!(
             app_id = %app.id,
             event_id = event_id,
@@ -515,6 +518,29 @@ pub async fn handle_google_play(
             );
             return Err(retryable_provider_ack_error("Google Play", &event_id, e));
         }
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    if event_type == GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE {
+        if let Err(e) = database.as_ref().suppress_webhook(webhook_id, "google_play_test_notification").await {
+            error!(
+                app_id = %app.id,
+                webhook_provider_id = %webhook_id,
+                provider = "Google Play",
+                event_id = event_id,
+                error = %e,
+                "Google Play test notification suppression failed before provider acknowledgement"
+            );
+            return Err(retryable_provider_ack_error("Google Play", &event_id, e));
+        }
+
+        info!(
+            app_id = %app.id,
+            webhook_provider_id = %webhook_id,
+            provider = "Google Play",
+            event_id = event_id,
+            "Google Play test notification stored as suppressed; no app delivery queued"
+        );
         return Ok(StatusCode::NO_CONTENT);
     }
 

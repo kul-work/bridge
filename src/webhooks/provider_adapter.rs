@@ -5,6 +5,7 @@ use crate::error::BridgeError;
 use crate::utils::diagnostic_hash;
 use crate::webhooks::processor::WebhookFields;
 
+pub(crate) const GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE: &str = "GOOGLE_PLAY_TEST_NOTIFICATION";
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -156,6 +157,10 @@ fn google_play_event_type(payload: &serde_json::Value) -> String {
         return "VOIDED_PURCHASE".to_string();
     }
 
+    if payload.get("testNotification").is_some() {
+        return GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE.to_string();
+    }
+
     "unknown".to_string()
 }
 
@@ -208,9 +213,8 @@ impl ProviderWebhookAdapter {
                 if decoded_payload.get("testNotification").is_some() {
                     info!(
                         message_id = pubsub_message_id.as_deref().unwrap_or("unknown"),
-                        "Google Play test notification received; no-op"
+                        "Google Play test notification received; persisting suppressed provider event"
                     );
-                    return Ok(None);
                 }
                 if crate::config::mock_external_apis_enabled() {
                     if let Some(price_str) = headers.get("X-Test-Price-Cents").and_then(|h| h.to_str().ok()) {
@@ -271,6 +275,7 @@ impl ProviderWebhookAdapter {
                     "ONE_TIME_PRODUCT_REFUNDED" => "purchase.one_time_refunded".to_string(),
                     "ONE_TIME_PRODUCT_CANCELED" => "purchase.one_time_cancelled".to_string(),
                     "VOIDED_PURCHASE" => "payment.refunded".to_string(),
+                    GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE => "google_play.test_notification".to_string(),
                     _ => format!("google_play.{}", raw_event_type),
                 }
             }
@@ -737,9 +742,13 @@ fn decode_google_play_payload(
 
 #[cfg(test)]
 mod tests {
+    use axum::http::HeaderMap;
     use serde_json::json;
 
-    use super::{normalize_creem_event, normalize_google_play_event};
+    use super::{
+        normalize_creem_event, normalize_google_play_event, ProviderWebhookAdapter,
+        GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE,
+    };
 
     #[test]
     fn normalizes_google_subscription_ingress_fields_without_changing_identity() {
@@ -866,6 +875,31 @@ mod tests {
         assert_eq!(message_id.as_deref(), Some("unwrapped-message-id"));
         assert_eq!(decoded["packageName"].as_str(), Some("com.hiha.fe"));
         assert!(decoded.get("testNotification").is_some());
+    }
+
+    #[test]
+    fn normalizes_google_play_test_notification_for_durable_suppression() {
+        let payload = json!({
+            "eventId": "google-test-event-id",
+            "version": "1.0",
+            "packageName": "com.hiha.fe",
+            "eventTimeMillis": "1778936707956",
+            "testNotification": { "version": "1.0" }
+        });
+
+        let event = ProviderWebhookAdapter::GooglePlay
+            .decode_and_normalize(payload.clone(), &HeaderMap::new())
+            .unwrap()
+            .expect("test notification should still produce a durable provider event");
+
+        assert_eq!(event.provider, "google_play");
+        assert_eq!(event.provider_event_id, "google-test-event-id");
+        assert_eq!(event.raw_event_type, GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE);
+        assert_eq!(event.canonical_event_type.as_deref(), Some("google_play.test_notification"));
+        assert_eq!(event.occurred_at_ms, Some(1778936707956));
+        assert_eq!(event.subscription_id, None);
+        assert_eq!(event.purchase_token, None);
+        assert_eq!(event.payload, payload);
     }
 
     #[test]
