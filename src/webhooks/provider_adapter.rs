@@ -5,6 +5,7 @@ use crate::error::BridgeError;
 use crate::utils::diagnostic_hash;
 use crate::webhooks::processor::WebhookFields;
 
+pub(crate) const GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE: &str = "GOOGLE_PLAY_TEST_NOTIFICATION";
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -156,6 +157,10 @@ fn google_play_event_type(payload: &serde_json::Value) -> String {
         return "VOIDED_PURCHASE".to_string();
     }
 
+    if payload.get("testNotification").is_some() {
+        return GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE.to_string();
+    }
+
     "unknown".to_string()
 }
 
@@ -163,6 +168,22 @@ fn google_play_event_type(payload: &serde_json::Value) -> String {
 pub(crate) enum ProviderWebhookAdapter {
     GooglePlay,
     Creem,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NormalizedProviderStatus {
+    Known(String),
+    Unknown(String),
+    Missing,
+}
+
+impl NormalizedProviderStatus {
+    pub(crate) fn known(self) -> Option<String> {
+        match self {
+            Self::Known(status) => Some(status),
+            Self::Unknown(_) | Self::Missing => None,
+        }
+    }
 }
 
 impl ProviderWebhookAdapter {
@@ -182,17 +203,18 @@ impl ProviderWebhookAdapter {
         match self {
             Self::GooglePlay => {
                 let (mut decoded_payload, pubsub_message_id) = decode_google_play_payload(&payload, headers)?;
+                let auth_diagnostics = google_play_pubsub_auth_diagnostics(headers);
                 tracing::debug!(
                     target: "BPT-RAW",
-                    "Webhook Incoming Payload [google_play]: {}",
-                    sanitize_google_play_payload_for_log(&decoded_payload)
+                    "Webhook Incoming Payload [google_play]: {}, pubsub_auth={}",
+                    sanitize_google_play_payload_for_log(&decoded_payload),
+                    auth_diagnostics
                 );
                 if decoded_payload.get("testNotification").is_some() {
                     info!(
                         message_id = pubsub_message_id.as_deref().unwrap_or("unknown"),
-                        "Google Play test notification received; no-op"
+                        "Google Play test notification received; persisting suppressed provider event"
                     );
-                    return Ok(None);
                 }
                 if crate::config::mock_external_apis_enabled() {
                     if let Some(price_str) = headers.get("X-Test-Price-Cents").and_then(|h| h.to_str().ok()) {
@@ -253,6 +275,7 @@ impl ProviderWebhookAdapter {
                     "ONE_TIME_PRODUCT_REFUNDED" => "purchase.one_time_refunded".to_string(),
                     "ONE_TIME_PRODUCT_CANCELED" => "purchase.one_time_cancelled".to_string(),
                     "VOIDED_PURCHASE" => "payment.refunded".to_string(),
+                    GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE => "google_play.test_notification".to_string(),
                     _ => format!("google_play.{}", raw_event_type),
                 }
             }
@@ -360,22 +383,22 @@ impl ProviderWebhookAdapter {
         }
     }
 
-    pub(crate) fn normalize_status(&self, raw_status: Option<&str>) -> Option<String> {
-        let Some(s) = raw_status else { return Some("pending".to_string()); };
+    pub(crate) fn normalize_status(&self, raw_status: Option<&str>) -> NormalizedProviderStatus {
+        let Some(s) = raw_status else { return NormalizedProviderStatus::Missing; };
         let cleaned = s.trim().to_ascii_lowercase();
         match cleaned.as_str() {
-            "trialing" | "trial" => Some("trial".to_string()),
-            "active" | "paid" | "completed" | "success" => Some("active".to_string()),
-            "past_due" | "grace_period" => Some("past_due".to_string()),
-            "cancelled" | "canceled" => Some("cancelled".to_string()),
-            "expired" => Some("expired".to_string()),
-            "on_hold" | "on-hold" => Some("on_hold".to_string()),
-            "paused" => Some("paused".to_string()),
-            "revoked" => Some("revoked".to_string()),
-            "pending" => Some("pending".to_string()),
+            "trialing" | "trial" => NormalizedProviderStatus::Known("trial".to_string()),
+            "active" | "paid" | "completed" | "success" => NormalizedProviderStatus::Known("active".to_string()),
+            "past_due" | "grace_period" => NormalizedProviderStatus::Known("past_due".to_string()),
+            "cancelled" | "canceled" => NormalizedProviderStatus::Known("cancelled".to_string()),
+            "expired" => NormalizedProviderStatus::Known("expired".to_string()),
+            "on_hold" | "on-hold" => NormalizedProviderStatus::Known("on_hold".to_string()),
+            "paused" => NormalizedProviderStatus::Known("paused".to_string()),
+            "revoked" => NormalizedProviderStatus::Known("revoked".to_string()),
+            "pending" => NormalizedProviderStatus::Known("pending".to_string()),
             _ => {
                 tracing::warn!(raw_status = s, cleaned_status = %cleaned, provider = ?self, "unknown status ignored");
-                None
+                NormalizedProviderStatus::Unknown(s.to_string())
             }
         }
     }
@@ -510,9 +533,15 @@ impl ProviderWebhookAdapter {
 
                 // Prefer actual cash collected when Creem sends a transaction object.
                 // Trial invoices can have amount_paid = 0 while amount is the recurring list price.
+                // Refunds/disputes use `refund_amount` + a `transaction` (not `last_transaction`)
+                // object, so those paths are covered as fallbacks.
                 let amount_cents = obj.get("last_transaction")
                     .and_then(|v| v.get("amount_paid").or_else(|| v.get("amount")))
                     .and_then(|v| v.as_i64())
+                    .or_else(|| obj.get("refund_amount").and_then(|v| v.as_i64()))
+                    .or_else(|| obj.get("transaction")
+                        .and_then(|v| v.get("amount_paid").or_else(|| v.get("amount")))
+                        .and_then(|v| v.as_i64()))
                     .or_else(|| obj.get("order")
                         .and_then(|v| v.get("amount"))
                         .and_then(|v| v.as_i64()))
@@ -520,9 +549,20 @@ impl ProviderWebhookAdapter {
                         .and_then(|v| v.get("price"))
                         .and_then(|v| v.as_i64()))
                     .or_else(|| obj.get("amount").and_then(|v| v.as_i64()));
+                // Currency mirrors the amount fallback chain: refunds use `refund_currency`
+                // or `transaction.currency`, disputes use top-level `currency`, checkout uses
+                // `order.currency`. `product.currency` covers subscription/checkout events.
                 let currency = obj.get("product")
                     .and_then(|v| v.get("currency"))
                     .and_then(|v| v.as_str())
+                    .or_else(|| obj.get("transaction")
+                        .and_then(|v| v.get("currency"))
+                        .and_then(|v| v.as_str()))
+                    .or_else(|| obj.get("order")
+                        .and_then(|v| v.get("currency"))
+                        .and_then(|v| v.as_str()))
+                    .or_else(|| obj.get("refund_currency").and_then(|v| v.as_str()))
+                    .or_else(|| obj.get("currency").and_then(|v| v.as_str()))
                     .map(|s| s.to_string());
 
                 // Extract purchase_token (checkout_id for OTP, order_id for refunds)
@@ -545,7 +585,7 @@ impl ProviderWebhookAdapter {
                         .clone()
                         .or_else(|| object_checkout_id.clone())
                         .or_else(|| object_id.clone()),
-                    "payment.refunded" | "payment.partially_refunded" => object_transaction_id
+                    "payment.refunded" | "payment.partially_refunded" | "payment.failed" => object_transaction_id
                         .clone()
                         .or_else(|| obj.get("last_transaction_id")
                             .and_then(|v| v.as_str())
@@ -604,6 +644,54 @@ fn sanitize_google_play_payload_for_log(payload: &serde_json::Value) -> String {
     crate::utils::scrub_email(&payload)
 }
 
+fn google_play_pubsub_auth_diagnostics(headers: &HeaderMap) -> String {
+    let Some(header) = headers.get("authorization").and_then(|value| value.to_str().ok()) else {
+        return "missing".to_string();
+    };
+    let Some(token) = header.strip_prefix("Bearer ") else {
+        return "invalid_format".to_string();
+    };
+
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        return "invalid_jwt".to_string();
+    }
+
+    let Ok(payload_bytes) = decode_base64_flexible(parts[1]) else {
+        return "invalid_jwt_payload_base64".to_string();
+    };
+    let Ok(claims) = serde_json::from_slice::<serde_json::Value>(&payload_bytes) else {
+        return "invalid_jwt_payload_json".to_string();
+    };
+
+    let email_hash = claims
+        .get("email")
+        .and_then(|value| value.as_str())
+        .filter(|email| !email.trim().is_empty())
+        .map(diagnostic_hash)
+        .unwrap_or_else(|| "missing".to_string());
+    let email_verified = claims
+        .get("email_verified")
+        .and_then(|value| value.as_bool())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "missing".to_string());
+    let aud = claims
+        .get("aud")
+        .and_then(|value| value.as_str())
+        .map(crate::utils::scrub_email)
+        .unwrap_or_else(|| "missing".to_string());
+    let iss = claims
+        .get("iss")
+        .and_then(|value| value.as_str())
+        .map(crate::utils::scrub_email)
+        .unwrap_or_else(|| "missing".to_string());
+
+    format!(
+        "email_hash={}, email_verified={}, aud={}, iss={}",
+        email_hash, email_verified, aud, iss
+    )
+}
+
 
 fn decode_base64_flexible(input: &str) -> Result<Vec<u8>, String> {
     if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(input) {
@@ -654,9 +742,13 @@ fn decode_google_play_payload(
 
 #[cfg(test)]
 mod tests {
+    use axum::http::HeaderMap;
     use serde_json::json;
 
-    use super::{normalize_creem_event, normalize_google_play_event};
+    use super::{
+        normalize_creem_event, normalize_google_play_event, ProviderWebhookAdapter,
+        GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE,
+    };
 
     #[test]
     fn normalizes_google_subscription_ingress_fields_without_changing_identity() {
@@ -784,5 +876,60 @@ mod tests {
         assert_eq!(decoded["packageName"].as_str(), Some("com.hiha.fe"));
         assert!(decoded.get("testNotification").is_some());
     }
-}
 
+    #[test]
+    fn normalizes_google_play_test_notification_for_durable_suppression() {
+        let payload = json!({
+            "eventId": "google-test-event-id",
+            "version": "1.0",
+            "packageName": "com.hiha.fe",
+            "eventTimeMillis": "1778936707956",
+            "testNotification": { "version": "1.0" }
+        });
+
+        let event = ProviderWebhookAdapter::GooglePlay
+            .decode_and_normalize(payload.clone(), &HeaderMap::new())
+            .unwrap()
+            .expect("test notification should still produce a durable provider event");
+
+        assert_eq!(event.provider, "google_play");
+        assert_eq!(event.provider_event_id, "google-test-event-id");
+        assert_eq!(event.raw_event_type, GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE);
+        assert_eq!(event.canonical_event_type.as_deref(), Some("google_play.test_notification"));
+        assert_eq!(event.occurred_at_ms, Some(1778936707956));
+        assert_eq!(event.subscription_id, None);
+        assert_eq!(event.purchase_token, None);
+        assert_eq!(event.payload, payload);
+    }
+
+    #[test]
+    fn google_play_pubsub_auth_diagnostics_exposes_identity_claim_presence_without_raw_email() {
+        use axum::http::{HeaderMap, HeaderValue};
+        use base64::Engine as _;
+        use super::google_play_pubsub_auth_diagnostics;
+
+        let claims = json!({
+            "iss": "https://accounts.google.com",
+            "aud": "https://bridge.example.com/webhooks/google-play",
+            "email": "pubsub-push@example-project.iam.gserviceaccount.com",
+            "email_verified": true
+        });
+        let token = format!(
+            "header.{}.signature",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string())
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        );
+
+        let diagnostics = google_play_pubsub_auth_diagnostics(&headers);
+
+        assert!(diagnostics.contains("email_hash="));
+        assert!(diagnostics.contains("email_verified=true"));
+        assert!(diagnostics.contains("aud=https://bridge.example.com/webhooks/google-play"));
+        assert!(diagnostics.contains("iss=https://accounts.google.com"));
+        assert!(!diagnostics.contains("pubsub-push@example-project.iam.gserviceaccount.com"));
+    }
+}

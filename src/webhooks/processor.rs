@@ -5,6 +5,9 @@ use crate::{
         WebhookProcessingRepository, WebhookProviderSnapshot, WebhookSubscriptionSnapshot,
         WebhookWriteRepository,
     },
+    services::google_play::status::{
+        subscription_state_to_canonical_status, GoogleSubscriptionStateStatus,
+    },
     services::google_play::trace::{hash_token, BpTrace},
 };
 use serde_json::json;
@@ -237,19 +240,10 @@ fn mock_google_play_renewal_period_end(
 }
 
 fn google_subscription_state_to_status(subscription_state: Option<&str>) -> Option<String> {
-    let state = subscription_state?;
-    let normalized = match state {
-        "SUBSCRIPTION_STATE_ACTIVE" => "active",
-        "SUBSCRIPTION_STATE_CANCELED" => "cancelled",
-        "SUBSCRIPTION_STATE_IN_GRACE_PERIOD" => "past_due",
-        "SUBSCRIPTION_STATE_ON_HOLD" => "on_hold",
-        "SUBSCRIPTION_STATE_PAUSED" => "paused",
-        "SUBSCRIPTION_STATE_PENDING" => "pending",
-        "SUBSCRIPTION_STATE_EXPIRED" => "expired",
-        _ => return None,
-    };
-
-    Some(normalized.to_string())
+    match subscription_state_to_canonical_status(subscription_state) {
+        GoogleSubscriptionStateStatus::Known(status) => Some(status.to_string()),
+        GoogleSubscriptionStateStatus::Unknown(_) | GoogleSubscriptionStateStatus::Missing => None,
+    }
 }
 
 fn google_cancellation_context_from_resource(
@@ -296,12 +290,8 @@ fn google_subscription_expiry_time(
 
 fn google_subscription_transaction_id(
     resource: &crate::services::google_play::models::SubscriptionPurchaseV2,
-    provider_webhook_id: &str,
-) -> String {
-    resource
-        .latest_order_id
-        .clone()
-        .unwrap_or_else(|| format!("google_play_rtdn:{}", provider_webhook_id))
+) -> Option<String> {
+    resource.latest_order_id.clone()
 }
 
 
@@ -460,8 +450,17 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
             fields.amount_cents = Some(test_price);
         }
 
-        if webhook.event_type.starts_with("SUBSCRIPTION_") && fields.provider_transaction_id.is_none() {
-            fields.provider_transaction_id = Some(format!("google_play_rtdn:{}", webhook.provider_webhook_id));
+        // Mock mode never reaches the real Google API call below that populates
+        // provider_transaction_id from latest_order_id. Simulate it for
+        // SUBSCRIPTION_* events so renewals/price-changes still record a payment
+        // row. Include provider_webhook_id (message_id) to mimic the per-renewal
+        // uniqueness of real latest_order_id, while staying distinct from the
+        // verify-purchase order id (mock-google-play-order:<token>).
+        if webhook.event_type.starts_with("SUBSCRIPTION_") {
+            fields.provider_transaction_id = Some(format!(
+                "mock-google-play-renewal:{}:{}",
+                purchase_token, webhook.provider_webhook_id
+            ));
         }
 
         return Ok(fields);
@@ -481,10 +480,7 @@ async fn enrich_google_play_fields<R: WebhookProcessingRepository>(
     }
 
     if webhook.event_type.starts_with("SUBSCRIPTION_") {
-        fields.provider_transaction_id = Some(google_subscription_transaction_id(
-            &resource,
-            &webhook.provider_webhook_id,
-        ));
+        fields.provider_transaction_id = google_subscription_transaction_id(&resource);
     }
 
     if fields.amount_cents.is_none() {

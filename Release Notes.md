@@ -1,5 +1,34 @@
 # Release Notes
 
+## [0.7.1] - 2026-07-09
+### Fixes
+- **Creem Lifecycle**: Resolve Creem subscriptions by subscription_id (not just purchase_token) in cancellation_scheduled and other lifecycle handlers, fixing silent callback drops for Creem.
+- **Creem Payments**: Extract `provider_transaction_id` from Creem `payment.failed` webhooks so failed payments are recorded in `pay.payments`.
+
+### Tests and docs
+- **Creem Snapshot Test**: Align test inserts and assertions with canonical DB status values (`trial`, `cancelled`) introduced by migration 10.
+- **Google Callback Body Test**: Use `mock-google-play-subscription:` token prefix required by mock validation added in a0236b0.
+- **Admin Test Runner**: Auto-start mock Clerk server and pre-flight check that Bridge enforces JWT auth before running admin auth tests.
+
+## [0.7.0] - 2026-07-09
+### Features
+- **Scheduler Callbacks**: Commit scheduled subscription state transitions and callback enqueue in one transaction.
+- **Webhook Ingress**: Validate Google Play package names against provider configuration before mutating state.
+- **Email Notifications**: Recover lifecycle email cooldown state after poisoned mutex errors instead of panicking.
+
+### Fixes
+- **Google Play Security**: Verify Pub/Sub push identity claims and warn clearly when the expected service-account email is missing.
+- **Rate Limiting**: Parse `X-Forwarded-For` from trusted proxy hops and reject invalid `TRUSTED_PROXIES` entries.
+- **Payments**: Stop storing webhook, message, and subscription identifiers as economic transaction IDs.
+- **Creem Payments**: Extract refund and dispute currency/amount values from Creem refund and transaction payloads.
+- **Google Play Payments**: Scope purchase-token uniqueness by app and prevent mock renewal transaction ID collisions.
+- **Configuration**: Reject local auth URLs in production and keep backend root requests as 404s.
+
+### Tests and docs
+- **Google Play Tests**: Add regression coverage for durable test-notification normalization, Pub/Sub identity checks, package validation, and transaction-ID handling.
+- **Scheduler Tests**: Add coverage for terminal-state rejection, stale-event suppression, and atomic callback enqueue durability.
+- **Documentation**: Refresh provider, security, bash test, and release-review notes.
+
 ## [0.6.2] - 2026-07-04
 ### Features
 - **Admin Cleanup**: Add gated emergency cleanup operations for webhook retries, worker claim resets, price step-up jobs, pause scheduler jobs, and reconciliation lock recovery.

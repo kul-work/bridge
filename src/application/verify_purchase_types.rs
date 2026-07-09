@@ -121,7 +121,7 @@ pub(crate) struct VerifyPurchaseCommitRequest<'a> {
     pub resolved_external_user_id: &'a str,
     pub provider: &'a str,
     pub subscription_id: &'a str,
-    pub provider_transaction_id: &'a str,
+    pub provider_transaction_id: Option<&'a str>,
     pub purchase_token: &'a str,
     pub subscription_status: &'a str,
     pub payment_status: &'a str,

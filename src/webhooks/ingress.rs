@@ -11,7 +11,7 @@ use crate::{
     error::BridgeError,
     ports::{
         ProviderConfigLookupRepository, WebhookForwardRepository, WebhookProviderLookupRepository,
-        WebhookWriteRepository,
+        WebhookSuppressionRepository, WebhookWriteRepository,
     },
     ports::composites::WebhookIngressRepository,
     state::AppState,
@@ -19,7 +19,7 @@ use crate::{
 };
 use crate::db::webhooks::WebhookDeliveryEnqueue;
 use crate::webhooks::forwarding::{webhook_worker_id, WEBHOOK_DELIVERY_LEASE_SECS};
-use crate::webhooks::provider_adapter::ProviderWebhookAdapter;
+use crate::webhooks::provider_adapter::{ProviderWebhookAdapter, GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE};
 
 const CREEM_SIGNATURE_HEADERS: [&str; 3] = ["creem-signature", "Webhook-Signature", "x-signature"];
 
@@ -38,6 +38,66 @@ fn google_voided_purchase_product_type(payload: &serde_json::Value) -> Option<i6
     payload
         .pointer("/voidedPurchaseNotification/productType")
         .and_then(|value| value.as_i64().or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok())))
+}
+
+fn google_pubsub_identity_env_override() -> Result<(Option<bool>, Option<String>), BridgeError> {
+    let Some(raw) = std::env::var("GOOGLE_VERIFY_PUBSUB_IDENTITY").ok() else {
+        return Ok((None, None));
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok((None, None));
+    }
+
+    match raw.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok((Some(true), None)),
+        "0" | "false" | "no" | "off" => Ok((Some(false), None)),
+        _ if raw.contains('@') => {
+            tracing::warn!(
+                "GOOGLE_VERIFY_PUBSUB_IDENTITY contains an email; treating it as GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL for backward compatibility"
+            );
+            Ok((Some(true), Some(raw.to_string())))
+        }
+        _ => Err(BridgeError::ConfigError(format!(
+            "Failed to parse GOOGLE_VERIFY_PUBSUB_IDENTITY as bool: {}",
+            raw
+        ))),
+    }
+}
+
+fn validate_google_play_package_name(
+    app_id: Uuid,
+    provider_config: &serde_json::Value,
+    payload: &serde_json::Value,
+) -> Result<(), BridgeError> {
+    let expected_package_name = provider_config
+        .get("package_name")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            BridgeError::ConfigError("Missing Google Play package_name in provider config".to_string())
+        })?;
+    let received_package_name = payload
+        .get("packageName")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            BridgeError::WebhookError("Missing Google Play packageName".to_string())
+        })?;
+
+    if received_package_name != expected_package_name {
+        tracing::warn!(
+            app_id = %app_id,
+            expected_package_name,
+            received_package_name,
+            "Rejecting Google Play webhook for unexpected packageName"
+        );
+        return Err(BridgeError::WebhookError(
+            "Google Play packageName mismatch".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 fn spawn_process_and_forward_delivery(
@@ -268,14 +328,72 @@ pub async fn handle_google_play(
                 .unwrap_or_default()
                 .to_string()
         });
+        let (env_verify_pubsub_identity, legacy_pub_sub_service_account_email) = google_pubsub_identity_env_override()?;
+        let pub_sub_service_account_email = std::env::var("GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL")
+            .ok()
+            .and_then(|email| {
+                let email = email.trim().to_string();
+                (!email.is_empty()).then_some(email)
+            })
+            .or(legacy_pub_sub_service_account_email)
+            .or_else(|| {
+                provider_config
+                    .config
+                    .get("pub_sub_service_account_email")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|email| !email.is_empty())
+                    .map(ToOwned::to_owned)
+            });
+        let db_verify_pubsub_identity = provider_config
+            .config
+            .get("verify_pubsub_identity")
+            .and_then(|v| v.as_bool());
+        let requested_verify_pubsub_identity = env_verify_pubsub_identity.or(db_verify_pubsub_identity);
+        let verify_pubsub_identity = if crate::config::mock_external_apis_enabled() {
+            requested_verify_pubsub_identity.unwrap_or(false)
+        } else {
+            if requested_verify_pubsub_identity == Some(false) {
+                tracing::warn!(
+                    app_id = %app.id,
+                    provider = "google_play",
+                    "Config attempted to disable Pub/Sub identity verification in non-mock mode; ignoring and forcing verification"
+                );
+            }
+            true
+        };
+        // Misconfig guard: identity verification is enabled (forced on in
+        // non-mock) but no expected service account email is resolvable from
+        // any source (env, legacy var, or DB provider config). Without the
+        // email every Google Play webhook for this app is rejected as a
+        // signature failure — but the per-request error reads like an attack,
+        // not a missing config. Surface the real cause once per app so the
+        // operator can set GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL (or the DB
+        // provider_config field) instead of chasing a false "bad signature".
+        if verify_pubsub_identity && pub_sub_service_account_email.is_none() {
+            static WARNED_MISSING_EMAIL: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+                std::sync::OnceLock::new();
+            let warned = WARNED_MISSING_EMAIL.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+            if warned.lock().unwrap().insert(app.id.to_string()) {
+                tracing::warn!(
+                    app_id = %app.id,
+                    provider = "google_play",
+                    "Google Pub/Sub identity verification is enabled but no expected service account email is configured. \
+                     Set GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL (env) or provider_config.config.pub_sub_service_account_email (DB). \
+                     Until then, all Google Play webhooks for this app are rejected as signature failures."
+                );
+            }
+        }
         let skip_rsa_verification = crate::config::parse_bool_env("GOOGLE_SKIP_RSA_VERIFICATION", false)
             .map_err(|e| BridgeError::ConfigError(e.to_string()))?;
 
         let client = tokio::task::spawn_blocking(move || {
-            crate::services::google_play::client::GooglePlayClient::with_config(
+            crate::services::google_play::client::GooglePlayClient::with_config_and_pubsub_identity(
                 &service_account_path_owned,
                 verify_audience,
                 pub_sub_audience,
+                verify_pubsub_identity,
+                pub_sub_service_account_email,
                 skip_rsa_verification,
             )
         })
@@ -316,6 +434,9 @@ pub async fn handle_google_play(
     let Some(normalized_event) = ProviderWebhookAdapter::GooglePlay.decode_and_normalize(payload, &headers)? else {
         return Ok(StatusCode::NO_CONTENT);
     };
+
+    validate_google_play_package_name(app.id, &provider_config.config, &normalized_event.payload)?;
+
     let provider = normalized_event.provider;
     let event_id = normalized_event.provider_event_id;
     let event_type = normalized_event.raw_event_type;
@@ -359,7 +480,10 @@ pub async fn handle_google_play(
         "Google Play webhook received"
     );
 
-    if subscription_id.is_none() && purchase_token.is_none() {
+    if subscription_id.is_none()
+        && purchase_token.is_none()
+        && event_type != GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE
+    {
         tracing::warn!(
             app_id = %app.id,
             event_id = event_id,
@@ -394,6 +518,29 @@ pub async fn handle_google_play(
             );
             return Err(retryable_provider_ack_error("Google Play", &event_id, e));
         }
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    if event_type == GOOGLE_PLAY_TEST_NOTIFICATION_EVENT_TYPE {
+        if let Err(e) = database.as_ref().suppress_webhook(webhook_id, "google_play_test_notification").await {
+            error!(
+                app_id = %app.id,
+                webhook_provider_id = %webhook_id,
+                provider = "Google Play",
+                event_id = event_id,
+                error = %e,
+                "Google Play test notification suppression failed before provider acknowledgement"
+            );
+            return Err(retryable_provider_ack_error("Google Play", &event_id, e));
+        }
+
+        info!(
+            app_id = %app.id,
+            webhook_provider_id = %webhook_id,
+            provider = "Google Play",
+            event_id = event_id,
+            "Google Play test notification stored as suppressed; no app delivery queued"
+        );
         return Ok(StatusCode::NO_CONTENT);
     }
 
@@ -654,7 +801,8 @@ mod tests {
 
     use super::{
         duplicate_webhook_action, extract_header_value,
-        google_voided_purchase_product_type,
+        google_pubsub_identity_env_override, google_voided_purchase_product_type,
+        validate_google_play_package_name,
         DuplicateWebhookAction, CREEM_SIGNATURE_HEADERS,
     };
 
@@ -757,5 +905,54 @@ mod tests {
 
         assert_eq!(google_voided_purchase_product_type(&numeric_payload), Some(2));
         assert_eq!(google_voided_purchase_product_type(&string_payload), Some(2));
+    }
+
+    #[test]
+    fn pubsub_identity_env_accepts_legacy_email_value() {
+        let key = "GOOGLE_VERIFY_PUBSUB_IDENTITY";
+        let old_value = std::env::var(key).ok();
+        std::env::set_var(key, "pubsub-push@example.iam.gserviceaccount.com");
+
+        let parsed = google_pubsub_identity_env_override().unwrap();
+
+        assert_eq!(parsed.0, Some(true));
+        assert_eq!(parsed.1.as_deref(), Some("pubsub-push@example.iam.gserviceaccount.com"));
+
+        if let Some(value) = old_value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn accepts_google_play_webhook_for_configured_package_name() {
+        let app_id = uuid::Uuid::new_v4();
+        let config = json!({ "package_name": "com.tyde.household" });
+        let payload = json!({ "packageName": "com.tyde.household" });
+
+        assert!(validate_google_play_package_name(app_id, &config, &payload).is_ok());
+    }
+
+    #[test]
+    fn rejects_google_play_webhook_for_wrong_package_name() {
+        let app_id = uuid::Uuid::new_v4();
+        let config = json!({ "package_name": "com.tyde.hiha" });
+        let payload = json!({ "packageName": "com.tyde.household" });
+
+        let result = validate_google_play_package_name(app_id, &config, &payload);
+
+        assert!(matches!(result, Err(crate::error::BridgeError::WebhookError(_))));
+    }
+
+    #[test]
+    fn rejects_google_play_webhook_when_configured_package_name_is_missing() {
+        let app_id = uuid::Uuid::new_v4();
+        let config = json!({});
+        let payload = json!({ "packageName": "com.tyde.household" });
+
+        let result = validate_google_play_package_name(app_id, &config, &payload);
+
+        assert!(matches!(result, Err(crate::error::BridgeError::ConfigError(_))));
     }
 }

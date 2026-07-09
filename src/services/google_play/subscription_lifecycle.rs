@@ -41,6 +41,17 @@ async fn resolve_google_subscription_id_by_token<R: WebhookProcessingLookupRepos
             return Ok(Some(sub.subscription_id));
         }
     }
+
+    let sub_id = fields
+        .subscription_id
+        .as_deref()
+        .or(webhook.subscription_id.as_deref());
+
+    if let Some(sub_id_val) = sub_id {
+        if let Some(sub) = repo.get_subscription_by_sub_id_for_provider(app_id, &webhook.provider, sub_id_val).await? {
+            return Ok(Some(sub.subscription_id));
+        }
+    }
     Ok(None)
 }
 

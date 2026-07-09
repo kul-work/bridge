@@ -1,8 +1,11 @@
 use crate::error::BridgeError;
 use crate::services::creem::client::CreemClient;
 use crate::services::creem::config::CreemConfig;
+use crate::services::google_play::status::{
+    subscription_state_to_canonical_status, GoogleSubscriptionStateStatus,
+};
 use serde_json::Value;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Extract a config string field or return ConfigError
 fn config_str<'a>(config: &'a Value, key: &str, provider: &str) -> Result<&'a str, BridgeError> {
@@ -221,29 +224,42 @@ pub async fn fetch_subscription_status(
                 .await
                 .map_err(|e| BridgeError::ProviderError(format!("Google Play get subscription failed: {}", e)))?;
 
-            let raw_status = purchase.subscription_state.as_deref().unwrap_or("unknown");
+            let raw_status = purchase.subscription_state.as_deref();
             let status = normalize_google_status(raw_status);
 
             let period_end = purchase.expiry_time.as_deref()
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                 .map(|dt| dt.with_timezone(&chrono::Utc));
 
-            Ok((Some(status), period_end))
+            Ok((status, period_end))
         }
 
         _ => Err(BridgeError::ValidationError(format!("Status fetch not supported for provider: {}", provider))),
     }
 }
 
-fn normalize_google_status(raw: &str) -> String {
-    match raw {
-        "SUBSCRIPTION_STATE_ACTIVE" => "active".to_string(),
-        "SUBSCRIPTION_STATE_CANCELED" => "cancelled".to_string(),
-        "SUBSCRIPTION_STATE_IN_GRACE_PERIOD" => "past_due".to_string(),
-        "SUBSCRIPTION_STATE_ON_HOLD" => "on_hold".to_string(),
-        "SUBSCRIPTION_STATE_PAUSED" => "paused".to_string(),
-        "SUBSCRIPTION_STATE_PENDING" => "pending".to_string(),
-        "SUBSCRIPTION_STATE_EXPIRED" => "expired".to_string(),
-        _ => "active".to_string(), // Default to active for unknown to avoid false expiry
+fn normalize_google_status(raw: Option<&str>) -> Option<String> {
+    match subscription_state_to_canonical_status(raw) {
+        GoogleSubscriptionStateStatus::Known(status) => Some(status.to_string()),
+        GoogleSubscriptionStateStatus::Unknown(other) => {
+            warn!(raw_status = other, "unknown Google Play subscription status ignored");
+            None
+        }
+        GoogleSubscriptionStateStatus::Missing => {
+            warn!("Google Play subscription status missing");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn google_unknown_subscription_status_is_not_treated_as_active() {
+        assert_eq!(normalize_google_status(Some("SUBSCRIPTION_STATE_ACTIVE")), Some("active".to_string()));
+        assert_eq!(normalize_google_status(Some("SUBSCRIPTION_STATE_FUTURE")), None);
+        assert_eq!(normalize_google_status(None), None);
     }
 }

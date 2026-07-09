@@ -14,7 +14,7 @@ CREATE TABLE payments (
     subscription_id TEXT,
     product_id TEXT,
 
-    amount_cents INT NOT NULL,
+    amount_cents BIGINT,
     currency TEXT DEFAULT 'N/A',
 
     status TEXT NOT NULL,

@@ -47,6 +47,7 @@ Admin routes under `/admin` require a Clerk session JWT from the configured Cler
 - `ADMIN_MUTATION_RATE_LIMIT_PER_MINUTE` (default: `10`) - Per-admin-actor rate limit for admin mutating requests such as `POST` and `PATCH`.
 - `ADMIN_AUTH_IP_LIMIT` (default: `10`) - Per-IP limit for failed or missing admin Clerk JWT attempts before JWT parsing. The rolling window is fixed at 60 seconds.
 - `RATE_LIMIT_DISABLE` (default: `false`) - Set to `true` to completely disable all rate limiting middlewares (useful for local development, staging, or automated security scans).
+- `TRUSTED_PROXIES` (default: unset) - Comma-separated **IP literals** (not CIDR ranges) of reverse proxies trusted to set forwarded IP headers (`X-Forwarded-For`, `X-Real-IP`) for per-IP rate limiting. When unset, forwarded headers are ignored and the TCP socket peer IP is used directly. Set this to the address of the proxy in front of Bridge (e.g. `127.0.0.1` for the local nginx proxy, or the Railway proxy address) so real client IPs are honored; without it, per-IP buckets collapse to the peer address (API-key and admin-actor limiters are unaffected). `X-Forwarded-For` is parsed right-to-left, skipping entries that are themselves trusted proxies, so a client-injected leftmost entry cannot spoof the bucket key when the proxy appends (nginx `$proxy_add_x_forwarded_for`). Invalid entries (CIDR ranges, typos) fail loudly at first use rather than being silently dropped.
 - `BYPASS_ADMIN_AUTH` (default: `false`) - Set to `true` to bypass Clerk admin authentication in non-production environments (useful for automated security scanning of admin endpoints). This option is strictly rejected and disabled in production environments.
 
 Issuer fallback order is:
@@ -87,17 +88,19 @@ Older docs and `.env.sample` mention these process env vars:
 
 - `GOOGLE_VERIFY_WEBHOOK_SIGNATURE`
 - `GOOGLE_VERIFY_AUDIENCE`
+- `GOOGLE_VERIFY_PUBSUB_IDENTITY`
 - `GOOGLE_PUB_SUB_AUDIENCE`
+- `GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL`
 - `GOOGLE_SKIP_RSA_VERIFICATION`
 
-Current active webhook ingress reads these controls from `pay.provider_configs.config` per app, not from process env. Keep Google provider controls in the DB config described below.
+Keep Google provider controls in `pay.provider_configs.config` per app where possible. The active webhook ingress also supports process-wide overrides for Pub/Sub audience and service-account email as described below.
 
 ### Legacy Or Sample-Only Env Vars
 
 These appear in older docs or `.env.sample`, but active runtime paths do not currently read them:
 
 - `APP_EMAIL_SUPPORT` - Use `ADMIN_ALERT_EMAIL` or `TYDE_SUPPORT_EMAIL` for alert destinations.
-- `RATE_LIMIT_CLEANUP_HOURS` - No active cleanup interval reads this env var.
+- `RATE_LIMIT_CLEANUP_HOURS` - No active cleanup interval reads this env var. Drained rate-limit buckets are evicted lazily on their next touch instead.
 
 ## Database Configuration
 
@@ -144,12 +147,15 @@ Required `config` keys:
 
 - `package_name` - Android package name, for example `app.hiha`.
 - `service_account_json` - Path to the Google service account JSON file.
+- `pub_sub_service_account_email` - Expected Pub/Sub authenticated push service account email. Required when Google webhook signature verification is enabled in non-mock mode; can be overridden process-wide with `GOOGLE_PUB_SUB_SERVICE_ACCOUNT_EMAIL`.
 
 Optional `config` keys:
 
 - `verify_webhook_signature` (default behavior: `true`) - Verifies Google Pub/Sub JWT signatures for RTDN webhooks.
+- `pub_sub_audience` - Expected Pub/Sub JWT audience when `GOOGLE_VERIFY_AUDIENCE=true`; can be overridden process-wide with `GOOGLE_PUB_SUB_AUDIENCE`.
+- `verify_pubsub_identity` - Verifies the JWT `email` claim matches the configured Pub/Sub push service account and `email_verified=true`. Non-mock mode forces this on whenever Google webhook signature verification is enabled; `false` is honored only for local/mock testing. Can be overridden process-wide with `GOOGLE_VERIFY_PUBSUB_IDENTITY`.
 
-The migration comment also documents planned/legacy keys such as `verify_audience` and `pub_sub_audience`. Confirm active code paths before relying on those.
+When Pub/Sub identity verification is enabled, the Pub/Sub JWT must be Google-signed and must include both `email` matching the configured push service account and `email_verified=true`.
 
 Example:
 
@@ -157,6 +163,8 @@ Example:
 {
   "package_name": "app.hiha",
   "service_account_json": "C:/secure/hiha-google-play-service-account.json",
+  "pub_sub_service_account_email": "pubsub-push@your-project.iam.gserviceaccount.com",
+  "pub_sub_audience": "https://api.yourdomain.com/webhooks/google",
   "verify_webhook_signature": true
 }
 ```

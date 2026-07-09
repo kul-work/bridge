@@ -808,6 +808,45 @@ pub async fn create_synthetic_webhook_delivery(
 ) -> Result<WebhookDeliveryEnqueue, BridgeError> {
     let mut tx = begin_app_tx(pool, app_id).await?;
 
+    let delivery = create_synthetic_webhook_delivery_tx(
+        &mut tx,
+        app_id,
+        provider,
+        provider_webhook_id,
+        event_type,
+        subscription_id,
+        purchase_token,
+        provider_payload,
+        timestamp_epoch_ms,
+        canonical_payload,
+        worker_id,
+        lease_secs,
+    )
+    .await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| BridgeError::DbError(e.to_string()))?;
+
+    Ok(delivery)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_synthetic_webhook_delivery_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    app_id: Uuid,
+    provider: &str,
+    provider_webhook_id: &str,
+    event_type: &str,
+    subscription_id: Option<String>,
+    purchase_token: Option<String>,
+    provider_payload: serde_json::Value,
+    timestamp_epoch_ms: Option<i64>,
+    canonical_payload: serde_json::Value,
+    worker_id: &str,
+    lease_secs: i64,
+) -> Result<WebhookDeliveryEnqueue, BridgeError> {
+
     let inserted = sqlx::query_as::<_, (Uuid,)>(
         "INSERT INTO pay.webhook_provider
          (app_id, provider, provider_webhook_id, event_type, subscription_id, purchase_token, payload, timestamp_epoch_ms)
@@ -823,7 +862,7 @@ pub async fn create_synthetic_webhook_delivery(
     .bind(&purchase_token)
     .bind(provider_payload)
     .bind(timestamp_epoch_ms)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to create synthetic webhook provider: {}", e)))?;
 
@@ -839,7 +878,7 @@ pub async fn create_synthetic_webhook_delivery(
         .bind(app_id)
         .bind(provider)
         .bind(provider_webhook_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await
         .map_err(|e| BridgeError::DbError(format!("Failed to fetch existing synthetic webhook: {}", e)))?;
         existing.0
@@ -860,7 +899,7 @@ pub async fn create_synthetic_webhook_delivery(
     .bind(canonical_payload)
     .bind(worker_id)
     .bind(lease_secs)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to create synthetic webhook delivery: {}", e)))?;
 
@@ -871,13 +910,9 @@ pub async fn create_synthetic_webhook_delivery(
     )
     .bind(webhook_provider_id)
     .bind(app_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(|e| BridgeError::DbError(format!("Failed to mark synthetic webhook processed: {}", e)))?;
-
-    tx.commit()
-        .await
-        .map_err(|e| BridgeError::DbError(e.to_string()))?;
 
     Ok(delivery)
 }

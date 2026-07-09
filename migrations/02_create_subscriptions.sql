@@ -10,7 +10,7 @@ CREATE TABLE subscriptions (
     subscription_id TEXT NOT NULL,
     provider TEXT NOT NULL,
 
-    purchase_token TEXT UNIQUE,
+    purchase_token TEXT,
 
     status TEXT NOT NULL DEFAULT 'pending',
     current_period_end TIMESTAMPTZ,
@@ -46,7 +46,7 @@ CREATE TABLE subscriptions (
     google_requires_price_step_up_consent BOOLEAN DEFAULT false,
     google_price_step_up_consent_status TEXT,
     google_price_step_up_consent_deadline TIMESTAMPTZ,
-    google_new_price_cents INT,
+    google_new_price_cents BIGINT,
     google_pause_scheduled_at TIMESTAMPTZ,
     google_pause_scheduled_reason TEXT,
     google_paused_at TIMESTAMPTZ,
@@ -76,11 +76,14 @@ CREATE INDEX idx_subs_app_id ON subscriptions(app_id);
 CREATE INDEX idx_subs_app_user ON subscriptions(app_id, external_user_id);
 CREATE INDEX idx_subs_status ON subscriptions(app_id, status) WHERE status = 'active';
 CREATE INDEX idx_subs_provider_status ON subscriptions(app_id, provider, status);
+CREATE UNIQUE INDEX uq_subscriptions_app_purchase_token
+    ON subscriptions(app_id, purchase_token)
+    WHERE purchase_token IS NOT NULL;
 CREATE INDEX idx_subs_event_time ON subscriptions(app_id, external_user_id, subscription_id, last_event_time);
 
 COMMENT ON TABLE subscriptions IS 'Source of truth for subscription lifecycle. external_user_id is opaque; Bridge does not interpret it.';
 COMMENT ON COLUMN subscriptions.external_user_id IS 'Opaque user ID from the app.';
-COMMENT ON COLUMN subscriptions.purchase_token IS 'One-token-one-owner for fraud prevention and restore purchases.';
+COMMENT ON COLUMN subscriptions.purchase_token IS 'One-token-one-owner for fraud prevention and restore purchases. Unique within (app_id, purchase_token), not globally, so app isolation holds.';
 COMMENT ON COLUMN subscriptions.payment_failure_notification IS 'Marks subscriptions that have had a payment failure webhook for admin/app follow-up.';
 COMMENT ON COLUMN subscriptions.last_event_time IS 'Epoch milliseconds from provider event timestamp. Used for ordering, deduplication, and stale event detection.';
 COMMENT ON COLUMN subscriptions.version IS 'Optimistic locking for concurrent updates.';

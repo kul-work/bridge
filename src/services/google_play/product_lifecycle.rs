@@ -43,27 +43,26 @@ pub async fn handle_otp_purchased<
         }
     }
 
-    let txn_id = fields
-        .provider_transaction_id
-        .as_deref()
-        .unwrap_or(&webhook.provider_webhook_id);
+    let txn_id = fields.provider_transaction_id.as_deref();
     let purchase_token = fields.purchase_token.as_deref().or(webhook.purchase_token.as_deref());
 
-    repo
-        .record_webhook_payment(WebhookPaymentRecordRequest {
-            app_id,
-            external_user_id: user_id,
-            provider: &webhook.provider,
-            provider_transaction_id: txn_id,
-            provider_purchase_token: purchase_token,
-            ack_required: webhook.provider == "google_play" && purchase_token.is_some(),
-            subscription_id: None,
-            product_id: fields.product_id.as_deref(),
-            amount_cents: fields.amount_cents.unwrap_or(-1),
-            currency: fields.currency.as_deref().or(Some("UNKNOWN")),
-            status: "success",
-        })
-        .await?;
+    if let Some(txn_id) = txn_id {
+        repo
+            .record_webhook_payment(WebhookPaymentRecordRequest {
+                app_id,
+                external_user_id: user_id,
+                provider: &webhook.provider,
+                provider_transaction_id: txn_id,
+                provider_purchase_token: purchase_token,
+                ack_required: webhook.provider == "google_play" && purchase_token.is_some(),
+                subscription_id: None,
+                product_id: fields.product_id.as_deref(),
+                amount_cents: fields.amount_cents.unwrap_or(-1),
+                currency: fields.currency.as_deref().or(Some("UNKNOWN")),
+                status: "success",
+            })
+            .await?;
+    }
 
     let _ = timestamp_epoch_ms;
 

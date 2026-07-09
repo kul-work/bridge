@@ -68,6 +68,7 @@ struct PubSubClaims {
     exp: u64,           // Expiration time
     iat: u64,           // Issued at
     email: Option<String>, // Service account email
+    email_verified: Option<bool>, // Google-authenticated service account identity
 }
 
 /// Cached Google public keys with expiration
@@ -84,6 +85,8 @@ pub struct GooglePlayClient {
     cached_keys: std::sync::Arc<tokio::sync::RwLock<Option<CachedKeys>>>,
     pub verify_aud: bool,
     pub pub_sub_audience: String,
+    verify_pubsub_identity: bool,
+    expected_pub_sub_service_account_email: Option<String>,
     skip_rsa: bool,
 }
 
@@ -92,9 +95,37 @@ impl GooglePlayClient {
         Self::with_config(service_account_path, false, String::new(), false)
     }
 
-    pub fn with_config(service_account_path: &str, verify_aud: bool, pub_sub_audience: String, skip_rsa: bool) -> Result<Self> {
+    pub fn with_config(
+        service_account_path: &str,
+        verify_aud: bool,
+        pub_sub_audience: String,
+        skip_rsa: bool,
+    ) -> Result<Self> {
+        Self::with_config_and_pubsub_identity(
+            service_account_path,
+            verify_aud,
+            pub_sub_audience,
+            false,
+            None,
+            skip_rsa,
+        )
+    }
+
+    pub fn with_config_and_pubsub_identity(
+        service_account_path: &str,
+        verify_aud: bool,
+        pub_sub_audience: String,
+        verify_pubsub_identity: bool,
+        expected_pub_sub_service_account_email: Option<String>,
+        skip_rsa: bool,
+    ) -> Result<Self> {
         let content = fs::read_to_string(service_account_path)?;
         let service_account: ServiceAccount = serde_json::from_str(&content)?;
+        let expected_pub_sub_service_account_email = expected_pub_sub_service_account_email
+            .and_then(|email| {
+                let email = email.trim().to_string();
+                (!email.is_empty()).then_some(email)
+            });
 
         Ok(Self {
             client: Client::builder()
@@ -104,6 +135,8 @@ impl GooglePlayClient {
             cached_keys: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             verify_aud,
             pub_sub_audience,
+            verify_pubsub_identity,
+            expected_pub_sub_service_account_email,
             skip_rsa,
         })
     }
@@ -118,6 +151,8 @@ impl GooglePlayClient {
             cached_keys: self.cached_keys.clone(),
             verify_aud,
             pub_sub_audience: self.pub_sub_audience.clone(),
+            verify_pubsub_identity: self.verify_pubsub_identity,
+            expected_pub_sub_service_account_email: self.expected_pub_sub_service_account_email.clone(),
             skip_rsa: self.skip_rsa,
         }
     }
@@ -692,6 +727,38 @@ impl GooglePlayClient {
         Ok(verified.claims)
     }
 
+    fn verify_pubsub_claim_identity(&self, claims: &PubSubClaims) -> Result<(), AppError> {
+        let expected_email = self.expected_pub_sub_service_account_email.as_deref()
+            .ok_or_else(|| {
+                AppError::WebhookSignatureVerificationFailed(
+                    "Google Pub/Sub service account email is required when Pub/Sub identity verification is enabled".to_string()
+                )
+            })?;
+
+        if claims.email_verified != Some(true) {
+            return Err(AppError::WebhookSignatureVerificationFailed(
+                "Google Pub/Sub JWT email_verified claim is missing or false".to_string()
+            ));
+        }
+
+        let actual_email = claims.email.as_deref().map(str::trim).filter(|email| !email.is_empty());
+        if actual_email != Some(expected_email) {
+            let actual_email_hash = actual_email
+                .map(diagnostic_hash)
+                .unwrap_or_else(|| "missing".to_string());
+            tracing::warn!(
+                actual_email_hash = %actual_email_hash,
+                expected_email_hash = %diagnostic_hash(expected_email),
+                "Google Pub/Sub JWT service account email mismatch"
+            );
+            return Err(AppError::WebhookSignatureVerificationFailed(
+                "Google Pub/Sub JWT service account email mismatch".to_string()
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Verify Google Pub/Sub message authentication header.
     /// 
     /// Issue #6: Webhook Signature Verification
@@ -747,7 +814,12 @@ impl GooglePlayClient {
         // 4. Manually verify JWT and extract claims
         let claims = Self::verify_jwt_with_jwk(token, key, self.skip_rsa)?;
 
-        // 5. Verify audience if configured (security requirement for production)
+        // 5. Verify the authenticated Pub/Sub push service account identity (opt-in).
+        if self.verify_pubsub_identity {
+            self.verify_pubsub_claim_identity(&claims)?;
+        }
+
+        // 6. Verify audience if configured (security requirement for production)
         if self.verify_aud {
             if self.pub_sub_audience.is_empty() {
                 let err = "GOOGLE_VERIFY_AUDIENCE=true but GOOGLE_PUB_SUB_AUDIENCE is not configured".to_string();
@@ -848,6 +920,33 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn test_pubsub_claims(email: Option<&str>, email_verified: Option<bool>) -> PubSubClaims {
+        PubSubClaims {
+            iss: "https://accounts.google.com".to_string(),
+            aud: "https://bridge.test/webhooks/google".to_string(),
+            exp: 4_102_444_800,
+            iat: 1_704_067_200,
+            email: email.map(ToOwned::to_owned),
+            email_verified,
+        }
+    }
+
+    fn test_client(expected_email: Option<&str>) -> GooglePlayClient {
+        GooglePlayClient {
+            client: Client::new(),
+            service_account: std::sync::Arc::new(ServiceAccount {
+                client_email: "bridge-api@example.iam.gserviceaccount.com".to_string(),
+                private_key: "unused".to_string(),
+            }),
+            cached_keys: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            verify_aud: true,
+            pub_sub_audience: "https://bridge.test/webhooks/google".to_string(),
+            verify_pubsub_identity: true,
+            expected_pub_sub_service_account_email: expected_email.map(ToOwned::to_owned),
+            skip_rsa: true,
+        }
+    }
+
     #[test]
     fn encodes_google_api_path_segments() {
         assert_eq!(encode_path_segment("com.example.app"), "com.example.app");
@@ -898,5 +997,60 @@ mod tests {
 
         assert_eq!(details.amount_cents, Some(1500));
         assert_eq!(details.currency, None);
+    }
+
+    #[test]
+    fn pubsub_claim_identity_accepts_expected_verified_service_account() {
+        let client = test_client(Some("pubsub-push@example.iam.gserviceaccount.com"));
+        let claims = test_pubsub_claims(Some("pubsub-push@example.iam.gserviceaccount.com"), Some(true));
+
+        assert!(client.verify_pubsub_claim_identity(&claims).is_ok());
+    }
+
+    #[test]
+    fn pubsub_claim_identity_rejects_missing_expected_email() {
+        let client = test_client(None);
+        let claims = test_pubsub_claims(Some("pubsub-push@example.iam.gserviceaccount.com"), Some(true));
+
+        assert!(client.verify_pubsub_claim_identity(&claims).is_err());
+    }
+
+    #[test]
+    fn pubsub_claim_identity_rejects_email_mismatch() {
+        let client = test_client(Some("pubsub-push@example.iam.gserviceaccount.com"));
+        let claims = test_pubsub_claims(Some("other@example.iam.gserviceaccount.com"), Some(true));
+
+        assert!(client.verify_pubsub_claim_identity(&claims).is_err());
+    }
+
+    #[test]
+    fn pubsub_claim_identity_rejects_unverified_email() {
+        let client = test_client(Some("pubsub-push@example.iam.gserviceaccount.com"));
+
+        let false_claim = test_pubsub_claims(Some("pubsub-push@example.iam.gserviceaccount.com"), Some(false));
+        let missing_claim = test_pubsub_claims(Some("pubsub-push@example.iam.gserviceaccount.com"), None);
+
+        assert!(client.verify_pubsub_claim_identity(&false_claim).is_err());
+        assert!(client.verify_pubsub_claim_identity(&missing_claim).is_err());
+    }
+
+    #[test]
+    fn pubsub_identity_empty_string_collapses_to_none() {
+        let client = GooglePlayClient {
+            client: Client::new(),
+            service_account: std::sync::Arc::new(ServiceAccount {
+                client_email: "bridge-api@example.iam.gserviceaccount.com".to_string(),
+                private_key: "unused".to_string(),
+            }),
+            cached_keys: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            verify_aud: true,
+            pub_sub_audience: "https://bridge.test/webhooks/google".to_string(),
+            verify_pubsub_identity: true,
+            expected_pub_sub_service_account_email: None,
+            skip_rsa: true,
+        };
+        let claims = test_pubsub_claims(Some("pubsub-push@example.iam.gserviceaccount.com"), Some(true));
+
+        assert!(client.verify_pubsub_claim_identity(&claims).is_err());
     }
 }

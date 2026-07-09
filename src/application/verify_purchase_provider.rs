@@ -14,6 +14,7 @@ use crate::ports::{
 use crate::services::google_play::{
     client::{GoogleOrderPaymentDetails, GooglePlayClient},
     models::{Money, ProductPurchase, SubscriptionPurchaseV2},
+    status::{subscription_state_to_canonical_status, GoogleSubscriptionStateStatus},
 };
 use crate::webhooks::processor::CanonicalWebhookPayload;
 
@@ -110,7 +111,7 @@ async fn verify_google_play(
             Ok(VerificationOutcome::Verified(map_google_product_verification_with_order_payment(
                 purchase,
                 order_payment,
-            )))
+            )?))
         }
     }
 }
@@ -286,14 +287,19 @@ fn map_google_subscription_verification(
         ));
     }
 
-    let status = match purchase.subscription_state.as_deref() {
-        Some("SUBSCRIPTION_STATE_ACTIVE") | Some("SUBSCRIPTION_STATE_IN_GRACE_PERIOD") => "active",
-        Some("SUBSCRIPTION_STATE_CANCELED") => "cancelled",
-        Some("SUBSCRIPTION_STATE_ON_HOLD") => "on_hold",
-        Some("SUBSCRIPTION_STATE_PAUSED") => "paused",
-        Some("SUBSCRIPTION_STATE_EXPIRED") => "expired",
-        Some("SUBSCRIPTION_STATE_PENDING") => "pending",
-        _ => "expired",
+    let status = match subscription_state_to_canonical_status(purchase.subscription_state.as_deref()) {
+        GoogleSubscriptionStateStatus::Known(status) => status,
+        GoogleSubscriptionStateStatus::Unknown(other) => {
+            return Err(BridgeError::ProviderError(format!(
+                "Google Play returned unknown subscription state: {}",
+                other
+            )));
+        }
+        GoogleSubscriptionStateStatus::Missing => {
+            return Err(BridgeError::ProviderError(
+                "Google Play response did not include subscription state".to_string(),
+            ));
+        }
     }
     .to_string();
 
@@ -368,12 +374,17 @@ fn google_subscription_current_amount_cents(purchase: &SubscriptionPurchaseV2) -
 fn map_google_product_verification(
     purchase: ProductPurchase,
     amount_cents: Option<i64>,
-) -> VerifiedPurchase {
+) -> Result<VerifiedPurchase, BridgeError> {
     let status = match purchase.purchase_state {
         0 => "active",
         1 => "cancelled",
         2 => "pending",
-        _ => "expired",
+        other => {
+            return Err(BridgeError::ProviderError(format!(
+                "Google Play returned unknown product purchase state: {}",
+                other
+            )));
+        }
     }
     .to_string();
 
@@ -382,7 +393,7 @@ fn map_google_product_verification(
         _ => PaymentAcknowledgement::Pending,
     };
 
-    VerifiedPurchase {
+    Ok(VerifiedPurchase {
         status,
         provider_transaction_id: purchase.order_id,
         current_period_end: None,
@@ -394,16 +405,16 @@ fn map_google_product_verification(
         obfuscated_account_id: purchase.obfuscated_account_id,
         resubscribe_obfuscated_account_id: None,
         linked_purchase_token: None,
-    }
+    })
 }
 
 fn map_google_product_verification_with_order_payment(
     purchase: ProductPurchase,
     order_payment: GoogleOrderPaymentDetails,
-) -> VerifiedPurchase {
-    let mut verified = map_google_product_verification(purchase, order_payment.amount_cents);
+) -> Result<VerifiedPurchase, BridgeError> {
+    let mut verified = map_google_product_verification(purchase, order_payment.amount_cents)?;
     verified.currency = order_payment.currency;
-    verified
+    Ok(verified)
 }
 
 fn mock_verify_google_play(
@@ -508,7 +519,7 @@ fn mock_verify_google_play(
                 return Ok(VerificationOutcome::Verified(map_google_product_verification(
                     purchase,
                     None,
-                )));
+                )?));
             }
 
             if purchase_token.contains("declined") || purchase_token.contains("fail") {
@@ -761,6 +772,30 @@ mod tests {
     }
 
     #[test]
+    fn google_subscription_verification_rejects_unknown_subscription_state() {
+        let purchase = SubscriptionPurchaseV2 {
+            subscription_state: Some("SUBSCRIPTION_STATE_FUTURE".to_string()),
+            acknowledgement_state: Some("ACKNOWLEDGEMENT_STATE_PENDING".to_string()),
+            line_items: vec![SubscriptionLineItem {
+                product_id: "premium_monthly".to_string(),
+                expiry_time: Some("2026-04-30T00:00:00Z".to_string()),
+                latest_successful_order_id: None,
+                auto_renewing_plan: None,
+                offer_details: None,
+                offer_phase: None,
+            }],
+            ..Default::default()
+        };
+
+        let err = match map_google_subscription_verification(purchase, "premium_monthly", "user-123") {
+            Ok(_) => panic!("unknown Google subscription state should not verify as expired"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, BridgeError::ProviderError(msg) if msg.contains("unknown subscription state")));
+    }
+
+    #[test]
     fn mock_google_subscription_rejects_err_token_patterns() {
         let cases = [
             "demo_token",
@@ -885,12 +920,32 @@ mod tests {
                 amount_cents: Some(499),
                 currency: Some("RON".to_string()),
             },
-        );
+        )
+        .expect("google product verification should succeed");
 
         assert_eq!(verified.amount_cents, Some(499));
         assert_eq!(verified.currency, Some("RON".to_string()));
         assert_eq!(verified.status, "active");
         assert_eq!(verified.payment_state, Some(0));
+    }
+
+    #[test]
+    fn google_product_verification_rejects_unknown_purchase_state() {
+        let purchase = ProductPurchase {
+            kind: "androidpublisher".to_string(),
+            purchase_state: 3,
+            purchase_time_millis: "1712448000000".to_string(),
+            order_id: Some("GPA.1234-5678-9012-34567".to_string()),
+            obfuscated_account_id: None,
+            acknowledgement_state: Some(1),
+        };
+
+        let err = match map_google_product_verification(purchase, Some(499)) {
+            Ok(_) => panic!("unknown Google product purchase state should not verify as expired"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, BridgeError::ProviderError(msg) if msg.contains("unknown product purchase state")));
     }
 
     #[test]

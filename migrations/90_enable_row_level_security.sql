@@ -117,14 +117,15 @@ RETURNS TABLE(
     id UUID,
     slug TEXT,
     display_name TEXT,
-    app_url TEXT
+    app_url TEXT,
+    notes TEXT
 )
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = pay, pg_temp
 STABLE
 AS $$
-    SELECT apps.id, apps.slug, apps.display_name, apps.app_url
+    SELECT apps.id, apps.slug, apps.display_name, apps.app_url, apps.notes
     FROM pay.apps
     ORDER BY display_name
 $$;
@@ -195,6 +196,43 @@ GRANT EXECUTE ON FUNCTION pay.webhook_delivery_exists_bootstrap(UUID) TO bridge_
 GRANT EXECUTE ON FUNCTION pay.get_app_by_webhook_token_bootstrap(UUID) TO bridge_app, bridge_admin;
 GRANT EXECUTE ON FUNCTION pay.list_enabled_app_ids_bootstrap() TO bridge_app, bridge_admin;
 GRANT EXECUTE ON FUNCTION pay.list_app_summaries_bootstrap() TO bridge_app, bridge_admin;
+
+CREATE OR REPLACE FUNCTION pay.update_app_notes_bootstrap(
+    p_app_id UUID,
+    p_notes TEXT
+)
+RETURNS TABLE(
+    id UUID,
+    notes TEXT
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pay, pg_temp
+VOLATILE
+AS $$
+    UPDATE pay.apps
+    SET notes = NULLIF(BTRIM(p_notes), '')
+    WHERE apps.id = p_app_id
+    RETURNING apps.id, apps.notes
+$$;
+
+REVOKE ALL ON FUNCTION pay.update_app_notes_bootstrap(UUID, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION pay.update_app_notes_bootstrap(UUID, TEXT) TO bridge_app, bridge_admin;
+
+CREATE OR REPLACE FUNCTION pay.count_enabled_provider_configs_bootstrap()
+RETURNS BIGINT
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pay, pg_temp
+STABLE
+AS $$
+    SELECT COUNT(*)
+    FROM pay.provider_configs
+    WHERE enabled = true
+$$;
+
+REVOKE ALL ON FUNCTION pay.count_enabled_provider_configs_bootstrap() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION pay.count_enabled_provider_configs_bootstrap() TO bridge_app, bridge_admin;
 GRANT EXECUTE ON FUNCTION pay.get_api_key_auth_candidates_bootstrap(TEXT) TO bridge_app, bridge_admin;
 GRANT EXECUTE ON FUNCTION pay.cleanup_old_webhook_provider() TO bridge_app, bridge_admin;
 GRANT EXECUTE ON FUNCTION pay.cleanup_purged_fraud_prevention() TO bridge_app, bridge_admin;

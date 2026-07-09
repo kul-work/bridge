@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use reqwest::{header::RETRY_AFTER, Client};
 use std::{
     env,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
     time::{Duration, Instant},
 };
 use tracing::{error, info, warn};
@@ -91,19 +91,27 @@ fn email_provider_rate_limit_cooldown_seconds(
         .unwrap_or(default_seconds)
 }
 
+fn email_provider_cooldown_guard(
+    cooldown_until: &Mutex<Option<Instant>>,
+) -> MutexGuard<'_, Option<Instant>> {
+    match cooldown_until.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            error!("Email provider cooldown lock was poisoned; recovering cooldown state");
+            poisoned.into_inner()
+        }
+    }
+}
+
 fn start_provider_rate_limit_cooldown(cooldown_until: &Mutex<Option<Instant>>, seconds: u64) {
-    let mut cooldown_until = cooldown_until
-        .lock()
-        .expect("email provider cooldown lock poisoned");
+    let mut cooldown_until = email_provider_cooldown_guard(cooldown_until);
     *cooldown_until = Some(Instant::now() + Duration::from_secs(seconds));
 }
 
 fn provider_rate_limit_cooldown_remaining_seconds(
     cooldown_until: &Mutex<Option<Instant>>,
 ) -> Option<u64> {
-    let mut cooldown_until = cooldown_until
-        .lock()
-        .expect("email provider cooldown lock poisoned");
+    let mut cooldown_until = email_provider_cooldown_guard(cooldown_until);
     let until = (*cooldown_until)?;
     let now = Instant::now();
     if until <= now {
@@ -630,7 +638,7 @@ pub fn send_email_mock(_to: &str, subject: &str, body: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -703,6 +711,25 @@ mod tests {
         assert_eq!(
             email_provider_rate_limit_cooldown_seconds(Some("9999"), 300, 900),
             900
+        );
+    }
+
+    #[test]
+    fn email_provider_cooldown_recovers_from_poisoned_lock() {
+        let cooldown_until = Arc::new(Mutex::new(None));
+        let poisoned_cooldown_until = cooldown_until.clone();
+
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned_cooldown_until.lock().unwrap();
+            panic!("poison email cooldown mutex");
+        })
+        .join();
+
+        start_provider_rate_limit_cooldown(&cooldown_until, 1);
+
+        assert_eq!(
+            provider_rate_limit_cooldown_remaining_seconds(&cooldown_until),
+            Some(1)
         );
     }
 

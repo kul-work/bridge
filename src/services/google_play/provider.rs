@@ -17,7 +17,23 @@ use crate::services::payment::{
 
 use super::client::GooglePlayClient;
 use super::models::{DeveloperNotification, PubSubMessage};
+use super::status::{subscription_state_to_canonical_status, GoogleSubscriptionStateStatus};
 use super::validation::{TokenValidationMode, TokenValidator};
+
+fn google_subscription_status_from_state(subscription_state: Option<&str>) -> SubscriptionStatus {
+    match subscription_state_to_canonical_status(subscription_state) {
+        GoogleSubscriptionStateStatus::Known("active") => SubscriptionStatus::Active,
+        GoogleSubscriptionStateStatus::Known("cancelled") => SubscriptionStatus::Cancelled,
+        GoogleSubscriptionStateStatus::Known("past_due") => SubscriptionStatus::PastDue,
+        GoogleSubscriptionStateStatus::Known("on_hold") => SubscriptionStatus::OnHold,
+        GoogleSubscriptionStateStatus::Known("paused") => SubscriptionStatus::Paused,
+        GoogleSubscriptionStateStatus::Known("pending") => SubscriptionStatus::Pending,
+        GoogleSubscriptionStateStatus::Known("expired") => SubscriptionStatus::Expired,
+        GoogleSubscriptionStateStatus::Known(status) => SubscriptionStatus::Unknown(status.to_string()),
+        GoogleSubscriptionStateStatus::Unknown(state) => SubscriptionStatus::Unknown(state.to_string()),
+        GoogleSubscriptionStateStatus::Missing => SubscriptionStatus::Unknown("no_subscription_state".to_string()),
+    }
+}
 
 pub struct GooglePlayProvider {
     pub client: GooglePlayClient,
@@ -366,20 +382,7 @@ impl GooglePlayProvider {
             Utc::now()
         };
 
-        let status = if let Some(state_str) = &purchase.subscription_state {
-            match state_str.as_str() {
-                "SUBSCRIPTION_STATE_ACTIVE" => SubscriptionStatus::Active,
-                "SUBSCRIPTION_STATE_CANCELED" => SubscriptionStatus::Cancelled,
-                "SUBSCRIPTION_STATE_IN_GRACE_PERIOD" => SubscriptionStatus::PastDue,
-                "SUBSCRIPTION_STATE_ON_HOLD" => SubscriptionStatus::OnHold,
-                "SUBSCRIPTION_STATE_PAUSED" => SubscriptionStatus::Paused,
-                "SUBSCRIPTION_STATE_PENDING" => SubscriptionStatus::Pending,
-                "SUBSCRIPTION_STATE_EXPIRED" => SubscriptionStatus::Expired,
-                _ => SubscriptionStatus::Unknown(state_str.clone()),
-            }
-        } else {
-            SubscriptionStatus::Unknown("no_subscription_state".to_string())
-        };
+        let status = google_subscription_status_from_state(purchase.subscription_state.as_deref());
 
         let auto_renewing = purchase.auto_renewing.or_else(|| {
             purchase.line_items.first()
@@ -1066,20 +1069,7 @@ impl GooglePlayProvider {
         };
 
         // V2 Status Determination directly from String Enum
-        let status = if let Some(state_str) = &purchase.subscription_state {
-            match state_str.as_str() {
-                "SUBSCRIPTION_STATE_ACTIVE" => SubscriptionStatus::Active,
-                "SUBSCRIPTION_STATE_CANCELED" => SubscriptionStatus::Cancelled,
-                "SUBSCRIPTION_STATE_IN_GRACE_PERIOD" => SubscriptionStatus::PastDue,
-                "SUBSCRIPTION_STATE_ON_HOLD" => SubscriptionStatus::OnHold,
-                "SUBSCRIPTION_STATE_PAUSED" => SubscriptionStatus::Paused,
-                "SUBSCRIPTION_STATE_PENDING" => SubscriptionStatus::Pending,
-                "SUBSCRIPTION_STATE_EXPIRED" => SubscriptionStatus::Expired,
-                _ => SubscriptionStatus::Unknown(state_str.clone()),
-            }
-        } else {
-            SubscriptionStatus::Unknown("no_subscription_state".to_string())
-        };
+        let status = google_subscription_status_from_state(purchase.subscription_state.as_deref());
 
         let auto_renewing = purchase.auto_renewing.or_else(|| {
             purchase.line_items.first()
