@@ -235,7 +235,7 @@ wait_for_callback() {
 }
 
 echo -e "${YELLOW}[1/5] Revocation/refund callback body${NC}"
-REV_TOKEN="test-net-callback-revoked-$TEST_RUN_ID"
+REV_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-net-callback-revoked-$TEST_RUN_ID"
 REV_USER="test_net_callback_revoked_$TEST_RUN_ID"
 register_and_verify_subscription "$REV_USER" "$REV_TOKEN"
 REV_JSON=$(cat <<EOF
@@ -257,7 +257,7 @@ wait_for_callback "$REV_TOKEN" '.event_type == "payment.refunded" and .revocatio
 echo ""
 
 echo -e "${YELLOW}[2/5] Price step-up consent callback body${NC}"
-PRICE_TOKEN="test-net-callback-price-$TEST_RUN_ID"
+PRICE_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-net-callback-price-$TEST_RUN_ID"
 PRICE_USER="test_net_callback_price_$TEST_RUN_ID"
 NEW_PRICE_MICROS=12990000
 NEW_PRICE_CENTS=1299
@@ -286,7 +286,7 @@ wait_for_callback "$PRICE_TOKEN" ".event_type == \"subscription.price_step_up\" 
 echo ""
 
 echo -e "${YELLOW}[3/5] Scheduled pause callback body${NC}"
-PAUSE_TOKEN="test-net-callback-pause-$TEST_RUN_ID"
+PAUSE_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-net-callback-pause-$TEST_RUN_ID"
 PAUSE_USER="test_net_callback_pause_$TEST_RUN_ID"
 PAUSE_SCHEDULE_TS=$(($(date +%s) + 604800))000
 register_and_verify_subscription "$PAUSE_USER" "$PAUSE_TOKEN"
@@ -310,7 +310,7 @@ wait_for_callback "$PAUSE_TOKEN" '.event_type == "subscription.pause_scheduled" 
 echo ""
 
 echo -e "${YELLOW}[4/5] Deferral callback body${NC}"
-DEFER_TOKEN="test-net-callback-defer-$TEST_RUN_ID"
+DEFER_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-net-callback-defer-$TEST_RUN_ID"
 DEFER_USER="test_net_callback_defer_$TEST_RUN_ID"
 register_and_verify_subscription "$DEFER_USER" "$DEFER_TOKEN"
 DEFER_JSON=$(cat <<EOF
@@ -333,7 +333,7 @@ wait_for_callback "$DEFER_TOKEN" '.event_type == "subscription.deferred" and .go
 echo ""
 
 echo -e "${YELLOW}[5/5] Scheduled cancellation callback body${NC}"
-CANCEL_TOKEN="test-net-callback-cancel-$TEST_RUN_ID"
+CANCEL_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-net-callback-cancel-$TEST_RUN_ID"
 CANCEL_USER="test_net_callback_cancel_$TEST_RUN_ID"
 register_and_verify_subscription "$CANCEL_USER" "$CANCEL_TOKEN"
 CANCEL_JSON=$(cat <<EOF
