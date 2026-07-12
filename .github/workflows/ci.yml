@@ -67,14 +67,6 @@ jobs:
       - name: Apply roles and RLS setup
         run: |
           sed 's/CHANGE_ME/postgres/g' docs/db-install-roles-rls.sql | psql -h localhost -U postgres -d appgen
-      - name: Apply migrations
-        run: |
-          for f in migrations/*.sql; do
-            psql -h localhost -U postgres -d appgen -f "$f"
-          done
-      - name: Seed database
-        run: |
-          psql -h localhost -U postgres -d appgen -f tests/ci-seed.sql
       - name: cargo test
         run: |
           DATABASE_URL=postgresql://bridge_app:postgres@localhost:5432/appgen \
@@ -127,14 +119,6 @@ jobs:
       - name: Apply roles and RLS setup
         run: |
           sed 's/CHANGE_ME/postgres/g' docs/db-install-roles-rls.sql | psql -h localhost -U postgres -d appgen
-      - name: Apply migrations
-        run: |
-          for f in migrations/*.sql; do
-            psql -h localhost -U postgres -d appgen -f "$f"
-          done
-      - name: Seed database
-        run: |
-          psql -h localhost -U postgres -d appgen -f tests/ci-seed.sql
       - name: Build backend
         run: cargo build
       - name: Start backend
@@ -160,6 +144,9 @@ jobs:
           done
           echo "Backend did not become healthy"
           exit 1
+      - name: Seed database
+        run: |
+          psql -h localhost -U postgres -d appgen -f tests/ci-seed.sql
       - name: Run root level tests
         run: |
           cd tests
