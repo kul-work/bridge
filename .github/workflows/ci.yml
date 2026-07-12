@@ -124,7 +124,8 @@ jobs:
           echo "GOOGLE_PUB_SUB_AUDIENCE=https://api.bridge.test/webhooks/google" >> .env
           # Admin suite: mock Clerk (tests/admin/mock_clerk.py on :5577) + dashboard CSP.
           # Bridge reads these at process start / first admin request (not from tests/admin/.env alone).
-          echo "ADMIN_CLERK_FRONTEND_API=http://127.0.0.1:5577" >> .env
+          # Must match mock_clerk.py default JWT iss claim exactly (localhost, not 127.0.0.1).
+          echo "ADMIN_CLERK_FRONTEND_API=http://localhost:5577" >> .env
           echo "ADMIN_CLERK_AUTHORIZED_PARTIES=https://admin.bridge.example.com" >> .env
           echo "ADMIN_CLERK_ORG_ID=org_test" >> .env
           echo "CLERK_PUBLISHABLE_KEY=pk_test_ci_admin_dummy_key" >> .env
