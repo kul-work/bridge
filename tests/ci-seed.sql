@@ -59,7 +59,7 @@ INSERT INTO pay.provider_configs (app_id, provider, config, enabled)
 VALUES (
   '43bd7125-87eb-4136-9605-6c5e524f1ab0'::uuid,
   'creem',
-  '{"webhook_secret": "whsec_1TSf4A155AEK1KLablY4w7", "verify_webhook_signature": true}'::jsonb,
+  '{"webhook_secret": "whsec_1TSf4A155AEK1KLablY4w7", "verify_webhook_signature": true, "api_key": "test_creem_api_key_dummy"}'::jsonb,
   true
 ),
 (
@@ -74,7 +74,7 @@ INSERT INTO pay.provider_configs (app_id, provider, config, enabled)
 VALUES (
   '23bd7125-87eb-4136-9605-6c5e524f1ab0'::uuid,
   'creem',
-  '{"webhook_secret": "whsec_1TSf4A155AEK1KLablY4w7", "verify_webhook_signature": true}'::jsonb,
+  '{"webhook_secret": "whsec_1TSf4A155AEK1KLablY4w7", "verify_webhook_signature": true, "api_key": "test_creem_api_key_dummy"}'::jsonb,
   true
 ),
 (
@@ -83,3 +83,4 @@ VALUES (
   '{"package_name": "com.tyde.household", "verify_audience": false, "service_account_json": "{}", "verify_webhook_signature": false}'::jsonb,
   true
 );
+
