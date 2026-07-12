@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: "1.93.1"
+  BRIDGE_API_URL: http://127.0.0.1:3000
+
 
 jobs:
   # ── Job 1: Compile + lint ──────────────────────────────────────────
