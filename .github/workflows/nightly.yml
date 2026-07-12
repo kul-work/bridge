@@ -1,98 +1,21 @@
-name: CI
+name: Nightly provider suites
+
+# Heavy bash suites (GPBI/Creem lifecycle + Admin). Not on every push/PR.
+# Trigger: nightly schedule or manual workflow_dispatch.
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  schedule:
+    # 03:15 UTC daily
+    - cron: "15 3 * * *"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: "1.93.1"
   BRIDGE_API_URL: http://127.0.0.1:3000
 
-# Every-build gate (fast):
-#   rust-checks + rust-tests + shell-smoke (root/CTI/security)
-# Provider lifecycle (GPBI/Creem) + Admin: see nightly.yml (schedule + manual).
-
 jobs:
-  # -- Job 1: Compile + lint -------------------------------------------------
-  rust-checks:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          components: clippy
-      - name: cargo check
-        run: cargo check --verbose
-      - name: cargo clippy
-        run: cargo clippy -- -D warnings
-
-  # -- Job 2: Rust integration tests ----------------------------------------
-  rust-tests:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_HOST_AUTH_METHOD: trust
-          POSTGRES_DB: appgen
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - name: Create .env file
-        run: |
-          echo "ENVIRONMENT=development" > .env
-          echo "DATABASE_URL=postgresql://bridge_app:postgres@localhost:5432/appgen" >> .env
-          echo "ADMIN_DATABASE_URL=postgresql://bridge_admin:postgres@localhost:5432/appgen" >> .env
-          echo "MOCK_EXTERNAL_APIS=true" >> .env
-          echo "PORT=3000" >> .env
-          echo "ENABLE_BACKGROUND_JOBS=false" >> .env
-          echo "RATE_LIMIT_DISABLE=true" >> .env
-          echo "RUST_LOG=bridge=info" >> .env
-      - name: Create schema and roles
-        run: |
-          psql -h localhost -U postgres -d appgen <<'SQL'
-          CREATE SCHEMA IF NOT EXISTS pay;
-          CREATE SCHEMA IF NOT EXISTS hiha;
-          CREATE SCHEMA IF NOT EXISTS household;
-          CREATE EXTENSION IF NOT EXISTS pgcrypto;
-          DO $$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bridge_admin') THEN
-              CREATE ROLE bridge_admin LOGIN PASSWORD 'postgres' BYPASSRLS;
-            END IF;
-          END $$;
-          DO $$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bridge_app') THEN
-              CREATE ROLE bridge_app LOGIN PASSWORD 'postgres' NOBYPASSRLS;
-            END IF;
-          END $$;
-          SQL
-      - name: Apply roles and RLS setup
-        run: |
-          sed 's/CHANGE_ME/postgres/g' docs/db-install-roles-rls.sql | psql -h localhost -U postgres -d appgen
-      - name: Pre-migrate database
-        run: |
-          cargo test --lib webhooks::identity_cross_user_tests::atomic_processor_rejects_mismatched_claim_token
-      - name: cargo test
-        run: |
-          cargo test --verbose
-
-  # -- Job 3: Shell smoke (no GPBI/Creem/Admin) -----------------------------
-  # Fast shell gate: root smoke + CTI (RLS/contracts) + Security (tenant isolation).
-  # Provider lifecycle suites (GPBI/Creem) and Admin live in nightly.yml.
-  shell-smoke:
+  shell-providers:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -125,16 +48,37 @@ jobs:
           echo "GOOGLE_SKIP_RSA_VERIFICATION=true" >> .env
           echo "GOOGLE_VERIFY_AUDIENCE=true" >> .env
           echo "GOOGLE_PUB_SUB_AUDIENCE=https://api.bridge.test/webhooks/google" >> .env
+          # Admin suite: mock Clerk on :5577. iss host must be localhost (not 127.0.0.1).
+          echo "ADMIN_CLERK_FRONTEND_API=http://localhost:5577" >> .env
+          echo "ADMIN_CLERK_AUTHORIZED_PARTIES=https://admin.bridge.example.com" >> .env
+          echo "ADMIN_CLERK_ORG_ID=org_test" >> .env
+          echo "CLERK_PUBLISHABLE_KEY=pk_test_ci_admin_dummy_key" >> .env
           echo "RUST_LOG=bridge=info" >> .env
       - name: Create tests .env files
         run: |
-          mkdir -p tests/security tests/cti
+          mkdir -p tests/creem tests/gpbi tests/security tests/cti tests/admin
+          echo "DATABASE_PASSWORD=postgres" > tests/creem/.env
+          echo "CREEM_WEBHOOK_SECRET=whsec_1TSf4A155AEK1KLablY4w7" >> tests/creem/.env
+          echo "BRIDGE_APP_ID=43bd7125-87eb-4136-9605-6c5e524f1ab0" >> tests/creem/.env
+          echo "BRIDGE_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm" >> tests/creem/.env
+          echo "WEBHOOK_INGRESS_TOKEN=fa0b93e3-32a1-49d4-ba2f-e421af5bf8e2" >> tests/creem/.env
+
+          echo "DATABASE_PASSWORD=postgres" > tests/gpbi/.env
+          echo "BRIDGE_APP_ID=43bd7125-87eb-4136-9605-6c5e524f1ab0" >> tests/gpbi/.env
+          echo "BRIDGE_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm" >> tests/gpbi/.env
+          echo "WEBHOOK_INGRESS_TOKEN=fa0b93e3-32a1-49d4-ba2f-e421af5bf8e2" >> tests/gpbi/.env
+
           echo "BRIDGE_APP_A_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm" > tests/security/.env
           echo "BRIDGE_APP_B_API_KEY=sk_haho_DxcO8Qk01fpD6V1Ov2R8P0Qs3CegemIV" >> tests/security/.env
 
           echo "DATABASE_PASSWORD=postgres" > tests/cti/.env
           echo "APP_A_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm" >> tests/cti/.env
           echo "APP_B_API_KEY=sk_haho_DxcO8Qk01fpD6V1Ov2R8P0Qs3CegemIV" >> tests/cti/.env
+
+          echo "DATABASE_PASSWORD=postgres" > tests/admin/.env
+          echo "ADMIN_CLERK_FRONTEND_API=http://localhost:5577" >> tests/admin/.env
+          echo "ADMIN_CLERK_AUTHORIZED_PARTIES=https://admin.bridge.example.com" >> tests/admin/.env
+          echo "ADMIN_CLERK_ORG_ID=org_test" >> tests/admin/.env
       - name: Install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client jq
       - name: Create schema and roles
@@ -178,11 +122,7 @@ jobs:
       - name: Seed database
         run: |
           psql -h localhost -U postgres -d appgen -f tests/ci-seed.sql
-      - name: Run root level tests
-        run: |
-          cd tests
-          bash test-runner.sh
-      - name: Run CTI tests
+      - name: Run Creem tests
         env:
           BRIDGE_DB_USER: postgres
           BRIDGE_DB_HOST: localhost
@@ -191,11 +131,12 @@ jobs:
           DATABASE_PASSWORD: ""
           BRIDGE_API_URL: http://127.0.0.1:3000
         run: |
-          cd tests/cti
-          export APP_A_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm
-          export APP_B_API_KEY=sk_haho_DxcO8Qk01fpD6V1Ov2R8P0Qs3CegemIV
+          cd tests/creem
+          export BRIDGE_APP_ID=43bd7125-87eb-4136-9605-6c5e524f1ab0
+          export BRIDGE_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm
+          export WEBHOOK_INGRESS_TOKEN=fa0b93e3-32a1-49d4-ba2f-e421af5bf8e2
           bash test-runner.sh --scope full --clear
-      - name: Run Security tests
+      - name: Run GPBI tests
         env:
           BRIDGE_DB_USER: postgres
           BRIDGE_DB_HOST: localhost
@@ -204,8 +145,19 @@ jobs:
           DATABASE_PASSWORD: ""
           BRIDGE_API_URL: http://127.0.0.1:3000
         run: |
-          cd tests/security
-          export BRIDGE_APP_A_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm
-          export BRIDGE_APP_B_API_KEY=sk_haho_DxcO8Qk01fpD6V1Ov2R8P0Qs3CegemIV
-          bash test-runner.sh --scope full
-
+          cd tests/gpbi
+          export BRIDGE_APP_ID=43bd7125-87eb-4136-9605-6c5e524f1ab0
+          export BRIDGE_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm
+          export WEBHOOK_INGRESS_TOKEN=fa0b93e3-32a1-49d4-ba2f-e421af5bf8e2
+          bash test-runner.sh --scope full --clear
+      - name: Run Admin tests
+        env:
+          BRIDGE_DB_USER: postgres
+          BRIDGE_DB_HOST: localhost
+          BRIDGE_DB_PORT: 5432
+          BRIDGE_DB_NAME: appgen
+          DATABASE_PASSWORD: ""
+          BRIDGE_API_URL: http://127.0.0.1:3000
+        run: |
+          cd tests/admin
+          bash test-runner.sh --clear
