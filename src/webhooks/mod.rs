@@ -19,4 +19,6 @@ pub fn webhook_routes() -> Router<AppState> {
     Router::new()
         .route("/:token/google_play", post(ingress::handle_google_play))
         .route("/:token/creem", post(ingress::handle_creem))
+        .route("/dummy", post(|| async { axum::http::StatusCode::NO_CONTENT }))
 }
+
