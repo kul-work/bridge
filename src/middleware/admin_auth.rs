@@ -340,7 +340,7 @@ fn validate_authorized_party(
     Ok(())
 }
 
-fn load_expected_issuer() -> Result<String, String> {
+pub fn load_expected_issuer() -> Result<String, String> {
     if let Some(issuer) = env::var("ADMIN_CLERK_FRONTEND_API")
         .ok()
         .map(|value| value.trim().to_string())
