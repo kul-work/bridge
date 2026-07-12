@@ -46,6 +46,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - name: Create .env file
+        run: |
+          echo "ENVIRONMENT=development" > .env
+          echo "DATABASE_URL=postgresql://bridge_app:postgres@localhost:5432/appgen" >> .env
+          echo "ADMIN_DATABASE_URL=postgresql://bridge_admin:postgres@localhost:5432/appgen" >> .env
+          echo "MOCK_EXTERNAL_APIS=true" >> .env
+          echo "PORT=3000" >> .env
+          echo "ENABLE_BACKGROUND_JOBS=false" >> .env
+          echo "RATE_LIMIT_DISABLE=false" >> .env
+          echo "RUST_LOG=bridge=info" >> .env
       - name: Create schema and roles
         run: |
           psql -h localhost -U postgres -d appgen <<'SQL'
@@ -69,17 +79,9 @@ jobs:
           sed 's/CHANGE_ME/postgres/g' docs/db-install-roles-rls.sql | psql -h localhost -U postgres -d appgen
       - name: Pre-migrate database
         run: |
-          DATABASE_URL=postgresql://bridge_app:postgres@localhost:5432/appgen \
-          ADMIN_DATABASE_URL=postgresql://bridge_admin:postgres@localhost:5432/appgen \
-          ENVIRONMENT=development \
-          MOCK_EXTERNAL_APIS=true \
           cargo test --lib webhooks::identity_cross_user_tests::atomic_processor_rejects_mismatched_claim_token
       - name: cargo test
         run: |
-          DATABASE_URL=postgresql://bridge_app:postgres@localhost:5432/appgen \
-          ADMIN_DATABASE_URL=postgresql://bridge_admin:postgres@localhost:5432/appgen \
-          ENVIRONMENT=development \
-          MOCK_EXTERNAL_APIS=true \
           cargo test --verbose
 
 
@@ -104,6 +106,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - name: Create .env file
+        run: |
+          echo "ENVIRONMENT=development" > .env
+          echo "DATABASE_URL=postgresql://bridge_app:postgres@localhost:5432/appgen" >> .env
+          echo "ADMIN_DATABASE_URL=postgresql://bridge_admin:postgres@localhost:5432/appgen" >> .env
+          echo "MOCK_EXTERNAL_APIS=true" >> .env
+          echo "PORT=3000" >> .env
+          echo "ENABLE_BACKGROUND_JOBS=false" >> .env
+          echo "RATE_LIMIT_DISABLE=false" >> .env
+          echo "RUST_LOG=bridge=info" >> .env
       - name: Install postgresql-client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client jq
       - name: Create schema and roles
@@ -131,16 +143,9 @@ jobs:
         run: cargo build
       - name: Start backend
         run: |
-          DATABASE_URL=postgresql://bridge_app:postgres@localhost:5432/appgen \
-          ADMIN_DATABASE_URL=postgresql://bridge_admin:postgres@localhost:5432/appgen \
-          ENVIRONMENT=development \
-          MOCK_EXTERNAL_APIS=true \
-          PORT=3000 \
-          ENABLE_BACKGROUND_JOBS=false \
-          RATE_LIMIT_DISABLE=false \
-          RUST_LOG=bridge=info \
           ./target/debug/bridge &
           sleep 3
+
       - name: Wait for backend health
         run: |
           for i in $(seq 1 30); do
