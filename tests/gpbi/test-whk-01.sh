@@ -72,11 +72,14 @@ EOF
 # Base64 encode the notification
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 
-# Send webhook with INVALID authorization header (tampered token)
+# Send webhook with INVALID authorization header (tampered token).
+# Force signature verification even when provider_config has
+# verify_webhook_signature=false (CI seed / local mock default).
 WEBHOOK_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer INVALID-TAMPERED-TOKEN-12345" \
+  -H "X-Webhook-Verification-Mode: strict" \
   -d "{
     \"message\": {
       \"data\": \"$NOTIFICATION_B64\",

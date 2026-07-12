@@ -787,32 +787,47 @@ impl GooglePlayClient {
 
         let token = parts[1];
 
-        // 1. Decode JWT header to extract key ID (kid)
-        let header = decode_header(token)
-            .map_err(|e| {
-                let err = format!("Failed to decode JWT header: {}", e);
-                AppError::WebhookSignatureVerificationFailed(err)
-            })?;
+        // Mock/dev path: GOOGLE_SKIP_RSA_VERIFICATION=true skips network JWK fetch
+        // and RSA crypto, but still validates JWT shape + exp/iss/aud/identity.
+        // Production keeps skip_rsa=false and requires real Google JWKs.
+        let claims = if self.skip_rsa {
+            let dummy_jwk = JsonWebKey {
+                kty: "RSA".to_string(),
+                use_: None,
+                kid: "skip-rsa".to_string(),
+                n: String::new(),
+                e: String::new(),
+                alg: None,
+            };
+            Self::verify_jwt_with_jwk(token, &dummy_jwk, true)?
+        } else {
+            // 1. Decode JWT header to extract key ID (kid)
+            let header = decode_header(token)
+                .map_err(|e| {
+                    let err = format!("Failed to decode JWT header: {}", e);
+                    AppError::WebhookSignatureVerificationFailed(err)
+                })?;
 
-        let kid = header.kid
-            .ok_or_else(|| {
-                let err = "JWT missing 'kid' (Key ID) in header".to_string();
-                AppError::WebhookSignatureVerificationFailed(err)
-            })?;
+            let kid = header.kid
+                .ok_or_else(|| {
+                    let err = "JWT missing 'kid' (Key ID) in header".to_string();
+                    AppError::WebhookSignatureVerificationFailed(err)
+                })?;
 
-        // 2. Fetch Google's public keys
-        let public_keys = self.get_google_public_keys().await?;
+            // 2. Fetch Google's public keys
+            let public_keys = self.get_google_public_keys().await?;
 
-        // 3. Find matching key by kid
-        let key = public_keys.iter()
-            .find(|k| k.kid == kid)
-            .ok_or_else(|| {
-                let err = format!("No public key found with kid: {}", kid);
-                AppError::WebhookSignatureVerificationFailed(err)
-            })?;
+            // 3. Find matching key by kid
+            let key = public_keys.iter()
+                .find(|k| k.kid == kid)
+                .ok_or_else(|| {
+                    let err = format!("No public key found with kid: {}", kid);
+                    AppError::WebhookSignatureVerificationFailed(err)
+                })?;
 
-        // 4. Manually verify JWT and extract claims
-        let claims = Self::verify_jwt_with_jwk(token, key, self.skip_rsa)?;
+            // 4. Manually verify JWT and extract claims
+            Self::verify_jwt_with_jwk(token, key, false)?
+        };
 
         // 5. Verify the authenticated Pub/Sub push service account identity (opt-in).
         if self.verify_pubsub_identity {
@@ -1032,6 +1047,31 @@ mod tests {
 
         assert!(client.verify_pubsub_claim_identity(&false_claim).is_err());
         assert!(client.verify_pubsub_claim_identity(&missing_claim).is_err());
+    }
+
+    #[tokio::test]
+    async fn skip_rsa_rejects_non_jwt_without_network() {
+        let client = test_client(None);
+        // skip_rsa already true on test_client; non-JWT must fail claims decode.
+        let result = client
+            .verify_pubsub_signature("Bearer INVALID-TAMPERED-TOKEN-12345")
+            .await;
+        assert!(result.is_err(), "non-JWT bearer must be rejected under skip_rsa");
+    }
+
+    #[tokio::test]
+    async fn skip_rsa_rejects_audience_mismatch_without_network() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+        let client = test_client(None);
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256","typ":"JWT"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(r#"{"aud":"https://wrong.example","iss":"https://accounts.google.com","exp":4102444800,"iat":1704067200}"#);
+        let token = format!("{}.{}.fakesig", header, payload);
+
+        let result = client
+            .verify_pubsub_signature(&format!("Bearer {}", token))
+            .await;
+        assert!(result.is_err(), "audience mismatch must be rejected under skip_rsa");
     }
 
     #[test]

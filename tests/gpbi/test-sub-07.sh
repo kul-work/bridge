@@ -97,20 +97,24 @@ echo -e "${GREEN}✓ Initial active subscription established (Expiry: $OLD_PERIO
 echo ""
 
 # Step 4: Simulate Pending Renewal (The "Slow" Card attempt)
-echo -e "${YELLOW}[2/5] Sending Pending Renewal Webhook (Type 2 + Pending status)${NC}"
+echo -e "${YELLOW}[2/5] Sending Pending Renewal Webhook (Type 21 = RENEWAL_PENDING)${NC}"
 
-# In mock mode, suffix "-pending" triggers PENDING state in mock Google API response
-TEMP_TOKEN_PENDING="$DUMMY_TOKEN-pending"
+# Keep the SAME purchase_token as the active subscription. A different token
+# would create/overwrite a separate lifecycle row and break the success step.
+# notificationType 21 maps to SUBSCRIPTION_RENEWAL_PENDING → status pending
+# without extending current_period_end (mock enrichment only extends on
+# SUBSCRIPTION_RENEWED). Type 13 is EXPIRED — do not use it here.
+PENDING_EVENT_TS="$BRIDGE_WEBHOOK_FUTURE_TS"
 
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$(date +%s000)",
+  "eventTimeMillis": "$PENDING_EVENT_TS",
   "subscriptionNotification": {
     "version": "1.0",
-    "notificationType": 2,
-    "purchaseToken": "$TEMP_TOKEN_PENDING",
+    "notificationType": 21,
+    "purchaseToken": "$DUMMY_TOKEN",
     "subscriptionId": "$PRODUCT_ID"
   }
 }
@@ -143,11 +147,15 @@ echo ""
 # Step 5: Simulate Successful Renewal (resolves to SUCCESS)
 echo -e "${YELLOW}[3/5] Sending Successful Renewal Webhook (resolves to SUCCESS)${NC}"
 
+# Use a strictly later eventTimeMillis than the pending event so stale-event
+# suppression cannot drop the success renewal (matches SUB-02/SUB-04 pattern).
+SUCCESS_EVENT_TS=$((BRIDGE_WEBHOOK_FUTURE_TS + 1000))
+
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "$(date +%s000)",
+  "eventTimeMillis": "$SUCCESS_EVENT_TS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 2,

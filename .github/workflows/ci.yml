@@ -116,7 +116,12 @@ jobs:
           echo "MOCK_EXTERNAL_APIS=true" >> .env
           echo "PORT=3000" >> .env
           echo "ENABLE_BACKGROUND_JOBS=false" >> .env
-          echo "RATE_LIMIT_DISABLE=true" >> .env
+          # Keep rate-limit middleware ON so API-01 can assert X-RateLimit headers.
+          # Suite volume is handled by high per-app limits in tests/ci-seed.sql.
+          echo "RATE_LIMIT_DISABLE=false" >> .env
+          echo "GOOGLE_SKIP_RSA_VERIFICATION=true" >> .env
+          echo "GOOGLE_VERIFY_AUDIENCE=true" >> .env
+          echo "GOOGLE_PUB_SUB_AUDIENCE=https://api.bridge.test/webhooks/google" >> .env
           echo "RUST_LOG=bridge=info" >> .env
       - name: Create tests .env files
         run: |
