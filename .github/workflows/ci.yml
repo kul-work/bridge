@@ -56,7 +56,7 @@ jobs:
           echo "MOCK_EXTERNAL_APIS=true" >> .env
           echo "PORT=3000" >> .env
           echo "ENABLE_BACKGROUND_JOBS=false" >> .env
-          echo "RATE_LIMIT_DISABLE=false" >> .env
+          echo "RATE_LIMIT_DISABLE=true" >> .env
           echo "RUST_LOG=bridge=info" >> .env
       - name: Create schema and roles
         run: |
@@ -116,7 +116,7 @@ jobs:
           echo "MOCK_EXTERNAL_APIS=true" >> .env
           echo "PORT=3000" >> .env
           echo "ENABLE_BACKGROUND_JOBS=false" >> .env
-          echo "RATE_LIMIT_DISABLE=false" >> .env
+          echo "RATE_LIMIT_DISABLE=true" >> .env
           echo "RUST_LOG=bridge=info" >> .env
       - name: Create tests .env files
         run: |
