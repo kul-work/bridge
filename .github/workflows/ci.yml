@@ -1,0 +1,231 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.93.1"
+
+jobs:
+  # ── Job 1: Compile + lint ──────────────────────────────────────────
+  rust-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy
+      - name: cargo check
+        run: cargo check --verbose
+      - name: cargo clippy
+        run: cargo clippy -- -D warnings
+
+  # ── Job 2: Rust integration tests ──────────────────────────────────
+  rust-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: appgen
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Create schema and roles
+        run: |
+          psql -h localhost -U postgres -d appgen <<'SQL'
+          CREATE SCHEMA IF NOT EXISTS pay;
+          CREATE SCHEMA IF NOT EXISTS hiha;
+          CREATE SCHEMA IF NOT EXISTS household;
+          CREATE EXTENSION IF NOT EXISTS pgcrypto;
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bridge_admin') THEN
+              CREATE ROLE bridge_admin LOGIN PASSWORD 'postgres' BYPASSRLS;
+            END IF;
+          END $$;
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bridge_app') THEN
+              CREATE ROLE bridge_app LOGIN PASSWORD 'postgres' NOBYPASSRLS;
+            END IF;
+          END $$;
+          SQL
+      - name: Apply roles and RLS setup
+        run: |
+          sed 's/CHANGE_ME/postgres/g' docs/db-install-roles-rls.sql | psql -h localhost -U postgres -d appgen
+      - name: Apply migrations
+        run: |
+          for f in migrations/*.sql; do
+            psql -h localhost -U postgres -d appgen -f "$f"
+          done
+      - name: Seed database
+        run: |
+          psql -h localhost -U postgres -d appgen -f tests/ci-seed.sql
+      - name: cargo test
+        run: |
+          DATABASE_URL=postgresql://bridge_app:postgres@localhost:5432/appgen \
+          ADMIN_DATABASE_URL=postgresql://bridge_admin:postgres@localhost:5432/appgen \
+          ENVIRONMENT=development \
+          MOCK_EXTERNAL_APIS=true \
+          cargo test --verbose
+
+  # ── Job 3: Shell integration + security tests ──────────────────────
+  shell-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: appgen
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client jq
+      - name: Create schema and roles
+        run: |
+          psql -h localhost -U postgres -d appgen <<'SQL'
+          CREATE SCHEMA IF NOT EXISTS pay;
+          CREATE SCHEMA IF NOT EXISTS hiha;
+          CREATE SCHEMA IF NOT EXISTS household;
+          CREATE EXTENSION IF NOT EXISTS pgcrypto;
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bridge_admin') THEN
+              CREATE ROLE bridge_admin LOGIN PASSWORD 'postgres' BYPASSRLS;
+            END IF;
+          END $$;
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bridge_app') THEN
+              CREATE ROLE bridge_app LOGIN PASSWORD 'postgres' NOBYPASSRLS;
+            END IF;
+          END $$;
+          SQL
+      - name: Apply roles and RLS setup
+        run: |
+          sed 's/CHANGE_ME/postgres/g' docs/db-install-roles-rls.sql | psql -h localhost -U postgres -d appgen
+      - name: Apply migrations
+        run: |
+          for f in migrations/*.sql; do
+            psql -h localhost -U postgres -d appgen -f "$f"
+          done
+      - name: Seed database
+        run: |
+          psql -h localhost -U postgres -d appgen -f tests/ci-seed.sql
+      - name: Build backend
+        run: cargo build
+      - name: Start backend
+        run: |
+          DATABASE_URL=postgresql://bridge_app:postgres@localhost:5432/appgen \
+          ADMIN_DATABASE_URL=postgresql://bridge_admin:postgres@localhost:5432/appgen \
+          ENVIRONMENT=development \
+          MOCK_EXTERNAL_APIS=true \
+          PORT=3000 \
+          ENABLE_BACKGROUND_JOBS=false \
+          RATE_LIMIT_DISABLE=false \
+          RUST_LOG=bridge=info \
+          ./target/debug/bridge &
+          sleep 3
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3000/health; then
+              echo "Backend is healthy"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Backend did not become healthy"
+          exit 1
+      - name: Run root level tests
+        run: |
+          cd tests
+          bash test-runner.sh
+      - name: Run CTI tests
+        env:
+          BRIDGE_DB_USER: postgres
+          BRIDGE_DB_HOST: localhost
+          BRIDGE_DB_PORT: 5432
+          BRIDGE_DB_NAME: appgen
+          DATABASE_PASSWORD: ""
+          BRIDGE_API_URL: http://127.0.0.1:3000
+        run: |
+          cd tests/cti
+          export APP_A_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm
+          export APP_B_API_KEY=sk_haho_DxcO8Qk01fpD6V1Ov2R8P0Qs3CegemIV
+          bash test-runner.sh --scope full --clear
+      - name: Run Creem tests
+        env:
+          BRIDGE_DB_USER: postgres
+          BRIDGE_DB_HOST: localhost
+          BRIDGE_DB_PORT: 5432
+          BRIDGE_DB_NAME: appgen
+          DATABASE_PASSWORD: ""
+          BRIDGE_API_URL: http://127.0.0.1:3000
+        run: |
+          cd tests/creem
+          export BRIDGE_APP_ID=43bd7125-87eb-4136-9605-6c5e524f1ab0
+          export BRIDGE_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm
+          export WEBHOOK_INGRESS_TOKEN=fa0b93e3-32a1-49d4-ba2f-e421af5bf8e2
+          bash test-runner.sh --scope full --clear
+      - name: Run GPBI tests
+        env:
+          BRIDGE_DB_USER: postgres
+          BRIDGE_DB_HOST: localhost
+          BRIDGE_DB_PORT: 5432
+          BRIDGE_DB_NAME: appgen
+          DATABASE_PASSWORD: ""
+          BRIDGE_API_URL: http://127.0.0.1:3000
+        run: |
+          cd tests/gpbi
+          export BRIDGE_APP_ID=43bd7125-87eb-4136-9605-6c5e524f1ab0
+          export BRIDGE_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm
+          export WEBHOOK_INGRESS_TOKEN=fa0b93e3-32a1-49d4-ba2f-e421af5bf8e2
+          bash test-runner.sh --scope full --clear
+      - name: Run Admin tests
+        env:
+          BRIDGE_DB_USER: postgres
+          BRIDGE_DB_HOST: localhost
+          BRIDGE_DB_PORT: 5432
+          BRIDGE_DB_NAME: appgen
+          DATABASE_PASSWORD: ""
+          BRIDGE_API_URL: http://127.0.0.1:3000
+        run: |
+          cd tests/admin
+          bash test-runner.sh --clear
+      - name: Run Security tests
+        env:
+          BRIDGE_DB_USER: postgres
+          BRIDGE_DB_HOST: localhost
+          BRIDGE_DB_PORT: 5432
+          BRIDGE_DB_NAME: appgen
+          DATABASE_PASSWORD: ""
+          BRIDGE_API_URL: http://127.0.0.1:3000
+        run: |
+          cd tests/security
+          export BRIDGE_APP_A_API_KEY=sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm
+          export BRIDGE_APP_B_API_KEY=sk_haho_DxcO8Qk01fpD6V1Ov2R8P0Qs3CegemIV
+          bash test-runner.sh --scope full
