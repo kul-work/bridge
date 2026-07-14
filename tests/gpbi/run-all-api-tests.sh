@@ -40,7 +40,7 @@ run_test() {
     local description=$3
     
     echo -e "${YELLOW}Running $test_id: $description...${NC}"
-    if ./$script_name; then
+    if bash "$script_name"; then
         echo -e "${GREEN}✓ $test_id PASSED${NC}"
         TEST_RESULTS[$test_id]="pass"
         echo ""

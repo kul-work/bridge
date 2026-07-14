@@ -131,7 +131,9 @@ NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0)
 # Format: header.payload.signature (all base64url encoded)
 # This simulates a JWT with aud="https://different-domain.com"
 JWT_HEADER=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 -w 0 | tr '+/' '-_' | tr -d '=')
-JWT_PAYLOAD=$(echo -n "{\"aud\":\"$WRONG_AUDIENCE\",\"iss\":\"accounts.google.com\",\"exp\":$(($(date +%s) + 3600))}" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
+# Issuer must match Google's Pub/Sub JWT iss claim shape so the failure is
+# specifically audience mismatch (not issuer rejection) under skip-RSA mode.
+JWT_PAYLOAD=$(echo -n "{\"aud\":\"$WRONG_AUDIENCE\",\"iss\":\"https://accounts.google.com\",\"exp\":$(($(date +%s) + 3600))}" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
 FAKE_JWT="$JWT_HEADER.$JWT_PAYLOAD.fake-signature-for-testing"
 
 # Send webhook with JWT containing wrong audience

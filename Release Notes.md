@@ -1,5 +1,11 @@
 # Release Notes
 
+## [0.7.2] - 2026-07-12
+### Maintenance
+- **Migrations**: Fold amount/price `bigint` and app-scoped purchase_token uniqueness into base table migrations (02/03); fold admin/bootstrap SQL into migration 90 and drop superseded 11–13 and 93–94 files.
+- **Migrations Ops**: Add reseed SQL and checksum recalc tooling under `migrations.ops/`.
+- **Tooling**: Remove CodeRabbit config; relocate auto_review under reviews; add Railway env notes.
+
 ## [0.7.1] - 2026-07-09
 ### Fixes
 - **Creem Lifecycle**: Resolve Creem subscriptions by subscription_id (not just purchase_token) in cancellation_scheduled and other lifecycle handlers, fixing silent callback drops for Creem.

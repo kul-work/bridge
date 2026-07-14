@@ -58,24 +58,31 @@ pub async fn admin_dashboard(
         .replace("{{CSP_NONCE}}", &csp_nonce)
         .replace("{{BYPASS_ADMIN_AUTH}}", &bypass_allowed.to_string())
         .replace("{{SHOW_EMERGENCY_CLEANUP}}", show_emergency);
-    Ok((admin_security_headers(&csp_nonce), Html(html)))
+    let clerk_issuer = crate::middleware::admin_auth::load_expected_issuer().unwrap_or_default();
+    Ok((admin_security_headers(&csp_nonce, &clerk_issuer), Html(html)))
 }
 
-fn admin_security_headers(csp_nonce: &str) -> HeaderMap {
+fn admin_security_headers(csp_nonce: &str, clerk_issuer: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
+    let clerk_custom_origin = if clerk_issuer.is_empty() {
+        "".to_string()
+    } else {
+        format!(" {}", clerk_issuer)
+    };
     let csp = format!(
         "default-src 'self'; \
-         script-src 'self' 'nonce-{0}' https://cdn.jsdelivr.net https://*.clerk.accounts.dev https://*.clerk.com https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
+         script-src 'self' 'nonce-{0}' https://cdn.jsdelivr.net https://*.clerk.accounts.dev https://*.clerk.com{1} https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
          style-src 'self' 'unsafe-inline' https://hcaptcha.com https://*.hcaptcha.com; \
-         connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://api.clerk.com https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
-         frame-src https://*.clerk.accounts.dev https://*.clerk.com https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
-         img-src 'self' data: blob: https://img.clerk.com https://images.clerk.dev https://*.clerk.com https://*.clerk.accounts.dev https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
-         font-src 'self' data: https://*.clerk.com https://*.clerk.accounts.dev https://*.perplexity.ai; \
+         connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://api.clerk.com{1} https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
+         frame-src https://*.clerk.accounts.dev https://*.clerk.com{1} https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
+         img-src 'self' data: blob: https://img.clerk.com https://images.clerk.dev https://*.clerk.com https://*.clerk.accounts.dev{1} https://hcaptcha.com https://*.hcaptcha.com https://challenges.cloudflare.com; \
+         font-src 'self' data: https://*.clerk.com https://*.clerk.accounts.dev{1} https://*.perplexity.ai; \
          worker-src 'self' blob:; \
          object-src 'none'; \
          base-uri 'none'; \
          frame-ancestors 'none'",
         csp_nonce,
+        clerk_custom_origin,
     );
 
     headers.insert(
