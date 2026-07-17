@@ -92,7 +92,7 @@ for ((i=1; i<=MAX_RETRIES; i++)); do
       -c "SELECT wd.forwarded, wd.last_http_status, wd.last_error 
           FROM pay.webhook_delivery wd
           JOIN pay.webhook_provider wp ON wd.webhook_provider_id = wp.id
-          WHERE wp.purchase_token = '$DUMMY_TOKEN' AND wp.app_id = (SELECT id FROM pay.apps WHERE slug = 'hiha' LIMIT 1)
+          WHERE wp.purchase_token = '$DUMMY_TOKEN' AND wp.app_id = (SELECT id FROM pay.apps WHERE slug = '$BRIDGE_APP_SLUG' LIMIT 1)
           ORDER BY wd.created_at DESC LIMIT 1;" -t | tr -d '[:space:]')
 
     if [[ "$DELIVERY_INFO" == "t"* ]]; then
