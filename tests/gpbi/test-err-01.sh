@@ -120,17 +120,15 @@ for token in "${FAKE_TOKENS[@]}"; do
       }")
     
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    RESPONSE_BODY=$(echo "$RESPONSE" | sed '$d')
     
-    # Check if properly rejected (4xx error expected)
-    if [[ "$HTTP_CODE" =~ ^4[0-9][0-9]$ ]]; then
-        echo -e "  ${GREEN}✓ Rejected with HTTP $HTTP_CODE (as expected)${NC}"
-    elif [[ "$HTTP_CODE" == "500" ]] || [[ "$HTTP_CODE" == "502" ]] || [[ "$HTTP_CODE" == "503" ]]; then
-        echo -e "  ${YELLOW}⚠ Server error HTTP $HTTP_CODE (Google API rejection)${NC}"
-    elif [[ "$HTTP_CODE" == "200" ]]; then
-        echo -e "  ${RED}✗ ACCEPTED (HTTP 200) - should have been rejected!${NC}"
-        ALL_REJECTED="false"
+    # The contract is a validation rejection, not merely any 4xx. In
+    # particular, a rate-limit 429 does not exercise token validation.
+    if [[ "$HTTP_CODE" == "400" ]] && echo "$RESPONSE_BODY" | grep -Eq '"error"[[:space:]]*:[[:space:]]*"validation_error"'; then
+        echo -e "  ${GREEN}✓ Rejected with HTTP 400 validation_error (as expected)${NC}"
     else
-        echo -e "  ${YELLOW}⚠ HTTP $HTTP_CODE${NC}"
+        echo -e "  ${RED}✗ Expected HTTP 400 validation_error, got HTTP $HTTP_CODE: $RESPONSE_BODY${NC}"
+        ALL_REJECTED="false"
     fi
 done
 echo ""

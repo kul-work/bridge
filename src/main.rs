@@ -5,7 +5,10 @@ use axum::Router;
 use tracing::info;
 use tracing_subscriber::fmt::time::OffsetTime;
 
-use bridge::{build_app, config::Config, db::Database, services, state::AppState, webhooks};
+use bridge::{
+    build_app, config::Config, db::Database, services, state::AppState, webhooks,
+    BUILD_GIT_SHA,
+};
 
 /// Initialize Google Play service account credentials from environment variables.
 ///
@@ -74,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
     config.validate_startup()?;
     init_google_play_credentials(&config.environment)?;
 
-    info!("Starting Bridge v{}", env!("CARGO_PKG_VERSION"));
+    info!(revision = BUILD_GIT_SHA, "Starting Bridge v{}", env!("CARGO_PKG_VERSION"));
     info!("Environment: {}", config.environment);
 
     // Log configuration

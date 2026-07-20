@@ -53,6 +53,39 @@ echo ""
 # Step 1: External User IDs
 USER1_ID="test_sub_user_19b_owner_$TEST_RUN_ID"
 USER2_ID="test_sub_user_19b_competitor_$TEST_RUN_ID"
+REGISTER_HTTP_CODE=0
+VERIFY_HTTP_CODE=0
+USER2_REGISTER_HTTP_CODE=0
+USER2_VERIFY_HTTP_CODE=0
+
+fail_test() {
+    local failure_step="$1"
+    local details="$2"
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "SUB-19B",
+  "test_name": "LinkingRequired Response (Different Account Verification)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "user1_id": "$USER1_ID",
+  "user2_id": "$USER2_ID",
+  "product_id": "$PRODUCT_ID",
+  "failure_step": "$failure_step",
+  "details": "$details",
+  "register_http_code": $REGISTER_HTTP_CODE,
+  "verify_http_code": $VERIFY_HTTP_CODE,
+  "user2_register_http_code": $USER2_REGISTER_HTTP_CODE,
+  "user2_verify_http_code": $USER2_VERIFY_HTTP_CODE
+}
+EOF
+    echo -e "${RED}SUB-19B failed at $failure_step: $details${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    exit 1
+}
 echo -e "${GREEN}✓ Testing with User IDs: $USER1_ID (Owner), $USER2_ID (Competitor)${NC}"
 echo ""
 
@@ -79,6 +112,10 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-sub-19b-u1\"
   }")
 
+if [[ "$REGISTER_HTTP_CODE" != "200" ]]; then
+    fail_test "user1_register" "expected HTTP 200, got $REGISTER_HTTP_CODE"
+fi
+
 # Verify
 # Mock returns a fixed external_account_identifier for this specific token string in some backend versions
 VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
@@ -92,6 +129,10 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"product_type\": \"subscription\"
   }")
 
+if [[ "$VERIFY_HTTP_CODE" != "200" ]]; then
+    fail_test "user1_verify" "expected HTTP 200, got $VERIFY_HTTP_CODE"
+fi
+
 echo -e "${GREEN}✓ User 1 verification complete${NC}"
 echo ""
 
@@ -99,21 +140,22 @@ echo ""
 echo -e "${YELLOW}[2/5] User 2 attempts verification (conflict expected)${NC}"
 
 # Pre-register for User 2
-curl -s -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+USER2_REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
     \"external_user_id\": \"$USER2_ID\",
     \"provider\": \"$PROVIDER\",
     \"subscription_id\": \"$PRODUCT_ID\",
-    \"reason\": \"test-sub-19b-u2\",
-    \"product_type\": \"subscription\",
-    \"amount_cents\": 0,
-    \"transaction_id\": \"$TEST_RUN_ID-u2\"
-  }" > /dev/null 2>&1 || true
+    \"reason\": \"test-sub-19b-u2\"
+  }")
+
+if [[ "$USER2_REGISTER_HTTP_CODE" != "200" ]]; then
+    fail_test "user2_register" "expected HTTP 200, got $USER2_REGISTER_HTTP_CODE"
+fi
 
 # Verify (expecting LinkingRequired)
-USER2_RESPONSE=$(curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
+USER2_RESPONSE_WITH_CODE=$(curl -s -w "\n%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -123,6 +165,8 @@ USER2_RESPONSE=$(curl -s -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
     \"purchase_token\": \"$DUMMY_TOKEN\",
     \"product_type\": \"subscription\"
   }")
+USER2_VERIFY_HTTP_CODE=$(echo "$USER2_RESPONSE_WITH_CODE" | tail -n1)
+USER2_RESPONSE=$(echo "$USER2_RESPONSE_WITH_CODE" | sed '$d')
 
 echo "Response: $USER2_RESPONSE"
 
@@ -130,13 +174,12 @@ echo "Response: $USER2_RESPONSE"
 echo ""
 echo -e "${YELLOW}[3/5] Validating LinkingRequired response${NC}"
 
-if echo "$USER2_RESPONSE" | grep -qi "LinkingRequired"; then
-    echo -e "${GREEN}✓ Success: Response contains 'LinkingRequired'${NC}"
-elif echo "$USER2_RESPONSE" | grep -qi "linking_required"; then
-    echo -e "${GREEN}✓ Success: Response contains 'linking_required'${NC}"
+if [[ "$USER2_VERIFY_HTTP_CODE" != "200" ]]; then
+    fail_test "user2_verify" "expected HTTP 200 linking_required response, got $USER2_VERIFY_HTTP_CODE"
+elif echo "$USER2_RESPONSE" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"linking_required"'; then
+    echo -e "${GREEN}✓ Success: Response status is 'linking_required'${NC}"
 else
-    echo -e "${RED}✗ Failure: Expected LinkingRequired in response${NC}"
-    # exit 1 # Don't exit yet, let's see if it's another error
+    fail_test "user2_verify" "HTTP 200 response did not contain status linking_required"
 fi
 echo ""
 
@@ -149,23 +192,7 @@ SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d
 if [[ "$SUB_COUNT" == "0" ]]; then
     echo -e "${GREEN}✓ Success: User 2 has 0 subscriptions${NC}"
 else
-    echo -e "${RED}✗ Failure: User 2 has $SUB_COUNT subscriptions, expected 0${NC}"
-    cat > "$REPORT_FILE" <<EOF
-{
-  "test_id": "SUB-19B",
-  "test_name": "LinkingRequired Response (Different Account Verification)",
-  "test_run_id": "$TEST_RUN_ID",
-  "started_at": "$TEST_STARTED_AT",
-  "status": "fail",
-  "user1_id": "$USER1_ID",
-  "user2_id": "$USER2_ID",
-  "product_id": "$PRODUCT_ID",
-  "failure_step": "user2_no_subscription",
-  "expected": "0",
-  "actual": "$SUB_COUNT"
-}
-EOF
-    exit 1
+    fail_test "user2_no_subscription" "expected 0 subscriptions, got $SUB_COUNT"
 fi
 echo ""
 
@@ -184,6 +211,8 @@ cat > "$REPORT_FILE" <<EOF
   "product_id": "$PRODUCT_ID",
   "register_http_code": $REGISTER_HTTP_CODE,
   "verify_http_code": $VERIFY_HTTP_CODE,
+  "user2_register_http_code": $USER2_REGISTER_HTTP_CODE,
+  "user2_verify_http_code": $USER2_VERIFY_HTTP_CODE,
   "results": {
     "user1_verified": true,
     "user2_linking_required": true,

@@ -19,8 +19,8 @@
 #
 # TESTPLAN Reference:
 #   Expected Behavior: A subscription.revoked (notificationType=12) webhook is successfully processed.
-#                      The subscription status is updated to 'revoked' (or cancelled/expired) in pay.subscriptions.
-#                      Subsequent requests to entitlement endpoints return a 4xx error.
+#                      The subscription status is updated to 'revoked' in pay.subscriptions.
+#                      The authenticated subscription snapshot returns HTTP 200 with is_premium=false and status='revoked'.
 #                      Ensures refunds and revocations are correctly propagated and enforced.
 #                      Validates idempotency and stale-event suppression logic using event timestamps.
 ##############################################################################
@@ -52,6 +52,51 @@ WEBHOOK_ID="webhook-err-04-$TEST_RUN_ID"
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 DB_URL="${BRIDGE_DB_URL}"
+PURCHASE_TOKEN=""
+WEBHOOK_HTTP_CODE=0
+STATUS_HTTP_CODE=0
+INITIAL_STATUS=""
+FINAL_STATUS=""
+CURRENT_FAILURE_KIND="setup"
+rm -f "$REPORT_FILE"
+
+write_failure_report() {
+    local failure_kind="$1"
+    local failure_step="$2"
+    local details="$3"
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "ERR-04",
+  "test_name": "Revoked/Refunded Purchase Token",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "failure_kind": "$failure_kind",
+  "failure_step": "$failure_step",
+  "details": "$details",
+  "webhook_http_code": $WEBHOOK_HTTP_CODE,
+  "status_http_code": $STATUS_HTTP_CODE,
+  "initial_status": "$INITIAL_STATUS",
+  "final_status": "$FINAL_STATUS"
+}
+EOF
+}
+
+fail_test() {
+    write_failure_report "$1" "$2" "$3"
+    exit 1
+}
+
+write_failure_report_on_exit() {
+    local exit_code=$?
+    if [[ "$exit_code" -ne 0 && ! -f "$REPORT_FILE" ]]; then
+        write_failure_report "$CURRENT_FAILURE_KIND" "script_exit" "unexpected command failure (exit $exit_code)"
+    fi
+}
+trap write_failure_report_on_exit EXIT
 
 # Extract DB password once
 # Extract DB password if needed
@@ -67,13 +112,15 @@ echo ""
 echo "Test Run ID: $TEST_RUN_ID"
 echo ""
 
+if ! command -v jq >/dev/null 2>&1; then
+    fail_test "setup" "prerequisite" "jq is required for entitlement assertions"
+fi
+
 # Step 1: Generate a synthetic external_user_id for this run
 echo -e "${YELLOW}[1/6] Preparing generated user_id for this run${NC}"
 
 if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
-    echo "Error: $USER_ID"
-    exit 1
+    fail_test "setup" "user_id" "generated user ID is invalid"
 fi
 
 USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
@@ -99,7 +146,12 @@ INITIAL_STATUS=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PO
 echo "Initial status: $INITIAL_STATUS"
 echo ""
 
+if [[ "$INITIAL_STATUS" != "active" ]]; then
+    fail_test "setup" "initial_status" "expected active subscription, got $INITIAL_STATUS"
+fi
+
 # Step 3: Simulate revocation via webhook (subscription.revoked)
+CURRENT_FAILURE_KIND="behavior"
 echo -e "${YELLOW}[3/6] Simulating revocation webhook${NC}"
 echo ""
 
@@ -158,7 +210,7 @@ if [[ "$WEBHOOK_HTTP_CODE" == "200" ]] || [[ "$WEBHOOK_HTTP_CODE" == "204" ]]; t
     echo -e "${GREEN}✓ Revocation webhook processed${NC}"
     WEBHOOK_OK="true"
 else
-    echo -e "${YELLOW}⚠ Webhook returned HTTP $WEBHOOK_HTTP_CODE${NC}"
+    fail_test "behavior" "revocation_webhook" "expected HTTP 200 or 204, got $WEBHOOK_HTTP_CODE"
 fi
 echo ""
 
@@ -173,40 +225,36 @@ echo "Revoked at: $REVOKED_AT"
 echo ""
 
 STATUS_UPDATED="false"
-if [[ "$FINAL_STATUS" == "revoked" ]] || [[ "$FINAL_STATUS" == "expired" ]] || [[ "$FINAL_STATUS" == "cancelled" ]]; then
+if [[ "$FINAL_STATUS" == "revoked" ]]; then
     echo -e "${GREEN}✓ Status correctly updated to: $FINAL_STATUS${NC}"
     STATUS_UPDATED="true"
 else
-    echo -e "${YELLOW}⚠ Status is '$FINAL_STATUS' (expected: revoked/expired/cancelled)${NC}"
-    # Check if status changed at all
-    if [[ "$FINAL_STATUS" != "$INITIAL_STATUS" ]]; then
-        STATUS_UPDATED="true"
-    fi
+    fail_test "behavior" "revocation_status" "expected revoked, got $FINAL_STATUS"
 fi
 echo ""
 
-# Step 5: Verify access is revoked (try premium feature)
+# Step 5: Verify access is revoked in the app-facing snapshot
 echo -e "${YELLOW}[5/6] Verifying access is revoked${NC}"
 
-PREMIUM_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
-  "$BRIDGE_API_URL/api/v1/subscriptions" \
+STATUS_RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
+  "$BRIDGE_API_URL/api/v1/users/$USER_ID/subscription-status" \
   -H "Content-Type: application/json" \
-   \
-  )
+  -H "Authorization: Bearer $BRIDGE_API_KEY")
 
-PREMIUM_HTTP_CODE=$(echo "$PREMIUM_RESPONSE" | tail -n1)
-echo "Premium feature HTTP: $PREMIUM_HTTP_CODE"
+STATUS_HTTP_CODE=$(echo "$STATUS_RESPONSE" | tail -n1)
+STATUS_BODY=$(echo "$STATUS_RESPONSE" | sed '$d')
+echo "Subscription status HTTP: $STATUS_HTTP_CODE"
+
+if [[ "$STATUS_HTTP_CODE" != "200" ]]; then
+    fail_test "behavior" "subscription_snapshot" "expected HTTP 200, got $STATUS_HTTP_CODE"
+fi
 
 ACCESS_REVOKED="false"
-if [[ "$PREMIUM_HTTP_CODE" == "401" ]] || [[ "$PREMIUM_HTTP_CODE" == "402" ]] || [[ "$PREMIUM_HTTP_CODE" == "403" ]]; then
-    echo -e "${GREEN}✓ Access correctly revoked (HTTP $PREMIUM_HTTP_CODE)${NC}"
+if echo "$STATUS_BODY" | jq -e '.is_premium == false and .status == "revoked"' > /dev/null; then
+    echo -e "${GREEN}✓ Subscription snapshot confirms revoked access${NC}"
     ACCESS_REVOKED="true"
-elif [[ "$PREMIUM_HTTP_CODE" == "200" ]]; then
-    echo -e "${YELLOW}⚠ Access still granted (HTTP 200) - may need status refresh${NC}"
-    ACCESS_REVOKED="false"
 else
-    echo -e "${YELLOW}⚠ HTTP $PREMIUM_HTTP_CODE${NC}"
-    ACCESS_REVOKED="false"
+    fail_test "behavior" "subscription_snapshot" "HTTP 200 response did not contain is_premium=false and status=revoked"
 fi
 echo ""
 
@@ -218,7 +266,7 @@ echo -e "${GREEN}✓ Cleaned up test data${NC}"
 echo ""
 
 # Determine overall test status
-if [[ "$WEBHOOK_OK" == "true" ]] && [[ "$STATUS_UPDATED" == "true" ]]; then
+if [[ "$WEBHOOK_OK" == "true" ]] && [[ "$STATUS_UPDATED" == "true" ]] && [[ "$ACCESS_REVOKED" == "true" ]]; then
     TEST_STATUS="pass"
     TEST_RESULT_MSG="${GREEN}✓ ERR-04 Test PASSED${NC}"
 else
@@ -236,6 +284,7 @@ cat > "$REPORT_FILE" <<EOF
   "started_at": "$TEST_STARTED_AT",
   "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
+  "failure_kind": null,
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
   "results": {
@@ -245,7 +294,7 @@ cat > "$REPORT_FILE" <<EOF
     "initial_status": "$INITIAL_STATUS",
     "final_status": "$FINAL_STATUS",
     "access_revoked": $ACCESS_REVOKED,
-    "premium_http_code": $PREMIUM_HTTP_CODE
+    "status_http_code": $STATUS_HTTP_CODE
   }
 }
 EOF

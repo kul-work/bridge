@@ -30,11 +30,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/globals.cfg"
 
-if ! command -v jq >/dev/null 2>&1; then
-    echo "jq is required for SUB-21 snapshot assertions"
-    exit 1
-fi
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -51,6 +46,10 @@ REPORT_FILE="sub-21-report.json"
 NEW_PRICE_CENTS=1200000 # 12,000 KRW (Google Play represents this as 12,000,000,000 micros)
 NEW_PRICE_MICROS=$((NEW_PRICE_CENTS * 10000))
 CONSENT_DEADLINE_MS=$(($(date +%s) + 604800))000
+REGISTER_HTTP_CODE=0
+VERIFY_HTTP_CODE=0
+CONSENT_WEBHOOK_HTTP_CODE=0
+PRICE_CHANGED_WEBHOOK_HTTP_CODE=0
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-21: Price Step-Up Consent (Korea Only)"
@@ -61,6 +60,37 @@ echo ""
 
 # Step 1: External User ID
 USER_ID="test_sub_user_01"
+
+fail_test() {
+    local failure_step="$1"
+    local details="$2"
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "SUB-21",
+  "test_name": "Price Step-Up Consent (Korea Only)",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "failure_step": "$failure_step",
+  "details": "$details",
+  "register_http_code": $REGISTER_HTTP_CODE,
+  "verify_http_code": $VERIFY_HTTP_CODE,
+  "consent_webhook_http_code": $CONSENT_WEBHOOK_HTTP_CODE,
+  "price_changed_webhook_http_code": $PRICE_CHANGED_WEBHOOK_HTTP_CODE
+}
+EOF
+    echo -e "${RED}SUB-21 failed at $failure_step: $details${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    exit 1
+}
+
+if ! command -v jq >/dev/null 2>&1; then
+    fail_test "prerequisite" "jq is required for SUB-21 snapshot assertions"
+fi
+
 echo -e "${GREEN}PASS: Testing with User ID: $USER_ID${NC}"
 echo ""
 
@@ -87,6 +117,10 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-step-up-setup-21\"
   }" )
 
+if [[ "$REGISTER_HTTP_CODE" != "200" ]]; then
+    fail_test "register" "expected HTTP 200, got $REGISTER_HTTP_CODE"
+fi
+
 # Verify purchase (as trial)
 # Mocking return of trial status by token naming or specific headers if supported
 VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
@@ -102,17 +136,22 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"currency\": \"KRW\"
   }" )
 
+if [[ "$VERIFY_HTTP_CODE" != "200" ]]; then
+    fail_test "verify" "expected HTTP 200, got $VERIFY_HTTP_CODE"
+fi
+
 echo -e "${GREEN}PASS: Trial subscription established${NC}"
 echo ""
 
 # Step 4: Simulate price_step_up_consent_updated (notificationType 22)
 echo -e "${YELLOW}[2/5] Sending price_step_up_consent_updated webhook (notificationType 22)${NC}"
 
+CONSENT_EVENT_TIME_MS=$(( ($(date +%s) + 10) * 1000 ))
 NOTIFICATION_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "\$((\$(date +%s) + 10))000",
+  "eventTimeMillis": "$CONSENT_EVENT_TIME_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 22,
@@ -128,7 +167,7 @@ EOF
 )
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || echo -n "$NOTIFICATION_JSON" | base64)
 
-curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
+CONSENT_WEBHOOK_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Verification-Mode: off" \
   -d "{
@@ -137,7 +176,11 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
       \"message_id\": \"test-webhook-21-consent-$(date +%s)\",
       \"attributes\": {}
     }
-  }" > /dev/null
+  }")
+
+if [[ "$CONSENT_WEBHOOK_HTTP_CODE" != "200" && "$CONSENT_WEBHOOK_HTTP_CODE" != "204" ]]; then
+    fail_test "consent_webhook" "expected HTTP 200 or 204, got $CONSENT_WEBHOOK_HTTP_CODE"
+fi
 
 echo -e "${GREEN}PASS: Consent notification webhook sent${NC}"
 echo ""
@@ -145,11 +188,12 @@ echo ""
 # Step 5: Simulate price_changed (notificationType 8) - user accepted
 echo -e "${YELLOW}[3/5] Sending price_changed webhook (notificationType 8)${NC}"
 
+PRICE_CHANGED_EVENT_TIME_MS=$(( ($(date +%s) + 20) * 1000 ))
 PRICE_CHANGED_JSON=$(cat <<EOF
 {
   "version": "1.0",
   "packageName": "$PACKAGE_NAME",
-  "eventTimeMillis": "\$((\$(date +%s) + 20))000",
+  "eventTimeMillis": "$PRICE_CHANGED_EVENT_TIME_MS",
   "subscriptionNotification": {
     "version": "1.0",
     "notificationType": 8,
@@ -161,7 +205,7 @@ EOF
 )
 PRICE_CHANGED_B64=$(echo -n "$PRICE_CHANGED_JSON" | base64 -w 0 2>/dev/null || echo -n "$PRICE_CHANGED_JSON" | base64)
 
-curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
+PRICE_CHANGED_WEBHOOK_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Verification-Mode: off" \
   -d "{
@@ -170,7 +214,11 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
       \"message_id\": \"test-webhook-21-changed-$(date +%s)\",
       \"attributes\": {}
     }
-  }" > /dev/null
+  }")
+
+if [[ "$PRICE_CHANGED_WEBHOOK_HTTP_CODE" != "200" && "$PRICE_CHANGED_WEBHOOK_HTTP_CODE" != "204" ]]; then
+    fail_test "price_changed_webhook" "expected HTTP 200 or 204, got $PRICE_CHANGED_WEBHOOK_HTTP_CODE"
+fi
 
 echo -e "${GREEN}PASS: Price changed webhook sent${NC}"
 echo ""
@@ -191,8 +239,7 @@ done
 if [[ "$STATUS" == "active" ]] || [[ "$STATUS" == "trial" ]]; then
     echo -e "${GREEN}PASS: Subscription status is $STATUS (valid state for Korea)${NC}"
 else
-    echo -e "${RED}FAIL: Subscription status is $STATUS, expected 'active' or 'trial'${NC}"
-    exit 1
+    fail_test "subscription_status" "expected active or trial, got $STATUS"
 fi
 
 bridge_wait_for_db_glob \
@@ -205,8 +252,7 @@ bridge_wait_for_db_glob \
 if [[ "$PAYMENT_COUNT" == "2" ]]; then
     echo -e "${GREEN}PASS: Payment row count is 2 (initial payment + price update)${NC}"
 else
-    echo -e "${RED}FAIL: Payment row count is $PAYMENT_COUNT, expected 2${NC}"
-    exit 1
+    fail_test "payment_count" "expected 2, got $PAYMENT_COUNT"
 fi
 
 LATEST_PAYMENT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" \
@@ -220,8 +266,7 @@ PAYMENT_CURRENCY=$(echo "$LATEST_PAYMENT" | awk -F '|' '{print $4}' | tr -d '[:s
 if [[ "$PAYMENT_STATUS" == "price_changed" && "$PAYMENT_ACK_REQUIRED" == "f" && "$PAYMENT_AMOUNT_IS_NULL" == "t" && "$PAYMENT_CURRENCY" == "KRW" ]]; then
     echo -e "${GREEN}PASS: Latest payment is a non-ACK price_changed audit row with inherited KRW currency and unknown amount${NC}"
 else
-    echo -e "${RED}FAIL: Latest payment audit row mismatch: status=$PAYMENT_STATUS ack_required=$PAYMENT_ACK_REQUIRED amount_is_null=$PAYMENT_AMOUNT_IS_NULL currency=$PAYMENT_CURRENCY${NC}"
-    exit 1
+    fail_test "payment_audit" "status=$PAYMENT_STATUS ack_required=$PAYMENT_ACK_REQUIRED amount_is_null=$PAYMENT_AMOUNT_IS_NULL currency=$PAYMENT_CURRENCY"
 fi
 echo ""
 
@@ -236,9 +281,8 @@ STATUS_HTTP_CODE=$(echo "$STATUS_RESPONSE" | tail -n1)
 STATUS_BODY=$(echo "$STATUS_RESPONSE" | sed '$d')
 
 if [[ "$STATUS_HTTP_CODE" != "200" ]]; then
-    echo -e "${RED}FAIL: subscription-status returned HTTP $STATUS_HTTP_CODE${NC}"
     echo "$STATUS_BODY"
-    exit 1
+    fail_test "subscription_snapshot" "expected HTTP 200, got $STATUS_HTTP_CODE"
 fi
 
 if echo "$STATUS_BODY" | jq -e \
@@ -246,9 +290,8 @@ if echo "$STATUS_BODY" | jq -e \
   '.is_premium == true and (.status == "active" or .status == "trial") and .google_requires_price_step_up_consent == true and .google_new_price_cents == $new_price and .google_price_step_up_consent_deadline != null' > /dev/null; then
     echo -e "${GREEN}PASS: Snapshot shows price step-up consent fields${NC}"
 else
-    echo -e "${RED}FAIL: Price step-up snapshot contract mismatch${NC}"
     echo "$STATUS_BODY" | jq .
-    exit 1
+    fail_test "subscription_snapshot" "price step-up snapshot contract mismatch"
 fi
 echo ""
 
@@ -264,6 +307,8 @@ cat > "$REPORT_FILE" <<EOF
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,
   "verify_http_code": $VERIFY_HTTP_CODE,
+  "consent_webhook_http_code": $CONSENT_WEBHOOK_HTTP_CODE,
+  "price_changed_webhook_http_code": $PRICE_CHANGED_WEBHOOK_HTTP_CODE,
   "automatic_upgrade_verified": true,
   "snapshot_verified": true
 }

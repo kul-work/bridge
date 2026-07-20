@@ -42,6 +42,9 @@ TEST_RUN_ID="sub-23-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_SUB"
 DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-sub-23-pending-$TEST_RUN_ID"
 REPORT_FILE="sub-23-report.json"
+REGISTER_HTTP_CODE=0
+VERIFY_HTTP_CODE=0
+WEBHOOK_HTTP_CODE=0
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-23: Pending Purchase Canceled"
@@ -52,6 +55,32 @@ echo ""
 
 # Step 1: External User ID
 USER_ID="test_sub_user_01"
+
+fail_test() {
+    local failure_step="$1"
+    local details="$2"
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "SUB-23",
+  "test_name": "Pending Purchase Canceled",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "failure_step": "$failure_step",
+  "details": "$details",
+  "register_http_code": $REGISTER_HTTP_CODE,
+  "verify_http_code": $VERIFY_HTTP_CODE,
+  "webhook_http_code": $WEBHOOK_HTTP_CODE
+}
+EOF
+    echo -e "${RED}SUB-23 failed at $failure_step: $details${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    exit 1
+}
+
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
@@ -78,6 +107,10 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-pending-cancel-setup-23\"
   }" )
 
+if [[ "$REGISTER_HTTP_CODE" != "200" ]]; then
+    fail_test "register" "expected HTTP 200, got $REGISTER_HTTP_CODE"
+fi
+
 # Verify purchase (as pending)
 VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
@@ -90,6 +123,10 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"purchase_token\": \"$DUMMY_TOKEN\",
     \"product_type\": \"subscription\"
   }" )
+
+if [[ "$VERIFY_HTTP_CODE" != "200" ]]; then
+    fail_test "verify" "expected HTTP 200, got $VERIFY_HTTP_CODE"
+fi
 
 echo -e "${GREEN}✓ Pending subscription established${NC}"
 echo ""
@@ -113,7 +150,7 @@ EOF
 )
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || echo -n "$NOTIFICATION_JSON" | base64)
 
-curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
+WEBHOOK_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Verification-Mode: off" \
   -d "{
@@ -122,7 +159,11 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
       \"message_id\": \"test-webhook-23-pc-$(date +%s)\",
       \"attributes\": {}
     }
-  }" > /dev/null
+  }")
+
+if [[ "$WEBHOOK_HTTP_CODE" != "200" && "$WEBHOOK_HTTP_CODE" != "204" ]]; then
+    fail_test "webhook" "expected HTTP 200 or 204, got $WEBHOOK_HTTP_CODE"
+fi
 
 echo -e "${GREEN}✓ Pending cancel webhook sent${NC}"
 echo ""
@@ -140,8 +181,7 @@ bridge_wait_for_db_glob \
 if [[ "$STATUS" == "cancelled" ]]; then
     echo -e "${GREEN}✓ Success: Subscription status is $STATUS${NC}"
 else
-    echo -e "${RED}✗ Failure: Subscription status is $STATUS, expected 'cancelled'${NC}"
-    exit 1
+    fail_test "subscription_status" "expected cancelled, got $STATUS"
 fi
 echo ""
 
@@ -157,7 +197,8 @@ cat > "$REPORT_FILE" <<EOF
   "status": "pass",
   "register_http_code": $REGISTER_HTTP_CODE,
   "verify_http_code": $VERIFY_HTTP_CODE,
-  "proration_credit_verified": true
+  "webhook_http_code": $WEBHOOK_HTTP_CODE,
+  "pending_purchase_cancelled_verified": true
 }
 EOF
 

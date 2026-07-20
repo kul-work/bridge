@@ -1,6 +1,7 @@
 # Stage 1: Build the Rust binary
 ARG RUST_VERSION=1.93.1
 FROM rust:${RUST_VERSION} AS builder
+ARG BRIDGE_BUILD_GIT_SHA=unknown
 
 WORKDIR /app
 
@@ -15,7 +16,7 @@ COPY migrations ./migrations
 COPY templates ./templates
 
 # Build the application
-RUN cargo build --release
+RUN BRIDGE_BUILD_GIT_SHA="${BRIDGE_BUILD_GIT_SHA}" cargo build --release
 
 # Stage 2: Runtime image
 FROM debian:bookworm-slim

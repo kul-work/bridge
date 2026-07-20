@@ -17,7 +17,7 @@
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: POST /api/v1/verify-purchase returns a 4xx HTTP error (Gone/BadRequest) for tokens > 60 days old. 
+#   Expected Behavior: POST /api/v1/verify-purchase returns HTTP 502 provider_error for the mock provider's expired-token response.
 #                      No database records are created or updated for expired tokens.
 #                      Ensures legacy or discarded tokens cannot be used to gain fraudulent access.
 #                      Validates strict compliance with provider token retention policies.
@@ -49,6 +49,34 @@ USER_ID="${USER_ID:-test_err_03_user_$TEST_RUN_ID}"
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 DB_URL="${BRIDGE_DB_URL}"
+EXPIRED_TOKEN=""
+HTTP_CODE=0
+CURRENT_FAILURE_KIND="setup"
+rm -f "$REPORT_FILE"
+
+write_early_failure_report() {
+    local exit_code=$?
+    if [[ "$exit_code" -eq 0 || -f "$REPORT_FILE" ]]; then
+        return
+    fi
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "ERR-03",
+  "test_name": "Expired Purchase Token",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "failure_kind": "$CURRENT_FAILURE_KIND",
+  "failure_step": "script_exit",
+  "exit_code": $exit_code,
+  "http_code": $HTTP_CODE
+}
+EOF
+}
+trap write_early_failure_report EXIT
 
 # Extract DB password once
 # Extract DB password if needed
@@ -88,12 +116,13 @@ echo -e "${BLUE}Initial payment count: $INITIAL_PAYMENT_COUNT${NC}"
 echo ""
 
 # Step 3: Test with simulated expired token
+CURRENT_FAILURE_KIND="behavior"
 echo -e "${YELLOW}[3/5] Testing with simulated expired token${NC}"
 echo ""
 
 # Use a token that indicates it's expired (the mock should recognize this pattern)
 # In real scenario, this would be a token from 60+ days ago
-EXPIRED_TOKEN="expired-token-err-03-$(date +%s)"
+EXPIRED_TOKEN="mock-google-play-subscription:$PRODUCT_ID:expired-token-err-03-$(date +%s)"
 
 echo "Request details:"
 echo "  Token: $EXPIRED_TOKEN (simulating 60+ day old token)"
@@ -131,21 +160,12 @@ if [[ ! -z "$BODY" ]]; then
 fi
 echo ""
 
-# Note: With mock API, any unknown token pattern should be rejected
 EXPIRED_REJECTED="false"
-if [[ "$HTTP_CODE" =~ ^4[0-9][0-9]$ ]]; then
-    echo -e "${GREEN}✓ Expired token rejected with HTTP $HTTP_CODE (as expected)${NC}"
+if [[ "$HTTP_CODE" == "502" ]] && echo "$BODY" | grep -Eq '"error"[[:space:]]*:[[:space:]]*"provider_error"'; then
+    echo -e "${GREEN}✓ Expired token rejected with HTTP 502 provider_error${NC}"
     EXPIRED_REJECTED="true"
-elif [[ "$HTTP_CODE" == "500" ]] || [[ "$HTTP_CODE" == "502" ]] || [[ "$HTTP_CODE" == "503" ]]; then
-    echo -e "${YELLOW}⚠ Server error HTTP $HTTP_CODE (treating as rejection)${NC}"
-    EXPIRED_REJECTED="true"
-elif [[ "$HTTP_CODE" == "200" ]]; then
-    # In mock mode, unknown tokens might be accepted - check if DB was modified
-    echo -e "${YELLOW}⚠ HTTP 200 - checking if this is mock behavior...${NC}"
-    EXPIRED_REJECTED="false"
 else
-    echo -e "${YELLOW}⚠ HTTP $HTTP_CODE${NC}"
-    EXPIRED_REJECTED="true"
+    echo -e "${RED}✗ Expected HTTP 502 provider_error, got HTTP $HTTP_CODE${NC}"
 fi
 echo ""
 
@@ -164,16 +184,11 @@ echo "Final payment count: $FINAL_PAYMENT_COUNT (initial: $INITIAL_PAYMENT_COUNT
 echo ""
 
 DB_SAFE="false"
-if [[ "$EXPIRED_TOKEN_SUB" == "0" ]]; then
-    echo -e "${GREEN}✓ No subscription created for expired token${NC}"
+if [[ "$EXPIRED_TOKEN_SUB" == "0" && "$FINAL_SUB_COUNT" == "$INITIAL_SUB_COUNT" && "$FINAL_PAYMENT_COUNT" == "$INITIAL_PAYMENT_COUNT" ]]; then
+    echo -e "${GREEN}✓ No subscription or payment created for expired token${NC}"
     DB_SAFE="true"
-    
-    # If token was "accepted" by mock but no DB entry, that's still a pass
-    if [[ "$EXPIRED_REJECTED" == "false" ]] && [[ "$FINAL_SUB_COUNT" == "$INITIAL_SUB_COUNT" ]]; then
-        EXPIRED_REJECTED="true"  # Consider it handled correctly
-    fi
 else
-    echo -e "${RED}✗ Subscription was created for expired token!${NC}"
+    echo -e "${RED}✗ Database state changed for expired token${NC}"
 fi
 echo ""
 
@@ -203,6 +218,7 @@ cat > "$REPORT_FILE" <<EOF
   "started_at": "$TEST_STARTED_AT",
   "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
+  "failure_kind": $([[ "$TEST_STATUS" == "pass" ]] && echo "null" || echo '"behavior"'),
   "user_id": "$USER_ID",
   "expired_token": "$EXPIRED_TOKEN",
   "results": {
@@ -211,7 +227,9 @@ cat > "$REPORT_FILE" <<EOF
     "no_db_entries_created": $DB_SAFE,
     "expired_token_subscription_count": $EXPIRED_TOKEN_SUB,
     "initial_subscription_count": $INITIAL_SUB_COUNT,
-    "final_subscription_count": $FINAL_SUB_COUNT
+    "final_subscription_count": $FINAL_SUB_COUNT,
+    "initial_payment_count": $INITIAL_PAYMENT_COUNT,
+    "final_payment_count": $FINAL_PAYMENT_COUNT
   },
   "notes": "Purchase tokens expire 60 days after subscription expiration"
 }
