@@ -1,5 +1,25 @@
 # Release Notes
 
+## [0.7.3] - 2026-07-20
+### Improvements
+- **Build Identity**: Embed the Bridge source revision in Docker builds, include it in startup logs, and expose it through `/health` and `/ready` for deployment verification.
+- **Continuous Integration**: Add GitHub Actions checks for compilation, tests, smoke coverage, and security checks on pushes and pull requests.
+- **Nightly Provider Coverage**: Move the broader GPBI, Creem, and Admin shell suites into scheduled and manually triggered workflows while keeping the every-build gate focused.
+
+### Fixes
+- **Admin Authentication**: Add the configured Clerk custom domain to the Admin Dashboard Content Security Policy so authentication assets and requests are not blocked.
+- **CI Database Setup**: Run migrations before parallel tests and provide deterministic seed data for app, provider, webhook, and callback scenarios.
+- **CI Environment Setup**: Supply Bridge URLs, API-key fallbacks, Google Play credentials, Clerk issuer settings, and generated provider test environments consistently across jobs.
+- **CI Provider Fixtures**: Restore Creem and GPBI snapshot inputs, add the required dummy Creem API key and webhook endpoint, and align mock JWT behavior with strict request paths.
+- **CI Shell Execution**: Normalize shell scripts to LF line endings, disable rate limiting where suites require unrestricted setup traffic, and run GPBI API coverage explicitly.
+- **GPBI Lifecycle Tests**: Correct rate-limit header handling, strict mock JWT paths, and pending-renewal expectations that caused valid CI runs to fail.
+
+### Tests and docs
+- **GPBI Acceptance Contracts**: Require exact setup status codes and semantic responses in LOG, ERR, notification, OTP, and subscription suites so rate limits or unrelated errors cannot produce false passes.
+- **GPBI Diagnostics**: Report setup failures separately from behavior failures, preserving the response evidence needed to identify the actual broken contract.
+- **GPBI Configuration**: Make the test app slug configurable across environments instead of relying on one hard-coded app identity.
+- **Rate-Limit Coverage**: Verify route-specific production thresholds, independent API-key buckets, semantic-error quota consumption, and high-volume app overrides.
+
 ## [0.7.2] - 2026-07-12
 ### Maintenance
 - **Migrations**: Fold amount/price `bigint` and app-scoped purchase_token uniqueness into base table migrations (02/03); fold admin/bootstrap SQL into migration 90 and drop superseded 11–13 and 93–94 files.
