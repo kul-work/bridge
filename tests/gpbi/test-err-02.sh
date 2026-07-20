@@ -17,7 +17,7 @@
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: POST /api/v1/verify-purchase returns a 4xx HTTP error when the subscription_id does not match the token's actual SKU. 
+#   Expected Behavior: POST /api/v1/verify-purchase returns HTTP 400 validation_error when the subscription_id does not match the token's actual SKU.
 #                      No database records are created in pay.subscriptions or pay.payments for the mismatched ID.
 #                      Ensures tokens are correctly bound to the requested product/SKU.
 #                      Validates that the backend cross-references token metadata with the provided SKU.
@@ -50,6 +50,34 @@ USER_ID="${USER_ID:-test_err_02_user_$TEST_RUN_ID}"
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 DB_URL="${BRIDGE_DB_URL}"
+PURCHASE_TOKEN=""
+HTTP_CODE=0
+CURRENT_FAILURE_KIND="setup"
+rm -f "$REPORT_FILE"
+
+write_early_failure_report() {
+    local exit_code=$?
+    if [[ "$exit_code" -eq 0 || -f "$REPORT_FILE" ]]; then
+        return
+    fi
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "ERR-02",
+  "test_name": "Subscription ID Mismatch",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "failure_kind": "$CURRENT_FAILURE_KIND",
+  "failure_step": "script_exit",
+  "exit_code": $exit_code,
+  "http_code": $HTTP_CODE
+}
+EOF
+}
+trap write_early_failure_report EXIT
 
 # Extract DB password once
 # Extract DB password if needed
@@ -89,6 +117,7 @@ echo -e "${BLUE}Initial payment count: $INITIAL_PAYMENT_COUNT${NC}"
 echo ""
 
 # Step 3: Call verify_payment with valid token but WRONG subscription_id
+CURRENT_FAILURE_KIND="behavior"
 echo -e "${YELLOW}[3/5] Testing with valid token but WRONG subscription_id${NC}"
 echo ""
 
@@ -131,18 +160,11 @@ fi
 echo ""
 
 MISMATCH_REJECTED="false"
-if [[ "$HTTP_CODE" =~ ^4[0-9][0-9]$ ]]; then
-    echo -e "${GREEN}✓ Mismatch rejected with HTTP $HTTP_CODE (as expected)${NC}"
+if [[ "$HTTP_CODE" == "400" ]] && echo "$BODY" | grep -Eq '"error"[[:space:]]*:[[:space:]]*"validation_error"' && echo "$BODY" | grep -q 'does not match the requested subscription ID'; then
+    echo -e "${GREEN}✓ Mismatch rejected with HTTP 400 validation_error${NC}"
     MISMATCH_REJECTED="true"
-elif [[ "$HTTP_CODE" == "500" ]] || [[ "$HTTP_CODE" == "502" ]] || [[ "$HTTP_CODE" == "503" ]]; then
-    echo -e "${YELLOW}⚠ Server error HTTP $HTTP_CODE (Google API rejection)${NC}"
-    MISMATCH_REJECTED="true"
-elif [[ "$HTTP_CODE" == "200" ]]; then
-    echo -e "${RED}✗ ACCEPTED (HTTP 200) - mismatch should have been rejected!${NC}"
-    MISMATCH_REJECTED="false"
 else
-    echo -e "${YELLOW}⚠ HTTP $HTTP_CODE${NC}"
-    MISMATCH_REJECTED="true"
+    echo -e "${RED}✗ Expected HTTP 400 subscription-ID validation_error${NC}"
 fi
 echo ""
 
@@ -161,7 +183,7 @@ echo "Final payment count: $FINAL_PAYMENT_COUNT (initial: $INITIAL_PAYMENT_COUNT
 echo ""
 
 DB_UNCHANGED="false"
-if [[ "$FINAL_SUB_COUNT" == "$INITIAL_SUB_COUNT" ]] && [[ "$WRONG_SUB_COUNT" == "0" ]]; then
+if [[ "$FINAL_SUB_COUNT" == "$INITIAL_SUB_COUNT" ]] && [[ "$FINAL_PAYMENT_COUNT" == "$INITIAL_PAYMENT_COUNT" ]] && [[ "$WRONG_SUB_COUNT" == "0" ]]; then
     echo -e "${GREEN}✓ No database entries created for mismatched subscription${NC}"
     DB_UNCHANGED="true"
 else
@@ -192,6 +214,7 @@ cat > "$REPORT_FILE" <<EOF
   "started_at": "$TEST_STARTED_AT",
   "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
+  "failure_kind": $([[ "$TEST_STATUS" == "pass" ]] && echo "null" || echo '"behavior"'),
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
   "correct_subscription_id": "$CORRECT_PRODUCT_ID",
@@ -202,7 +225,9 @@ cat > "$REPORT_FILE" <<EOF
     "no_db_entries_created": $DB_UNCHANGED,
     "wrong_subscription_count": $WRONG_SUB_COUNT,
     "initial_subscription_count": $INITIAL_SUB_COUNT,
-    "final_subscription_count": $FINAL_SUB_COUNT
+    "final_subscription_count": $FINAL_SUB_COUNT,
+    "initial_payment_count": $INITIAL_PAYMENT_COUNT,
+    "final_payment_count": $FINAL_PAYMENT_COUNT
   }
 }
 EOF

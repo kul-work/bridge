@@ -43,6 +43,11 @@ PRODUCT_ID="$PRODUCT_ID_SUB"
 OLD_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-sub-22-old-$TEST_RUN_ID"
 NEW_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-sub-22-new-$TEST_RUN_ID"
 REPORT_FILE="sub-22-report.json"
+OLD_REGISTER_HTTP_CODE=0
+OLD_VERIFY_HTTP_CODE=0
+EXPIRATION_WEBHOOK_HTTP_CODE=0
+NEW_REGISTER_HTTP_CODE=0
+NEW_VERIFY_HTTP_CODE=0
 
 echo -e "${YELLOW}========================================${NC}"
 echo "SUB-22: Out-of-App Resubscribe Linking"
@@ -53,6 +58,34 @@ echo ""
 
 # Step 1: External User ID
 USER_ID="test_sub_user_01"
+
+fail_test() {
+    local failure_step="$1"
+    local details="$2"
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "SUB-22",
+  "test_name": "Out-of-App Resubscribe Linking",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "failure_step": "$failure_step",
+  "details": "$details",
+  "old_register_http_code": $OLD_REGISTER_HTTP_CODE,
+  "old_verify_http_code": $OLD_VERIFY_HTTP_CODE,
+  "expiration_webhook_http_code": $EXPIRATION_WEBHOOK_HTTP_CODE,
+  "new_register_http_code": $NEW_REGISTER_HTTP_CODE,
+  "new_verify_http_code": $NEW_VERIFY_HTTP_CODE
+}
+EOF
+    echo -e "${RED}SUB-22 failed at $failure_step: $details${NC}"
+    echo "Report saved to: $REPORT_FILE"
+    exit 1
+}
+
 echo -e "${GREEN}✓ Testing with User ID: $USER_ID${NC}"
 echo ""
 
@@ -69,7 +102,7 @@ echo ""
 echo -e "${YELLOW}[1/5] Establishing initial subscription (OLD Token)${NC}"
 
 # Pre-register
-REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+OLD_REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -79,8 +112,12 @@ REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API
     \"reason\": \"test-sub-oap-old-22\"
   }" )
 
+if [[ "$OLD_REGISTER_HTTP_CODE" != "200" ]]; then
+    fail_test "old_register" "expected HTTP 200, got $OLD_REGISTER_HTTP_CODE"
+fi
+
 # Verify
-VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
+OLD_VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -90,6 +127,10 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"purchase_token\": \"$OLD_TOKEN\",
     \"product_type\": \"subscription\"
   }" )
+
+if [[ "$OLD_VERIFY_HTTP_CODE" != "200" ]]; then
+    fail_test "old_verify" "expected HTTP 200, got $OLD_VERIFY_HTTP_CODE"
+fi
 
 echo -e "${GREEN}✓ Initial subscription established${NC}"
 echo ""
@@ -113,7 +154,7 @@ EOF
 )
 NOTIFICATION_B64=$(echo -n "$NOTIFICATION_JSON" | base64 -w 0 2>/dev/null || echo -n "$NOTIFICATION_JSON" | base64)
 
-curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
+EXPIRATION_WEBHOOK_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Verification-Mode: off" \
   -d "{
@@ -122,7 +163,11 @@ curl -s -X POST "$BRIDGE_API_URL/webhooks/$WEBHOOK_INGRESS_TOKEN/$PROVIDER" \
       \"message_id\": \"test-webhook-22-exp-$(date +%s)\",
       \"attributes\": {}
     }
-  }" > /dev/null
+  }")
+
+if [[ "$EXPIRATION_WEBHOOK_HTTP_CODE" != "200" && "$EXPIRATION_WEBHOOK_HTTP_CODE" != "204" ]]; then
+    fail_test "expiration_webhook" "expected HTTP 200 or 204, got $EXPIRATION_WEBHOOK_HTTP_CODE"
+fi
 
 echo -e "${GREEN}✓ Expiration webhook sent${NC}"
 echo ""
@@ -132,22 +177,23 @@ echo -e "${YELLOW}[3/5] Resubscribing with NEW Token (Out-of-App)${NC}"
 
 # Pre-register for the NEW purchase (simulating app noticing new subscription)
 # In Out-of-App, identifying the account usually relies on the backend finding the previous owner.
-REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+NEW_REGISTER_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
     \"external_user_id\": \"$USER_ID\",
     \"provider\": \"$PROVIDER\",
     \"subscription_id\": \"$PRODUCT_ID\",
-    \"reason\": \"test-sub-oap-new-22\",
-    \"product_type\": \"subscription\",
-    \"amount_cents\": 0,
-    \"transaction_id\": \"test-reg-22-new-$(date +%s)\"
+    \"reason\": \"test-sub-oap-new-22\"
   }" )
+
+if [[ "$NEW_REGISTER_HTTP_CODE" != "200" ]]; then
+    fail_test "new_register" "expected HTTP 200, got $NEW_REGISTER_HTTP_CODE"
+fi
 
 # Verify NEW token
 # The backend should link this token to USER_ID because it belongs to the same Google account.
-VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
+NEW_VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/verify-purchase" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -157,6 +203,10 @@ VERIFY_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_U
     \"purchase_token\": \"$NEW_TOKEN\",
     \"product_type\": \"subscription\"
   }" )
+
+if [[ "$NEW_VERIFY_HTTP_CODE" != "200" ]]; then
+    fail_test "new_verify" "expected HTTP 200, got $NEW_VERIFY_HTTP_CODE"
+fi
 
 echo -e "${GREEN}✓ Resubscription verification requested${NC}"
 echo ""
@@ -174,8 +224,7 @@ bridge_wait_for_db_glob \
 if [[ "$RES_DATA" == *"$USER_ID"*"active"* ]]; then
     echo -e "${GREEN}✓ Success: New token $NEW_TOKEN correctly linked to $USER_ID with status 'active'${NC}"
 else
-    echo -e "${RED}✗ Failure: Resubscription data mismatch: $RES_DATA${NC}"
-    exit 1
+    fail_test "resubscription_link" "expected new token linked to $USER_ID with active status, got $RES_DATA"
 fi
 echo ""
 
@@ -189,9 +238,12 @@ cat > "$REPORT_FILE" <<EOF
   "started_at": "$TEST_STARTED_AT",
   "finished_at": "$TEST_FINISHED_AT",
   "status": "pass",
-  "register_http_code": $REGISTER_HTTP_CODE,
-  "verify_http_code": $VERIFY_HTTP_CODE,
-  "downgrade_verified": true
+  "old_register_http_code": $OLD_REGISTER_HTTP_CODE,
+  "old_verify_http_code": $OLD_VERIFY_HTTP_CODE,
+  "expiration_webhook_http_code": $EXPIRATION_WEBHOOK_HTTP_CODE,
+  "new_register_http_code": $NEW_REGISTER_HTTP_CODE,
+  "new_verify_http_code": $NEW_VERIFY_HTTP_CODE,
+  "resubscribe_link_verified": true
 }
 EOF
 

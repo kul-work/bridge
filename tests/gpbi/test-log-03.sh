@@ -50,6 +50,52 @@ DUMMY_TOKEN="mock-google-play-subscription:$PRODUCT_ID:test-log-03-token-$TEST_R
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 DB_URL="${BRIDGE_DB_URL}"
+REGISTER_HTTP=0
+VERIFY_HTTP=0
+REGISTER_BODY=""
+VERIFY_BODY=""
+SUB_STATUS=""
+ACK_AT=""
+CURRENT_FAILURE_KIND="setup"
+rm -f "$REPORT_FILE"
+
+write_failure_report() {
+    local failure_kind="$1"
+    local failure_step="$2"
+    local details="$3"
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "LOG-03",
+  "test_name": "ACK Failure & Retry Logging",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "failure_kind": "$failure_kind",
+  "failure_step": "$failure_step",
+  "details": "$details",
+  "register_http_code": $REGISTER_HTTP,
+  "verify_http_code": $VERIFY_HTTP,
+  "subscription_status": "$SUB_STATUS",
+  "acknowledged_at": "$ACK_AT"
+}
+EOF
+}
+
+fail_test() {
+    write_failure_report "$1" "$2" "$3"
+    exit 1
+}
+
+write_failure_report_on_exit() {
+    local exit_code=$?
+    if [[ "$exit_code" -ne 0 && ! -f "$REPORT_FILE" ]]; then
+        write_failure_report "$CURRENT_FAILURE_KIND" "script_exit" "unexpected command failure (exit $exit_code)"
+    fi
+}
+trap write_failure_report_on_exit EXIT
 
 # Extract DB password if needed (globals.cfg already exports PGPASSWORD=postgres)
 if [[ "$DB_URL" == *":"* ]]; then
@@ -68,9 +114,7 @@ echo ""
 echo -e "${YELLOW}[1/6] Preparing generated user_id for this run${NC}"
 
 if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
-    echo "Error: $USER_ID"
-    exit 1
+    fail_test "setup" "user_id" "generated user ID is invalid"
 fi
 
 USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
@@ -86,7 +130,7 @@ echo ""
 
 # Step 2.5: Register purchase (Bridge requirement)
 echo -e "${YELLOW}[2.5/6] Registering purchase in Bridge${NC}"
-REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+REGISTER_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -96,11 +140,13 @@ REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/
     \"reason\": \"test-log-03-setup\"
   }")
 
-if [[ "$REGISTER_HTTP" == "200" ]]; then
+REGISTER_HTTP=$(echo "$REGISTER_RESPONSE" | tail -n1)
+REGISTER_BODY=$(echo "$REGISTER_RESPONSE" | sed '$d')
+
+if [[ "$REGISTER_HTTP" == "200" ]] && echo "$REGISTER_BODY" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"registered"'; then
     echo -e "${GREEN}✓ Purchase registration successful${NC}"
 else
-    echo -e "${RED}✗ Purchase registration failed (HTTP $REGISTER_HTTP)${NC}"
-    exit 1
+    fail_test "setup" "register" "expected HTTP 200 with status=registered, got HTTP $REGISTER_HTTP"
 fi
 echo ""
 
@@ -134,18 +180,20 @@ VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   }")
 
 VERIFY_HTTP=$(echo "$VERIFY_RESPONSE" | tail -n1)
+VERIFY_BODY=$(echo "$VERIFY_RESPONSE" | sed '$d')
 
 PURCHASE_OK="false"
-if [[ "$VERIFY_HTTP" == "200" ]]; then
+if [[ "$VERIFY_HTTP" == "200" ]] && echo "$VERIFY_BODY" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"active"'; then
     echo -e "${GREEN}✓ Purchase successful (HTTP 200)${NC}"
     echo -e "${BLUE}  Access granted even if ACK is pending${NC}"
     PURCHASE_OK="true"
 else
-    echo -e "${RED}✗ Purchase failed (HTTP $VERIFY_HTTP)${NC}"
+    fail_test "setup" "verify" "expected HTTP 200 with status=active, got HTTP $VERIFY_HTTP"
 fi
 echo ""
 
 # Step 4: Verify subscription exists and check acknowledged_at
+CURRENT_FAILURE_KIND="behavior"
 echo -e "${YELLOW}[4/6] Verifying subscription and ACK status (DB Validation)${NC}"
 
 SUB_DATA=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT status FROM pay.subscriptions WHERE purchase_token = '$DUMMY_TOKEN';" -t 2>/dev/null || echo "")
@@ -154,7 +202,7 @@ if [[ ! -z "$SUB_DATA" ]] && [[ "$SUB_DATA" != *"(0 rows)"* ]]; then
     SUB_STATUS=$(echo "$SUB_DATA" | awk -F '|' '{print $1}' | tr -d ' ')
     
     # Fetch acknowledged_at from PAYMENTS table
-    ACK_AT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT acknowledged_at FROM pay.payments WHERE provider_transaction_id = '$DUMMY_TOKEN';" -t 2>/dev/null | tr -d ' ')
+    ACK_AT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p "$BRIDGE_DB_PORT" -d "$BRIDGE_DB_NAME" -c "SELECT acknowledged_at FROM pay.payments WHERE provider_purchase_token = '$DUMMY_TOKEN' ORDER BY created_at DESC LIMIT 1;" -t 2>/dev/null | tr -d ' ')
 
     echo "Subscription status: $SUB_STATUS"
     echo "Acknowledged at: $ACK_AT"
@@ -166,13 +214,10 @@ if [[ ! -z "$SUB_DATA" ]] && [[ "$SUB_DATA" != *"(0 rows)"* ]]; then
         echo -e "${BLUE}  Backend should have logged: ack_attempt with status=success${NC}"
         ACK_LOGGED="true"
     else
-        echo -e "${YELLOW}⚠ Subscription not acknowledged yet (ack_at is NULL)${NC}"
-        echo -e "${BLUE}  Backend may have logged: ack_attempt with status=failed, ack_retry_scheduled${NC}"
-        ACK_LOGGED="true"  # Still counts as test pass - we're testing the log flow exists
+        fail_test "behavior" "acknowledgement" "mock verification succeeded but acknowledged_at is empty"
     fi
 else
-    echo -e "${RED}✗ No subscription found${NC}"
-    ACK_LOGGED="false"
+    fail_test "behavior" "subscription" "verification returned 200 but no subscription was created"
 fi
 echo ""
 
@@ -235,9 +280,11 @@ cat > "$REPORT_FILE" <<EOF
   "started_at": "$TEST_STARTED_AT",
   "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
+  "failure_kind": null,
   "user_id": "$USER_ID",
   "purchase_token": "$DUMMY_TOKEN",
   "results": {
+    "register_http_code": $REGISTER_HTTP,
     "purchase_success": $PURCHASE_OK,
     "verify_http_code": $VERIFY_HTTP,
     "ack_flow_triggered": $ACK_LOGGED,

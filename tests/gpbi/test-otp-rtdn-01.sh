@@ -44,6 +44,7 @@ TEST_RUN_ID="otp-rtdn-01-${TIMESTAMP}-$$"
 PRODUCT_ID="$PRODUCT_ID_OTP"
 PROVIDER="$PROVIDER"
 REPORT_FILE="otp-rtdn-01-report.json"
+rm -f "$REPORT_FILE"
 
 # Defaults
 PURCHASE_TOKEN=""
@@ -51,6 +52,39 @@ APP_URL="$BRIDGE_API_URL"
 DB_URL="$BRIDGE_DB_URL"
 MOCK_GOOGLE_PURCHASE_RESPONSE=""
 OTP_01_REPORT="otp-01-report.json"
+USER_ID=""
+MESSAGE_ID=""
+WEBHOOK_HTTP_CODE=0
+WEBHOOK_HTTP_CODE_2=0
+
+write_failure_report_on_exit() {
+    local exit_code=$?
+    if [[ "$exit_code" -eq 0 || -f "$REPORT_FILE" ]]; then
+        return
+    fi
+
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "OTP-RTDN-01",
+  "test_name": "Webhook Purchase Completed",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "user_id": "$USER_ID",
+  "product_id": "$PRODUCT_ID",
+  "purchase_token": "$PURCHASE_TOKEN",
+  "message_id": "$MESSAGE_ID",
+  "webhook_http_code": $WEBHOOK_HTTP_CODE,
+  "duplicate_webhook_http_code": $WEBHOOK_HTTP_CODE_2,
+  "failure_step": "script_exit",
+  "exit_code": $exit_code
+}
+EOF
+}
+trap write_failure_report_on_exit EXIT
 
 if [[ ! -f "$OTP_01_REPORT" && -f "$SCRIPT_DIR/otp-01-report.json" ]]; then
     OTP_01_REPORT="$SCRIPT_DIR/otp-01-report.json"
@@ -328,6 +362,8 @@ cat > "$REPORT_FILE" <<EOF
   "product_id": "$PRODUCT_ID",
   "purchase_token": "$PURCHASE_TOKEN",
   "message_id": "$MESSAGE_ID",
+  "webhook_http_code": $WEBHOOK_HTTP_CODE,
+  "duplicate_webhook_http_code": $WEBHOOK_HTTP_CODE_2,
   "webhook_accepted": $WEBHOOK_ACCEPTED,
   "idempotency_verified": $IDEMPOTENCY_WORKS,
   "final_status": "$FINAL_DB_STATUS",

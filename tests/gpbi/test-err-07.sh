@@ -4,7 +4,7 @@
 # ERR-07: Unknown Notification Type
 # 
 # Purpose: Verify that webhooks with unknown or future notification types 
-#          (e.g., type 99) are acknowledged with HTTP 200 but no action 
+#          (e.g., type 99) are acknowledged with HTTP 204 but no business action
 #          is taken (forward-compatible).
 #
 # Usage: ./test-err-07.sh
@@ -18,8 +18,8 @@
 #   - psql installed and in PATH
 #
 # TESTPLAN Reference:
-#   Expected Behavior: POST /webhooks/... returns HTTP 200 for unknown 'notificationType' values. 
-#                      The event is logged in webhook_log but ignored by business logic.
+#   Expected Behavior: POST /webhooks/... returns HTTP 204 for unknown 'notificationType' values.
+#                      The event and delivery are durably recorded but ignored by business logic.
 #                      No state changes occur in pay.subscriptions or pay.payments.
 #                      Ensures forward-compatibility with future provider updates.
 #                      Validates that the system safely ignores unrecognized events.
@@ -50,6 +50,45 @@ USER_ID="${USER_ID:-test_err_07_user_$TEST_RUN_ID}"
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 DB_URL="${BRIDGE_DB_URL}"
+HTTP_99=0
+HTTP_50=0
+HTTP_100=0
+HTTP_255=0
+CURRENT_FAILURE_KIND="setup"
+rm -f "$REPORT_FILE"
+
+write_failure_report() {
+    local failure_kind="$1"
+    local failure_step="$2"
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "ERR-07",
+  "test_name": "Unknown Notification Type",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "failure_kind": "$failure_kind",
+  "failure_step": "$failure_step",
+  "http_codes": [$HTTP_99, $HTTP_50, $HTTP_100, $HTTP_255]
+}
+EOF
+}
+
+fail_test() {
+    write_failure_report "$1" "$2"
+    exit 1
+}
+
+write_failure_report_on_exit() {
+    local exit_code=$?
+    if [[ "$exit_code" -ne 0 && ! -f "$REPORT_FILE" ]]; then
+        write_failure_report "$CURRENT_FAILURE_KIND" "script_exit"
+    fi
+}
+trap write_failure_report_on_exit EXIT
 
 # Extract DB password once
 # Extract DB password if needed
@@ -69,9 +108,7 @@ echo ""
 echo -e "${YELLOW}[1/5] Preparing generated user_id for this run${NC}"
 
 if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
-    echo "Error: $USER_ID"
-    exit 1
+    fail_test "setup" "user_id"
 fi
 
 USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
@@ -89,6 +126,7 @@ echo -e "${BLUE}Initial payment count: $INITIAL_PAYMENT_COUNT${NC}"
 echo ""
 
 # Step 3: Send webhooks with unknown notification types
+CURRENT_FAILURE_KIND="behavior"
 echo -e "${YELLOW}[3/5] Sending webhooks with unknown notification types${NC}"
 echo ""
 
@@ -139,15 +177,20 @@ EOF
       }")
     
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+
+    case "$TYPE" in
+        99) HTTP_99=$HTTP_CODE ;;
+        50) HTTP_50=$HTTP_CODE ;;
+        100) HTTP_100=$HTTP_CODE ;;
+        255) HTTP_255=$HTTP_CODE ;;
+    esac
     
-    if [[ "$HTTP_CODE" == "200" ]] || [[ "$HTTP_CODE" == "204" ]]; then
-        echo -e "  ${GREEN}✓ Acknowledged (HTTP $HTTP_CODE) - correctly ignored${NC}"
+    if [[ "$HTTP_CODE" == "204" ]] && [[ -z "$BODY" ]]; then
+        echo -e "  ${GREEN}✓ Durably acknowledged with HTTP 204${NC}"
     else
-        echo -e "  ${YELLOW}⚠ HTTP $HTTP_CODE (expected 200)${NC}"
-        # Still acceptable if it doesn't cause errors
-        if [[ "$HTTP_CODE" =~ ^5[0-9][0-9]$ ]]; then
-            ALL_ACKNOWLEDGED="false"
-        fi
+        echo -e "  ${RED}✗ Expected an empty HTTP 204 response, got HTTP $HTTP_CODE${NC}"
+        ALL_ACKNOWLEDGED="false"
     fi
 done
 echo ""
@@ -160,6 +203,9 @@ FINAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_
 
 # Check for test token pay.subscriptions
 UNKNOWN_TOKEN_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+UNKNOWN_TOKEN_PAYMENT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE provider_purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+UNKNOWN_WEBHOOK_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.webhook_provider WHERE app_id = '$BRIDGE_APP_ID' AND provider = 'google_play' AND provider_webhook_id LIKE 'webhook-err-07-%-$TEST_RUN_ID' AND event_type = 'SUBSCRIPTION_UNKNOWN' AND purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
+UNKNOWN_DELIVERY_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.webhook_delivery wd JOIN pay.webhook_provider wp ON wp.id = wd.webhook_provider_id WHERE wp.app_id = '$BRIDGE_APP_ID' AND wp.provider_webhook_id LIKE 'webhook-err-07-%-$TEST_RUN_ID';" -t 2>/dev/null | tr -d ' ')
 
 echo "Final subscription count: $FINAL_SUB_COUNT (initial: $INITIAL_SUB_COUNT)"
 echo "Subscriptions with test token: $UNKNOWN_TOKEN_SUB"
@@ -167,8 +213,8 @@ echo "Final payment count: $FINAL_PAYMENT_COUNT (initial: $INITIAL_PAYMENT_COUNT
 echo ""
 
 DB_UNCHANGED="false"
-if [[ "$FINAL_SUB_COUNT" == "$INITIAL_SUB_COUNT" ]] && [[ "$UNKNOWN_TOKEN_SUB" == "0" ]]; then
-    echo -e "${GREEN}✓ No database state change (forward-compatible)${NC}"
+if [[ "$FINAL_SUB_COUNT" == "$INITIAL_SUB_COUNT" ]] && [[ "$FINAL_PAYMENT_COUNT" == "$INITIAL_PAYMENT_COUNT" ]] && [[ "$UNKNOWN_TOKEN_SUB" == "0" ]] && [[ "$UNKNOWN_TOKEN_PAYMENT" == "0" ]] && [[ "$UNKNOWN_WEBHOOK_COUNT" == "4" ]] && [[ "$UNKNOWN_DELIVERY_COUNT" == "4" ]]; then
+    echo -e "${GREEN}✓ Business state unchanged and all four events were durably recorded${NC}"
     DB_UNCHANGED="true"
 else
     echo -e "${RED}✗ Database state changed with unknown notification types!${NC}"
@@ -186,9 +232,6 @@ echo ""
 if [[ "$ALL_ACKNOWLEDGED" == "true" ]] && [[ "$DB_UNCHANGED" == "true" ]]; then
     TEST_STATUS="pass"
     TEST_RESULT_MSG="${GREEN}✓ ERR-07 Test PASSED${NC}"
-elif [[ "$DB_UNCHANGED" == "true" ]]; then
-    TEST_STATUS="pass"
-    TEST_RESULT_MSG="${GREEN}✓ ERR-07 Test PASSED (unknown types handled safely)${NC}"
 else
     TEST_STATUS="fail"
     TEST_RESULT_MSG="${RED}✗ ERR-07 Test FAILED${NC}"
@@ -204,15 +247,22 @@ cat > "$REPORT_FILE" <<EOF
   "started_at": "$TEST_STARTED_AT",
   "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
+  "failure_kind": $([[ "$TEST_STATUS" == "pass" ]] && echo "null" || echo '"behavior"'),
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
   "results": {
     "all_unknown_types_acknowledged": $ALL_ACKNOWLEDGED,
     "no_db_state_change": $DB_UNCHANGED,
     "unknown_types_tested": [99, 50, 100, 255],
+    "http_codes": [$HTTP_99, $HTTP_50, $HTTP_100, $HTTP_255],
     "unknown_token_subscription_count": $UNKNOWN_TOKEN_SUB,
+    "unknown_token_payment_count": $UNKNOWN_TOKEN_PAYMENT,
+    "unknown_webhook_count": $UNKNOWN_WEBHOOK_COUNT,
+    "unknown_delivery_count": $UNKNOWN_DELIVERY_COUNT,
     "initial_subscription_count": $INITIAL_SUB_COUNT,
-    "final_subscription_count": $FINAL_SUB_COUNT
+    "final_subscription_count": $FINAL_SUB_COUNT,
+    "initial_payment_count": $INITIAL_PAYMENT_COUNT,
+    "final_payment_count": $FINAL_PAYMENT_COUNT
   },
   "notes": "Google may add new notification types; backend should be forward-compatible"
 }

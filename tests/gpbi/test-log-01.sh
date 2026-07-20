@@ -49,6 +49,55 @@ USER_ID="${USER_ID:-test_log_01_user_$TEST_RUN_ID}"
 # Defaults
 APP_URL="${BRIDGE_API_URL:-http://localhost:5555}"
 DB_URL="${BRIDGE_DB_URL}"
+PURCHASE_TOKEN=""
+REGISTER_HTTP=0
+VERIFY_HTTP=0
+REGISTER_BODY=""
+VERIFY_BODY=""
+WEBHOOK_HTTP=0
+CANCEL_HTTP=0
+EXPIRE_HTTP=0
+CURRENT_FAILURE_KIND="setup"
+rm -f "$REPORT_FILE"
+
+write_failure_report() {
+    local failure_kind="$1"
+    local failure_step="$2"
+    local details="$3"
+    local finished_at
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$REPORT_FILE" <<EOF
+{
+  "test_id": "LOG-01",
+  "test_name": "Structured Billing Event Logging",
+  "test_run_id": "$TEST_RUN_ID",
+  "started_at": "$TEST_STARTED_AT",
+  "finished_at": "$finished_at",
+  "status": "fail",
+  "failure_kind": "$failure_kind",
+  "failure_step": "$failure_step",
+  "details": "$details",
+  "register_http_code": $REGISTER_HTTP,
+  "verify_http_code": $VERIFY_HTTP,
+  "renewal_http_code": $WEBHOOK_HTTP,
+  "cancel_http_code": $CANCEL_HTTP,
+  "expiry_http_code": $EXPIRE_HTTP
+}
+EOF
+}
+
+fail_test() {
+    write_failure_report "$1" "$2" "$3"
+    exit 1
+}
+
+write_failure_report_on_exit() {
+    local exit_code=$?
+    if [[ "$exit_code" -ne 0 && ! -f "$REPORT_FILE" ]]; then
+        write_failure_report "$CURRENT_FAILURE_KIND" "script_exit" "unexpected command failure (exit $exit_code)"
+    fi
+}
+trap write_failure_report_on_exit EXIT
 
 # Extract DB password if needed (globals.cfg already exports PGPASSWORD=postgres)
 if [[ "$DB_URL" == *":"* ]]; then
@@ -67,9 +116,7 @@ echo ""
 echo -e "${YELLOW}[1/7] Preparing generated user_id for this run${NC}"
 
 if [[ -z "$USER_ID" ]] || [[ "$USER_ID" == *"error"* ]] || [[ "$USER_ID" == *"ERROR"* ]]; then
-    echo -e "${RED}✗ Failed to fetch user_id from database${NC}"
-    echo "Error: $USER_ID"
-    exit 1
+    fail_test "setup" "user_id" "generated user ID is invalid"
 fi
 
 USER_ID=$(echo "$USER_ID" | tr -d '[:space:]')
@@ -90,7 +137,7 @@ echo ""
 
 # Step 2.5: Register purchase (Bridge requirement)
 echo -e "${YELLOW}[2.5/7] Registering purchase in Bridge${NC}"
-REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
+REGISTER_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BRIDGE_API_URL/api/v1/purchase/register" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BRIDGE_API_KEY" \
   -d "{
@@ -100,11 +147,13 @@ REGISTER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRIDGE_API_URL/
     \"reason\": \"test-log-01-setup\"
   }")
 
-if [[ "$REGISTER_HTTP" == "200" ]]; then
+REGISTER_HTTP=$(echo "$REGISTER_RESPONSE" | tail -n1)
+REGISTER_BODY=$(echo "$REGISTER_RESPONSE" | sed '$d')
+
+if [[ "$REGISTER_HTTP" == "200" ]] && echo "$REGISTER_BODY" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"registered"'; then
     echo -e "${GREEN}✓ Purchase registration successful${NC}"
 else
-    echo -e "${RED}✗ Purchase registration failed (HTTP $REGISTER_HTTP)${NC}"
-    exit 1
+    fail_test "setup" "register" "expected HTTP 200 with status=registered, got HTTP $REGISTER_HTTP"
 fi
 echo ""
 
@@ -131,18 +180,20 @@ VERIFY_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   }")
 
 VERIFY_HTTP=$(echo "$VERIFY_RESPONSE" | tail -n1)
+VERIFY_BODY=$(echo "$VERIFY_RESPONSE" | sed '$d')
 
 PURCHASE_LOGGED="false"
-if [[ "$VERIFY_HTTP" == "200" ]]; then
+if [[ "$VERIFY_HTTP" == "200" ]] && echo "$VERIFY_BODY" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"active"'; then
     echo -e "${GREEN}✓ Purchase successful (HTTP 200)${NC}"
     echo -e "${BLUE}  Backend should have logged: purchase_verified, purchase_acknowledged, access_granted${NC}"
     PURCHASE_LOGGED="true"
 else
-    echo -e "${RED}✗ Purchase failed (HTTP $VERIFY_HTTP)${NC}"
+    fail_test "setup" "verify" "expected HTTP 200 with status=active, got HTTP $VERIFY_HTTP"
 fi
 echo ""
 
 # Step 4: Execute webhook (renewal) - should log webhook_received, webhook_processed
+CURRENT_FAILURE_KIND="behavior"
 echo -e "${YELLOW}[4/7] Executing renewal webhook (SUB-02 lifecycle event)${NC}"
 echo ""
 
@@ -193,7 +244,7 @@ if [[ "$WEBHOOK_HTTP" == "200" ]] || [[ "$WEBHOOK_HTTP" == "204" ]]; then
     echo -e "${BLUE}  Backend should have logged: webhook_received, webhook_processed${NC}"
     WEBHOOK_LOGGED="true"
 else
-    echo -e "${YELLOW}⚠ Webhook returned HTTP $WEBHOOK_HTTP${NC}"
+    fail_test "behavior" "renewal_webhook" "expected HTTP 200 or 204, got $WEBHOOK_HTTP"
 fi
 echo ""
 
@@ -246,7 +297,7 @@ if [[ "$CANCEL_HTTP" == "200" ]] || [[ "$CANCEL_HTTP" == "204" ]]; then
     echo -e "${GREEN}✓ Cancellation webhook processed (HTTP 200)${NC}"
     CANCEL_LOGGED="true"
 else
-    echo -e "${YELLOW}⚠ Cancellation webhook returned HTTP $CANCEL_HTTP${NC}"
+    fail_test "behavior" "cancellation_webhook" "expected HTTP 200 or 204, got $CANCEL_HTTP"
 fi
 echo ""
 
@@ -301,7 +352,7 @@ if [[ "$EXPIRE_HTTP" == "200" ]] || [[ "$EXPIRE_HTTP" == "204" ]]; then
     echo -e "${BLUE}  Backend should have logged: webhook_received, webhook_processed, access_revoked${NC}"
     EXPIRE_LOGGED="true"
 else
-    echo -e "${YELLOW}⚠ Expiry webhook returned HTTP $EXPIRE_HTTP${NC}"
+    fail_test "behavior" "expiry_webhook" "expected HTTP 200 or 204, got $EXPIRE_HTTP"
 fi
 echo ""
 
@@ -349,10 +400,12 @@ cat > "$REPORT_FILE" <<EOF
   "started_at": "$TEST_STARTED_AT",
   "finished_at": "$TEST_FINISHED_AT",
   "status": "$TEST_STATUS",
+  "failure_kind": null,
   "user_id": "$USER_ID",
   "purchase_token": "$PURCHASE_TOKEN",
   "results": {
     "all_lifecycle_events_executed": $ALL_EVENTS_EXECUTED,
+    "register_http_code": $REGISTER_HTTP,
     "purchase_event_triggered": $PURCHASE_LOGGED,
     "renewal_webhook_triggered": $WEBHOOK_LOGGED,
     "cancel_webhook_triggered": $CANCEL_LOGGED,
