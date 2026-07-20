@@ -652,7 +652,7 @@ pub async fn admin_auth_ip_rate_limit_middleware(
 
 #[cfg(test)]
 mod tests {
-    use super::{admin_endpoint_group, admin_limit_for_group_with_values, effective_limit_for_group, endpoint_group, extract_client_ip_with, parse_trusted_proxies, RateLimitStore};
+    use super::{admin_endpoint_group, admin_limit_for_group_with_values, default_limit_for_group, effective_limit_for_group, endpoint_group, extract_client_ip_with, parse_trusted_proxies, RateLimitStore};
     use axum::extract::ConnectInfo;
     use axum::body::Body;
     use axum::http::Request;
@@ -838,6 +838,39 @@ mod tests {
         assert!(!limits.contains_key("ip:9.9.9.9"));
     }
 
+    #[tokio::test]
+    async fn api_key_route_groups_and_api_keys_have_independent_buckets() {
+        let store = RateLimitStore::new();
+        let verify_key = "api:key-a:verify_purchase";
+
+        for _ in 0..20 {
+            assert!(store.check_rate_limit(verify_key, 20, 60).await.0);
+        }
+        assert!(!store.check_rate_limit(verify_key, 20, 60).await.0);
+
+        assert!(store
+            .check_rate_limit("api:key-a:purchase_registration", 20, 60)
+            .await
+            .0);
+        assert!(store
+            .check_rate_limit("api:key-b:verify_purchase", 20, 60)
+            .await
+            .0);
+    }
+
+    #[tokio::test]
+    async fn pre_handler_quota_checks_consume_semantic_error_attempts() {
+        let store = RateLimitStore::new();
+        let key = "api:key-a:verify_purchase";
+
+        // api_rate_limit_middleware calls this before the handler. The first
+        // two allowed attempts therefore remain charged even when the handler
+        // later returns semantic errors such as 400 or 422.
+        assert!(store.check_rate_limit(key, 2, 60).await.0);
+        assert!(store.check_rate_limit(key, 2, 60).await.0);
+        assert!(!store.check_rate_limit(key, 2, 60).await.0);
+    }
+
     #[test]
     fn parse_trusted_proxies_accepts_valid_ip_literals() {
         let proxies = parse_trusted_proxies("127.0.0.1, ::1 , 10.0.0.5").unwrap();
@@ -875,6 +908,17 @@ mod tests {
     }
 
     #[test]
+    fn route_groups_use_exact_production_default_thresholds() {
+        assert_eq!(default_limit_for_group("checkout"), 20);
+        assert_eq!(default_limit_for_group("verify_purchase"), 20);
+        assert_eq!(default_limit_for_group("purchase_registration"), 20);
+        assert_eq!(default_limit_for_group("subscription_queries"), 100);
+        assert_eq!(default_limit_for_group("subscription_mutations"), 10);
+        assert_eq!(default_limit_for_group("payment_history"), 100);
+        assert_eq!(default_limit_for_group("default"), 120);
+    }
+
+    #[test]
     fn tighter_app_limit_caps_endpoint_default() {
         assert_eq!(effective_limit_for_group("checkout", 15, None), 15);
     }
@@ -885,6 +929,31 @@ mod tests {
 
         assert_eq!(effective_limit_for_group("checkout", 60, Some(&rules)), 60);
         assert_eq!(effective_limit_for_group("checkout", 120, Some(&rules)), 90);
+    }
+
+    #[test]
+    fn high_volume_app_configuration_raises_every_gpbi_route_limit() {
+        let rules = json!({
+            "checkout": 100000,
+            "verify_purchase": 100000,
+            "purchase_registration": 100000,
+            "subscription_queries": 100000,
+            "subscription_mutations": 100000,
+            "payment_history": 100000,
+            "default": 100000
+        });
+
+        for group in [
+            "checkout",
+            "verify_purchase",
+            "purchase_registration",
+            "subscription_queries",
+            "subscription_mutations",
+            "payment_history",
+            "default",
+        ] {
+            assert_eq!(effective_limit_for_group(group, 100000, Some(&rules)), 100000);
+        }
     }
 
     #[test]
