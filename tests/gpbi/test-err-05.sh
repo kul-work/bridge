@@ -181,12 +181,14 @@ echo ""
 # Step 4: Verify NO partial database state created
 echo -e "${YELLOW}[4/5] Verifying no partial database state (DB Validation)${NC}"
 
+CURRENT_FAILURE_KIND="setup"
 FINAL_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" -t 2>/dev/null | tr -d ' ')
 FINAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID';" -t 2>/dev/null | tr -d ' ')
 
 # Check for error token specifically
 ERROR_TOKEN_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE purchase_token = '$ERROR_TOKEN';" -t 2>/dev/null | tr -d ' ')
 ERROR_TOKEN_PAYMENT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE provider_purchase_token = '$ERROR_TOKEN';" -t 2>/dev/null | tr -d ' ')
+CURRENT_FAILURE_KIND="behavior"
 
 echo "Final subscription count: $FINAL_SUB_COUNT (initial: $INITIAL_SUB_COUNT)"
 echo "Subscriptions with error token: $ERROR_TOKEN_SUB"

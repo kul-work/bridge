@@ -198,6 +198,7 @@ echo ""
 # Step 4: Verify no database state change
 echo -e "${YELLOW}[4/5] Verifying no database state change (DB Validation)${NC}"
 
+CURRENT_FAILURE_KIND="setup"
 FINAL_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" -t 2>/dev/null | tr -d ' ')
 FINAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID';" -t 2>/dev/null | tr -d ' ')
 
@@ -206,6 +207,7 @@ UNKNOWN_TOKEN_SUB=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB
 UNKNOWN_TOKEN_PAYMENT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE provider_purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
 UNKNOWN_WEBHOOK_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.webhook_provider WHERE app_id = '$BRIDGE_APP_ID' AND provider = 'google_play' AND provider_webhook_id LIKE 'webhook-err-07-%-$TEST_RUN_ID' AND event_type = 'SUBSCRIPTION_UNKNOWN' AND purchase_token = '$PURCHASE_TOKEN';" -t 2>/dev/null | tr -d ' ')
 UNKNOWN_DELIVERY_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.webhook_delivery wd JOIN pay.webhook_provider wp ON wp.id = wd.webhook_provider_id WHERE wp.app_id = '$BRIDGE_APP_ID' AND wp.provider_webhook_id LIKE 'webhook-err-07-%-$TEST_RUN_ID';" -t 2>/dev/null | tr -d ' ')
+CURRENT_FAILURE_KIND="behavior"
 
 echo "Final subscription count: $FINAL_SUB_COUNT (initial: $INITIAL_SUB_COUNT)"
 echo "Subscriptions with test token: $UNKNOWN_TOKEN_SUB"

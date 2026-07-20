@@ -13,6 +13,11 @@ pub mod state;
 mod utils;
 pub mod webhooks;
 
+pub const BUILD_GIT_SHA: &str = match option_env!("BRIDGE_BUILD_GIT_SHA") {
+    Some(revision) => revision,
+    None => "unknown",
+};
+
 use axum::{http::StatusCode, routing::get, Router};
 
 use crate::{

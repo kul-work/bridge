@@ -132,6 +132,8 @@ echo -e "${YELLOW}[3/5] Testing with malformed webhook payloads${NC}"
 echo ""
 
 ALL_REJECTED="true"
+MISSING_DATA_MESSAGE_ID="err-06-missing-data-$TEST_RUN_ID"
+INVALID_BASE64_MESSAGE_ID="err-06-invalid-base64-$TEST_RUN_ID"
 
 # Test 1: Invalid JSON
 echo -e "${BLUE}Test 1: Invalid JSON syntax${NC}"
@@ -176,12 +178,12 @@ RESPONSE_3=$(curl -s -w "\n%{http_code}" -X POST \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
-  -d '{
-    "message": {
-      "message_id": "err-06-missing-data"
+  -d "{
+    \"message\": {
+      \"message_id\": \"$MISSING_DATA_MESSAGE_ID\"
     },
-    "subscription": "projects/test/pay.subscriptions/test"
-  }')
+    \"subscription\": \"projects/test/pay.subscriptions/test\"
+  }")
 
 HTTP_3=$(echo "$RESPONSE_3" | tail -n1)
 BODY_3=$(echo "$RESPONSE_3" | sed '$d')
@@ -199,13 +201,13 @@ RESPONSE_4=$(curl -s -w "\n%{http_code}" -X POST \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-Webhook-Verification-Mode: off" \
-  -d '{
-    "message": {
-      "data": "not-valid-base64!!!",
-      "message_id": "err-06-invalid-base64"
+  -d "{
+    \"message\": {
+      \"data\": \"not-valid-base64!!!\",
+      \"message_id\": \"$INVALID_BASE64_MESSAGE_ID\"
     },
-    "subscription": "projects/test/pay.subscriptions/test"
-  }')
+    \"subscription\": \"projects/test/pay.subscriptions/test\"
+  }")
 
 HTTP_4=$(echo "$RESPONSE_4" | tail -n1)
 BODY_4=$(echo "$RESPONSE_4" | sed '$d')
@@ -249,11 +251,13 @@ echo ""
 # Step 4: Verify no database state change
 echo -e "${YELLOW}[4/5] Verifying no database state change (DB Validation)${NC}"
 
+CURRENT_FAILURE_KIND="setup"
 FINAL_SUB_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.subscriptions WHERE external_user_id = '$USER_ID';" -t 2>/dev/null | tr -d ' ')
 FINAL_PAYMENT_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.payments WHERE external_user_id = '$USER_ID';" -t 2>/dev/null | tr -d ' ')
-REJECTED_WEBHOOK_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.webhook_provider WHERE app_id = '$BRIDGE_APP_ID' AND provider_webhook_id IN ('err-06-missing-data', 'err-06-invalid-base64');" -t 2>/dev/null | tr -d ' ')
+REJECTED_WEBHOOK_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.webhook_provider WHERE app_id = '$BRIDGE_APP_ID' AND provider_webhook_id IN ('$MISSING_DATA_MESSAGE_ID', '$INVALID_BASE64_MESSAGE_ID');" -t 2>/dev/null | tr -d ' ')
 UNKNOWN_WEBHOOK_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.webhook_provider WHERE app_id = '$BRIDGE_APP_ID' AND provider_webhook_id = '$INCOMPLETE_MESSAGE_ID' AND event_type = 'unknown';" -t 2>/dev/null | tr -d ' ')
 UNKNOWN_DELIVERY_COUNT=$(psql -U "$BRIDGE_DB_USER" -h "$BRIDGE_DB_HOST" -p $BRIDGE_DB_PORT -d "$BRIDGE_DB_NAME" -c "SELECT COUNT(*) FROM pay.webhook_delivery wd JOIN pay.webhook_provider wp ON wp.id = wd.webhook_provider_id WHERE wp.app_id = '$BRIDGE_APP_ID' AND wp.provider_webhook_id = '$INCOMPLETE_MESSAGE_ID';" -t 2>/dev/null | tr -d ' ')
+CURRENT_FAILURE_KIND="behavior"
 
 echo "Final subscription count: $FINAL_SUB_COUNT (initial: $INITIAL_SUB_COUNT)"
 echo ""
