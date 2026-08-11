@@ -1,10 +1,10 @@
 # Bridge API Contract
 
 > Status: Implemented contract, aligned with the current Bridge codebase.
-> Base URL: `https://pay.tydecode.com`
+> Base URL: production Bridge host (configure per environment)
 > Public app API prefix: `/api/v1`
 
-This document describes the app-facing Bridge API implemented by the Rust/Axum service. Bridge is the payment boundary for Tyde apps: apps authenticate with Bridge API keys, Bridge talks to providers, and Bridge forwards normalized payment events back to each app callback URL.
+This document describes the app-facing Bridge API implemented by the Rust/Axum service. Bridge is the payment boundary for registered apps: apps authenticate with Bridge API keys, Bridge talks to providers, and Bridge forwards normalized payment events back to each app callback URL.
 
 ## Authentication
 

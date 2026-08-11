@@ -1,5 +1,5 @@
 -- Shared DB install script for Bridge (pay schema) + Apps (HiHa, HouseHold schema)
--- Source alignment: docs/pay-tydecode-architecture.md Section 5
+-- Source alignment: DESIGN.md / DB architecture notes
 -- Run as superuser/postgres in the target database (example: appgen)
 
 -- ============================================================

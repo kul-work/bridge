@@ -93,7 +93,7 @@ VALUES (
 (
   '23bd7125-87eb-4136-9605-6c5e524f1ab0'::uuid,
   'google_play',
-  '{"package_name": "com.tyde.household", "verify_audience": false, "service_account_json": "certs/ci-mock-google-sa.json", "verify_webhook_signature": false}'::jsonb,
+  '{"package_name": "com.example.household", "verify_audience": false, "service_account_json": "certs/ci-mock-google-sa.json", "verify_webhook_signature": false}'::jsonb,
   true
 );
 

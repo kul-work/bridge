@@ -16,7 +16,7 @@ MODULE_SPEC.loader.exec_module(local_code_review_watch)
 
 def sample_workspace():
     return {
-        "repo_root": "c:/share/tyde/bridge",
+        "repo_root": "c:/share/bridge",
         "repo_name": "bridge",
         "branch": "feature/local-review",
         "head_sha": "abc123",

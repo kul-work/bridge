@@ -56,13 +56,13 @@ python .agents/skills/babysit-code-review/scripts/local_code_review_watch.py --w
 ### Use `code-fit-evaluator` output as local review input
 
 ```bash
-python .agents/skills/babysit-code-review/scripts/local_code_review_watch.py --once --review-file c:\share\tyde\bridge\tmp\code-fit-result.json
+python .agents/skills/babysit-code-review/scripts/local_code_review_watch.py --once --review-file tmp/code-fit-result.json
 ```
 
 ### Watch only staged changes with local findings
 
 ```bash
-python .agents/skills/babysit-code-review/scripts/local_code_review_watch.py --watch --diff staged --review-file c:\share\tyde\bridge\tmp\local-review.json
+python .agents/skills/babysit-code-review/scripts/local_code_review_watch.py --watch --diff staged --review-file tmp/local-review.json
 ```
 
 ## Review Sources

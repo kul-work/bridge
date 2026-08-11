@@ -469,7 +469,7 @@ pub fn admin_auth_bypass_allowed(environment: &str, bypass_enabled: bool) -> boo
 }
 
 /// Clerk admin authentication middleware
-/// Validates that request is from Tyde's internal Clerk organization
+/// Validates that request is from the internal Clerk organization
 pub async fn admin_auth_middleware(
     mut request: Request,
     next: Next,
@@ -615,7 +615,7 @@ mod tests {
     #[test]
     fn authorized_party_requires_azp_when_allowlist_is_configured() {
         let claims = valid_claims();
-        let allowed = vec!["https://admin.tyde.app".to_string()];
+        let allowed = vec!["https://admin.example.com".to_string()];
 
         let err = validate_authorized_party(&claims, &allowed).unwrap_err();
 
@@ -625,8 +625,8 @@ mod tests {
     #[test]
     fn authorized_party_accepts_normalized_allowed_azp() {
         let mut claims = valid_claims();
-        claims.azp = Some("https://admin.tyde.app/".to_string());
-        let allowed = vec!["https://admin.tyde.app".to_string()];
+        claims.azp = Some("https://admin.example.com/".to_string());
+        let allowed = vec!["https://admin.example.com".to_string()];
 
         validate_authorized_party(&claims, &allowed).unwrap();
     }
@@ -635,7 +635,7 @@ mod tests {
     fn authorized_party_rejects_unlisted_azp() {
         let mut claims = valid_claims();
         claims.azp = Some("https://evil.example".to_string());
-        let allowed = vec!["https://admin.tyde.app".to_string()];
+        let allowed = vec!["https://admin.example.com".to_string()];
 
         let err = validate_authorized_party(&claims, &allowed).unwrap_err();
 
@@ -644,10 +644,10 @@ mod tests {
 
     #[test]
     fn parse_csv_env_ignores_blank_entries_before_normalizing_urls() {
-        let values = parse_csv_env(" https://admin.tyde.app/, , http://localhost:3000 ,, ");
+        let values = parse_csv_env(" https://admin.example.com/, , http://localhost:3000 ,, ");
 
         assert_eq!(values, vec![
-            "https://admin.tyde.app".to_string(),
+            "https://admin.example.com".to_string(),
             "http://localhost:3000".to_string(),
         ]);
     }

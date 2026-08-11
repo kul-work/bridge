@@ -1,8 +1,8 @@
 # Bridge — Multi-App Payment Gateway
 
-**Bridge** is a central payment processing service designed to handle subscription lifecycles and payments for all Tyde applications. It decouples complex payment logic, provider webhooks, and ledger auditing mechanics from core business applications. 
+**Bridge** is a central payment processing service designed to handle subscription lifecycles and payments for registered client applications. It decouples complex payment logic, provider webhooks, and ledger auditing mechanics from core business applications.
 
-It operates as a private, centralized gateway (e.g., `pay.tydecode.com`) serving approved Tyde application instances (such as **hiha.app**).
+It operates as a private, centralized gateway serving approved application instances (such as **hiha.app**).
 
 ### Tech Stack
 
@@ -14,7 +14,7 @@ It operates as a private, centralized gateway (e.g., `pay.tydecode.com`) serving
 ## Core Principles
 
 - **Opaque Identifiers**: Bridge prioritizes keeping general user PII out of the core database, relying on `external_user_id` that client apps map back to users. It supports linked identifiers (like Agent emails) when required for Ledger tracking.
-- **Non-Public**: It only serves approved Tyde client applications using secure API key authentication.
+- **Non-Public**: It only serves approved client applications using secure API key authentication.
 - **Provider Abstraction**: Normalizes events across providers into a common format for apps.
 - **Idempotency First**: Strict webhook deduplication and state-change guards to prevent race conditions or duplicate processing.
 
@@ -38,7 +38,7 @@ Bridge includes a built-in **Admin Dashboard** at `/admin/` (secured by Clerk au
 
 - **Language**: Rust 1.75+
 - **Database**: PostgreSQL 17+
-- **Administration**: Secured by Tyde’s internal Admin UI (Clerk authorized).
+- **Administration**: Secured by the internal Admin UI (Clerk authorized).
 
 ## Quickstart
 

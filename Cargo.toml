@@ -4,8 +4,6 @@ version = "0.7.3"
 edition = "2021"
 description = "A multi-payments middle-gateway application"
 license-file = "LICENSE"
-repository = "https://github.com/tyde-code/bridge"
-homepage = "https://tyde-code.com"
 publish = false
 
 [[bin]]

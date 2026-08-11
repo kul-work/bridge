@@ -59,7 +59,7 @@ When handing off, use this prompt:
 ```
 You are a codebase analyzer. Extract and summarize architecture for: [TASK]
 
-From c:/share/tyde/bridge, start with:
+From the Bridge repository root, start with:
 
 **Reference Docs** (read first for hard constraints):
 - INVARIANTS.md (non-negotiable rules: money handling, status, layer boundaries, webhooks, errors)

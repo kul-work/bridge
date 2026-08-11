@@ -19,13 +19,9 @@ C:\share\hiha
 
 Use this as the historical pre-Bridge oracle.
 
-Do not use `C:\share\tyde\hiha` as the old-behavior oracle unless the task is explicitly about current post-Bridge HiHa integration.
+Do not use a post-Bridge/current HiHa checkout as the old-behavior oracle unless the task is explicitly about current post-Bridge HiHa integration.
 
-Bridge lives at:
-
-```text
-C:\share\tyde\bridge
-```
+Bridge is this repository (workspace root).
 
 ## Required Classification
 
@@ -97,7 +93,7 @@ If this cannot be filled in from code, docs, tests, git history, or user-provide
 
 1. Read Bridge `AGENTS.md`, `DESIGN.md`, and `INVARIANTS.md` when behavior or architecture may change.
 2. Locate the old HiHa oracle in `C:\share\hiha`.
-3. Locate the matching Bridge path in `C:\share\tyde\bridge`.
+3. Locate the matching Bridge path in this repository (workspace root).
 4. Identify one specific divergence.
 5. Add or update one assertion proving the expected side effect.
 6. Patch the smallest Bridge change needed.
