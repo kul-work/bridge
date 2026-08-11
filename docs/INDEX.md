@@ -15,6 +15,8 @@ Navigate Bridge's architecture, setup, integration guides, provider references, 
 7. Payment Provider Guides - [Google Play](./google/) and [Creem](./creem/) specifics
 8. **[BEHAVIORAL_SPEC.md](./BEHAVIORAL_SPEC.md)** - Detailed procedural flows for every Bridge action
 9. **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** - Operational debugging and common failure modes
+10. **[CONTRIBUTING.md](../CONTRIBUTING.md)** - Build, test, and PR guidelines for contributors
+11. **[SECURITY.md](../SECURITY.md)** - Vulnerability reporting and operator hardening notes
 ---
 
 ## Full Documentation Map
@@ -24,10 +26,13 @@ Navigate Bridge's architecture, setup, integration guides, provider references, 
 | Document | Purpose | Audience |
 |----------|---------|----------|
 | [README.md](../README.md) | Project overview, API snapshot, prerequisites | Everyone |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | Local development, tests, PR expectations | Contributors |
+| [SECURITY.md](../SECURITY.md) | Private vulnerability reporting, production hardening | Operators, security researchers |
 | [DESIGN.md](../DESIGN.md) | Architectural principles, component design, database schema | Developers, Architects |
 | [INVARIANTS.md](../INVARIANTS.md) | Behavioral guarantees, constraints, invariant rules | Developers implementing features |
 | [BEHAVIORAL_SPEC.md](./BEHAVIORAL_SPEC.md) | Detailed procedural flows for every Bridge action | Developers, Auditors |
 | [API_CONTRACT.md](./API_CONTRACT.md) | Implemented app-facing API contract, callback payloads, error format, rate limits | App integrators, Backend developers |
+| [LICENSE](../LICENSE) | MIT license | Everyone |
 
 ### Setup & Operations
 
