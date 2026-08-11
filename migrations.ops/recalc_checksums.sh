@@ -4,7 +4,7 @@
 #   bash recalc_checksums.sh                          # auto-detect from ../migrations
 #   bash recalc_checksums.sh <migrations_dir> <db_user> <db_name>
 # Example:
-#   bash recalc_checksums.sh c:/share/tyde/bridge/migrations bridge_admin appgen
+#   bash recalc_checksums.sh ./migrations bridge_admin appgen
 
 set -euo pipefail
 

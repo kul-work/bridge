@@ -675,7 +675,7 @@ async fn send_reconciliation_admin_alert_email(
     provider_status: &str,
 ) -> Result<(), crate::error::BridgeError> {
     let admin_email = match std::env::var("ADMIN_ALERT_EMAIL")
-        .or_else(|_| std::env::var("TYDE_SUPPORT_EMAIL"))
+        .or_else(|_| std::env::var("BRIDGE_SUPPORT_EMAIL"))
     {
         Ok(value) if !value.trim().is_empty() => value,
         _ => {

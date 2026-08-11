@@ -7,7 +7,7 @@ Bridge configuration is split into two layers:
 - **Process environment**: service-level settings for Bridge itself.
 - **Database configuration**: per-app and per-provider settings in `pay.apps`, `pay.provider_configs`, and `pay.api_keys`.
 
-Bridge should not use app-specific provider env vars such as `CREEM_API_KEY` or `GOOGLE_PACKAGE_NAME`. Those belong in `pay.provider_configs` so each Tyde app can have independent payment setup.
+Bridge should not use app-specific provider env vars such as `CREEM_API_KEY` or `GOOGLE_PACKAGE_NAME`. Those belong in `pay.provider_configs` so each registered app can have independent payment setup.
 
 ## Variables Loaded By `Config::from_env()` (`src/config.rs`)
 
@@ -38,11 +38,11 @@ Logs are also written to daily files under `logs/server.YYYY-MM-DD.log`.
 
 Admin routes under `/admin` require a Clerk session JWT from the configured Clerk instance.
 
-- `ADMIN_CLERK_ORG_ID` (default: unset) - Optional. When set, the JWT's active organization must match this value (requires Clerk organizations/paid plan). When omitted, any valid JWT from the configured Clerk instance is accepted without org membership enforcement. Set this in production to restrict access to your internal Tyde org.
+- `ADMIN_CLERK_ORG_ID` (default: unset) - Optional. When set, the JWT's active organization must match this value (requires Clerk organizations/paid plan). When omitted, any valid JWT from the configured Clerk instance is accepted without org membership enforcement. Set this in production to restrict access to your internal admin org.
 - `ADMIN_CLERK_FRONTEND_API` (default: unset) - Preferred Clerk issuer for admin JWT validation. In production, this URL must use public `https` when set.
 - `CLERK_FRONTEND_API` (default: unset) - Fallback Clerk issuer when `ADMIN_CLERK_FRONTEND_API` is unset. In production, this URL must use public `https` when set.
 - `CLERK_PUBLISHABLE_KEY` - Required in production for the admin dashboard. Also used to derive the Clerk issuer when both issuer URL vars are unset.
-- `ADMIN_CLERK_AUTHORIZED_PARTIES` (default: unset) - Comma-separated allowed browser origins, for example `https://admin.tyde.app`. Required in production; admin JWTs must include an `azp` claim matching one of these origins. Production origins must use public `https`.
+- `ADMIN_CLERK_AUTHORIZED_PARTIES` (default: unset) - Comma-separated allowed browser origins, for example `https://admin.example.com`. Required in production; admin JWTs must include an `azp` claim matching one of these origins. Production origins must use public `https`.
 - `ADMIN_READ_RATE_LIMIT_PER_MINUTE` (default: `120`) - Per-admin-actor rate limit for admin `GET`/read requests.
 - `ADMIN_MUTATION_RATE_LIMIT_PER_MINUTE` (default: `10`) - Per-admin-actor rate limit for admin mutating requests such as `POST` and `PATCH`.
 - `ADMIN_AUTH_IP_LIMIT` (default: `10`) - Per-IP limit for failed or missing admin Clerk JWT attempts before JWT parsing. The rolling window is fixed at 60 seconds.
@@ -74,7 +74,7 @@ For non-production, missing provider credentials fall back to mock email. In pro
 ### Admin Alert Emails (`src/webhooks/processor.rs`, `src/webhooks/scheduler.rs`)
 
 - `ADMIN_ALERT_EMAIL` - Destination for dispute/reconciliation drift alerts.
-- `TYDE_SUPPORT_EMAIL` - Fallback alert destination when `ADMIN_ALERT_EMAIL` is unset.
+- `BRIDGE_SUPPORT_EMAIL` - Fallback alert destination when `ADMIN_ALERT_EMAIL` is unset.
 
 If neither is set, Bridge logs the alert and skips sending email.
 
@@ -99,7 +99,7 @@ Keep Google provider controls in `pay.provider_configs.config` per app where pos
 
 These appear in older docs or `.env.sample`, but active runtime paths do not currently read them:
 
-- `APP_EMAIL_SUPPORT` - Use `ADMIN_ALERT_EMAIL` or `TYDE_SUPPORT_EMAIL` for alert destinations.
+- `APP_EMAIL_SUPPORT` - Use `ADMIN_ALERT_EMAIL` or `BRIDGE_SUPPORT_EMAIL` for alert destinations.
 - `RATE_LIMIT_CLEANUP_HOURS` - No active cleanup interval reads this env var. Drained rate-limit buckets are evicted lazily on their next touch instead.
 
 ## Database Configuration
@@ -270,17 +270,17 @@ EMAIL_PROVIDER=mock
 For admin UI locally, also configure Clerk admin auth:
 
 ```env
-ADMIN_CLERK_ORG_ID=org_your_internal_tyde_org
+ADMIN_CLERK_ORG_ID=org_your_internal_admin_org
 CLERK_FRONTEND_API=https://your-clerk-instance.clerk.accounts.dev
 CLERK_PUBLISHABLE_KEY=pk_test_xxx
-ADMIN_CLERK_AUTHORIZED_PARTIES=https://admin.tyde.app
+ADMIN_CLERK_AUTHORIZED_PARTIES=https://admin.example.com
 ```
 
 For local provider simulation:
 
 ```env
 MOCK_EXTERNAL_APIS=true
-MOCK_GOOGLE_PURCHASE_RESPONSE=C:/share/tyde/bridge/scratch/google-purchase-fixture.json
+MOCK_GOOGLE_PURCHASE_RESPONSE=./scratch/google-purchase-fixture.json
 ```
 
 Never run production with `MOCK_EXTERNAL_APIS=true`; startup rejects it.

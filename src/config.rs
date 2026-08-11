@@ -351,9 +351,9 @@ mod tests {
         let config = test_config();
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("ADMIN_CLERK_ORG_ID", "org_123"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
@@ -368,7 +368,7 @@ mod tests {
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_YWRtaW4tdHlkZS5jbGVyay5hY2NvdW50cy5kZXYk"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("ADMIN_CLERK_ORG_ID", "org_123"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
@@ -399,8 +399,8 @@ mod tests {
         let config = test_config();
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.example.com"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("ADMIN_CLERK_ORG_ID", "org_123"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
@@ -418,7 +418,7 @@ mod tests {
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
             ("ADMIN_CLERK_FRONTEND_API", "http://example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
         ]));
@@ -445,7 +445,7 @@ mod tests {
                 ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
                 ("ADMIN_CLERK_FRONTEND_API", local_url),
                 ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-                ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+                ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
                 ("GOOGLE_VERIFY_AUDIENCE", "true"),
                 ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
             ]));
@@ -464,7 +464,7 @@ mod tests {
         let config = test_config();
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
             ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://ADMIN.LOCAL, https://svc.internal.local."),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
@@ -497,7 +497,7 @@ mod tests {
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
             ("ADMIN_CLERK_FRONTEND_API", "https://locally-hosted.example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
         ]));
@@ -518,9 +518,9 @@ mod tests {
         config.mock_external_apis = true;
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("ADMIN_CLERK_ORG_ID", "org_123"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
@@ -537,9 +537,9 @@ mod tests {
         config.swagger_enabled = true;
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("ADMIN_CLERK_ORG_ID", "org_123"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
@@ -556,9 +556,9 @@ mod tests {
         config.bypass_admin_auth = true;
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("ADMIN_CLERK_ORG_ID", "org_123"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
@@ -574,9 +574,9 @@ mod tests {
         let config = test_config();
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("ADMIN_CLERK_ORG_ID", "org_123"),
             ("GOOGLE_SKIP_RSA_VERIFICATION", "true"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
@@ -592,9 +592,9 @@ mod tests {
         let config = test_config();
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("ADMIN_CLERK_ORG_ID", "org_123"),
             ("GOOGLE_VERIFY_AUDIENCE", "false"),
             ("GOOGLE_PUB_SUB_AUDIENCE", "https://api.example.com/webhooks/google"),
@@ -609,9 +609,9 @@ mod tests {
         let config = test_config();
         let env = env_getter(HashMap::from([
             ("DATABASE_URL", "postgresql://bridge_app:password@db.example.com/appgen"),
-            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.tyde.app"),
+            ("ADMIN_CLERK_FRONTEND_API", "https://admin-clerk.example.com"),
             ("CLERK_PUBLISHABLE_KEY", "pk_test_dGVzdC1icmlkZ2UtYWRtaW4uY2xlcmsuYWNjb3VudHMuZGV2JA"),
-            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.tyde.app"),
+            ("ADMIN_CLERK_AUTHORIZED_PARTIES", "https://admin.example.com"),
             ("ADMIN_CLERK_ORG_ID", "org_123"),
             ("GOOGLE_VERIFY_AUDIENCE", "true"),
         ]));

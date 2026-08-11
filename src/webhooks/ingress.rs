@@ -928,8 +928,8 @@ mod tests {
     #[test]
     fn accepts_google_play_webhook_for_configured_package_name() {
         let app_id = uuid::Uuid::new_v4();
-        let config = json!({ "package_name": "com.tyde.household" });
-        let payload = json!({ "packageName": "com.tyde.household" });
+        let config = json!({ "package_name": "com.example.household" });
+        let payload = json!({ "packageName": "com.example.household" });
 
         assert!(validate_google_play_package_name(app_id, &config, &payload).is_ok());
     }
@@ -937,8 +937,8 @@ mod tests {
     #[test]
     fn rejects_google_play_webhook_for_wrong_package_name() {
         let app_id = uuid::Uuid::new_v4();
-        let config = json!({ "package_name": "com.tyde.hiha" });
-        let payload = json!({ "packageName": "com.tyde.household" });
+        let config = json!({ "package_name": "com.example.hiha" });
+        let payload = json!({ "packageName": "com.example.household" });
 
         let result = validate_google_play_package_name(app_id, &config, &payload);
 
@@ -949,7 +949,7 @@ mod tests {
     fn rejects_google_play_webhook_when_configured_package_name_is_missing() {
         let app_id = uuid::Uuid::new_v4();
         let config = json!({});
-        let payload = json!({ "packageName": "com.tyde.household" });
+        let payload = json!({ "packageName": "com.example.household" });
 
         let result = validate_google_play_package_name(app_id, &config, &payload);
 

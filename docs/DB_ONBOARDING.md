@@ -124,9 +124,9 @@ VALUES (
 >   'google_play',
 >   (
 >     SELECT jsonb_build_object(
->       'package_name', 'com.tyde.household',
+>       'package_name', 'com.example.household',
 >       'verify_audience', true,
->       'pub_sub_audience', 'https://pay.tydecode.com/webhooks/' || webhook_ingress_token || '/google_play',
+>       'pub_sub_audience', 'https://bridge.example.com/webhooks/' || webhook_ingress_token || '/google_play',
 >       'service_account_json', '/etc/secrets/play-billing-482519-28c007356bc6.json',
 >       'verify_webhook_signature', true
 >     )

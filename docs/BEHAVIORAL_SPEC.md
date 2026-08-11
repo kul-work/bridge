@@ -2,7 +2,7 @@
 
 > Status: **Proposal / Under Review**  
 > Source: Extracted from HiHa monolith codebase, filtered to Bridge-owned concerns only  
-> Purpose: Step-by-step behavioral documentation for implementing Bridge (`pay.tydecode.com`)
+> Purpose: Step-by-step behavioral documentation for implementing Bridge
 
 ---
 
@@ -86,7 +86,7 @@ This document captures **every behavioral action** that Bridge must perform. Eac
    - **Public**: `GET /health`
    - **API** (`/api/v1/*`): all endpoints, authenticated via API key
    - **Webhook ingress** (`/webhooks/{token}/:provider`): per-app obfuscated paths, no auth (signature verification instead)
-   - **Admin UI**: separate routes, secured by Tyde's internal Clerk instance
+   - **Admin UI**: separate routes, secured by the internal Clerk instance
 9. Serve on `0.0.0.0:{PORT}`.
 
 ---
@@ -698,7 +698,7 @@ If provider supports enrichment (Google Play):
 **Event type**: `dispute.created`
 
 1. Compose alert email with event details (event_id, amount, customer email).
-2. Collect a post-commit admin alert effect for Bridge admin email / Tyde support.
+2. Collect a post-commit admin alert effect for Bridge admin support email.
 3. No subscription status change.
 4. **Forward callback to app**: a dispute notification so app can track it.
 
@@ -894,7 +894,7 @@ if webhook_provider.timestamp_epoch_ms < subscription.last_event_time →
      - Update the subscription to the provider-corrected status.
      - Insert an audit record in `webhook_provider`.
      - **Forward callback to app**: `reconciliation.drift_detected` event with `previous_status` and `corrected_status`.
-     - Send admin alert email to Tyde support.
+     - Send admin alert email to the configured Bridge support address.
 3. Errors on individual subscriptions are logged but don't fail the whole job.
 
 ---

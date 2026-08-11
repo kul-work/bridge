@@ -892,7 +892,7 @@ mod tests {
             "object": {
                 "purchaseToken": "long_purchase_token_1234567890",
                 "amount": 499,
-                "packageName": "com.tyde.bridge"
+                "packageName": "com.example.bridge"
             }
         }));
 
@@ -900,6 +900,6 @@ mod tests {
         assert_eq!(redacted["customer_email"], "[redacted]...mple.com");
         assert_eq!(redacted["object"]["purchaseToken"], "[redacted]...34567890");
         assert_eq!(redacted["object"]["amount"], 499);
-        assert_eq!(redacted["object"]["packageName"], "com.tyde.bridge");
+        assert_eq!(redacted["object"]["packageName"], "com.example.bridge");
     }
 }

@@ -1,111 +1,185 @@
 # Bridge — Multi-App Payment Gateway
 
-**Bridge** is a central payment processing service designed to handle subscription lifecycles and payments for all Tyde applications. It decouples complex payment logic, provider webhooks, and ledger auditing mechanics from core business applications. 
+**Bridge** is an open-source payment middleware service. It owns subscription lifecycle, payment recording, provider webhooks, and secure callback delivery so your product backends do not have to.
 
-It operates as a private, centralized gateway (e.g., `pay.tydecode.com`) serving approved Tyde application instances (such as **hiha.app**).
+Apps talk to Bridge over a versioned HTTP API. Bridge talks to billing providers (Google Play, Creem today). Normalized events flow back to each app’s callback URL.
 
-### Tech Stack
+## Why Bridge
 
-- **Backend**: Rust + Axum + Tokio
-- **Database**: PostgreSQL (SQLx)
-- **API Support**: Multi-provider registry (Creem, Google Play)
-- **Security**: Double-ended HMAC validation on callbacks, explicit provider signature cryptographic verification, rate limiting, and API key authentication.
+- **Decouple payments from product logic** — apps keep users and features; Bridge keeps money state.
+- **Multi-app by design** — one Bridge deployment serves many apps with per-app API keys, provider config, and webhook paths.
+- **Idempotent webhooks** — provider ingress is deduplicated and ordered before state changes.
+- **Least privilege** — opaque `external_user_id`s, hashed API keys, HMAC-signed app callbacks, PostgreSQL RLS for tenant isolation.
 
-## Core Principles
+## Tech stack
 
-- **Opaque Identifiers**: Bridge prioritizes keeping general user PII out of the core database, relying on `external_user_id` that client apps map back to users. It supports linked identifiers (like Agent emails) when required for Ledger tracking.
-- **Non-Public**: It only serves approved Tyde client applications using secure API key authentication.
-- **Provider Abstraction**: Normalizes events across providers into a common format for apps.
-- **Idempotency First**: Strict webhook deduplication and state-change guards to prevent race conditions or duplicate processing.
+| Layer | Choice |
+|-------|--------|
+| Runtime | Rust, Axum, Tokio |
+| Database | PostgreSQL (SQLx) |
+| Providers | Google Play Billing, Creem |
+| Admin UI | Clerk-authenticated dashboard at `/admin` |
 
-## Responsibilities
+## Documentation
 
-- **App Registry System**: Manages registered apps, credential hashing, and callbacks.
-- **Subscription Lifecycle System**: Source of truth for recurring billing states, including upgrades, downgrades, and linked subscriptions.
-- **Webhook Ingress Handlers**: Safely absorbs provider webhooks with full idempotency checks and event ordering.
-- **Webhook Sub-delivery Forwarding**: Delivers actionable notifications securely to app backends with a 3-strike retry strategy.
-- **Reconciliation Engine**: Background workers verifying provider status polling drift and self-healing subscription states.
-
-## Administration
-
-Bridge includes a built-in **Admin Dashboard** at `/admin/` (secured by Clerk authentication) for monitoring:
-- Registered applications and their configurations.
-- Webhook ingress logs and delivery status.
-- Manual webhook retry for dead-lettered deliveries.
-- Global system health and background worker status.
+| Doc | Purpose |
+|-----|---------|
+| [docs/INDEX.md](docs/INDEX.md) | Full documentation map |
+| [DESIGN.md](DESIGN.md) | Architecture and component design |
+| [INVARIANTS.md](INVARIANTS.md) | Non-negotiable payment/webhook rules |
+| [docs/API_CONTRACT.md](docs/API_CONTRACT.md) | App-facing API and callback payloads |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Environment and DB-backed config |
+| [docs/DB_ONBOARDING.md](docs/DB_ONBOARDING.md) | Roles, RLS, onboarding a new app |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Build, test, and PR guidelines |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting |
 
 ## Prerequisites
 
-- **Language**: Rust 1.75+
-- **Database**: PostgreSQL 17+
-- **Administration**: Secured by Tyde’s internal Admin UI (Clerk authorized).
+- Rust **1.75+** (CI may pin a newer stable; see `.github/workflows`)
+- PostgreSQL **16+** (17 recommended)
+- Optional: [sqlx-cli](https://github.com/launchbadge/sqlx) for migrations from the shell
 
 ## Quickstart
 
-### 1. Setup Environment
+### 1. Clone and configure
 
 ```bash
 cp .env.sample .env
 ```
 
-Set at minimum:
+Minimum local settings:
+
 ```env
-# Database configuration
+ENVIRONMENT=development
 DATABASE_URL=postgresql://bridge_app:password@localhost/appgen
 ADMIN_DATABASE_URL=postgresql://bridge_admin:password@localhost/appgen
+PORT=3000
+MOCK_EXTERNAL_APIS=true
+ENABLE_BACKGROUND_JOBS=true
+EMAIL_PROVIDER=mock
 ```
 
-`DATABASE_URL` is the runtime app role. `ADMIN_DATABASE_URL` is required in production so startup migrations run with the admin role instead of the least-privilege runtime role.
+- `DATABASE_URL` — least-privilege runtime role (`bridge_app`).
+- `ADMIN_DATABASE_URL` — elevated role for startup migrations (`bridge_admin`). Required in production.
 
-### 2. Run Database Migrations
+Create DB roles/schema as described in [docs/DB_ONBOARDING.md](docs/DB_ONBOARDING.md) (or use the SQL helpers under `docs/db-install-roles-rls*.sql`).
+
+### 2. Migrate
 
 ```bash
 sqlx migrate run --database-url postgresql://bridge_admin:password@localhost:5432/appgen
 ```
 
-Or if using a `.env` file with `DATABASE_URL`:
+Or with `DATABASE_URL` / `.env` loaded:
 
 ```bash
 sqlx migrate run
 ```
 
-### 3. Run Application
+Migrations also run automatically at process startup when `ADMIN_DATABASE_URL` (or a non-hardened `DATABASE_URL`) can apply them.
+
+### 3. Run
 
 ```bash
 cargo run
 ```
 
-Backend serves on port `3000` (default).
+Default listen address: `0.0.0.0:3000` (`SERVER_ADDR` / `PORT`).
 
-## Authentication
+Health check:
 
-- **App → Bridge**: Requires API key (`Authorization: Bearer sk_app_...`)
-- **Bridge → App**: HMACS payload using `X-Pay-Signature` for safe callback handling.
-- **Provider → Bridge webhooks**: Provider callbacks use `/webhooks/{webhook_ingress_token}/{provider}`. The token is only an app-routing secret; production must keep provider signature verification enabled. Google Play uses Pub/Sub `Authorization` JWT verification, with audience enforcement controlled by `GOOGLE_VERIFY_AUDIENCE` + `GOOGLE_PUB_SUB_AUDIENCE`. Creem uses HMAC-SHA256 over the raw request body with the configured provider webhook secret.
+```bash
+curl -s http://127.0.0.1:3000/health
+```
 
-## API Snapshot Overview
+### 4. Register an app (DB-driven)
 
-### Subscriptions & Payments
-- `POST /api/v1/payment/checkout` — Initiate session with provider
-- `POST /api/v1/verify-purchase` — Mobile receipt verification
-- `GET /api/v1/subscriptions` — List recurring billing status 
-- `GET /api/v1/subscriptions/:id` — Get specific subscription details
-- `POST /api/v1/subscriptions/:id/cancel` — Cancel subscription
-- `POST /api/v1/subscriptions/:id/resume` — Resume subscription
-- `POST /api/v1/subscriptions/:id/acknowledge` — Acknowledge purchase (Google Play compliance)
-- `POST /api/v1/subscriptions/:id/portal` — Create billing portal URL
-- `POST /api/v1/subscriptions/:id/price-step-up/accept` — Accept price changes
-- `POST /api/v1/subscriptions/:id/price-step-up/decline` — Decline price changes
-- `GET /api/v1/payments` — Query payment history
-- `POST /api/v1/purchase/register` — Register external/one-time purchases
+There is no public “create app” HTTP API yet. Onboard apps by inserting rows into `pay.apps`, `pay.provider_configs`, and `pay.api_keys`. See [docs/DB_ONBOARDING.md](docs/DB_ONBOARDING.md).
 
-### User & Privacy
-- `POST /api/v1/users/:id/anonymize` — GDPR/Privacy anonymization
-- `GET /api/v1/users/:id/data-export` — GDPR data export
+### 5. Call the API
+
+```http
+Authorization: Bearer sk_your_app_key
+```
+
+Full contract: [docs/API_CONTRACT.md](docs/API_CONTRACT.md).
+
+## Authentication model
+
+| Direction | Mechanism |
+|-----------|-----------|
+| App → Bridge | API key (`Authorization: Bearer sk_…`) |
+| Bridge → App | HMAC body signature (`X-Pay-Signature`) using the app callback secret |
+| Provider → Bridge | Per-app path `/webhooks/{ingress_token}/{provider}` plus provider signature / Pub/Sub JWT checks |
+
+Production must keep provider signature verification enabled. Ingress tokens only route traffic to the correct app; they are not a substitute for cryptographic verification.
+
+## API snapshot
+
+### Subscriptions & payments
+
+- `POST /api/v1/payment/checkout` — start a provider checkout session
+- `POST /api/v1/verify-purchase` — verify a mobile purchase
+- `GET /api/v1/subscriptions` — list subscriptions for the authenticated app
+- `GET /api/v1/subscriptions/:id` — subscription detail
+- `POST /api/v1/subscriptions/:id/cancel` — cancel
+- `POST /api/v1/subscriptions/:id/resume` — resume
+- `POST /api/v1/subscriptions/:id/acknowledge` — Google Play acknowledge
+- `POST /api/v1/subscriptions/:id/portal` — billing portal URL
+- `POST /api/v1/subscriptions/:id/price-step-up/accept` — accept price step-up
+- `POST /api/v1/subscriptions/:id/price-step-up/decline` — decline price step-up
+- `GET /api/v1/payments` — payment history
+- `POST /api/v1/purchase/register` — register / pre-register a purchase
+
+### User & privacy
+
+- `POST /api/v1/users/:id/anonymize` — GDPR-style anonymization
+- `GET /api/v1/users/:id/data-export` — GDPR-style export
 
 ### System
-- `GET /health` — Diagnostics
-- `GET /admin/` — Admin Dashboard (Clerk sign-in)
-- `GET /admin/apps` — List registered apps (auth required)
-- `GET /admin/apps/:app_id/webhooks` — List webhooks for an app (auth required)
-- `POST /admin/webhooks/:webhook_id/retry` — Reset a dead-lettered webhook for retry (auth required)
+
+- `GET /health` — liveness / diagnostics
+- `GET /admin/` — admin dashboard (Clerk)
+- `GET /admin/apps` — list apps (auth required)
+- `GET /admin/apps/:app_id/webhooks` — webhook log for an app
+- `POST /admin/webhooks/:webhook_id/retry` — requeue a dead-lettered delivery
+
+## Administration
+
+The built-in admin UI at `/admin/` (Clerk) is for operators:
+
+- registered apps and provider config visibility
+- webhook ingress and delivery status
+- manual retry for dead-lettered callbacks
+- worker / health oriented monitoring
+
+Local admin setup is documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+
+## Design principles (short)
+
+- **Opaque identifiers** — prefer `external_user_id` over storing general end-user PII in Bridge.
+- **App-scoped tenancy** — API keys and RLS pin every read/write to one app.
+- **Provider abstraction** — normalize provider states into Bridge’s canonical statuses.
+- **Idempotency first** — log provider webhooks before mutating subscription/payment state; suppress stale events.
+
+## Development & tests
+
+```bash
+cargo check
+cargo test --lib
+```
+
+Shell integration suites live under `tests/` (admin, Creem, Google Play / GPBI, contract/isolation, security). Each suite has a README. For local provider simulation set `MOCK_EXTERNAL_APIS=true` (rejected in production).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security
+
+Payment middleware is high risk. Please report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
+
+Do not commit real `.env` files, Google Play service-account JSON, API keys, or production webhook secrets.
+
+## License
+
+Bridge is released under the [MIT License](LICENSE).  
+Copyright © 2026 Mihaita Nita (Kul).

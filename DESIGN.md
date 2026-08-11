@@ -4,7 +4,7 @@ Architectural overview of Bridge payment gateway system, design decisions, and c
 
 ## 1. Core Purpose
 
-Bridge (`pay.tydecode.com`) is a private payment processing microservice for Tyde. It acts as a centralized payment gateway decoupling payment logic from app business logic.
+Bridge is a private payment processing microservice. It acts as a centralized payment gateway decoupling payment logic from app business logic.
 
 **Single responsibility**: Process, record, and relay payments. Never owns app users, products, or business logic.
 

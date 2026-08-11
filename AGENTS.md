@@ -4,7 +4,7 @@ If you did not load the user-level AGENTS.md from `~\.config\AGENTS.md`, load it
 
 ## Project Overview
 
-**Bridge** is a central payment processing service designed to handle subscription lifecycles and payments for all Tyde applications. It decouples payment logic from business logic.
+**Bridge** is a central payment processing service designed to handle subscription lifecycles and payments for registered client applications. It decouples payment logic from business logic.
 
 **Tech Stack:**
 - **Backend**: Rust + Axum + Tokio
@@ -187,7 +187,7 @@ cmd /c "set PGPASSWORD=password && psql -U postgres -h localhost -p 5432 -d appg
 For complex queries (with quotes, WHERE clauses, etc.), write a temp `.sql` file and use `-f`:
 
 ```bash
-cmd /c "set PGPASSWORD=password && psql -U postgres -h localhost -p 5432 -d appgen -f c:\share\tyde\bridge\tmp_query.sql"
+cmd /c "set PGPASSWORD=password && psql -U postgres -h localhost -p 5432 -d appgen -f tmp_query.sql"
 ```
 
 1. Create the file (use create_file tool)
@@ -203,5 +203,5 @@ When using the Bash tool on Windows with absolute paths:
 **Use forward slashes with lowercase drive letter:**
 
 ```bash
-cmd: "cd c:/share/tyde/bridge && cargo build"
+cmd: "cargo build"
 ```

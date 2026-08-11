@@ -2,10 +2,10 @@
 name = "bridge"
 version = "0.7.3"
 edition = "2021"
-description = "A multi-payments middle-gateway application"
-license-file = "LICENSE"
-repository = "https://github.com/tyde-code/bridge"
-homepage = "https://tyde-code.com"
+description = "Multi-app payment gateway for subscription lifecycles and provider webhooks"
+license = "MIT"
+authors = ["Mihaita Nita (Kul)"]
+readme = "README.md"
 publish = false
 
 [[bin]]
