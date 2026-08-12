@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f19" />
+      <stop offset="50%" stop-color="#111827" />
+      <stop offset="100%" stop-color="#070a12" />
+    </linearGradient>
+
+    <!-- Accent Glow Radial -->
+    <radialGradient id="glow-cyan" cx="20%" cy="20%" r="60%">
+      <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.28" />
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="glow-purple" cx="80%" cy="80%" r="60%">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.22" />
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Card Inner Glow & Border -->
+    <linearGradient id="border-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.6" />
+      <stop offset="50%" stop-color="#818cf8" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#c084fc" stop-opacity="0.6" />
+    </linearGradient>
+
+    <!-- Grid Pattern -->
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.75" stroke-opacity="0.5" />
+    </pattern>
+  </defs>
+
+  <!-- Base Canvas (1280x640) -->
+  <rect width="1280" height="640" fill="url(#bg-gradient)" />
+
+  <!-- Background Grids & Ambient Lighting -->
+  <rect width="1280" height="640" fill="url(#grid)" />
+  <rect width="1280" height="640" fill="url(#glow-cyan)" />
+  <rect width="1280" height="640" fill="url(#glow-purple)" />
+
+  <!-- Safe Margin Guide Line (40px padding boundary) -->
+  <rect x="40" y="40" width="1200" height="560" rx="16" fill="none" stroke="url(#border-gradient)" stroke-width="1.5" stroke-dasharray="6 6" stroke-opacity="0.4" />
+
+  <!-- Main Content Container (Inside 40px Safe Zone) -->
+  <g transform="translate(70, 70)">
+    
+    <!-- Top Bar: Category / Badge -->
+    <g transform="translate(0, 20)">
+      <rect width="180" height="32" rx="16" fill="#1e293b" stroke="#334155" stroke-width="1" />
+      <circle cx="20" cy="16" r="5" fill="#10b981" />
+      <text x="34" y="21" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#94a3b8" letter-spacing="0.5">OPEN SOURCE</text>
+    </g>
+
+    <!-- Center Section: Title & Tagline -->
+    <g transform="translate(0, 135)">
+      <!-- Bridge Icon + Title Group -->
+      <g transform="translate(0, 0)">
+        <!-- Bridge Logo Icon -->
+        <svg x="0" y="-48" width="68" height="68" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19V9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10" />
+          <path d="M2 19h20" />
+          <path d="M9 19v-4a3 3 0 0 1 6 0v4" />
+          <path d="M12 3v4" />
+        </svg>
+        <!-- Project Title -->
+        <text x="88" y="5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="68" font-weight="800" fill="#ffffff" letter-spacing="-1">Bridge</text>
+      </g>
+
+      <!-- Subtitle / Tagline -->
+      <text x="0" y="75" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="30" font-weight="500" fill="#cbd5e1">
+        Multi-App Payment Gateway &amp; Subscription Middleware
+      </text>
+
+      <!-- Key Value Propositions -->
+      <text x="0" y="118" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="19" font-weight="400" fill="#64748b">
+        Decouples money logic from business services • Idempotent ingress • Multi-provider engine
+      </text>
+    </g>
+
+    <!-- Bottom Section: Tech Stack Badges -->
+    <g transform="translate(0, 415)">
+      <!-- Rust Pill -->
+      <g transform="translate(0, 0)">
+        <rect width="115" height="38" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1" />
+        <text x="18" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600" fill="#f97316">🦀 Rust</text>
+      </g>
+
+      <!-- Axum Pill -->
+      <g transform="translate(127, 0)">
+        <rect width="115" height="38" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1" />
+        <text x="18" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600" fill="#38bdf8">⚡ Axum</text>
+      </g>
+
+      <!-- PostgreSQL Pill -->
+      <g transform="translate(254, 0)">
+        <rect width="145" height="38" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1" />
+        <text x="18" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600" fill="#60a5fa">🐘 PostgreSQL</text>
+      </g>
+
+      <!-- Google Play Pill -->
+      <g transform="translate(411, 0)">
+        <rect width="170" height="38" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1" />
+        <text x="18" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600" fill="#34d399">▶ Google Play</text>
+      </g>
+
+      <!-- Creem Pill -->
+      <g transform="translate(593, 0)">
+        <rect width="125" height="38" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1" />
+        <text x="18" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600" fill="#a78bfa">💳 Creem</text>
+      </g>
+    </g>
+
+  </g>
+</svg>
