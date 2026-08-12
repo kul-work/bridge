@@ -35,7 +35,6 @@ static/tmp/app
 
 # Sensitive files
 certs/play-billing*.json
-certs/ci-mock-google-sa.json
 
 # Misc
 .sqlx

@@ -1,0 +1,10 @@
+{
+  "type": "service_account",
+  "project_id": "bridge-ci-test-only",
+  "private_key_id": "not-a-real-key-id",
+  "private_key": "not-a-real-private-key",
+  "client_email": "ci-test-only@example.invalid",
+  "client_id": "000000000000000000000",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token"
+}
