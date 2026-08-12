@@ -41,6 +41,7 @@ certs/play-billing*.json
 .agents.arhive
 .gemini_security
 .codesight
+.github
 
 
 # Added by cargo
