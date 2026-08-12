@@ -46,23 +46,23 @@ VALUES (
 );
 
 -- 3. Insert API Key for App A (hiha)
--- Key: sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm
+-- Key: sk_hiha_ci_test_only_not_a_secret
 INSERT INTO pay.api_keys (app_id, key_prefix, key_hash, label, enabled)
 VALUES (
   '43bd7125-87eb-4136-9605-6c5e524f1ab0'::uuid,
   'sk_hiha_',
-  '$2b$12$OQBHmWyzeBjverDDrkuAuOhQRrNtaK602snucHkdQReoTdvvFOeYa',
+  '$2b$12$H52M.o6FEMCBnHlTqN7kHO8wmNXoijG6821uR5iB4ENPghJmPjrMK',
   'ci-hiha-key',
   true
 );
 
 -- 4. Insert API Key for App B (household)
--- Key: sk_haho_DxcO8Qk01fpD6V1Ov2R8P0Qs3CegemIV
+-- Key: sk_haho_ci_test_only_not_a_secret
 INSERT INTO pay.api_keys (app_id, key_prefix, key_hash, label, enabled)
 VALUES (
   '23bd7125-87eb-4136-9605-6c5e524f1ab0'::uuid,
   'sk_haho_',
-  '$2b$12$3mSLeYtIW0WseymEvShihO1mS.a1h8Emc9jhsazYNiEFNW9QpAr/y',
+  '$2b$12$fwHYi4rNXaK5EPP0M8kGv.hz5z4A0kzexFPveCpJWb7NC8cuB/EFy',
   'ci-haho-key',
   true
 );
@@ -72,7 +72,7 @@ INSERT INTO pay.provider_configs (app_id, provider, config, enabled)
 VALUES (
   '43bd7125-87eb-4136-9605-6c5e524f1ab0'::uuid,
   'creem',
-  '{"webhook_secret": "whsec_1TSf4A155AEK1KLablY4w7", "verify_webhook_signature": true, "api_key": "test_creem_api_key_dummy"}'::jsonb,
+  '{"webhook_secret": "ci_test_webhook_secret_not_for_production", "verify_webhook_signature": true, "api_key": "ci_test_api_key_not_for_production"}'::jsonb,
   true
 ),
 (
@@ -87,7 +87,7 @@ INSERT INTO pay.provider_configs (app_id, provider, config, enabled)
 VALUES (
   '23bd7125-87eb-4136-9605-6c5e524f1ab0'::uuid,
   'creem',
-  '{"webhook_secret": "whsec_1TSf4A155AEK1KLablY4w7", "verify_webhook_signature": true, "api_key": "test_creem_api_key_dummy"}'::jsonb,
+  '{"webhook_secret": "ci_test_webhook_secret_not_for_production", "verify_webhook_signature": true, "api_key": "ci_test_api_key_not_for_production"}'::jsonb,
   true
 ),
 (
@@ -96,4 +96,3 @@ VALUES (
   '{"package_name": "com.example.household", "verify_audience": false, "service_account_json": "certs/ci-mock-google-sa.json", "verify_webhook_signature": false}'::jsonb,
   true
 );
-

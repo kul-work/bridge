@@ -242,7 +242,7 @@ If you are running an automated security scanner like OWASP ZAP, you may encount
    Configure ZAP's **Replacer** tool to inject a test API key header to authenticate requests under `/api/v1`:
    - **Type**: `Request Header (will add if not present)`
    - **Match**: `Authorization`
-   - **Replacement**: `Bearer <dev_api_key>` (e.g. `sk_hiha_fnP2iRSNMZoNm0HWLNp2MWWIcxawt0fm` from dev/test config)
+   - **Replacement**: `Bearer <dev_api_key>` using a dedicated key from your local test environment.
 
 4. **Scanning Admin Endpoints (/admin)**
    Clerk authentication requires interactive loading of external scripts which can fail or expire during scanning.
