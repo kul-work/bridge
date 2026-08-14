@@ -1,4 +1,5 @@
 {
+  "_comment": "NON-OPERATIONAL TEST MOCK FIXTURE ONLY. This is a dummy key for local/CI shell tests. It does not exist in Google Cloud IAM and NEVER requires rotation.",
   "type": "service_account",
   "project_id": "bridge-ci-test-only",
   "private_key_id": "not-a-real-key-id",
